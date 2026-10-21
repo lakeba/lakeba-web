@@ -1,0 +1,153 @@
+import type Anthropic from '@anthropic-ai/sdk';
+import { getCollection } from 'astro:content';
+import { PUBLIC_SITE_URL } from 'astro:env/server';
+import { serviceClient } from './admin';
+
+/*
+ * The Ask Lakeba knowledge base: the same for every shareholder, so it is
+ * sent in full and cached. It contains
+ *   1. a facts sheet generated from portal data (share classes, prices,
+ *      ventures, meetings),
+ *   2. every published, all-investor document marked "use in Ask Lakeba"
+ *      (registers can never be marked), one citable block per page part,
+ *   3. public News & Media from NEWS_FROM onwards, one citable block per article.
+ * Its content is deterministic so the prompt cache keeps hitting until
+ * something actually changes.
+ */
+
+export const NEWS_FROM = '2023-01-01';
+
+/** What a citable block points back to. */
+export type Source =
+  | { kind: 'facts'; title: string }
+  | { kind: 'document'; title: string; documentId: string; pages: (number | null)[] }
+  | { kind: 'news'; title: string; articles: { title: string; href: string; date: string }[] };
+
+export type KnowledgeBase = {
+  blocks: Anthropic.Beta.BetaContentBlockParam[];
+  sources: Source[];
+  approxTokens: number;
+  documentCount: number;
+  articleCount: number;
+};
+
+const day = new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' });
+const fmtDate = (d: string | Date) => day.format(new Date(d));
+const int = new Intl.NumberFormat('en-AU');
+
+async function factsSheet(svc: ReturnType<typeof serviceClient>) {
+  const [{ data: classes }, { data: holdings }, { data: prices }, { data: ventures }, { data: meetings }, { data: liquidity }] = await Promise.all([
+    svc.from('share_classes').select('id, code, name, voting, official_on_issue, official_as_at').order('code'),
+    svc.from('holdings').select('holder_id, share_class_id, shares, as_at'),
+    svc.from('reference_prices').select('price, currency, priced_on, source, note, share_classes(name)').order('priced_on'),
+    svc.from('ventures').select('name, tagline, stage, lakeba_stake, status, venture_updates(title, body, happened_on)').order('sort'),
+    svc.from('meetings').select('title, starts_at, location, proxy_deadline, status, resolutions(number, title, kind, outcome)').order('starts_at'),
+    svc.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle(),
+  ]);
+
+  // Latest holding per holder and class, summed (no individual holdings are included).
+  const latest = new Map<string, { classId: string; shares: number; asAt: string }>();
+  for (const h of holdings ?? []) {
+    const key = `${h.holder_id}|${h.share_class_id}`;
+    const prev = latest.get(key);
+    if (!prev || prev.asAt < h.as_at) latest.set(key, { classId: h.share_class_id, shares: Number(h.shares), asAt: h.as_at });
+  }
+  const held = (classId: string) => [...latest.values()].filter((h) => h.classId === classId).reduce((a, h) => a + h.shares, 0);
+
+  const lines = ['LAKEBA GROUP LIMITED — FACTS FROM THE INVESTOR PORTAL', ''];
+  lines.push('Share classes:');
+  for (const c of classes ?? []) {
+    const total = c.official_on_issue != null
+      ? `${int.format(c.official_on_issue)} shares on issue (official figure as at ${fmtDate(c.official_as_at!)})`
+      : `${int.format(held(c.id))} shares held by portal shareholders (no official shares-on-issue figure recorded)`;
+    lines.push(`- ${c.name} (${c.code}), ${c.voting ? 'voting' : 'non-voting'}: ${total}.`);
+  }
+  lines.push('', 'Reference prices (indicative only; Lakeba shares are unlisted):');
+  for (const p of prices ?? []) {
+    const cls = (p.share_classes as unknown as { name: string } | null)?.name ?? '';
+    lines.push(`- ${fmtDate(p.priced_on)}: ${p.currency} ${Number(p.price).toFixed(2)} per ${cls.toLowerCase()} share — ${p.source.replace('_', ' ')}${p.note ? ` (${p.note})` : ''}.`);
+  }
+  if ((ventures ?? []).length) {
+    lines.push('', 'Portfolio ventures:');
+    for (const v of ventures ?? []) {
+      lines.push(`- ${v.name}: ${v.tagline}. Stage: ${v.stage || 'n/a'}. Status: ${v.status}.${v.lakeba_stake != null ? ` Lakeba stake: ${Number(v.lakeba_stake)}%.` : ''}`);
+      const updates = [...((v.venture_updates as { title: string; body: string; happened_on: string }[]) ?? [])].sort((a, b) => b.happened_on.localeCompare(a.happened_on)).slice(0, 3);
+      for (const u of updates) lines.push(`  - ${fmtDate(u.happened_on)}: ${u.title}${u.body ? ` — ${u.body}` : ''}`);
+    }
+  }
+  if ((meetings ?? []).length) {
+    lines.push('', 'Shareholder meetings:');
+    for (const m of meetings ?? []) {
+      lines.push(`- ${m.title}: ${fmtDate(m.starts_at)}${m.location ? `, ${m.location}` : ''}. Status: ${m.status}. Proxy deadline: ${fmtDate(m.proxy_deadline)}.`);
+      for (const r of [...((m.resolutions as { number: number; title: string; kind: string; outcome: string | null }[]) ?? [])].sort((a, b) => a.number - b.number)) {
+        lines.push(`  - Resolution ${r.number} (${r.kind}): ${r.title}${r.outcome ? ` — ${r.outcome.replace('_', ' ')}` : ''}`);
+      }
+    }
+  }
+  const liq = liquidity?.value as { title?: string; body?: string } | undefined;
+  if (liq?.body) lines.push('', `Secondary trading: ${liq.body}`);
+  return lines.join('\n');
+}
+
+/** Markdown article body as plain text for the model. */
+const articleText = (md: string) =>
+  md.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/<iframe[^>]*><\/iframe>/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\n{3,}/g, '\n\n').trim();
+
+export async function buildKnowledgeBase(): Promise<KnowledgeBase> {
+  const svc = serviceClient();
+  const now = new Date().toISOString();
+  const [facts, { data: docs }, news] = await Promise.all([
+    factsSheet(svc),
+    svc.from('documents')
+      .select('id, title, category, published_at, document_chunks(chunk_index, page, content)')
+      .eq('in_knowledge_base', true).eq('audience', 'all_investors').not('published_at', 'is', null).lte('published_at', now)
+      .order('published_at').order('id'),
+    getCollection('publicNews'),
+  ]);
+
+  const blocks: Anthropic.Beta.BetaContentBlockParam[] = [];
+  const sources: Source[] = [];
+  let chars = facts.length;
+
+  blocks.push({ type: 'document', source: { type: 'text', media_type: 'text/plain', data: facts }, title: 'Portal facts sheet', citations: { enabled: true } });
+  sources.push({ kind: 'facts', title: 'Portal facts sheet' });
+
+  for (const d of docs ?? []) {
+    const parts = [...(d.document_chunks as { chunk_index: number; page: number | null; content: string }[])]
+      .sort((a, b) => a.chunk_index - b.chunk_index)
+      .filter((c) => c.content.trim());
+    if (!parts.length) continue;
+    chars += parts.reduce((a, c) => a + c.content.length, 0);
+    blocks.push({
+      type: 'document',
+      source: { type: 'content', content: parts.map((c) => ({ type: 'text' as const, text: c.content })) },
+      title: `${d.title} (published ${fmtDate(d.published_at!)})`,
+      citations: { enabled: true },
+    });
+    sources.push({ kind: 'document', title: d.title, documentId: d.id, pages: parts.map((c) => c.page) });
+  }
+
+  const site = PUBLIC_SITE_URL.replace(/\/$/, '');
+  const articles = news
+    .filter((n) => n.data.date.toISOString() >= NEWS_FROM && n.body?.trim() && !n.data.external)
+    .sort((a, b) => a.data.date.getTime() - b.data.date.getTime() || a.id.localeCompare(b.id));
+  if (articles.length) {
+    const texts = articles.map((n) => `${n.data.title} — ${fmtDate(n.data.date)} — ${n.data.venture}\n\n${articleText(n.body!)}`);
+    chars += texts.reduce((a, t) => a + t.length, 0);
+    blocks.push({
+      type: 'document',
+      source: { type: 'content', content: texts.map((text) => ({ type: 'text' as const, text })) },
+      title: `Lakeba News & Media (from ${fmtDate(NEWS_FROM)})`,
+      citations: { enabled: true },
+    });
+    sources.push({ kind: 'news', title: 'Lakeba News & Media', articles: articles.map((n) => ({ title: n.data.title, href: `${site}/news/${n.id}/`, date: fmtDate(n.data.date) })) });
+  }
+
+  // Everything up to here is identical for every question: cache it for an hour.
+  const last = blocks.at(-1) as Anthropic.Beta.BetaRequestDocumentBlock;
+  last.cache_control = { type: 'ephemeral', ttl: '1h' };
+
+  // About 2.8 characters per token, measured against the API's own count.
+  const approxTokens = Math.round(chars / 2.8);
+  return { blocks, sources, approxTokens, documentCount: (docs ?? []).length, articleCount: articles.length };
+}

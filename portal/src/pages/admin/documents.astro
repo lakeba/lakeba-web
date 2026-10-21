@@ -8,6 +8,8 @@ import { parseLocal } from '../../lib/admin-forms';
 import { categoryLabels, dateTime, fileSize } from '../../lib/format';
 import { notifyMembers } from '../../lib/notify';
 import { pdfChunks } from '../../lib/pdf-text';
+import { buildKnowledgeBase, NEWS_FROM } from '../../lib/knowledge';
+import { askEnabled } from '../../lib/ask';
 
 const supabase = Astro.locals.supabase;
 const categories = Object.keys(categoryLabels);
@@ -60,6 +62,7 @@ if (Astro.request.method === 'POST') {
           title, summary, category, audience, holder_id: audience === 'holder' ? holderId : null,
           file_path: path, mime_type: file.type || 'application/octet-stream', size_bytes: file.size,
           published_at: publishedAt, created_by: Astro.locals.user!.id,
+          in_knowledge_base: category !== 'register' && form.get('in_knowledge_base') === 'on',
         }).select('id').single();
         if (insertError || !doc) {
           await supabase.storage.from('documents').remove([path]);
@@ -71,6 +74,13 @@ if (Astro.request.method === 'POST') {
           notice = `Uploaded “${title}”${passages ? ` (${passages} passages indexed for search)` : ''}.`;
         }
       }
+    }
+  } else if (intent === 'kb-on' || intent === 'kb-off') {
+    const { data: doc, error: kbError } = await supabase.from('documents').update({ in_knowledge_base: intent === 'kb-on' }).eq('id', id).select('title').single();
+    if (kbError) error = kbError.code === '23514' ? 'Registers contain shareholders’ personal details and can’t be used by Ask Lakeba.' : kbError.message;
+    else {
+      await supabase.rpc('log_event', { event_action: intent === 'kb-on' ? 'admin_added_to_ask' : 'admin_removed_from_ask', event_detail: { document_id: id, title: doc.title } });
+      notice = intent === 'kb-on' ? `“${doc.title}” is now used by Ask Lakeba.` : `Ask Lakeba no longer uses “${doc.title}”.`;
     }
   } else if (intent === 'publish' || intent === 'unpublish') {
     const { data: doc } = await supabase.from('documents')
@@ -92,7 +102,7 @@ if (Astro.request.method === 'POST') {
 }
 
 const [{ data: docs }, { data: reads }, { data: holders }] = await Promise.all([
-  supabase.from('documents').select('id, title, category, audience, size_bytes, published_at, created_at, holders(name)').order('created_at', { ascending: false }),
+  supabase.from('documents').select('id, title, category, audience, size_bytes, published_at, created_at, in_knowledge_base, holders(name)').order('created_at', { ascending: false }),
   supabase.from('document_reads').select('document_id'),
   supabase.from('holders').select('id, name').order('name'),
 ]);
@@ -101,10 +111,26 @@ for (const r of reads ?? []) readCount.set(r.document_id, (readCount.get(r.docum
 const now = new Date();
 const status = (p: string | null) => (!p ? 'Draft' : new Date(p) > now ? 'Scheduled' : 'Published');
 const statusStyle: Record<string, string> = { Draft: 'bg-white/10 text-white/60', Scheduled: 'bg-lk-orange/15 text-lk-orange', Published: 'bg-lk-green/15 text-lk-green' };
+// Ask Lakeba knowledge base summary. Costs: Claude Opus 5.5 at $4/M input,
+// $20/M output, cache reads $0.20/M; a cache write with 1-hour TTL is 2× input.
+const kb = await buildKnowledgeBase();
+const kbCost = { warm: (kb.approxTokens * 0.2 + 1500 * 20) / 1e6, cold: (kb.approxTokens * 8 + 1500 * 20) / 1e6 };
+const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 ---
 
 <Admin title="Documents">
   <PageHeader title="Documents" subtitle="Files are stored privately; investors get short-lived links only for documents they are allowed to see." />
+  <section class="card mb-6 !p-5">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <h2 class="text-lg font-bold">Ask Lakeba knowledge base</h2>
+      <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', askEnabled ? 'bg-lk-green/15 text-lk-green' : 'bg-lk-orange/15 text-lk-orange']}>{askEnabled ? 'AI answers on (Claude Opus 5.5)' : 'AI answers off: ANTHROPIC_API_KEY not set'}</span>
+    </div>
+    <p class="mt-2 text-sm text-white/60">
+      Facts sheet + {kb.documentCount} documents + {kb.articleCount} news articles (from {NEWS_FROM.slice(0, 4)}) · about {Math.round(kb.approxTokens / 1000)}k tokens, sent in full and cached for an hour.
+      Registers are never included; drafts, scheduled, board-only and holder documents are left out.
+    </p>
+    <p class="mt-1 text-xs text-white/40">Estimated cost per question: about {usd.format(kbCost.warm)} when the cache is warm, {usd.format(kbCost.cold)} for the first question after an hour without questions.</p>
+  </section>
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 
@@ -120,6 +146,7 @@ const statusStyle: Record<string, string> = { Draft: 'bg-white/10 text-white/60'
       <div><label class="label" for="publish">Publishing</label>
         <select class="field" id="publish" name="publish"><option value="now">Publish now and notify</option><option value="schedule">Schedule</option><option value="draft">Save as draft</option></select></div>
       <div><label class="label" for="publish_at">Scheduled time</label><input class="field" id="publish_at" name="publish_at" type="datetime-local" /></div>
+      <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="in_knowledge_base" checked class="size-4 accent-lk-blue" /> Use in Ask Lakeba (ignored for registers, which are never used)</label>
       <div class="sm:col-span-2"><button name="intent" value="upload" class="btn-primary">Upload</button></div>
     </form>
   </details>
@@ -133,7 +160,7 @@ const statusStyle: Record<string, string> = { Draft: 'bg-white/10 text-white/60'
             const s = status(d.published_at);
             return (
               <tr>
-                <td class="px-5 py-3"><a href={`/documents/${d.id}`} class="font-medium text-white hover:underline">{d.title}</a><span class="block text-xs text-white/40">{categoryLabels[d.category]} · {fileSize(d.size_bytes)}</span></td>
+                <td class="px-5 py-3"><a href={`/documents/${d.id}`} class="font-medium text-white hover:underline">{d.title}</a><span class="block text-xs text-white/40">{categoryLabels[d.category]} · {fileSize(d.size_bytes)}{d.in_knowledge_base && d.audience === 'all_investors' && <span class="ml-1 rounded-full bg-lk-blue/15 px-2 py-0.5 text-lk-blue">Ask Lakeba</span>}</span></td>
                 <td class="px-5 py-3 text-white/60">{d.audience === 'holder' ? (d.holders as { name: string } | null)?.name : audiences[d.audience as keyof typeof audiences]}</td>
                 <td class="px-5 py-3"><span class={`rounded-full px-2.5 py-0.5 text-xs ${statusStyle[s]}`}>{s}</span>{d.published_at && <span class="mt-1 block text-xs text-white/40">{dateTime.format(new Date(d.published_at))}</span>}</td>
                 <td class="px-5 py-3 text-right text-white/70">{readCount.get(d.id) ?? 0}</td>
@@ -141,6 +168,9 @@ const statusStyle: Record<string, string> = { Draft: 'bg-white/10 text-white/60'
                   <form method="post" class="flex justify-end gap-3 text-xs">
                     <input type="hidden" name="id" value={d.id} />
                     {s === 'Published' ? <button name="intent" value="unpublish" class="text-white/50 hover:text-white">Unpublish</button> : <button name="intent" value="publish" class="text-lk-blue hover:underline">Publish now</button>}
+                    {d.category !== 'register' && (d.in_knowledge_base
+                      ? <button name="intent" value="kb-off" class="text-white/50 hover:text-white">Remove from Ask</button>
+                      : <button name="intent" value="kb-on" class="text-lk-blue hover:underline">Use in Ask</button>)}
                     <button name="intent" value="delete" class="text-white/50 hover:text-lk-red" onclick="return confirm('Delete this document for everyone?')">Delete</button>
                   </form>
                 </td>

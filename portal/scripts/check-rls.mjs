@@ -133,6 +133,17 @@ try {
   const { data: twoHits } = await two.rpc('search_documents', { query: 'zebracorn' });
   check('Ask search returns passages the investor can read', (twoHits ?? []).length === 1, `${twoHits?.length} hits`);
 
+  // Ask Lakeba knowledge base
+  const { error: kbRegisterErr } = await service.from('documents').update({ category: 'register', in_knowledge_base: true }).eq('id', draft.id);
+  check('a register can never be used by Ask Lakeba', Boolean(kbRegisterErr));
+  await service.from('documents').update({ in_knowledge_base: false }).eq('id', forA3.id).throwOnError();
+  const { data: notInKb } = await two.rpc('search_documents', { query: 'zebracorn' });
+  check('Ask search skips documents not in the knowledge base', (notInKb ?? []).length === 0, `${notInKb?.length} hits`);
+  await service.from('documents').update({ in_knowledge_base: true }).eq('id', forA3.id).throwOnError();
+  const { error: kbEdit } = await one.from('documents').update({ in_knowledge_base: false }).eq('id', forA3.id).select();
+  const { data: kbAfter } = await service.from('documents').select('in_knowledge_base').eq('id', forA3.id).single();
+  check('investors cannot change what Ask Lakeba uses', Boolean(kbEdit) || kbAfter.in_knowledge_base === true);
+
   // Official shares on issue
   const ORD = '00000000-0000-4000-8000-000000000001';
   const { error: officialErr } = await one.from('share_classes').update({ official_on_issue: 1, official_as_at: '2026-01-01' }).eq('id', ORD).select();
