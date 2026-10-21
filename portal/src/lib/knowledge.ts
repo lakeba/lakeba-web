@@ -5,12 +5,15 @@ import { serviceClient } from './admin';
 
 /*
  * The Ask Lakeba knowledge base: the same for every shareholder, so it is
- * sent in full and cached. It contains
- *   1. a facts sheet generated from portal data (share classes, prices,
- *      ventures, meetings),
- *   2. every published, all-investor document marked "use in Ask Lakeba"
+ * sent in full and cached. In order:
+ *   1. every published, all-investor document marked "use in Ask Lakeba"
  *      (registers can never be marked), one citable block per page part,
- *   3. public News & Media from NEWS_FROM onwards, one citable block per article.
+ *   2. public News & Media from NEWS_FROM onwards, one citable block per article,
+ *      — cache breakpoint: this large part rarely changes —
+ *   3. a facts sheet generated from portal data (share classes, prices,
+ *      ventures, meetings),
+ *   4. live approved answers from Ask review, one citable block each,
+ *      — cache breakpoint: approving an answer only re-caches this small tail.
  * Its content is deterministic so the prompt cache keeps hitting until
  * something actually changes.
  */
@@ -21,7 +24,8 @@ export const NEWS_FROM = '2023-01-01';
 export type Source =
   | { kind: 'facts'; title: string }
   | { kind: 'document'; title: string; documentId: string; pages: (number | null)[] }
-  | { kind: 'news'; title: string; articles: { title: string; href: string; date: string }[] };
+  | { kind: 'news'; title: string; articles: { title: string; href: string; date: string }[] }
+  | { kind: 'approved'; title: string };
 
 export type KnowledgeBase = {
   blocks: Anthropic.Beta.BetaContentBlockParam[];
@@ -29,7 +33,10 @@ export type KnowledgeBase = {
   approxTokens: number;
   documentCount: number;
   articleCount: number;
+  approvedCount: number;
 };
+
+const sydneyToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(new Date());
 
 const day = new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' });
 const fmtDate = (d: string | Date) => day.format(new Date(d));
@@ -96,21 +103,20 @@ const articleText = (md: string) =>
 export async function buildKnowledgeBase(): Promise<KnowledgeBase> {
   const svc = serviceClient();
   const now = new Date().toISOString();
-  const [facts, { data: docs }, news] = await Promise.all([
+  const [facts, { data: docs }, news, { data: approved }] = await Promise.all([
     factsSheet(svc),
     svc.from('documents')
       .select('id, title, category, published_at, document_chunks(chunk_index, page, content)')
       .eq('in_knowledge_base', true).eq('audience', 'all_investors').not('published_at', 'is', null).lte('published_at', now)
       .order('published_at').order('id'),
     getCollection('publicNews'),
+    // Approved answers count until their review-by date.
+    svc.from('ask_approved_answers').select('id, question, answer').eq('active', true).gte('review_by', sydneyToday()).order('created_at').order('id'),
   ]);
 
   const blocks: Anthropic.Beta.BetaContentBlockParam[] = [];
   const sources: Source[] = [];
   let chars = facts.length;
-
-  blocks.push({ type: 'document', source: { type: 'text', media_type: 'text/plain', data: facts }, title: 'Portal facts sheet', citations: { enabled: true } });
-  sources.push({ kind: 'facts', title: 'Portal facts sheet' });
 
   for (const d of docs ?? []) {
     const parts = [...(d.document_chunks as { chunk_index: number; page: number | null; content: string }[])]
@@ -143,11 +149,28 @@ export async function buildKnowledgeBase(): Promise<KnowledgeBase> {
     sources.push({ kind: 'news', title: 'Lakeba News & Media', articles: articles.map((n) => ({ title: n.data.title, href: `${site}/news/${n.id}/`, date: fmtDate(n.data.date) })) });
   }
 
-  // Everything up to here is identical for every question: cache it for an hour.
-  const last = blocks.at(-1) as Anthropic.Beta.BetaRequestDocumentBlock;
-  last.cache_control = { type: 'ephemeral', ttl: '1h' };
+  // Documents and news rarely change: first cache breakpoint.
+  const cacheHere = () => { (blocks.at(-1) as Anthropic.Beta.BetaRequestDocumentBlock).cache_control = { type: 'ephemeral', ttl: '1h' }; };
+  if (blocks.length) cacheHere();
+
+  blocks.push({ type: 'document', source: { type: 'text', media_type: 'text/plain', data: facts }, title: 'Portal facts sheet', citations: { enabled: true } });
+  sources.push({ kind: 'facts', title: 'Portal facts sheet' });
+
+  if (approved?.length) {
+    const texts = approved.map((a) => `Question: ${a.question}\n\nApproved answer: ${a.answer}`);
+    chars += texts.reduce((n, t) => n + t.length, 0);
+    blocks.push({
+      type: 'document',
+      source: { type: 'content', content: texts.map((text) => ({ type: 'text' as const, text })) },
+      title: 'Approved answers from Lakeba',
+      citations: { enabled: true },
+    });
+    sources.push({ kind: 'approved', title: 'Lakeba approved answer' });
+  }
+  // Second breakpoint: a change to facts or approved answers re-caches only this tail.
+  cacheHere();
 
   // About 2.8 characters per token, measured against the API's own count.
   const approxTokens = Math.round(chars / 2.8);
-  return { blocks, sources, approxTokens, documentCount: (docs ?? []).length, articleCount: articles.length };
+  return { blocks, sources, approxTokens, documentCount: (docs ?? []).length, articleCount: articles.length, approvedCount: approved?.length ?? 0 };
 }

@@ -1,0 +1,174 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import Empty from '../../components/Empty.astro';
+import Markdown from '../../components/Markdown.astro';
+import { field } from '../../lib/forms';
+import { shortDate, dateTime } from '../../lib/format';
+import { buildKnowledgeBase } from '../../lib/knowledge';
+import { askEnabled, buildMessages, client, CORE_RULES, HOUSE_RULES_MAX, loadHouseRules, MODEL, systemPrompt } from '../../lib/ask';
+import { serviceClient } from '../../lib/admin';
+
+const supabase = Astro.locals.supabase;
+const userId = Astro.locals.user!.id;
+let notice = '';
+let error = '';
+let exactTokens: number | null = null;
+
+const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(new Date());
+const plusMonths = (n: number) => { const d = new Date(); d.setMonth(d.getMonth() + n); return d.toISOString().slice(0, 10); };
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const id = field(form, 'id');
+  const log = (action: string, detail: object = {}) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
+
+  if (intent === 'house-rules') {
+    const text = field(form, 'house_rules');
+    if (text.length > HOUSE_RULES_MAX) error = `House rules can be at most ${HOUSE_RULES_MAX.toLocaleString()} characters.`;
+    else {
+      const { error: e } = await supabase.from('ask_settings').upsert({ key: 'house_rules', value: { text }, updated_by: userId, updated_at: new Date().toISOString() });
+      if (e) error = e.message; else { await log('admin_updated_ask_house_rules', { length: text.length }); notice = 'House rules saved. Ask Lakeba uses them from the next question.'; }
+    }
+  } else if (intent === 'add' || intent === 'save') {
+    const values = { question: field(form, 'question'), answer: field(form, 'answer'), review_by: field(form, 'review_by') || plusMonths(6), updated_by: userId, updated_at: new Date().toISOString() };
+    if (values.question.length < 3 || !values.answer) error = 'Write both the question and the answer.';
+    else {
+      const { error: e } = intent === 'add'
+        ? await supabase.from('ask_approved_answers').insert({ ...values, created_by: userId })
+        : await supabase.from('ask_approved_answers').update(values).eq('id', id);
+      if (e) error = e.message; else { await log(intent === 'add' ? 'admin_added_approved_answer' : 'admin_updated_approved_answer', { id }); notice = intent === 'add' ? 'Approved answer added.' : 'Approved answer saved.'; }
+    }
+  } else if (intent === 'extend') {
+    const { error: e } = await supabase.from('ask_approved_answers').update({ review_by: plusMonths(6), active: true, updated_by: userId, updated_at: new Date().toISOString() }).eq('id', id);
+    if (e) error = e.message; else { await log('admin_extended_approved_answer', { id }); notice = 'Checked and extended for 6 months.'; }
+  } else if (intent === 'deactivate' || intent === 'activate') {
+    const { error: e } = await supabase.from('ask_approved_answers').update({ active: intent === 'activate', updated_by: userId, updated_at: new Date().toISOString() }).eq('id', id);
+    if (e) error = e.message; else { await log(`admin_${intent}d_approved_answer`, { id }); notice = intent === 'activate' ? 'Approved answer switched on.' : 'Approved answer switched off.'; }
+  } else if (intent === 'delete') {
+    const { error: e } = await supabase.from('ask_approved_answers').delete().eq('id', id);
+    if (e) error = e.message; else { await log('admin_deleted_approved_answer', { id }); notice = 'Approved answer deleted.'; }
+  } else if (intent === 'count' && client) {
+    // Token counting is free; it also checks the request is well-formed.
+    const [kb, rules] = await Promise.all([buildKnowledgeBase(), loadHouseRules(serviceClient())]);
+    try {
+      const counted = await client.beta.messages.countTokens({ model: MODEL, system: systemPrompt(rules), messages: buildMessages(kb, [{ role: 'user', content: 'Example question' }]) });
+      exactTokens = counted.input_tokens;
+    } catch (e) {
+      error = `Could not count tokens: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  }
+}
+
+const view = Astro.url.searchParams.get('view') ?? 'live';
+const soon = (() => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10); })();
+let query = supabase.from('ask_approved_answers').select('id, question, answer, review_by, active, source_exchange_id, updated_at').order('updated_at', { ascending: false });
+if (view === 'live') query = query.eq('active', true).gte('review_by', today);
+if (view === 'due') query = query.eq('active', true).lte('review_by', soon);
+if (view === 'inactive') query = query.eq('active', false);
+const [{ data: answers }, rules, kb, { count: liveCount }, { count: dueCount }] = await Promise.all([
+  query,
+  loadHouseRules(serviceClient()),
+  buildKnowledgeBase(),
+  supabase.from('ask_approved_answers').select('id', { count: 'exact', head: true }).eq('active', true).gte('review_by', today),
+  supabase.from('ask_approved_answers').select('id', { count: 'exact', head: true }).eq('active', true).lte('review_by', soon),
+]);
+const tabs = [
+  { id: 'live', label: `Live (${liveCount ?? 0})` },
+  { id: 'due', label: `Due for review (${dueCount ?? 0})` },
+  { id: 'inactive', label: 'Switched off' },
+  { id: 'all', label: 'All' },
+];
+const expired = (d: string) => d < today;
+---
+
+<Admin title="Ask knowledge">
+  <PageHeader title="Ask Lakeba knowledge" subtitle="Approved answers and house rules shape what Ask Lakeba says. Changes apply from the next question." />
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+
+  <section class="card mb-6 !p-5">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <p class="text-sm text-white/70">
+        Knowledge base now: {kb.documentCount} documents, {kb.articleCount} news articles, the facts sheet and <strong class="text-white">{kb.approvedCount} approved answers</strong> ·
+        {exactTokens !== null ? <strong class="text-white"> exactly {exactTokens.toLocaleString()} tokens</strong> : ` about ${Math.round(kb.approxTokens / 1000)}k tokens`}
+      </p>
+      {askEnabled && <form method="post"><button name="intent" value="count" class="btn-ghost !px-3 !py-2 text-sm">Check exact size (free)</button></form>}
+    </div>
+  </section>
+
+  <section class="card mb-6">
+    <h2 class="text-lg font-bold">House rules</h2>
+    <p class="mt-1 text-sm text-white/55">Guidance in plain English, e.g. “Always mention that F class shares are non-voting.” They are added after the core rules, which always win.</p>
+    <form method="post" class="mt-4 space-y-3">
+      <textarea name="house_rules" rows="6" maxlength={HOUSE_RULES_MAX} class="field font-mono text-sm" placeholder="- Use “Lakeba Group”, not “Lakeba”.&#10;- For questions about selling shares, mention the secondary trading windows.">{rules}</textarea>
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <details class="text-sm text-white/55">
+          <summary class="cursor-pointer">Core rules (locked)</summary>
+          <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white/[0.03] p-3 text-xs text-white/60">{CORE_RULES}</pre>
+        </details>
+        <button name="intent" value="house-rules" class="btn-primary !py-2">Save house rules</button>
+      </div>
+    </form>
+  </section>
+
+  <section>
+    <div class="mb-4 flex flex-wrap items-center gap-2">
+      <h2 class="mr-2 text-lg font-bold">Approved answers</h2>
+      {tabs.map((t) => <a href={`?view=${t.id}`} class:list={['rounded-full border px-3 py-1.5 text-sm', view === t.id ? 'border-lk-blue bg-lk-blue/15 text-white' : 'border-white/10 text-white/60 hover:text-white']}>{t.label}</a>)}
+    </div>
+
+    <details class="card mb-4 !p-5">
+      <summary class="cursor-pointer font-semibold text-lk-blue">+ Add an approved answer</summary>
+      <form method="post" class="mt-4 space-y-3">
+        <input name="question" maxlength="1000" placeholder="Question, as a shareholder would ask it" class="field" />
+        <textarea name="answer" rows="5" maxlength="8000" placeholder="The approved answer (Markdown allowed). Include the date or period of any figures." class="field"></textarea>
+        <div class="flex flex-wrap items-end gap-3">
+          <label class="text-sm"><span class="label">Review by</span><input type="date" name="review_by" value={plusMonths(6)} class="field !py-2" /></label>
+          <button name="intent" value="add" class="btn-primary !py-2">Add</button>
+        </div>
+      </form>
+    </details>
+
+    {answers?.length ? (
+      <ol class="space-y-3">
+        {answers.map((a) => (
+          <li class="card !p-5">
+            <div class="flex flex-wrap items-center gap-2 text-xs">
+              {!a.active ? <span class="rounded-full bg-white/10 px-2 py-0.5 text-white/60">switched off</span>
+                : expired(a.review_by) ? <span class="rounded-full bg-lk-red/15 px-2 py-0.5 text-lk-red">expired — not used until checked</span>
+                : a.review_by <= soon ? <span class="rounded-full bg-lk-orange/15 px-2 py-0.5 text-lk-orange">review soon</span>
+                : <span class="rounded-full bg-lk-green/15 px-2 py-0.5 text-lk-green">live</span>}
+              <span class="text-white/45">Review by {shortDate.format(new Date(a.review_by))} · updated {dateTime.format(new Date(a.updated_at))}</span>
+              {a.source_exchange_id && <a href="/admin/ask-review?view=reviewed" class="text-white/45 hover:text-white">from Ask review</a>}
+            </div>
+            <p class="mt-3 font-semibold text-white">{a.question}</p>
+            <div class="mt-2 rounded-2xl bg-white/[0.03] p-4 text-sm"><Markdown source={a.answer} /></div>
+            <details class="mt-3 text-sm">
+              <summary class="cursor-pointer text-lk-blue">Edit</summary>
+              <form method="post" class="mt-3 space-y-3">
+                <input type="hidden" name="id" value={a.id} />
+                <input name="question" value={a.question} maxlength="1000" class="field" />
+                <textarea name="answer" rows="5" maxlength="8000" class="field">{a.answer}</textarea>
+                <div class="flex flex-wrap items-end gap-3">
+                  <label><span class="label">Review by</span><input type="date" name="review_by" value={a.review_by} class="field !py-2" /></label>
+                  <button name="intent" value="save" class="btn-primary !py-2">Save</button>
+                </div>
+              </form>
+            </details>
+            <form method="post" class="mt-3 flex flex-wrap gap-3 text-sm">
+              <input type="hidden" name="id" value={a.id} />
+              <button name="intent" value="extend" class="text-lk-blue hover:underline">Still correct — extend 6 months</button>
+              {a.active ? <button name="intent" value="deactivate" class="text-white/55 hover:text-white">Switch off</button> : <button name="intent" value="activate" class="text-white/55 hover:text-white">Switch on</button>}
+              <button name="intent" value="delete" class="text-white/45 hover:text-lk-red" onclick="return confirm('Delete this approved answer?')">Delete</button>
+            </form>
+          </li>
+        ))}
+      </ol>
+    ) : (
+      <Empty title="No approved answers here">Mark answers ✅ Good or save a correction in Ask review, or add one above.</Empty>
+    )}
+  </section>
+</Admin>

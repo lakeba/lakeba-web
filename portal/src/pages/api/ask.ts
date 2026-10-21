@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import Anthropic from '@anthropic-ai/sdk';
 import { buildKnowledgeBase } from '../../lib/knowledge';
 import { serviceClient } from '../../lib/admin';
-import { buildMessages, client, costUsd, DECLINE, FULL_CONTEXT_LIMIT, MODEL, searchPassages, sourcesFor, SYSTEM, validateTurns, type ChatTurn, type SourceRef } from '../../lib/ask';
+import { buildMessages, client, costUsd, DECLINE, FULL_CONTEXT_LIMIT, loadHouseRules, MODEL, searchPassages, sourcesFor, systemPrompt, validateTurns, type ChatTurn, type SourceRef } from '../../lib/ask';
 
 const QUESTIONS_PER_HOUR = 30;
 
@@ -41,7 +41,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
       // What gets stored for review once the answer is complete (or stopped).
       const record: { answer: string; sources: SourceRef[]; error: string | null; usage: Record<string, unknown> } = { answer: '', sources: [], error: null, usage: {} };
       try {
-        const kb = await buildKnowledgeBase();
+        const [kb, houseRules] = await Promise.all([buildKnowledgeBase(), loadHouseRules(serviceClient())]);
         if (!client || kb.approxTokens > FULL_CONTEXT_LIMIT) {
           // AI answers off: point to the most relevant passages instead.
           const passages = await searchPassages(supabase, turns.at(-1)!.content);
@@ -59,7 +59,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           // Re-runs on a fallback model if a safety classifier declines.
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
-          system: SYSTEM,
+          system: systemPrompt(houseRules),
           messages: buildMessages(kb, turns),
         }, { signal: request.signal });
         for await (const event of response) {

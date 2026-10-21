@@ -154,6 +154,10 @@ try {
   check("investor cannot rate someone else's Ask answer", Boolean(rateOtherErr));
   await service.from('ask_exchanges').delete().eq('id', exOne.id);
 
+  // Approved answers and house rules are admin-only
+  const [{ data: apprSeen }, { data: settingsSeen }] = await Promise.all([one.from('ask_approved_answers').select('id'), one.from('ask_settings').select('key')]);
+  check('investors cannot read approved answers or house rules', (apprSeen ?? []).length === 0 && (settingsSeen ?? []).length === 0);
+
   // Official shares on issue
   const ORD = '00000000-0000-4000-8000-000000000001';
   const { error: officialErr } = await one.from('share_classes').update({ official_on_issue: 1, official_as_at: '2026-01-01' }).eq('id', ORD).select();
