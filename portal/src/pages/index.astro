@@ -10,10 +10,10 @@ const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
 const role = Astro.locals.profile?.role;
 const [positions, holderIds] = await Promise.all([loadPositions(supabase, userId), myHolderIds(supabase, userId)]);
-const classId = positions[0]?.row.share_class_id;
+const classIds = [...new Set(positions.map((p) => p.row.share_class_id))];
 
-const [prices, { data: announcements }, { data: settings }, { data: docs }, posts, { data: meetings }, { data: video }, { count: openQueries }] = await Promise.all([
-  classId ? loadPrices(supabase, classId) : Promise.resolve([]),
+const [priceSeries, { data: announcements }, { data: settings }, { data: docs }, posts, { data: meetings }, { data: video }, { count: openQueries }] = await Promise.all([
+  Promise.all(classIds.map(async (id) => [id, await loadPrices(supabase, id)] as const)),
   supabase.from('announcements').select('id, title, body, link_url, link_label, tone').order('starts_at', { ascending: false }).limit(2),
   supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle(),
   onlyMyDocuments(supabase.from('documents').select('id, title, category, published_at, document_reads(user_id)').neq('category', 'video'), holderIds, role).order('published_at', { ascending: false }).limit(5),
@@ -23,8 +23,22 @@ const [prices, { data: announcements }, { data: settings }, { data: docs }, post
   supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').eq('user_id', userId),
 ]);
 
-const price = prices.at(-1);
+// Each share class is valued at its own latest reference price, if it has one.
+const pricesByClass = new Map(priceSeries);
+const latestPrice = (classId: string) => pricesByClass.get(classId)?.at(-1);
+const value = (p: (typeof positions)[number]) => {
+  const pr = latestPrice(p.row.share_class_id);
+  return pr ? p.row.shares * pr.price : null;
+};
 const totalShares = positions.reduce((sum, p) => sum + p.row.shares, 0);
+const pricedValues = positions.map(value).filter((v): v is number => v !== null);
+const totalValue = pricedValues.reduce((a, b) => a + b, 0);
+const unpricedClasses = [...new Set(positions.filter((p) => value(p) === null).map((p) => p.row.share_classes?.name))];
+// The chart shows the class with the longest price history (normally Ordinary).
+const chartClass = [...pricesByClass].sort((a, b) => b[1].length - a[1].length)[0];
+const prices = chartClass?.[1] ?? [];
+const price = prices.at(-1);
+const chartClassName = positions.find((p) => p.row.share_class_id === chartClass?.[0])?.row.share_classes?.name;
 const liquidity = settings?.value as { title: string; body: string; url: string; label: string } | undefined;
 const meeting = meetings?.[0];
 const firstName = Astro.locals.profile?.first_name || 'there';
@@ -45,10 +59,13 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
       <h1 class="mt-4 text-4xl font-extrabold sm:text-5xl">Welcome, {firstName}</h1>
       <p class="mt-3 text-white/55">Your investment in Lakeba Group Limited.</p>
     </div>
-    {positions.length > 0 && (
-      <div class="flex flex-wrap gap-x-8 gap-y-4">
-        <div><p class="text-xs uppercase tracking-widest text-white/40">Total shares</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{shares.format(totalShares)}</p></div>
-        {price && <div><p class="text-xs uppercase tracking-widest text-white/40">Indicative value</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{aud.format(totalShares * price.price)}</p></div>}
+    {positions.length > 1 && (
+      <div>
+        <div class="flex flex-wrap gap-x-8 gap-y-4">
+          <div><p class="text-xs uppercase tracking-widest text-white/40">Total shares</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{shares.format(totalShares)}</p></div>
+          {pricedValues.length > 0 && <div><p class="text-xs uppercase tracking-widest text-white/40">Indicative value</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{aud.format(totalValue)}</p></div>}
+        </div>
+        <p class="mt-1 text-xs text-white/40">Across your {positions.length} holdings{unpricedClasses.length > 0 && pricedValues.length > 0 && ` · value excludes ${unpricedClasses.join(', ')} (no reference price)`}</p>
       </div>
     )}
   </div>
@@ -67,7 +84,7 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
         <dl class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
           <div><dt class="text-xs uppercase tracking-widest text-white/40">Shares</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{shares.format(p.row.shares)}</dd></div>
           <div><dt class="text-xs uppercase tracking-widest text-white/40">Of total</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{p.total ? percent.format(p.row.shares / p.total) : '—'}</dd></div>
-          <div><dt class="text-xs uppercase tracking-widest text-white/40">Indicative</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{price ? aud.format(p.row.shares * price.price) : '—'}</dd></div>
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">Indicative</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{value(p) !== null ? aud.format(value(p)!) : '—'}</dd></div>
         </dl>
         <p class="mt-6 border-t border-white/5 pt-4 text-xs text-white/40">As at {longDate.format(new Date(p.row.as_at))} · {shares.format(p.total)} {p.row.share_classes?.name.toLowerCase()} on issue</p>
       </article>
@@ -86,6 +103,7 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 class="text-lg font-bold">Reference price</h2>
+            {chartClassName && <p class="text-xs text-white/40">{chartClassName}</p>}
             <p class="text-sm text-white/45">{sourceLabels[price.source]} · {shortDate.format(new Date(price.priced_on))}</p>
           </div>
           <p class="font-display text-3xl font-bold text-white">{audPrecise.format(price.price)}</p>
