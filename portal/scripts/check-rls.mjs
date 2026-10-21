@@ -158,6 +158,10 @@ try {
   const [{ data: apprSeen }, { data: settingsSeen }] = await Promise.all([one.from('ask_approved_answers').select('id'), one.from('ask_settings').select('key')]);
   check('investors cannot read approved answers or house rules', (apprSeen ?? []).length === 0 && (settingsSeen ?? []).length === 0);
 
+  // The Ask test set is admin-only
+  const testTables = await Promise.all(['ask_test_cases', 'ask_test_runs', 'ask_test_results'].map((t) => one.from(t).select('id')));
+  check('investors cannot see the Ask test set', testTables.every((t) => (t.data ?? []).length === 0));
+
   // Official shares on issue
   const ORD = '00000000-0000-4000-8000-000000000001';
   const { error: officialErr } = await one.from('share_classes').update({ official_on_issue: 1, official_as_at: '2026-01-01' }).eq('id', ORD).select();

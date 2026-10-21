@@ -1,0 +1,242 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import Empty from '../../components/Empty.astro';
+import Markdown from '../../components/Markdown.astro';
+import { field } from '../../lib/forms';
+import { dateTime } from '../../lib/format';
+import { askEnabled, MODEL } from '../../lib/ask';
+import { buildKnowledgeBase } from '../../lib/knowledge';
+import { runTestSet, STARTER_TESTS } from '../../lib/ask-tests';
+
+const supabase = Astro.locals.supabase;
+const userId = Astro.locals.user!.id;
+let notice = '';
+let error = '';
+const terms = (s: string) => s.split(/[,\n]/).map((t) => t.trim()).filter(Boolean);
+
+// A run left "running" by a server restart is marked as interrupted.
+await supabase.from('ask_test_runs').update({ status: 'failed', error: 'Interrupted (server restarted)', finished_at: new Date().toISOString() })
+  .eq('status', 'running').lt('started_at', new Date(Date.now() - 2 * 3600_000).toISOString());
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const id = field(form, 'id');
+  const log = (action: string, detail: object = {}) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
+  const caseValues = () => ({
+    question: field(form, 'question'),
+    expected_answer: field(form, 'expected_answer') || null,
+    must_include: terms(field(form, 'must_include')),
+    must_not_include: terms(field(form, 'must_not_include')),
+    expect_decline: form.get('expect_decline') === 'on',
+    notes: field(form, 'notes') || null,
+    updated_at: new Date().toISOString(),
+  });
+
+  if (intent === 'run') {
+    const [{ count: running }, { count: cases }] = await Promise.all([
+      supabase.from('ask_test_runs').select('id', { count: 'exact', head: true }).eq('status', 'running'),
+      supabase.from('ask_test_cases').select('id', { count: 'exact', head: true }).eq('active', true),
+    ]);
+    if (!askEnabled) error = 'AI answers are off: set ANTHROPIC_API_KEY.';
+    else if (running) error = 'A test run is already in progress.';
+    else if (!cases) error = 'Add some test cases first.';
+    else {
+      const { data: run, error: e } = await supabase.from('ask_test_runs')
+        .insert({ model: MODEL, total: cases, label: field(form, 'label') || null, started_by: userId }).select('id').single();
+      if (e || !run) error = e?.message ?? 'Could not start the run.';
+      else {
+        await log('admin_started_ask_test_run', { run_id: run.id, cases });
+        void runTestSet(run.id); // continues in the background
+        return Astro.redirect(`/admin/ask-tests?run=${run.id}`);
+      }
+    }
+  } else if (intent === 'add' || intent === 'save') {
+    const v = caseValues();
+    if (v.question.length < 3) error = 'Write the question.';
+    else if (!v.expected_answer && !v.expect_decline && !v.must_include.length && !v.must_not_include.length) error = 'Add an expected answer or at least one check.';
+    else {
+      const { error: e } = intent === 'add' ? await supabase.from('ask_test_cases').insert({ ...v, created_by: userId }) : await supabase.from('ask_test_cases').update(v).eq('id', id);
+      if (e) error = e.message; else { await log(`admin_${intent === 'add' ? 'added' : 'updated'}_ask_test`, { id }); notice = intent === 'add' ? 'Test added.' : 'Test saved.'; }
+    }
+  } else if (intent === 'toggle') {
+    const { data: c } = await supabase.from('ask_test_cases').select('active').eq('id', id).single();
+    const { error: e } = await supabase.from('ask_test_cases').update({ active: !c?.active, updated_at: new Date().toISOString() }).eq('id', id);
+    if (e) error = e.message; else notice = c?.active ? 'Test switched off.' : 'Test switched on.';
+  } else if (intent === 'delete') {
+    const { error: e } = await supabase.from('ask_test_cases').delete().eq('id', id);
+    if (e) error = e.message; else { await log('admin_deleted_ask_test', { id }); notice = 'Test deleted.'; }
+  } else if (intent === 'starters') {
+    const { data: existing } = await supabase.from('ask_test_cases').select('question');
+    const have = new Set((existing ?? []).map((c) => c.question));
+    const add = STARTER_TESTS.filter((t) => !have.has(t.question)).map((t) => ({ ...t, notes: 'Starter safety test', created_by: userId }));
+    if (add.length) await supabase.from('ask_test_cases').insert(add).throwOnError();
+    notice = add.length ? `Added ${add.length} starter safety tests.` : 'The starter safety tests are already in the set.';
+  }
+}
+
+const [{ data: cases }, { data: runs }, kb] = await Promise.all([
+  supabase.from('ask_test_cases').select('*').order('created_at'),
+  supabase.from('ask_test_runs').select('*').order('started_at', { ascending: false }).limit(10),
+  buildKnowledgeBase(),
+]);
+const selectedId = Astro.url.searchParams.get('run') ?? runs?.[0]?.id;
+const run = runs?.find((r) => r.id === selectedId) ?? null;
+const previous = run ? runs?.find((r) => r.status === 'done' && r.started_at < run.started_at) : null;
+const [{ data: results }, { data: previousResults }] = await Promise.all([
+  run ? supabase.from('ask_test_results').select('*').eq('run_id', run.id).order('created_at') : Promise.resolve({ data: [] }),
+  previous ? supabase.from('ask_test_results').select('case_id, passed').eq('run_id', previous.id) : Promise.resolve({ data: [] }),
+]);
+const before = new Map((previousResults ?? []).map((r) => [r.case_id, r.passed as boolean]));
+const change = (r: { case_id: string | null; passed: boolean }) => {
+  if (!r.case_id || !before.has(r.case_id)) return null;
+  const was = before.get(r.case_id);
+  return was && !r.passed ? 'regression' : !was && r.passed ? 'fixed' : null;
+};
+const regressions = (results ?? []).filter((r) => change(r) === 'regression').length;
+
+// Cost estimate: one cache write, then cache reads; grading for cases with an expected answer.
+const active = (cases ?? []).filter((c) => c.active);
+const graded = active.filter((c) => c.expected_answer).length;
+const estimate = active.length ? (kb.approxTokens * 8) / 1e6 + active.length * ((kb.approxTokens * 0.2 + 1500 * 20) / 1e6) + graded * 0.02 : 0;
+const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD' });
+const running = run?.status === 'running';
+---
+
+<Admin title="Ask tests">
+  {running && <meta http-equiv="refresh" content="5" />}
+  <PageHeader title="Ask Lakeba test set" subtitle="Re-run these questions after changing documents, house rules, approved answers, the prompt or the model, and see what got worse." />
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+
+  <section class="card mb-6 !p-5">
+    <form method="post" class="flex flex-wrap items-end gap-3" onsubmit={`return confirm('Run ${active.length} tests? Estimated cost about ${usd.format(estimate)}.')`}>
+      <div class="min-w-60 flex-1">
+        <label class="label" for="label">What changed? (optional)</label>
+        <input id="label" name="label" class="field !py-2" placeholder="e.g. added FY25 accounts" />
+      </div>
+      <button name="intent" value="run" class="btn-primary !py-2" disabled={!askEnabled || running || !active.length}>Run {active.length} tests</button>
+    </form>
+    <p class="mt-2 text-xs text-white/40">Estimated cost about {usd.format(estimate)} ({graded} graded against an expected answer). Test runs don’t appear in Ask review and don’t count towards anyone’s limit.</p>
+  </section>
+
+  {run && (
+    <section class="card mb-6">
+      <div class="flex flex-wrap items-center gap-3">
+        <h2 class="text-lg font-bold">Run of {dateTime.format(new Date(run.started_at))}</h2>
+        {run.label && <span class="text-sm text-white/55">· {run.label}</span>}
+        <span class:list={['ml-auto rounded-full px-3 py-1 text-xs font-semibold', run.status === 'running' ? 'bg-lk-blue/15 text-lk-blue' : run.status === 'failed' ? 'bg-lk-red/15 text-lk-red' : run.failed ? 'bg-lk-orange/15 text-lk-orange' : 'bg-lk-green/15 text-lk-green']}>
+          {run.status === 'running' ? `Running… ${(results ?? []).length} of ${run.total}` : run.status === 'failed' ? 'Failed' : `${run.passed} passed · ${run.failed} failed`}
+        </span>
+      </div>
+      <p class="mt-1 text-sm text-white/50">
+        {run.model} · cost {usd.format(Number(run.cost_usd) || (results ?? []).reduce((a, r) => a + Number(r.cost_usd), 0))}
+        {previous && ` · compared with ${dateTime.format(new Date(previous.started_at))}`}
+        {regressions > 0 && <strong class="text-lk-red"> · {regressions} regression{regressions > 1 ? 's' : ''}</strong>}
+      </p>
+      {run.error && <p class="mt-2 text-sm text-lk-red">{run.error}</p>}
+      <ol class="mt-5 space-y-3">
+        {(results ?? []).map((r) => {
+          const ch = change(r);
+          return (
+            <li class:list={['rounded-2xl border p-4', r.passed ? 'border-white/10' : 'border-lk-red/30 bg-lk-red/5']}>
+              <div class="flex flex-wrap items-center gap-2 text-xs">
+                <span class:list={['rounded-full px-2 py-0.5 font-semibold', r.passed ? 'bg-lk-green/15 text-lk-green' : 'bg-lk-red/15 text-lk-red']}>{r.passed ? 'Pass' : 'Fail'}</span>
+                {ch === 'regression' && <span class="rounded-full bg-lk-red px-2 py-0.5 font-semibold text-white">Regression</span>}
+                {ch === 'fixed' && <span class="rounded-full bg-lk-green/20 px-2 py-0.5 text-lk-green">Fixed</span>}
+                {r.score && <span class="text-white/45">score {r.score}/5</span>}
+                {(r.checks as { name: string; passed: boolean }[]).map((k) => <span class:list={['rounded-full border px-2 py-0.5', k.passed ? 'border-white/10 text-white/50' : 'border-lk-red/40 text-lk-red']}>{k.passed ? '✓' : '✗'} {k.name}</span>)}
+                <span class="ml-auto text-white/35">{usd.format(Number(r.cost_usd))}</span>
+              </div>
+              <p class="mt-2 font-semibold text-white">{r.question}</p>
+              {r.grader_reason && <p class="mt-1 text-sm text-white/60">{r.grader_reason}</p>}
+              {r.error && <p class="mt-1 text-sm text-lk-red">{r.error}</p>}
+              {r.answer && (
+                <details class="mt-2 text-sm">
+                  <summary class="cursor-pointer text-white/45">Answer given</summary>
+                  <div class="mt-2 rounded-xl bg-white/[0.03] p-3"><Markdown source={r.answer} /></div>
+                </details>
+              )}
+            </li>
+          );
+        })}
+      </ol>
+    </section>
+  )}
+
+  {(runs ?? []).length > 1 && (
+    <section class="mb-8">
+      <h2 class="mb-3 text-lg font-bold">Recent runs</h2>
+      <ul class="divide-y divide-white/5 text-sm">
+        {(runs ?? []).map((r) => (
+          <li><a href={`?run=${r.id}`} class:list={['flex flex-wrap justify-between gap-3 py-2.5 hover:text-white', r.id === run?.id ? 'text-white' : 'text-white/60']}>
+            <span>{dateTime.format(new Date(r.started_at))}{r.label && ` · ${r.label}`}</span>
+            <span>{r.status === 'done' ? `${r.passed}/${r.total} passed` : r.status} · {usd.format(Number(r.cost_usd))}</span>
+          </a></li>
+        ))}
+      </ul>
+    </section>
+  )}
+
+  <section>
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+      <h2 class="text-lg font-bold">Test cases ({active.length} active)</h2>
+      <form method="post"><button name="intent" value="starters" class="btn-ghost !px-3 !py-2 text-sm">Add starter safety tests</button></form>
+    </div>
+    <details class="card mb-4 !p-5">
+      <summary class="cursor-pointer font-semibold text-lk-blue">+ Add a test</summary>
+      <form method="post" class="mt-4 space-y-3">
+        <input name="question" maxlength="1000" placeholder="Question" class="field" />
+        <textarea name="expected_answer" rows="4" maxlength="8000" placeholder="Expected answer (optional; Claude grades the answer against it)" class="field"></textarea>
+        <div class="grid gap-3 sm:grid-cols-2">
+          <input name="must_include" placeholder="Must mention (comma-separated)" class="field !py-2 text-sm" />
+          <input name="must_not_include" placeholder="Must not mention (comma-separated)" class="field !py-2 text-sm" />
+        </div>
+        <label class="flex items-center gap-2 text-sm text-white/65"><input type="checkbox" name="expect_decline" class="size-4 accent-lk-blue" /> Should be declined as off-topic</label>
+        <input name="notes" placeholder="Notes (optional)" class="field !py-2 text-sm" />
+        <button name="intent" value="add" class="btn-primary !py-2">Add test</button>
+      </form>
+    </details>
+    {(cases ?? []).length ? (
+      <ol class="space-y-2">
+        {(cases ?? []).map((c) => (
+          <li class:list={['card !p-4', !c.active && 'opacity-55']}>
+            <div class="flex flex-wrap items-center gap-2 text-xs text-white/45">
+              {c.expected_answer && <span class="rounded-full bg-lk-blue/15 px-2 py-0.5 text-lk-blue">graded</span>}
+              {c.expect_decline && <span class="rounded-full bg-white/10 px-2 py-0.5">should decline</span>}
+              {c.must_include.length > 0 && <span>mentions: {c.must_include.join(', ')}</span>}
+              {c.must_not_include.length > 0 && <span>never: {c.must_not_include.join(', ')}</span>}
+              {c.notes && <span>· {c.notes}</span>}
+              {!c.active && <span>· switched off</span>}
+            </div>
+            <p class="mt-1 font-semibold text-white">{c.question}</p>
+            <details class="mt-2 text-sm">
+              <summary class="cursor-pointer text-lk-blue">Edit</summary>
+              <form method="post" class="mt-3 space-y-3">
+                <input type="hidden" name="id" value={c.id} />
+                <input name="question" value={c.question} maxlength="1000" class="field" />
+                <textarea name="expected_answer" rows="4" maxlength="8000" class="field">{c.expected_answer ?? ''}</textarea>
+                <div class="grid gap-3 sm:grid-cols-2">
+                  <input name="must_include" value={c.must_include.join(', ')} placeholder="Must mention" class="field !py-2 text-sm" />
+                  <input name="must_not_include" value={c.must_not_include.join(', ')} placeholder="Must not mention" class="field !py-2 text-sm" />
+                </div>
+                <label class="flex items-center gap-2 text-sm text-white/65"><input type="checkbox" name="expect_decline" checked={c.expect_decline} class="size-4 accent-lk-blue" /> Should be declined as off-topic</label>
+                <input name="notes" value={c.notes ?? ''} class="field !py-2 text-sm" />
+                <button name="intent" value="save" class="btn-primary !py-2">Save</button>
+              </form>
+            </details>
+            <form method="post" class="mt-2 flex gap-3 text-xs">
+              <input type="hidden" name="id" value={c.id} />
+              <button name="intent" value="toggle" class="text-white/55 hover:text-white">{c.active ? 'Switch off' : 'Switch on'}</button>
+              <button name="intent" value="delete" class="text-white/45 hover:text-lk-red" onclick="return confirm('Delete this test?')">Delete</button>
+            </form>
+          </li>
+        ))}
+      </ol>
+    ) : (
+      <Empty title="No tests yet">Add the starter safety tests, add a test above, or use “Add to test set” in Ask review.</Empty>
+    )}
+  </section>
+</Admin>

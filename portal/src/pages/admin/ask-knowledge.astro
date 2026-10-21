@@ -47,6 +47,14 @@ if (Astro.request.method === 'POST') {
   } else if (intent === 'deactivate' || intent === 'activate') {
     const { error: e } = await supabase.from('ask_approved_answers').update({ active: intent === 'activate', updated_by: userId, updated_at: new Date().toISOString() }).eq('id', id);
     if (e) error = e.message; else { await log(`admin_${intent}d_approved_answer`, { id }); notice = intent === 'activate' ? 'Approved answer switched on.' : 'Approved answer switched off.'; }
+  } else if (intent === 'test') {
+    const { data: a } = await supabase.from('ask_approved_answers').select('question, answer').eq('id', id).single();
+    const { data: dup } = await supabase.from('ask_test_cases').select('id').eq('question', a?.question ?? '').maybeSingle();
+    if (dup) notice = 'This question is already in the test set.';
+    else {
+      const { error: e } = await supabase.from('ask_test_cases').insert({ question: a!.question, expected_answer: a!.answer, notes: 'From approved answers', created_by: userId });
+      if (e) error = e.message; else notice = 'Added to the test set.';
+    }
   } else if (intent === 'delete') {
     const { error: e } = await supabase.from('ask_approved_answers').delete().eq('id', id);
     if (e) error = e.message; else { await log('admin_deleted_approved_answer', { id }); notice = 'Approved answer deleted.'; }
@@ -161,6 +169,7 @@ const expired = (d: string) => d < today;
             <form method="post" class="mt-3 flex flex-wrap gap-3 text-sm">
               <input type="hidden" name="id" value={a.id} />
               <button name="intent" value="extend" class="text-lk-blue hover:underline">Still correct — extend 6 months</button>
+              <button name="intent" value="test" class="text-white/55 hover:text-white">🧪 Add to test set</button>
               {a.active ? <button name="intent" value="deactivate" class="text-white/55 hover:text-white">Switch off</button> : <button name="intent" value="activate" class="text-white/55 hover:text-white">Switch on</button>}
               <button name="intent" value="delete" class="text-white/45 hover:text-lk-red" onclick="return confirm('Delete this approved answer?')">Delete</button>
             </form>

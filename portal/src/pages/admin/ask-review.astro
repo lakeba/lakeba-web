@@ -19,7 +19,25 @@ await supabase.rpc('purge_ask_exchanges', { keep_months: RETENTION_MONTHS });
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const status = field(form, 'intent');
-  if (['good', 'corrected', 'out_of_scope', 'missing_document', 'unreviewed'].includes(status)) {
+  if (status === 'test') {
+    // The question becomes a test case; who asked is not copied.
+    const id = field(form, 'id');
+    const { data: ex } = await supabase.from('ask_exchanges').select('question, answer, corrected_answer, declined, review_status').eq('id', id).single();
+    const { data: existing } = await supabase.from('ask_test_cases').select('id').eq('source_exchange_id', id).maybeSingle();
+    if (existing) notice = 'This question is already in the test set.';
+    else if (ex) {
+      const decline = ex.declined || ex.review_status === 'out_of_scope';
+      const { error: e } = await supabase.from('ask_test_cases').insert({
+        question: ex.question,
+        expected_answer: decline ? null : ex.corrected_answer ?? ex.answer,
+        expect_decline: decline,
+        source_exchange_id: id,
+        notes: 'From Ask review',
+        created_by: Astro.locals.user!.id,
+      });
+      if (e) error = e.message; else notice = 'Added to the test set.';
+    }
+  } else if (['good', 'corrected', 'out_of_scope', 'missing_document', 'unreviewed'].includes(status)) {
     const corrected = field(form, 'corrected_answer');
     if (status === 'corrected' && !corrected) error = 'Write the correct answer before saving.';
     else {
@@ -201,6 +219,7 @@ const statusStyle: Record<string, string> = { unreviewed: 'bg-white/10 text-whit
               <button name="intent" value="corrected" class="btn-ghost !px-3 !py-2">✏️ Save correction</button>
               <button name="intent" value="out_of_scope" class="btn-ghost !px-3 !py-2">🚫 Out of scope</button>
               <button name="intent" value="missing_document" class="btn-ghost !px-3 !py-2">🗂 Missing document</button>
+              <button name="intent" value="test" class="px-3 py-2 text-white/55 hover:text-white">🧪 Add to test set</button>
               {e.review_status !== 'unreviewed' && <button name="intent" value="unreviewed" class="px-3 py-2 text-white/45 hover:text-white">Back to queue</button>}
             </div>
           </form>
