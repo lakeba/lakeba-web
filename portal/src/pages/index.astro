@@ -38,8 +38,13 @@ const unpricedClasses = [...new Set(positions.filter((p) => value(p) === null).m
 const chartClass = [...pricesByClass].sort((a, b) => b[1].length - a[1].length)[0];
 const prices = chartClass?.[1] ?? [];
 const price = prices.at(-1);
+// Cards before the liquidity card in the two-column grid (the "no holdings" card spans both columns).
+const cardsBefore = (positions.length || 2) + (prices.length > 0 && price ? 1 : 0);
+const liquidityWide = cardsBefore % 2 === 0;
 const chartClassName = positions.find((p) => p.row.share_class_id === chartClass?.[0])?.row.share_classes?.name;
 const liquidity = settings?.value as { title: string; body: string; url: string; label: string } | undefined;
+// The price card spans both columns when it would otherwise sit alone in its row.
+const priceWide = positions.length > 0 && positions.length % 2 === 0 && !liquidity;
 const meeting = meetings?.[0];
 const firstName = Astro.locals.profile?.first_name || 'there';
 const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-lk-green/30 bg-lk-green/10', warning: 'border-lk-orange/40 bg-lk-orange/10' };
@@ -70,10 +75,11 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
     )}
   </div>
 
-  <!-- Holdings -->
-  <section class="mt-10 grid gap-4 lg:grid-cols-2" aria-label="Holdings">
+  <!-- Holdings, reference price and secondary trading share one two-column grid,
+       so a single holding sits next to the price chart. -->
+  <div class="mt-10 grid gap-4 lg:grid-cols-2">
     {positions.length ? positions.map((p) => (
-      <article class="card">
+      <article class="card" aria-label={`Holding: ${p.holder.name}`}>
         <div class="flex items-start justify-between gap-4">
           <div>
             <h2 class="text-lg font-bold">{p.holder.name}</h2>
@@ -94,12 +100,10 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
         <p class="mt-2 text-sm text-white/55">If you are a shareholder, ask a question in <a class="text-lk-blue hover:underline" href="/board">Board Q&amp;A</a> or email info@lakeba.com and we'll link your holding to this account.</p>
       </div>
     )}
-  </section>
 
-  <div class="mt-4 grid gap-4 lg:grid-cols-3">
     <!-- Reference price -->
     {prices.length > 0 && price && (
-      <section class="card lg:col-span-2">
+      <section class:list={['card', priceWide && 'lg:col-span-2']}>
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
             <h2 class="text-lg font-bold">Reference price</h2>
@@ -113,13 +117,15 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
       </section>
     )}
 
-    <!-- Secondary trading -->
+    <!-- Secondary trading: full width when it would otherwise sit alone in a row -->
     {liquidity && (
-      <section class="card flex flex-col bg-gradient-to-br from-lk-green/15 to-transparent">
-        <p class="eyebrow w-fit">Liquidity</p>
-        <h2 class="mt-4 text-lg font-bold">{liquidity.title}</h2>
-        <p class="mt-2 flex-1 text-sm text-white/60">{liquidity.body}</p>
-        <a href={liquidity.url} target="_blank" rel="noopener" class="btn-primary mt-6">{liquidity.label} ↗</a>
+      <section class:list={['card flex flex-col bg-gradient-to-br from-lk-green/15 to-transparent', liquidityWide && 'lg:col-span-2 lg:flex-row lg:items-center lg:gap-8']}>
+        <div class="flex-1">
+          <p class="eyebrow w-fit">Liquidity</p>
+          <h2 class="mt-4 text-lg font-bold">{liquidity.title}</h2>
+          <p class="mt-2 text-sm text-white/60">{liquidity.body}</p>
+        </div>
+        <a href={liquidity.url} target="_blank" rel="noopener" class:list={['btn-primary mt-6 shrink-0', liquidityWide && 'lg:mt-0']}>{liquidity.label} ↗</a>
       </section>
     )}
   </div>
