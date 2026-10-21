@@ -1,0 +1,30 @@
+---
+import Portal from '../../layouts/Portal.astro';
+
+// Reaching this page needs the admin role and an MFA-verified session (middleware).
+const supabase = Astro.locals.supabase;
+const [{ count: investors }, { count: holders }, { data: events }] = await Promise.all([
+  supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'investor'),
+  supabase.from('holders').select('id', { count: 'exact', head: true }),
+  supabase.from('audit_log').select('action, created_at, detail').order('created_at', { ascending: false }).limit(10),
+]);
+const time = new Intl.DateTimeFormat('en-AU', { dateStyle: 'medium', timeStyle: 'short' });
+---
+
+<Portal title="Admin">
+  <p class="eyebrow">Admin</p>
+  <h1 class="mt-4 text-4xl font-extrabold">Portal administration</h1>
+  <p class="mt-3 text-white/55">Investor, holdings and document management arrive in Phase 3.</p>
+  <div class="mt-10 grid gap-4 sm:grid-cols-2">
+    <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">Investor accounts</p><p class="mt-2 font-display text-4xl font-bold text-white">{investors ?? 0}</p></div>
+    <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">Holding entities</p><p class="mt-2 font-display text-4xl font-bold text-white">{holders ?? 0}</p></div>
+  </div>
+  <section class="card mt-4">
+    <h2 class="text-lg font-bold">Recent activity</h2>
+    <ul class="mt-4 divide-y divide-white/5 text-sm">
+      {(events ?? []).map((e) => (
+        <li class="flex justify-between gap-4 py-2.5"><span class="font-mono text-white/80">{e.action}</span><span class="text-white/40">{time.format(new Date(e.created_at))}</span></li>
+      ))}
+    </ul>
+  </section>
+</Portal>

@@ -1,0 +1,35 @@
+@import "tailwindcss";
+@import "../../../src/styles/brand.css";
+
+@layer base {
+  html { color-scheme: dark; }
+  body {
+    @apply min-h-dvh bg-ink font-sans text-white/80 antialiased;
+  }
+  h1, h2, h3 { @apply font-display tracking-tight text-white; text-wrap: balance; }
+  ::selection { background: var(--color-lk-blue); color: white; }
+}
+
+@utility field {
+  @apply w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white placeholder:text-white/30 outline-none transition focus:border-lk-blue focus:bg-white/[0.07] focus:ring-2 focus:ring-lk-blue/30;
+}
+
+@utility label {
+  @apply mb-1.5 block text-sm font-medium text-white/70;
+}
+
+@utility btn {
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 font-semibold transition disabled:opacity-50;
+}
+
+@utility btn-primary {
+  @apply btn bg-lk-blue text-white shadow-lg shadow-lk-blue/25 hover:bg-[#3a78ee];
+}
+
+@utility btn-ghost {
+  @apply btn border border-white/12 text-white hover:bg-white/5;
+}
+
+@utility card {
+  @apply glass rounded-3xl p-6 sm:p-8;
+}

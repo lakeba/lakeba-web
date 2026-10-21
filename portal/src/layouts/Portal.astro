@@ -1,0 +1,57 @@
+---
+import '../styles/portal.css';
+import Mark from '../../../src/components/Mark.astro';
+interface Props { title: string }
+const { title } = Astro.props;
+const { profile } = Astro.locals;
+const path = Astro.url.pathname;
+const nav = [
+  { href: '/', label: 'Dashboard' },
+  { href: '/account/security', label: 'Security' },
+  ...(profile?.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : []),
+];
+const isActive = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
+const initials = `${profile?.first_name?.[0] ?? ''}${profile?.last_name?.[0] ?? ''}`.toUpperCase() || '·';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <title>{title} · Lakeba Investor Portal</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body class="overflow-x-clip">
+    <div aria-hidden="true" class="pointer-events-none fixed inset-x-0 top-0 -z-10 h-[30rem]">
+      <div class="absolute -top-48 left-1/4 h-[30rem] w-[30rem] rounded-full bg-lk-blue/15 blur-[120px]"></div>
+    </div>
+    <header class="sticky top-0 z-40 border-b border-white/5 bg-ink/80 backdrop-blur-xl">
+      <div class="container-x flex h-16 items-center justify-between gap-4">
+        <a href="/" class="flex items-center gap-2.5">
+          <Mark class="size-7" />
+          <span class="font-display text-lg font-bold text-white">lakeba</span>
+          <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">Investors</span>
+        </a>
+        <nav class="flex items-center gap-1 text-sm">
+          {nav.map((n) => (
+            <a href={n.href} class:list={['rounded-lg px-3 py-2 transition', isActive(n.href) ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white']} aria-current={isActive(n.href) ? 'page' : undefined}>{n.label}</a>
+          ))}
+        </nav>
+        <div class="flex items-center gap-3">
+          <span class="grid size-9 place-items-center rounded-full bg-gradient-to-br from-lk-blue to-lk-green font-display text-sm font-bold text-white" title={profile?.email}>{initials}</span>
+          <form method="post" action="/logout">
+            <button class="text-sm text-white/60 hover:text-white">Sign out</button>
+          </form>
+        </div>
+      </div>
+    </header>
+    <main class="container-x py-10">
+      <slot />
+    </main>
+  </body>
+</html>

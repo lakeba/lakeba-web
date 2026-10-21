@@ -1,0 +1,63 @@
+---
+import Auth from '../../layouts/Auth.astro';
+import Alert from '../../components/Alert.astro';
+import { safeNext } from '../../lib/supabase';
+import { field } from '../../lib/forms';
+
+const supabase = Astro.locals.supabase;
+const required = Astro.url.searchParams.get('required') === '1';
+const next = safeNext(Astro.url.searchParams.get('next'));
+let error = '';
+let factorId = '';
+let qr = '';
+let secret = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  factorId = field(form, 'factorId');
+  qr = field(form, 'qr');
+  secret = field(form, 'secret');
+  const { error: verifyError } = await supabase.auth.mfa.challengeAndVerify({ factorId, code: field(form, 'code') });
+  if (!verifyError) {
+    await supabase.rpc('log_event', { event_action: 'mfa_enrolled', event_detail: { factor: 'totp' } });
+    return Astro.redirect(next);
+  }
+  error = 'That code did not match. Check the time on your phone and try the newest code.';
+} else {
+  const { data: factors } = await supabase.auth.mfa.listFactors();
+  if (factors?.totp.some((f) => f.status === 'verified')) return Astro.redirect('/account/security');
+  // Drop abandoned attempts so the new factor can reuse the friendly name.
+  for (const f of factors?.all.filter((f) => f.factor_type === 'totp' && f.status !== 'verified') ?? []) {
+    await supabase.auth.mfa.unenroll({ factorId: f.id });
+  }
+  const { data, error: enrollError } = await supabase.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'Authenticator app' });
+  if (enrollError || !data) error = 'Could not start setup. Please refresh the page.';
+  else ({ id: factorId, totp: { qr_code: qr, secret } } = data);
+}
+---
+
+<Auth title="Set up two-step verification" subtitle="Use an authenticator app such as 1Password, Microsoft Authenticator or Google Authenticator.">
+  {required && <div class="mb-5"><Alert>Administrators must use two-step verification.</Alert></div>}
+  {error && <div class="mb-5"><Alert tone="error">{error}</Alert></div>}
+  {factorId && (
+    <form method="post" class="space-y-5">
+      <ol class="space-y-2 text-sm text-white/65">
+        <li>1. Scan this code with your authenticator app.</li>
+        <li>2. Enter the 6-digit code it shows.</li>
+      </ol>
+      <div class="mx-auto w-fit rounded-2xl bg-white p-3"><img src={qr} alt="QR code for your authenticator app" width="176" height="176" /></div>
+      <details class="text-sm text-white/55">
+        <summary class="cursor-pointer">Can't scan? Enter this key instead</summary>
+        <code class="mt-2 block break-all rounded-lg bg-white/5 p-3 font-mono text-white/80">{secret}</code>
+      </details>
+      <input type="hidden" name="factorId" value={factorId} />
+      <input type="hidden" name="qr" value={qr} />
+      <input type="hidden" name="secret" value={secret} />
+      <div>
+        <label for="code" class="label">6-digit code</label>
+        <input id="code" name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required class="field text-center font-mono text-2xl tracking-[0.5em]" />
+      </div>
+      <button class="btn-primary w-full">Turn on two-step verification</button>
+    </form>
+  )}
+</Auth>

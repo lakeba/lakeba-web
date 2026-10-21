@@ -1,0 +1,9 @@
+# build output
+dist/
+.astro/
+node_modules/
+.env
+.env.local
+# generated local test accounts (see scripts/seed-dev.mjs)
+.dev-users.json
+.DS_Store

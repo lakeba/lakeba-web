@@ -1,0 +1,36 @@
+---
+import Auth from '../../layouts/Auth.astro';
+import Alert from '../../components/Alert.astro';
+import { safeNext } from '../../lib/supabase';
+import { field } from '../../lib/forms';
+
+const supabase = Astro.locals.supabase;
+const next = safeNext(Astro.url.searchParams.get('next'));
+if (!Astro.locals.mfaEnrolled || Astro.locals.user?.aal === 'aal2') return Astro.redirect(next);
+
+let error = '';
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const { data: factors } = await supabase.auth.mfa.listFactors();
+  const factor = factors?.totp.find((f) => f.status === 'verified');
+  const { error: verifyError } = factor
+    ? await supabase.auth.mfa.challengeAndVerify({ factorId: factor.id, code: field(form, 'code') })
+    : { error: new Error('no factor') };
+  if (!verifyError) {
+    await supabase.rpc('log_event', { event_action: 'mfa_verified' });
+    return Astro.redirect(next);
+  }
+  error = 'That code did not match. Try the newest code from your app.';
+}
+---
+
+<Auth title="Enter your code" subtitle="Open your authenticator app and enter the 6-digit code for Lakeba.">
+  {error && <div class="mb-5"><Alert tone="error">{error}</Alert></div>}
+  <form method="post" class="space-y-4">
+    <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus aria-label="6-digit code" class="field text-center font-mono text-2xl tracking-[0.5em]" />
+    <button class="btn-primary w-full">Verify</button>
+  </form>
+  <form method="post" action="/logout" class="mt-5 text-center">
+    <button class="text-sm text-white/60 hover:text-white">Use a different account</button>
+  </form>
+</Auth>

@@ -1,0 +1,67 @@
+---
+import Auth from '../layouts/Auth.astro';
+import Alert from '../components/Alert.astro';
+import Turnstile from '../components/Turnstile.astro';
+import { safeNext } from '../lib/supabase';
+import { captchaToken, field } from '../lib/forms';
+
+const next = safeNext(Astro.url.searchParams.get('next'));
+let error = Astro.url.searchParams.get('error') === 'link' ? 'That link has expired or was already used. Please sign in again.' : '';
+let sent = false;
+let email = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  email = field(form, 'email');
+  const supabase = Astro.locals.supabase;
+
+  if (field(form, 'intent') === 'magic-link') {
+    // Same message whether or not the account exists, so emails can't be probed.
+    await supabase.auth.signInWithOtp({
+      email,
+      options: {
+        shouldCreateUser: false,
+        emailRedirectTo: `${Astro.url.origin}/auth/confirm?next=${encodeURIComponent(next)}`,
+        captchaToken: captchaToken(form),
+      },
+    });
+    sent = true;
+  } else {
+    const { error: signInError } = await supabase.auth.signInWithPassword({
+      email,
+      password: String(form.get('password') ?? ''),
+      options: { captchaToken: captchaToken(form) },
+    });
+    if (!signInError) {
+      await supabase.rpc('log_event', { event_action: 'sign_in', event_detail: { method: 'password' } });
+      return Astro.redirect(next);
+    }
+    error = signInError.status === 429 ? 'Too many attempts. Please wait a minute and try again.' : 'Email or password is incorrect.';
+  }
+}
+---
+
+<Auth title="Sign in" subtitle="Lakeba shareholders and directors only.">
+  {error && <div class="mb-5"><Alert tone="error">{error}</Alert></div>}
+  {sent ? (
+    <Alert tone="success">If an account exists for {email}, we've emailed a sign-in link. It expires in 1 hour.</Alert>
+  ) : (
+    <form method="post" class="space-y-4">
+      <div>
+        <label for="email" class="label">Email</label>
+        <input id="email" name="email" type="email" autocomplete="username" required value={email} class="field" />
+      </div>
+      <div>
+        <div class="flex items-baseline justify-between">
+          <label for="password" class="label">Password</label>
+          <a href="/forgot-password" class="text-xs text-lk-blue hover:underline">Forgot password?</a>
+        </div>
+        <input id="password" name="password" type="password" autocomplete="current-password" class="field" />
+      </div>
+      <Turnstile />
+      <button name="intent" value="password" class="btn-primary w-full">Sign in</button>
+      <div class="flex items-center gap-3 text-xs text-white/35"><span class="h-px flex-1 bg-white/10"></span>or<span class="h-px flex-1 bg-white/10"></span></div>
+      <button name="intent" value="magic-link" formnovalidate class="btn-ghost w-full">Email me a sign-in link</button>
+    </form>
+  )}
+</Auth>
