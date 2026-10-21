@@ -1,0 +1,31 @@
+---
+import Mark from './Mark.astro';
+const offices = ['Sydney', 'India', 'Indonesia', 'Italy', 'United Kingdom', 'United States'];
+const cols = [
+  { h: 'LakebaOS', l: [['How it works', '#program'], ['AI team', '#team'], ['GitHub', 'https://github.com/lakeba/agent-team'], ['Download', 'https://lakeba.github.io/agent-team/#desktop']] },
+  { h: 'Lakeba', l: [['Portfolio', 'https://lakeba.com/portfolios/'], ['About us', 'https://lakeba.com/about-us/'], ['Our team', 'https://lakeba.com/our-team/'], ['Investors', 'https://lakeba.com/']] },
+  { h: 'Founders', l: [['Fund offer', '#fund'], ['Apply', 'https://lakeba.com/os/apply'], ['Contact', 'mailto:info@lakeba.com']] },
+];
+---
+
+<footer class="border-t border-white/5 pt-16 pb-10">
+  <div class="container-x grid gap-12 md:grid-cols-[1.4fr_repeat(3,1fr)]">
+    <div>
+      <div class="flex items-center gap-2.5"><Mark class="size-8" /><span class="font-display text-xl font-bold text-white">lakeba</span></div>
+      <p class="mt-4 max-w-xs text-sm text-white/50">Conceive · Create · Commercialise. A global venture studio, now an operating system for founders.</p>
+      <p class="mt-6 flex flex-wrap gap-x-3 gap-y-1 text-xs text-white/40">{offices.map((o) => <span>{o}</span>)}</p>
+    </div>
+    {cols.map((c) => (
+      <div>
+        <h4 class="text-sm font-semibold">{c.h}</h4>
+        <ul class="mt-4 space-y-2.5 text-sm">
+          {c.l.map(([t, h]) => <li><a href={h} class="text-white/50 transition hover:text-white">{t}</a></li>)}
+        </ul>
+      </div>
+    ))}
+  </div>
+  <div class="container-x mt-14 flex flex-col justify-between gap-3 border-t border-white/5 pt-6 text-xs text-white/35 sm:flex-row">
+    <p>© 2026 Lakeba Group Limited</p>
+    <a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a>
+  </div>
+</footer>

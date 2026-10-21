@@ -1,0 +1,86 @@
+@import "tailwindcss";
+
+@theme {
+  --font-display: "Montserrat", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-ink: #050b16;
+  --color-navy: #0b1d37;
+  --color-line: rgb(255 255 255 / 0.08);
+  --color-lk-blue: #276ae7;
+  --color-lk-orange: #eb802b;
+  --color-lk-red: #dd3b2d;
+  --color-lk-green: #35a954;
+
+  --animate-spin-slow: spin 60s linear infinite;
+  --animate-spin-rev: spin-rev 60s linear infinite;
+  --animate-marquee: marquee 40s linear infinite;
+  --animate-float: float 6s ease-in-out infinite;
+
+  @keyframes spin-rev { to { transform: rotate(-360deg); } }
+  @keyframes marquee { to { transform: translateX(-50%); } }
+  @keyframes float { 50% { transform: translateY(-10px); } }
+}
+
+@layer base {
+  html { scroll-behavior: smooth; color-scheme: dark; }
+  body {
+    @apply bg-ink text-white/80 font-sans antialiased;
+    overflow-x: clip;
+    text-rendering: optimizeLegibility;
+  }
+  h1, h2, h3, h4 { @apply font-display text-white tracking-tight; text-wrap: balance; }
+  p { text-wrap: pretty; }
+  ::selection { background: var(--color-lk-blue); color: white; }
+}
+
+@utility container-x {
+  @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+}
+
+@utility text-gradient {
+  background: linear-gradient(90deg, var(--color-lk-blue), #7aa7ff 30%, var(--color-lk-green) 55%, var(--color-lk-orange) 78%, var(--color-lk-red));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+@utility glass {
+  background: linear-gradient(180deg, rgb(255 255 255 / 0.06), rgb(255 255 255 / 0.02));
+  border: 1px solid var(--color-line);
+  backdrop-filter: blur(14px);
+}
+
+@utility grid-bg {
+  background-image:
+    linear-gradient(to right, rgb(255 255 255 / 0.05) 1px, transparent 1px),
+    linear-gradient(to bottom, rgb(255 255 255 / 0.05) 1px, transparent 1px);
+  background-size: 56px 56px;
+  mask-image: radial-gradient(ellipse at center, black 20%, transparent 70%);
+}
+
+@utility eyebrow {
+  @apply inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-medium uppercase tracking-[0.18em] text-white/70;
+}
+
+/* Scroll-reveal: native scroll-driven animations, no JS */
+@keyframes reveal {
+  from { opacity: 0; transform: translateY(32px) scale(0.98); filter: blur(6px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+@supports (animation-timeline: view()) {
+  .reveal {
+    animation: reveal linear both;
+    animation-timeline: view();
+    animation-range: entry 0% cover 28%;
+  }
+}
+
+@keyframes draw { to { stroke-dashoffset: 0; } }
+@keyframes blink { 50% { opacity: 0; } }
+@keyframes typein { from { opacity: 0; transform: translateX(-6px); } to { opacity: 1; transform: none; } }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+}

@@ -1,0 +1,33 @@
+---
+const steps = [
+  { n: '01', title: 'Describe', text: 'Tell LakebaOS your idea in plain words. Point to an app you like.', glow: 'shadow-lk-blue', tint: 'bg-lk-blue/15', fg: 'text-lk-blue', icon: 'M4 6h16M4 12h10M4 18h7' },
+  { n: '02', title: 'Build', text: 'Your AI team plans, codes, tests and reviews a working MVP.', glow: 'shadow-lk-orange', tint: 'bg-lk-orange/15', fg: 'text-lk-orange', icon: 'M8 9l-4 3 4 3M16 9l4 3-4 3M13 6l-2 12' },
+  { n: '03', title: 'Apply', text: 'Submit the MVP with the pitch deck LakebaOS writes for you.', glow: 'shadow-lk-green', tint: 'bg-lk-green/15', fg: 'text-lk-green', icon: 'M5 12l5 5L20 7' },
+  { n: '04', title: 'Found', text: 'Approved? You become CEO of your company, co-founded and funded by Lakeba.', glow: 'shadow-lk-red', tint: 'bg-lk-red/15', fg: 'text-lk-red', icon: 'M12 3l2.6 5.6 6.1.7-4.5 4.2 1.2 6L12 16.6 6.6 19.5l1.2-6L3.3 9.3l6.1-.7z' },
+];
+---
+
+<section id="program" class="relative py-28">
+  <div class="container-x">
+    <div class="reveal mx-auto max-w-2xl text-center">
+      <span class="eyebrow">The program</span>
+      <h2 class="mt-5 text-4xl font-extrabold sm:text-5xl">From idea to founder<br /><span class="text-white/40">in four moves.</span></h2>
+    </div>
+
+    <ol class="relative mt-20 grid gap-6 md:grid-cols-4">
+      <!-- connecting rail -->
+      <div aria-hidden="true" class="absolute top-10 right-[12%] left-[12%] hidden h-px bg-gradient-to-r from-lk-blue via-lk-green to-lk-red opacity-60 md:block"></div>
+      {steps.map((s, i) => (
+        <li class="reveal relative text-center" style={`animation-range: entry ${i * 6}% cover ${30 + i * 6}%`}>
+          <div class={`relative mx-auto grid size-20 place-items-center rounded-3xl border border-white/10 bg-ink shadow-[0_0_60px_-10px] ${s.glow}`}>
+            <div class={`absolute inset-0 rounded-3xl ${s.tint}`}></div>
+            <svg viewBox="0 0 24 24" class={`relative size-8 ${s.fg}`} fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d={s.icon} /></svg>
+          </div>
+          <p class="mt-6 font-mono text-xs text-white/40">{s.n}</p>
+          <h3 class="mt-1 text-2xl font-bold">{s.title}</h3>
+          <p class="mx-auto mt-2 max-w-[16rem] text-sm text-white/55">{s.text}</p>
+        </li>
+      ))}
+    </ol>
+  </div>
+</section>
