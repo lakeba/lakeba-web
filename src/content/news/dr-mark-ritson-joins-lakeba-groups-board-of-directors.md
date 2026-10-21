@@ -13,8 +13,6 @@ Internationally renowned marketing professional, Dr Mark Ritson, is joining the 
 
 *Global venture studio Lakeba Group has secured global marketing expert Dr Mark Ritson for its Board of Directors. Ritson brings thirty years of experience as an entrepreneur, business school professor and consultant to the role.*
 
-![Mark Ritson and Giuseppe Porcelli](./images/dr-mark-ritson-joins-lakeba-groups-board-of-directors/image-1.webp)
-
 *Dr Ritson has a Ph.D in Marketing and is recognised globally for his MBA teaching at business schools that included MIT Sloan, London Business School and Melbourne Business School. Ritson has worked as a global consultant on marketing and branding issues for a wide range of clients with significant stints working for the likes of McKinsey, Westpac, Sephora, Ericsson and Flight Centre. For more than a decade, he has worked as an in-house brand consultant for global luxury goods giant LVMH, working with the senior teams at brands like Louis Vuitton, Tag Heuer, DFS, Dom Perignon, and Hennessy.*
 
 *In 2016, Ritson founded the Marketing Week Mini MBA program – an online version of his acclaimed business school classes. The program has become one of the most successful specialist online training platforms in the world, equipping more than 30,000 alumni across more than 50 different countries.*

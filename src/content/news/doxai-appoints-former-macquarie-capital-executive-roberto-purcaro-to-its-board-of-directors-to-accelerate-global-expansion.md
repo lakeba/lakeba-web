@@ -9,8 +9,6 @@ external: false
 wordpressId: 22596
 ---
 
-![DoxAI Appoints Former Macquarie Capital Executive Roberto Purcaro to its Board of Directors - Email & blog banner](./images/doxai-appoints-former-macquarie-capital-executive-roberto-purcaro-to-its-board-of-directors-to-accelerate-global-expansion/image-1.webp)
-
 **DoxAI**, the rapidly growing AI automation and document-intelligence company within the [Lakeba](http://lakeba.com/) Group, today announced the appointment of **Roberto Purcaro** as a **Non-Executive Director**.
 
 **Strengthening Strategic Oversight for International Growth**

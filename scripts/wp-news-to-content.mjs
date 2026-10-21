@@ -11,6 +11,7 @@
 // 1600px wide and saved as WebP next to the Markdown. Linked documents
 // (PDFs and similar) are copied to [files-dir] (default public/news/files).
 // Re-running replaces the generated files.
+import { createHash } from 'node:crypto';
 import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, copyFileSync } from 'node:fs';
 import { basename, extname, join } from 'node:path';
 import sharp from 'sharp';
@@ -36,6 +37,10 @@ const decode = (s) => s
   .replace(/&([a-z]+);/gi, (m, n) => entities[n.toLowerCase()] ?? m);
 const plain = (html) => decode(html.replace(/<!--[\s\S]*?-->/g, ' ').replace(/<[^>]+>/g, ' ')).replace(/\s+/g, ' ').trim();
 const yaml = (v) => JSON.stringify(v); // JSON strings are valid YAML scalars
+
+// WordPress keeps resized copies (photo-1024x683.jpg, photo-scaled.jpg) of an upload.
+const uploadBase = (path) => path.replace(/-(\d+x\d+|scaled)(?=\.\w+$)/, '').toLowerCase();
+const fileHash = (path) => (existsSync(path) ? createHash('sha256').update(readFileSync(path)).digest('hex') : null);
 
 /** Resizes an upload into the post's image folder; returns the relative path or null. */
 async function copyImage(uploadPath, slug, name) {
@@ -66,18 +71,27 @@ turndown.addRule('youtube', {
 });
 turndown.addRule('figcaption', { filter: 'figcaption', replacement: (content) => (content.trim() ? `\n\n*${content.trim()}*\n\n` : '') });
 
-const report = { posts: 0, external: 0, images: 0, missingImages: 0, files: 0, missingFiles: 0 };
+const report = { posts: 0, external: 0, images: 0, missingImages: 0, files: 0, missingFiles: 0, coverRepeatsSkipped: 0 };
 for (const p of posts) {
   const slug = p.slug;
   let html = (p.content ?? '').replace(/<!--[\s\S]*?-->/g, '');
 
   // Inline images: copy, then point at the local file. Links that only wrap
   // an image and point at the upload are unwrapped.
+  // The article page shows the cover above the text, so drop copies of it
+  // from the text (same upload in any size, or identical bytes).
   let n = 0;
+  const coverBase = p.cover ? uploadBase(p.cover) : null;
+  const coverHash = p.cover ? fileHash(join(uploadsDir, p.cover)) : null;
   const imgs = [...html.matchAll(/<img[^>]+src="([^"]+)"[^>]*>/g)];
   for (const [tag, src] of imgs) {
     const upload = src.match(/\/wp-content\/uploads\/(.+?)(?:\?.*)?$/)?.[1];
     if (!upload) { html = html.replace(tag, ''); continue; } // theme icons
+    if (coverBase && (uploadBase(upload) === coverBase || (coverHash && fileHash(join(uploadsDir, upload)) === coverHash))) {
+      html = html.replace(tag, '');
+      report.coverRepeatsSkipped++;
+      continue;
+    }
     const local = await copyImage(upload, slug, `image-${++n}`);
     if (local) report.images++; else report.missingImages++;
     html = html.replace(tag, local ? tag.replace(src, local).replace(/\s(srcset|sizes)="[^"]*"/g, '') : '');

@@ -9,8 +9,6 @@ external: false
 wordpressId: 24687
 ---
 
-![](./images/lakeba-group-appoints-mitchell-filby-as-independent-non-executive-director/image-1.webp)
-
 **Sydney, 21 September 2026 — Lakeba Group Limited is pleased to announce the appointment of Mitchell Filby as an Independent Non-Executive Director, effective 21 September 2026.** 
 
 Mitchell brings extensive experience across strategy, innovation, commercialisation, technology, digital transformation and market development, together with more than a decade of Board-level and industry governance experience. 

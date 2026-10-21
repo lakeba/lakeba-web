@@ -9,8 +9,6 @@ external: false
 wordpressId: 22650
 ---
 
-![Clarification Regarding AfricAI](./images/clarification-regarding-africai/image-1.webp)
-
 Lakeba Group wishes to clarify its position in relation to the AfricAI initiative.
 
 AfricAI was publicly announced in 2025 as a proposed strategic joint initiative involving Lakeba Group and AqlanX, based on representations made by third parties regarding the structure, governance, and strategic intent of the initiative.

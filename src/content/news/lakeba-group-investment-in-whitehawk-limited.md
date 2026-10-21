@@ -9,8 +9,6 @@ external: false
 wordpressId: 22576
 ---
 
-![whitehawk investment](./images/lakeba-group-investment-in-whitehawk-limited/image-1.webp)
-
 Lakeba Group Limited (“Lakeba” or the “Company”) is pleased to announce a strategic investment in *WhiteHawk Limited*(ASX: WHK) (“WhiteHawk”), a global technology company focused on AI-driven cybersecurity and digital risk management solutions.
 
 Under a completed placement (Tranche 2), Lakeba has acquired an equity interest in WhiteHawk by subscribing for ordinary shares and attaching listed options, resulting in Lakeba becoming a **top 10 shareholder** in WhiteHawk. The investment underscores Lakeba’s confidence in WhiteHawk’s platform, management and growth strategy in cybersecurity and AI-enabled risk solutions. ([Intelligent Investor](https://www.intelligentinvestor.com.au/shares/asx-whk/whitehawk-limited/announcements?utm_source=chatgpt.com))

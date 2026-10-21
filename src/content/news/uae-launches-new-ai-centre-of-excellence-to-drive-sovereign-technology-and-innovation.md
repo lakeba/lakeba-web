@@ -9,8 +9,6 @@ external: false
 wordpressId: 22146
 ---
 
-![](./images/uae-launches-new-ai-centre-of-excellence-to-drive-sovereign-technology-and-innovation/image-1.webp)
-
 ## Five flagship AI projects unveiled to accelerate national AI strategy
 
 Dubai: The UAE has launched a new initiative with the opening of the AI Centre of Excellence, established by Lakeba Group, DoxAI, AqlanX, and the University of Wollongong in Dubai (UOWD). Located at UOWD’s campus in Dubai Knowledge Park, part of TECOM Group PJSC, the Centre is designed to support the UAE’s sovereign AI strategy by combining research, innovation, and commercialisation. Its goal is to develop, deploy, and export [AI technologies](https://gulfnews.com/living-in-uae/education/free-ai-courses-in-uae-for-students-and-adults-to-boost-careers-1.500345085) created in the UAE for local and global use.

@@ -9,8 +9,6 @@ external: false
 wordpressId: 21767
 ---
 
-![](./images/next-digital-lakeba-group-aqlanx-and-agentic-dynamic-launch-africai-a-strategic-joint-venture-for-sovereign-ai-in-africa/image-1.webp)
-
 **Lagos, Nigeria – 18 August 2025** – In a landmark initiative to advance Africa’s AI sovereignty and regional digital infrastructure, four technology leaders, **Lakeba Group** (Australia), **Next Digital** (Nigeria), **AqlanX** (UAE), and **Agentic Dynamic** (Netherlands) have signed a Memorandum of Understanding (MoU) to establish a **Joint Venture** named **AfricAI**, focused on localizing, deploying, and commercializing enterprise-grade AI solutions tailored to African markets. 
 
 **AfricAI** will immediately focus on **Nigeria** as its flagship market, leveraging existing national data centers and edge infrastructure to deliver impactful AI applications in healthcare, digital identity, document automation, public administration, and enterprise services. The Joint Venture aims to position Africa as an active developer of sovereign, inclusive, and context-aware AI ecosystems — built locally, for local needs. 

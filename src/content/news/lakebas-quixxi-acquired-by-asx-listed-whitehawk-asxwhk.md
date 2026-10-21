@@ -9,8 +9,6 @@ external: false
 wordpressId: 23296
 ---
 
-![](./images/lakebas-quixxi-acquired-by-asx-listed-whitehawk-asxwhk/image-1.webp)
-
 Sydney, 13 April 2026 — Lakeba Group ("Lakeba") confirms that WhiteHawk Limited (ASX: WHK) has entered into an agreement to acquire Quixxi, a Lakeba venture and developer of the Clarity AI platform, which enables organisations to discover, monitor and govern artificial intelligence systems across enterprise environments.
 
 The transaction reflects Lakeba's venture catalyst model of conceiving, building and commercialising technology businesses to the point of strategic value realisation.

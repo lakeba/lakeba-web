@@ -9,8 +9,6 @@ external: false
 wordpressId: 21759
 ---
 
-![Giuseppe Porcelli and Kevin Wo](./images/microsoft-asean-cpo-kevin-wo-joins-doxai-as-non-executive-director-to-accelerate-global-ai-growth/image-1.webp)
-
 [DoxAI](https://doxai.co/), a leading provider of AI-powered automation solutions, is pleased to announce  the appointment of Kevin Wo as a Non-Executive Director to its board. 
 
 Kevin brings with him over 29 years of leadership experience in the information  technology sector, having held senior executive roles at globally recognised companies  including Microsoft, Oracle, IBM, and PwC. Currently serving as Microsoft’s Chief Partner Officer for ASEAN, Kevin is responsible for driving the growth and adoption of Microsoft  Cloud services across the region through strategic partnerships and digital innovation. 

@@ -17,8 +17,6 @@ The ICCIAUS Business Excellence Award is a testament to Lakeba Group's exemplary
 
 The award ceremony, attended by business leaders, officials, and dignitaries, highlighted Lakeba Group's achievements and positive influence on the Australian business network. 
 
-![](./images/lakeba-group-giuseppe-porcelli-takes-out-top-business-excellence-award/image-1.webp)
-
 Giuseppe Porcelli, Chairman and Founder of Lakeba Group said: "Receiving the Business Excellence Award from the Italian Chamber of Commerce and Industry Australia is a significant honour for us." 
 
 “We are proud of our Italian heritage and are committed to continuing to drive innovation, create opportunities, and make a positive impact on the Australian business community." 

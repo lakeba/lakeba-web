@@ -9,8 +9,6 @@ external: false
 wordpressId: 23250
 ---
 
-![fujifilm partnered doxai](./images/fujifilm-business-innovation-new-zealand-partners-with-doxai-to-deliver-advanced-fraud-detection-for-the-financial-services-industry/image-1.webp)
-
 FUJIFILM Business Innovation New Zealand (FBNZ) announced a partnership with DoxAI, a venture of Lakeba Group, to bring Fraud Check AI, an advanced fraud detection solution designed specifically for the Financial Services Industry (FSI), to customers across New Zealand.
 
 The partnership strengthens FBNZ's long standing commitment to helping organisations process critical documents efficiently and securely. Delivered by the FBNZ Process Automation team trusted by New Zealand businesses for decades when it comes to document management and automation, the new offering uses artificial intelligence to detect fraudulent documents with speed, accuracy, and consistency.
