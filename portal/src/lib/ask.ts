@@ -34,6 +34,14 @@ export const askEnabled = Boolean(client);
 
 const today = () => new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' }).format(new Date());
 
+/**
+ * Approximate cost in USD for Claude Opus 5.5: input $4/M, output $20/M,
+ * cache reads $0.20/M, cache writes with a 1-hour TTL $8/M (2× input).
+ */
+export function costUsd(u: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number | null; cache_creation_input_tokens?: number | null }) {
+  return (u.input_tokens * 4 + u.output_tokens * 20 + (u.cache_read_input_tokens ?? 0) * 0.2 + (u.cache_creation_input_tokens ?? 0) * 8) / 1e6;
+}
+
 /** Checks the chat history sent by the browser. Returns an error message or null. */
 export function validateTurns(turns: unknown): string | null {
   if (!Array.isArray(turns) || !turns.length || turns.length > MAX_TURNS * 2) return 'This conversation is too long. Start a new chat.';

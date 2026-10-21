@@ -144,6 +144,16 @@ try {
   const { data: kbAfter } = await service.from('documents').select('in_knowledge_base').eq('id', forA3.id).single();
   check('investors cannot change what Ask Lakeba uses', Boolean(kbEdit) || kbAfter.in_knowledge_base === true);
 
+  // Ask Lakeba review records
+  const { data: exOne } = await service.from('ask_exchanges').insert({ user_id: oneId, conversation_id: crypto.randomUUID(), turn: 1, question: 'RLS fixture question', declined: false }).select('id').single().throwOnError();
+  const { data: exSeen } = await one.from('ask_exchanges').select('id');
+  check('investors cannot read stored Ask questions', (exSeen ?? []).length === 0, `${exSeen?.length}`);
+  const { error: rateOwnErr } = await one.rpc('rate_ask_answer', { exchange_id: exOne.id, rating: 1 });
+  check('investor can rate their own Ask answer', !rateOwnErr, rateOwnErr?.message);
+  const { error: rateOtherErr } = await two.rpc('rate_ask_answer', { exchange_id: exOne.id, rating: -1 });
+  check("investor cannot rate someone else's Ask answer", Boolean(rateOtherErr));
+  await service.from('ask_exchanges').delete().eq('id', exOne.id);
+
   // Official shares on issue
   const ORD = '00000000-0000-4000-8000-000000000001';
   const { error: officialErr } = await one.from('share_classes').update({ official_on_issue: 1, official_as_at: '2026-01-01' }).eq('id', ORD).select();

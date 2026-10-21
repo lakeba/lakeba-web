@@ -59,6 +59,15 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
       <div class="min-w-0 flex-1">
         <div class="ask-answer leading-relaxed text-white/85" data-text><span class="typing"><i></i><i></i><i></i></span></div>
         <div class="mt-3 flex flex-wrap gap-2 text-xs" data-sources hidden></div>
+        <div class="mt-2 flex items-center gap-1 text-white/40" data-rate hidden>
+          <button type="button" data-rating="1" class="rate-btn" aria-label="Good answer" title="Good answer">👍</button>
+          <button type="button" data-rating="-1" class="rate-btn" aria-label="Not helpful" title="Not helpful">👎</button>
+          <span class="ml-1 text-xs" data-rate-status></span>
+        </div>
+        <form class="mt-2 flex gap-2" data-rate-note hidden>
+          <input maxlength="1000" placeholder="What was wrong? (optional)" aria-label="What was wrong?" class="field !py-2 text-sm" />
+          <button class="btn-ghost shrink-0 !px-3 !py-2 text-sm">Send</button>
+        </form>
       </div>
     </li>
   </template>
@@ -75,6 +84,8 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
   .ask-answer :global(table) { width: 100%; border-collapse: collapse; margin-bottom: 0.8rem; font-size: 0.9rem; }
   .ask-answer :global(th), .ask-answer :global(td) { border-bottom: 1px solid var(--color-line); padding: 0.4rem; text-align: left; }
   .ask-answer :global(.cursor)::after { content: '▍'; margin-left: 1px; color: var(--color-lk-blue); animation: blink 1s steps(1) infinite; }
+  .rate-btn { border-radius: 9999px; padding: 0.15rem 0.45rem; filter: grayscale(1); opacity: 0.6; transition: all 150ms; }
+  .rate-btn:hover, .rate-btn[aria-pressed='true'] { filter: none; opacity: 1; background: color-mix(in oklab, var(--color-white) 8%, transparent); }
   .typing { display: inline-flex; gap: 4px; padding: 0.5rem 0; }
   .typing i { width: 6px; height: 6px; border-radius: 9999px; background: color-mix(in oklab, var(--color-white) 45%, transparent); animation: bounce 1.2s infinite; }
   .typing i:nth-child(2) { animation-delay: 0.15s; }
@@ -87,7 +98,7 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
   import { Marked } from 'marked';
 
   type Source = { title: string; detail: string | null; href: string | null };
-  type Turn = { role: 'user' | 'assistant'; content: string; sources?: Source[] };
+  type Turn = { role: 'user' | 'assistant'; content: string; sources?: Source[]; exchange?: string; rating?: number };
 
   // Markdown from the model; any raw HTML is shown as text.
   const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -108,9 +119,41 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
 
   // The conversation is kept for this browser tab only.
   let turns: Turn[] = [];
+  let conversationId = crypto.randomUUID();
   let controller: AbortController | null = null;
-  try { turns = JSON.parse(sessionStorage.getItem(STORE) ?? '[]'); } catch {}
-  const save = () => { try { sessionStorage.setItem(STORE, JSON.stringify(turns)); } catch {} };
+  try {
+    const saved = JSON.parse(sessionStorage.getItem(STORE) ?? 'null');
+    if (saved?.turns) ({ turns, conversationId } = saved);
+  } catch {}
+  const save = () => { try { sessionStorage.setItem(STORE, JSON.stringify({ turns, conversationId })); } catch {} };
+
+  // 👍 / 👎 under an answer; 👎 asks (optionally) what was wrong.
+  const setupRating = (li: HTMLElement, turn: Turn) => {
+    if (!turn.exchange) return;
+    const row = li.querySelector<HTMLElement>('[data-rate]')!;
+    const status = row.querySelector<HTMLElement>('[data-rate-status]')!;
+    const noteForm = li.querySelector<HTMLFormElement>('[data-rate-note]')!;
+    const buttons = [...row.querySelectorAll<HTMLButtonElement>('[data-rating]')];
+    const mark = () => buttons.forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.rating) === turn.rating)));
+    const rate = async (rating: number, note?: string) => {
+      const res = await fetch('/api/ask-feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: turn.exchange, rating, note }) });
+      status.textContent = res.ok ? 'Thanks for the feedback.' : 'Could not save your feedback.';
+      if (res.ok) { turn.rating = rating; save(); mark(); }
+    };
+    buttons.forEach((b) => b.addEventListener('click', async () => {
+      const rating = Number(b.dataset.rating);
+      await rate(rating);
+      noteForm.hidden = rating !== -1;
+      if (rating === -1) noteForm.querySelector('input')!.focus();
+    }));
+    noteForm.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      await rate(-1, noteForm.querySelector('input')!.value);
+      noteForm.hidden = true;
+    });
+    mark();
+    row.hidden = false;
+  };
 
   const showSources = (el: HTMLElement, sources: Source[]) => {
     if (!sources.length) return;
@@ -146,9 +189,9 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
     const li = botTpl.content.firstElementChild!.cloneNode(true) as HTMLElement;
     const text = li.querySelector<HTMLElement>('[data-text]')!;
     const sources = li.querySelector<HTMLElement>('[data-sources]')!;
-    if (turn) { text.innerHTML = render(turn.content); showSources(sources, turn.sources ?? []); }
+    if (turn) { text.innerHTML = render(turn.content); showSources(sources, turn.sources ?? []); setupRating(li, turn); }
     list.append(li);
-    return { text, sources };
+    return { li, text, sources };
   };
 
   const refresh = () => { empty.hidden = turns.length > 0; newChat.hidden = turns.length === 0; };
@@ -169,13 +212,14 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
 
     let answer = '';
     let sources: Source[] = [];
+    let exchange: string | undefined;
     let frame = 0;
     const paint = () => { frame = 0; view.text.innerHTML = render(answer); view.text.lastElementChild?.classList.add('cursor'); };
     try {
       const res = await fetch('/api/ask', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ turns: turns.map(({ role, content }) => ({ role, content })) }),
+        body: JSON.stringify({ conversationId, turns: turns.map(({ role, content }) => ({ role, content })) }),
         signal: controller.signal,
       });
       if (!res.ok || !res.body) {
@@ -194,6 +238,7 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
           buffer = buffer.slice(cut + 2);
           if (msg.text) { answer += msg.text; frame ||= requestAnimationFrame(paint); }
           if (msg.sources) sources = msg.sources;
+          if (msg.exchange) exchange = msg.exchange;
           if (msg.error) throw new Error(msg.error);
         }
       }
@@ -203,7 +248,9 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
       cancelAnimationFrame(frame);
       view.text.innerHTML = render(answer || '*Stopped.*');
       showSources(view.sources, sources);
-      turns.push({ role: 'assistant', content: answer || 'Stopped.', sources });
+      const turn: Turn = { role: 'assistant', content: answer || 'Stopped.', sources, exchange };
+      turns.push(turn);
+      setupRating(view.li, turn);
       save();
       busy(false);
       controller = null;
@@ -224,7 +271,7 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
   });
   input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; });
   stop.addEventListener('click', () => controller?.abort());
-  newChat.addEventListener('click', () => { turns = []; save(); list.replaceChildren(); refresh(); input.focus(); });
+  newChat.addEventListener('click', () => { turns = []; conversationId = crypto.randomUUID(); save(); list.replaceChildren(); refresh(); input.focus(); });
   root.querySelectorAll<HTMLButtonElement>('[data-example]').forEach((b) => b.addEventListener('click', () => { input.value = b.textContent ?? ''; form.requestSubmit(); }));
   input.focus();
 </script>

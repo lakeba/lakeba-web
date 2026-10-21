@@ -1,0 +1,201 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import Empty from '../../components/Empty.astro';
+import Markdown from '../../components/Markdown.astro';
+import { field } from '../../lib/forms';
+import { dateTime } from '../../lib/format';
+
+const supabase = Astro.locals.supabase;
+const RETENTION_MONTHS = 12;
+const PAGE = 20;
+let notice = '';
+let error = '';
+
+// Questions are personal information: keep them for a limited time.
+await supabase.rpc('purge_ask_exchanges', { keep_months: RETENTION_MONTHS });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const status = field(form, 'intent');
+  if (['good', 'corrected', 'out_of_scope', 'missing_document', 'unreviewed'].includes(status)) {
+    const corrected = field(form, 'corrected_answer');
+    if (status === 'corrected' && !corrected) error = 'Write the correct answer before saving.';
+    else {
+      const id = field(form, 'id');
+      const { error: updateError } = await supabase.from('ask_exchanges').update({
+        review_status: status,
+        corrected_answer: status === 'corrected' ? corrected : null,
+        review_note: field(form, 'review_note') || null,
+        reviewer_id: status === 'unreviewed' ? null : Astro.locals.user!.id,
+        reviewed_at: status === 'unreviewed' ? null : new Date().toISOString(),
+      }).eq('id', id);
+      if (updateError) error = updateError.message;
+      else {
+        await supabase.rpc('log_event', { event_action: 'admin_reviewed_ask_answer', event_detail: { exchange_id: id, status } });
+        notice = status === 'unreviewed' ? 'Moved back to the queue.' : 'Review saved.';
+      }
+    }
+  }
+}
+
+const params = Astro.url.searchParams;
+const view = params.get('view') ?? 'queue';
+const q = (params.get('q') ?? '').trim();
+const page = Math.max(1, Number(params.get('page') ?? 1) || 1);
+
+type Exchange = {
+  id: string; user_id: string | null; conversation_id: string; turn: number; question: string; answer: string;
+  sources: { title: string; detail: string | null; href: string | null }[]; declined: boolean; error: string | null;
+  cost_usd: number | null; feedback: number | null; feedback_note: string | null; review_status: string;
+  corrected_answer: string | null; review_note: string | null; reviewer_id: string | null; reviewed_at: string | null; created_at: string;
+};
+
+let query = supabase.from('ask_exchanges').select('*').order('created_at', { ascending: false }).limit(500);
+if (view === 'queue') query = query.eq('review_status', 'unreviewed');
+if (view === 'unhelpful') query = query.eq('feedback', -1);
+if (view === 'declined') query = query.eq('declined', true);
+if (view === 'reviewed') query = query.neq('review_status', 'unreviewed');
+if (q) query = query.or(`question.ilike.%${q.replace(/[%_,()\\]/g, ' ')}%,answer.ilike.%${q.replace(/[%_,()\\]/g, ' ')}%`);
+const { data: rows } = await query;
+
+// Worst first in the queue: 👎, then declined or failed answers, then the rest (newest first).
+const priority = (e: Exchange) => (e.feedback === -1 ? 0 : e.declined || e.error ? 1 : 2);
+const items = ((rows ?? []) as Exchange[]).sort((a, b) => (view === 'queue' ? priority(a) - priority(b) : 0) || b.created_at.localeCompare(a.created_at));
+const pageItems = items.slice((page - 1) * PAGE, page * PAGE);
+const pages = Math.max(1, Math.ceil(items.length / PAGE));
+
+// Earlier turns of the same conversations, and names for askers and reviewers.
+const conversations = [...new Set(pageItems.filter((e) => e.turn > 1).map((e) => e.conversation_id))];
+const people = [...new Set(pageItems.flatMap((e) => [e.user_id, e.reviewer_id]).filter(Boolean))] as string[];
+const [{ data: earlier }, { data: profiles }] = await Promise.all([
+  conversations.length ? supabase.from('ask_exchanges').select('conversation_id, turn, question, answer').in('conversation_id', conversations).order('turn') : Promise.resolve({ data: [] }),
+  people.length ? supabase.from('profiles').select('id, email').in('id', people) : Promise.resolve({ data: [] }),
+]);
+const email = new Map((profiles ?? []).map((p) => [p.id, p.email as string]));
+const before = (e: Exchange) => (earlier ?? []).filter((x) => x.conversation_id === e.conversation_id && x.turn < e.turn);
+
+// Totals for the last 7 days.
+const { data: week } = await supabase.from('ask_exchanges').select('feedback, declined, error, cost_usd').gte('created_at', new Date(Date.now() - 7 * 86400_000).toISOString());
+const { count: waiting } = await supabase.from('ask_exchanges').select('id', { count: 'exact', head: true }).eq('review_status', 'unreviewed');
+const w = week ?? [];
+const rated = w.filter((x) => x.feedback !== null);
+const pct = (n: number, d: number) => (d ? `${Math.round((n / d) * 100)}%` : '—');
+const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD' });
+const stats = [
+  { label: 'Questions this week', value: String(w.length) },
+  { label: 'Helpful (of rated)', value: pct(rated.filter((x) => x.feedback === 1).length, rated.length), note: `${rated.length} rated` },
+  { label: 'Not helpful', value: String(w.filter((x) => x.feedback === -1).length) },
+  { label: 'Declined as off-topic', value: pct(w.filter((x) => x.declined).length, w.length) },
+  { label: 'Cost this week', value: usd.format(w.reduce((a, x) => a + Number(x.cost_usd ?? 0), 0)) },
+  { label: 'Waiting for review', value: String(waiting ?? 0) },
+];
+
+const tabs = [
+  { id: 'queue', label: 'Needs review' },
+  { id: 'unhelpful', label: '👎 Not helpful' },
+  { id: 'declined', label: 'Declined' },
+  { id: 'reviewed', label: 'Reviewed' },
+  { id: 'all', label: 'All' },
+];
+const link = (over: Record<string, string>) => {
+  const p = new URLSearchParams({ view, ...(q && { q }), ...over });
+  if (p.get('page') === '1') p.delete('page');
+  return `?${p}`;
+};
+const statusLabel: Record<string, string> = { unreviewed: 'Not reviewed', good: 'Good', corrected: 'Corrected', out_of_scope: 'Out of scope', missing_document: 'Missing document' };
+const statusStyle: Record<string, string> = { unreviewed: 'bg-white/10 text-white/60', good: 'bg-lk-green/15 text-lk-green', corrected: 'bg-lk-blue/15 text-lk-blue', out_of_scope: 'bg-white/10 text-white/70', missing_document: 'bg-lk-orange/15 text-lk-orange' };
+---
+
+<Admin title="Ask review">
+  <PageHeader title="Ask Lakeba review" subtitle={`Every question and answer, for checking and correcting. Only admins can see who asked; records are deleted after ${RETENTION_MONTHS} months.`} />
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+
+  <div class="mb-6 grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6">
+    {stats.map((s) => (
+      <div class="card !p-4"><p class="text-[11px] uppercase tracking-widest text-white/40">{s.label}</p><p class="mt-1 font-display text-2xl font-bold text-white">{s.value}</p>{s.note && <p class="text-xs text-white/40">{s.note}</p>}</div>
+    ))}
+  </div>
+
+  <div class="mb-6 flex flex-wrap items-center gap-2">
+    {tabs.map((t) => <a href={link({ view: t.id, page: '1' })} class:list={['rounded-full border px-3 py-1.5 text-sm', view === t.id ? 'border-lk-blue bg-lk-blue/15 text-white' : 'border-white/10 text-white/60 hover:text-white']}>{t.label}</a>)}
+    <form method="get" class="ml-auto flex gap-2">
+      <input type="hidden" name="view" value={view} />
+      <input name="q" value={q} type="search" placeholder="Search questions and answers" class="field !py-2 text-sm" />
+    </form>
+  </div>
+
+  {pageItems.length ? (
+    <ol class="space-y-4">
+      {pageItems.map((e) => (
+        <li class="card !p-5">
+          <div class="flex flex-wrap items-center gap-2 text-xs text-white/45">
+            <span>{dateTime.format(new Date(e.created_at))}</span>
+            <span>· {e.user_id ? email.get(e.user_id) ?? 'unknown' : 'deleted account'}</span>
+            {e.turn > 1 && <span>· follow-up {e.turn}</span>}
+            {e.cost_usd != null && <span>· {usd.format(Number(e.cost_usd))}</span>}
+            {e.feedback === 1 && <span class="rounded-full bg-lk-green/15 px-2 py-0.5 text-lk-green">👍 helpful</span>}
+            {e.feedback === -1 && <span class="rounded-full bg-lk-red/15 px-2 py-0.5 text-lk-red">👎 not helpful</span>}
+            {e.declined && <span class="rounded-full bg-white/10 px-2 py-0.5 text-white/60">declined</span>}
+            {e.error && <span class="rounded-full bg-lk-orange/15 px-2 py-0.5 text-lk-orange">{e.error === 'stopped' ? 'stopped by user' : e.error === 'ai_off' ? 'AI off' : 'error'}</span>}
+            <span class:list={['ml-auto rounded-full px-2 py-0.5', statusStyle[e.review_status]]}>{statusLabel[e.review_status]}</span>
+          </div>
+
+          {before(e).length > 0 && (
+            <details class="mt-3 text-sm text-white/55">
+              <summary class="cursor-pointer">Earlier in this chat ({before(e).length})</summary>
+              <ol class="mt-2 space-y-2 border-l border-white/10 pl-3">
+                {before(e).map((x) => <li><p class="font-semibold text-white/75">{x.question}</p><p class="line-clamp-3">{x.answer}</p></li>)}
+              </ol>
+            </details>
+          )}
+
+          <p class="mt-3 font-semibold text-white">{e.question}</p>
+          <div class="mt-2 rounded-2xl bg-white/[0.03] p-4 text-sm"><Markdown source={e.answer || '*No answer.*'} /></div>
+          {e.sources.length > 0 && (
+            <p class="mt-2 flex flex-wrap gap-1.5 text-xs">
+              {e.sources.map((s) => s.href ? <a href={s.href} target="_blank" rel="noopener" class="rounded-full border border-white/10 px-2.5 py-0.5 text-white/55 hover:text-white">{s.title}{s.detail && ` · ${s.detail}`}</a> : <span class="rounded-full border border-white/10 px-2.5 py-0.5 text-white/55">{s.title}</span>)}
+            </p>
+          )}
+          {e.feedback_note && <p class="mt-3 rounded-xl border border-lk-red/30 bg-lk-red/10 px-3 py-2 text-sm text-white/85">Shareholder’s note: {e.feedback_note}</p>}
+
+          {e.review_status !== 'unreviewed' && (
+            <div class="mt-3 rounded-xl border border-white/10 px-3 py-2 text-sm text-white/70">
+              <p class="text-xs text-white/40">Reviewed by {e.reviewer_id ? email.get(e.reviewer_id) ?? 'admin' : 'admin'}{e.reviewed_at && ` · ${dateTime.format(new Date(e.reviewed_at))}`}</p>
+              {e.corrected_answer && <div class="mt-1"><p class="text-xs font-semibold text-lk-blue">Correct answer</p><Markdown source={e.corrected_answer} /></div>}
+              {e.review_note && <p class="mt-1">Note: {e.review_note}</p>}
+            </div>
+          )}
+
+          <form method="post" class="mt-4 space-y-3">
+            <input type="hidden" name="id" value={e.id} />
+            <details class="text-sm" open={e.review_status === 'corrected'}>
+              <summary class="cursor-pointer text-lk-blue">✏️ Write the correct answer</summary>
+              <textarea name="corrected_answer" rows="4" class="field mt-2" placeholder="The answer Ask Lakeba should give (Markdown allowed)">{e.corrected_answer ?? ''}</textarea>
+            </details>
+            <input name="review_note" value={e.review_note ?? ''} placeholder="Note for the team (optional), e.g. which document is missing" class="field !py-2 text-sm" />
+            <div class="flex flex-wrap gap-2 text-sm">
+              <button name="intent" value="good" class="btn-ghost !px-3 !py-2">✅ Good</button>
+              <button name="intent" value="corrected" class="btn-ghost !px-3 !py-2">✏️ Save correction</button>
+              <button name="intent" value="out_of_scope" class="btn-ghost !px-3 !py-2">🚫 Out of scope</button>
+              <button name="intent" value="missing_document" class="btn-ghost !px-3 !py-2">🗂 Missing document</button>
+              {e.review_status !== 'unreviewed' && <button name="intent" value="unreviewed" class="px-3 py-2 text-white/45 hover:text-white">Back to queue</button>}
+            </div>
+          </form>
+        </li>
+      ))}
+    </ol>
+  ) : (
+    <Empty title={view === 'queue' ? 'Nothing waiting for review' : 'No questions here'}>{q ? 'Try a different search.' : 'Questions asked in Ask Lakeba will appear here.'}</Empty>
+  )}
+
+  {pages > 1 && (
+    <nav class="mt-6 flex items-center justify-between text-sm" aria-label="Pages">
+      {page > 1 ? <a href={link({ page: String(page - 1) })} class="text-lk-blue hover:underline">← Newer</a> : <span></span>}
+      <span class="text-white/40">Page {page} of {pages}</span>
+      {page < pages ? <a href={link({ page: String(page + 1) })} class="text-lk-blue hover:underline">Older →</a> : <span></span>}
+    </nav>
+  )}
+</Admin>
