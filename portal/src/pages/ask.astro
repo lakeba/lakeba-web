@@ -1,112 +1,230 @@
 ---
 import Portal from '../layouts/Portal.astro';
-import PageHeader from '../components/PageHeader.astro';
-import Alert from '../components/Alert.astro';
-import { ask, askEnabled, type AskResult } from '../lib/ask';
-import { field } from '../lib/forms';
-import { Marked } from 'marked';
+import Mark from '../../../src/components/Mark.astro';
+import { askEnabled } from '../lib/ask';
 
-const supabase = Astro.locals.supabase;
-let question = '';
-let result: AskResult | null = null;
-let error = '';
-
-if (Astro.request.method === 'POST') {
-  question = field(await Astro.request.formData(), 'question').slice(0, 500);
-  // Simple fair-use limit: 20 questions per hour per user.
-  const since = new Date(Date.now() - 3600_000).toISOString();
-  const { data: count } = await supabase.rpc('my_recent_event_count', { event_action: 'ask_question', since });
-  if (question.length < 3) error = 'Type a question first.';
-  else if (Number(count ?? 0) >= 20) error = 'You have asked a lot of questions this hour. Please try again later.';
-  else {
-    await supabase.rpc('log_event', { event_action: 'ask_question', event_detail: { length: question.length } });
-    result = await ask(supabase, question);
-  }
-}
-// The answer is Markdown; citation markers are placed after the cited text
-// and swapped for links once rendered. Raw HTML from the model is escaped.
-const marked = new Marked({ renderer: { html: ({ text }) => text.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`) } });
-const answerHtml = result?.kind === 'answer'
-  ? (await marked.parse(result.parts.map((p) => p.text + p.refs.map((n) => `⟦${n}⟧`).join('')).join('')))
-      .replace(/⟦(\d+)⟧/g, '<a href="#cite-$1" class="ml-0.5 align-super text-[11px] font-semibold text-lk-blue no-underline">[$1]</a>')
-  : '';
-const examples = ['What were the FY24 revenue and profit?', 'How many shares are on issue, and what is the latest price?', 'What has Bricklet announced recently?', 'Who audits Lakeba and when did that change?'];
-const reasons = {
-  no_api_key: 'AI answers are not switched on yet. Here are the most relevant passages.',
-  refused: 'This question could not be answered automatically. Here are the most relevant passages; you can also ask the board.',
-  error: 'The assistant is unavailable right now. Here are the most relevant passages.',
-};
+const examples = [
+  'What were the FY24 revenue and profit?',
+  'How many shares are on issue, and what is the latest price?',
+  'What has Bricklet announced recently?',
+  'Who audits Lakeba and when did that change?',
+];
+const isAdmin = Astro.locals.profile?.role === 'admin';
 ---
 
 <Portal title="Ask Lakeba">
-  <PageHeader eyebrow="Ask Lakeba" title="Ask about your company" subtitle="Answers come only from the documents published in this portal, with links to the source pages." />
-
-  <div class="max-w-3xl">
-    <form method="post" class="card flex flex-col gap-3 p-4 sm:flex-row">
-      <input name="question" value={question} maxlength="500" required aria-label="Your question" placeholder="e.g. What did the directors say about the FY26 outlook?" class="field flex-1" />
-      <button class="btn-primary">Ask</button>
-    </form>
-    {!result && !error && (
-      <div class="mt-4 flex flex-wrap gap-2">
-        {examples.map((e) => (
-          <form method="post"><input type="hidden" name="question" value={e} /><button class="rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/60 transition hover:border-white/30 hover:text-white">{e}</button></form>
-        ))}
+  <div class="mx-auto flex min-h-[calc(100dvh-14rem)] max-w-3xl flex-col" data-chat>
+    <div class="flex items-center justify-between gap-4">
+      <div>
+        <p class="eyebrow">Ask Lakeba</p>
+        <h1 class="mt-3 text-3xl font-extrabold">Ask about your company</h1>
       </div>
-    )}
+      <button type="button" data-new-chat class="btn-ghost px-4 py-2 text-sm" hidden>New chat</button>
+    </div>
 
-    {error && <div class="mt-6"><Alert tone="error">{error}</Alert></div>}
+    <div data-empty class="flex flex-1 flex-col items-center justify-center py-12 text-center">
+      <Mark class="size-14" animated />
+      <p class="mt-6 max-w-md text-white/60">Answers come only from the documents in this portal and the news on Lakeba’s website, with links to the sources.</p>
+      <div class="mt-8 grid w-full gap-2 sm:grid-cols-2">
+        {examples.map((e) => <button type="button" data-example class="glass rounded-2xl px-4 py-3 text-left text-sm text-white/75 transition hover:text-white">{e}</button>)}
+      </div>
+    </div>
 
-    {result?.kind === 'not_member' && (
-      <div class="mt-6"><Alert>Ask Lakeba is available once your account is linked to a shareholding. Contact us through <a href="/board" class="underline">Board Q&amp;A</a> or info@lakeba.com.</Alert></div>
-    )}
+    <ol data-messages class="flex-1 space-y-6 py-8" aria-live="polite"></ol>
 
-    {result?.kind === 'nothing' && (
-      <div class="mt-6"><Alert>No published document mentions that. Try other words, or <a href="/board" class="underline">ask the board</a>.</Alert></div>
-    )}
-
-    {result?.kind === 'answer' && (
-      <section class="card mt-6">
-        <div class="ask-answer leading-relaxed text-white/85" set:html={answerHtml} />
-        {result.citations.length > 0 && (
-          <ol class="mt-6 space-y-3 border-t border-white/5 pt-5 text-sm">
-            {result.citations.map((c) => (
-              <li id={`cite-${c.n}`} class="flex gap-3">
-                <span class="font-semibold text-lk-blue">[{c.n}]</span>
-                <span class="min-w-0">
-                  {c.href ? <a href={c.href} target="_blank" rel="noopener" class="font-semibold text-white hover:underline">{c.title}{c.detail && `, ${c.detail}`} ↗</a> : <span class="font-semibold text-white">{c.title}</span>}
-                  <span class="mt-1 block line-clamp-3 text-white/50">“{c.quote.trim()}”</span>
-                </span>
-              </li>
-            ))}
-          </ol>
-        )}
-        <p class="mt-6 text-xs text-white/35">AI-generated from company documents. Check the sources; this is not financial advice. Still unsure? <a href="/board" class="underline">Ask the board</a>.</p>
-      </section>
-    )}
-
-    {result?.kind === 'passages' && (
-      <section class="mt-6 space-y-3">
-        <Alert>{reasons[result.reason]}</Alert>
-        {result.passages.slice(0, 5).map((p) => (
-          <a href={`/documents/${p.document_id}`} target="_blank" rel="noopener" class="card block p-5 transition hover:bg-white/[0.07]">
-            <p class="text-sm font-semibold text-white">{p.title}{p.page && `, page ${p.page}`} ↗</p>
-            <p class="mt-2 line-clamp-4 text-sm text-white/55">{p.content}</p>
-          </a>
-        ))}
-      </section>
-    )}
-
-    {!askEnabled && !result && Astro.locals.profile?.role === 'admin' && <p class="mt-8 text-xs text-white/35">AI answers are off: set ANTHROPIC_API_KEY to enable them. Search still works.</p>}
+    <form data-form class="sticky bottom-4 mt-4">
+      <div class="glass flex items-end gap-2 rounded-3xl p-2 shadow-2xl shadow-black/30">
+        <label for="question" class="sr-only">Your question</label>
+        <textarea id="question" data-input rows="1" maxlength="4000" placeholder="Ask about results, shares, meetings or ventures…" class="max-h-48 min-h-11 flex-1 resize-none bg-transparent px-3 py-2.5 text-white outline-none placeholder:text-white/35"></textarea>
+        <button type="submit" data-send class="btn-primary size-11 shrink-0 rounded-2xl p-0" aria-label="Send">
+          <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+        </button>
+        <button type="button" data-stop class="btn-ghost size-11 shrink-0 rounded-2xl p-0" aria-label="Stop" hidden>
+          <svg viewBox="0 0 24 24" class="size-4" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+        </button>
+      </div>
+      <p class="mt-2 text-center text-xs text-white/35">
+        AI answers from company documents. Check the sources; this is not financial advice.
+        {!askEnabled && isAdmin && ' AI answers are off: set ANTHROPIC_API_KEY.'}
+      </p>
+    </form>
   </div>
+
+  <template data-user-template>
+    <li class="flex justify-end"><div class="max-w-[85%] whitespace-pre-line rounded-3xl rounded-br-md bg-lk-blue/20 px-5 py-3 text-white/90" data-text></div></li>
+  </template>
+  <template data-assistant-template>
+    <li class="flex gap-3">
+      <div class="mt-1 grid size-8 shrink-0 place-items-center rounded-full bg-white/5"><Mark class="size-5" /></div>
+      <div class="min-w-0 flex-1">
+        <div class="ask-answer leading-relaxed text-white/85" data-text><span class="typing"><i></i><i></i><i></i></span></div>
+        <div class="mt-3 flex flex-wrap gap-2 text-xs" data-sources hidden></div>
+      </div>
+    </li>
+  </template>
 </Portal>
 
 <style>
-  .ask-answer :global(p), .ask-answer :global(ul), .ask-answer :global(ol) { margin: 0 0 0.9rem; }
+  .ask-answer :global(p), .ask-answer :global(ul), .ask-answer :global(ol) { margin: 0 0 0.8rem; }
+  .ask-answer :global(> :last-child) { margin-bottom: 0; }
   .ask-answer :global(ul) { list-style: disc; padding-left: 1.25rem; }
   .ask-answer :global(ol) { list-style: decimal; padding-left: 1.25rem; }
   .ask-answer :global(li) { margin: 0.2rem 0; }
   .ask-answer :global(strong) { color: var(--color-white); }
-  .ask-answer :global(h3), .ask-answer :global(h4) { margin: 1rem 0 0.5rem; font-weight: 700; color: var(--color-white); }
-  .ask-answer :global(table) { width: 100%; border-collapse: collapse; margin-bottom: 0.9rem; font-size: 0.9rem; }
+  .ask-answer :global(h3), .ask-answer :global(h4) { margin: 0.8rem 0 0.4rem; font-weight: 700; color: var(--color-white); }
+  .ask-answer :global(table) { width: 100%; border-collapse: collapse; margin-bottom: 0.8rem; font-size: 0.9rem; }
   .ask-answer :global(th), .ask-answer :global(td) { border-bottom: 1px solid var(--color-line); padding: 0.4rem; text-align: left; }
+  .ask-answer :global(.cursor)::after { content: '▍'; margin-left: 1px; color: var(--color-lk-blue); animation: blink 1s steps(1) infinite; }
+  .typing { display: inline-flex; gap: 4px; padding: 0.5rem 0; }
+  .typing i { width: 6px; height: 6px; border-radius: 9999px; background: color-mix(in oklab, var(--color-white) 45%, transparent); animation: bounce 1.2s infinite; }
+  .typing i:nth-child(2) { animation-delay: 0.15s; }
+  .typing i:nth-child(3) { animation-delay: 0.3s; }
+  @keyframes bounce { 0%, 60%, 100% { transform: translateY(0); opacity: 0.5; } 30% { transform: translateY(-4px); opacity: 1; } }
+  @keyframes blink { 50% { opacity: 0; } }
 </style>
+
+<script>
+  import { Marked } from 'marked';
+
+  type Source = { title: string; detail: string | null; href: string | null };
+  type Turn = { role: 'user' | 'assistant'; content: string; sources?: Source[] };
+
+  // Markdown from the model; any raw HTML is shown as text.
+  const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
+  const marked = new Marked({ renderer: { html: ({ text }) => escape(text) } });
+  const render = (md: string) => marked.parse(md, { async: false }) as string;
+
+  const STORE = 'lakeba-ask-chat';
+  const root = document.querySelector<HTMLElement>('[data-chat]')!;
+  const list = root.querySelector<HTMLOListElement>('[data-messages]')!;
+  const empty = root.querySelector<HTMLElement>('[data-empty]')!;
+  const form = root.querySelector<HTMLFormElement>('[data-form]')!;
+  const input = root.querySelector<HTMLTextAreaElement>('[data-input]')!;
+  const send = root.querySelector<HTMLButtonElement>('[data-send]')!;
+  const stop = root.querySelector<HTMLButtonElement>('[data-stop]')!;
+  const newChat = root.querySelector<HTMLButtonElement>('[data-new-chat]')!;
+  const userTpl = document.querySelector<HTMLTemplateElement>('[data-user-template]')!;
+  const botTpl = document.querySelector<HTMLTemplateElement>('[data-assistant-template]')!;
+
+  // The conversation is kept for this browser tab only.
+  let turns: Turn[] = [];
+  let controller: AbortController | null = null;
+  try { turns = JSON.parse(sessionStorage.getItem(STORE) ?? '[]'); } catch {}
+  const save = () => { try { sessionStorage.setItem(STORE, JSON.stringify(turns)); } catch {} };
+
+  const showSources = (el: HTMLElement, sources: Source[]) => {
+    if (!sources.length) return;
+    const LIMIT = 4;
+    const chip = (s: Source) => {
+      const a = document.createElement(s.href ? 'a' : 'span');
+      a.className = 'inline-flex max-w-full items-center gap-1 rounded-full border border-white/10 px-3 py-1 text-white/60 transition hover:border-white/30 hover:text-white';
+      if (s.href && a instanceof HTMLAnchorElement) { a.href = s.href; a.target = '_blank'; a.rel = 'noopener'; }
+      a.innerHTML = `<span class="truncate">${escape(s.title)}</span>${s.detail ? `<span class="shrink-0 text-white/35">· ${escape(s.detail)}</span>` : ''}`;
+      return a;
+    };
+    const label = document.createElement('span');
+    label.className = 'py-1 text-white/35';
+    label.textContent = 'Sources';
+    el.append(label, ...sources.slice(0, LIMIT).map(chip));
+    if (sources.length > LIMIT) {
+      const more = document.createElement('button');
+      more.type = 'button';
+      more.className = 'rounded-full px-3 py-1 text-white/45 hover:text-white';
+      more.textContent = `+${sources.length - LIMIT} more`;
+      more.onclick = () => more.replaceWith(...sources.slice(LIMIT).map(chip));
+      el.append(more);
+    }
+    el.hidden = false;
+  };
+
+  const addUser = (text: string) => {
+    const li = userTpl.content.firstElementChild!.cloneNode(true) as HTMLElement;
+    li.querySelector('[data-text]')!.textContent = text;
+    list.append(li);
+  };
+  const addAssistant = (turn?: Turn) => {
+    const li = botTpl.content.firstElementChild!.cloneNode(true) as HTMLElement;
+    const text = li.querySelector<HTMLElement>('[data-text]')!;
+    const sources = li.querySelector<HTMLElement>('[data-sources]')!;
+    if (turn) { text.innerHTML = render(turn.content); showSources(sources, turn.sources ?? []); }
+    list.append(li);
+    return { text, sources };
+  };
+
+  const refresh = () => { empty.hidden = turns.length > 0; newChat.hidden = turns.length === 0; };
+  const busy = (on: boolean) => { send.hidden = on; stop.hidden = !on; input.disabled = on; };
+  const scrollDown = () => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
+
+  for (const t of turns) t.role === 'user' ? addUser(t.content) : addAssistant(t);
+  refresh();
+
+  async function ask(question: string) {
+    turns.push({ role: 'user', content: question });
+    addUser(question);
+    refresh();
+    const view = addAssistant();
+    scrollDown();
+    busy(true);
+    controller = new AbortController();
+
+    let answer = '';
+    let sources: Source[] = [];
+    let frame = 0;
+    const paint = () => { frame = 0; view.text.innerHTML = render(answer); view.text.lastElementChild?.classList.add('cursor'); };
+    try {
+      const res = await fetch('/api/ask', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ turns: turns.map(({ role, content }) => ({ role, content })) }),
+        signal: controller.signal,
+      });
+      if (!res.ok || !res.body) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error ?? 'Ask Lakeba is unavailable right now.');
+      }
+      const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
+      let buffer = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buffer += value;
+        let cut;
+        while ((cut = buffer.indexOf('\n\n')) >= 0) {
+          const msg = JSON.parse(buffer.slice(0, cut).replace(/^data: /, ''));
+          buffer = buffer.slice(cut + 2);
+          if (msg.text) { answer += msg.text; frame ||= requestAnimationFrame(paint); }
+          if (msg.sources) sources = msg.sources;
+          if (msg.error) throw new Error(msg.error);
+        }
+      }
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') answer += `${answer ? '\n\n' : ''}*${(error as Error).message}*`;
+    } finally {
+      cancelAnimationFrame(frame);
+      view.text.innerHTML = render(answer || '*Stopped.*');
+      showSources(view.sources, sources);
+      turns.push({ role: 'assistant', content: answer || 'Stopped.', sources });
+      save();
+      busy(false);
+      controller = null;
+      input.focus();
+    }
+  }
+
+  form.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const q = input.value.trim();
+    if (!q || controller) return;
+    input.value = '';
+    input.style.height = '';
+    ask(q);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
+  });
+  input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; });
+  stop.addEventListener('click', () => controller?.abort());
+  newChat.addEventListener('click', () => { turns = []; save(); list.replaceChildren(); refresh(); input.focus(); });
+  root.querySelectorAll<HTMLButtonElement>('[data-example]').forEach((b) => b.addEventListener('click', () => { input.value = b.textContent ?? ''; form.requestSubmit(); }));
+  input.focus();
+</script>
