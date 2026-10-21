@@ -1,13 +1,16 @@
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { myHolderIds } from './scope';
 
 export type HoldingRow = { shares: number; as_at: string; share_class_id: string; share_classes: { code: string; name: string } | null };
 export type HolderWithHoldings = { id: string; name: string; kind: string; registry_ref: string | null; holdings: HoldingRow[] };
 export type Position = { holder: HolderWithHoldings; row: HoldingRow; total: number; history: HoldingRow[] };
 
-/** The signed-in user's latest position per holder and class, with history. RLS scopes it. */
-export async function loadPositions(supabase: SupabaseClient): Promise<Position[]> {
+/** The signed-in user's latest position per holder and class, with history. */
+export async function loadPositions(supabase: SupabaseClient, userId: string): Promise<Position[]> {
+  const ids = await myHolderIds(supabase, userId);
+  if (!ids.length) return [];
   const [{ data: holders }, { data: onIssue }] = await Promise.all([
-    supabase.from('holders').select('id, name, kind, registry_ref, holdings(shares, as_at, share_class_id, share_classes(code, name))').order('name'),
+    supabase.from('holders').select('id, name, kind, registry_ref, holdings(shares, as_at, share_class_id, share_classes(code, name))').in('id', ids).order('name'),
     supabase.rpc('shares_on_issue'),
   ]);
   const totals = new Map<string, number>((onIssue ?? []).map((r: { share_class_id: string; total: number }) => [r.share_class_id, Number(r.total)]));

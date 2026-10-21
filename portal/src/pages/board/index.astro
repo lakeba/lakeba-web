@@ -27,7 +27,7 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const { data: queries } = await supabase.from('queries').select('id, subject, status, due_at, created_at, updated_at').order('updated_at', { ascending: false });
+const { data: queries } = await supabase.from('queries').select('id, subject, status, due_at, created_at, updated_at').eq('user_id', userId).order('updated_at', { ascending: false });
 const statusStyles: Record<string, string> = { open: 'bg-lk-orange/15 text-lk-orange', answered: 'bg-lk-green/15 text-lk-green', closed: 'bg-white/10 text-white/55' };
 const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 'Answered', closed: 'Closed' };
 ---

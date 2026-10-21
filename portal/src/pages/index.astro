@@ -2,21 +2,24 @@
 import Portal from '../layouts/Portal.astro';
 import Sparkline from '../components/Sparkline.astro';
 import { loadPositions, loadPrices, sourceLabels } from '../lib/holdings';
+import { myHolderIds, onlyMyDocuments } from '../lib/scope';
 import { aud, audPrecise, categoryLabels, holderKinds, longDate, percent, shares, shortDate } from '../lib/format';
 
 const supabase = Astro.locals.supabase;
-const positions = await loadPositions(supabase);
+const userId = Astro.locals.user!.id;
+const role = Astro.locals.profile?.role;
+const [positions, holderIds] = await Promise.all([loadPositions(supabase, userId), myHolderIds(supabase, userId)]);
 const classId = positions[0]?.row.share_class_id;
 
 const [prices, { data: announcements }, { data: settings }, { data: docs }, { data: posts }, { data: meetings }, { data: video }, { count: openQueries }] = await Promise.all([
   classId ? loadPrices(supabase, classId) : Promise.resolve([]),
   supabase.from('announcements').select('id, title, body, link_url, link_label, tone').order('starts_at', { ascending: false }).limit(2),
   supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle(),
-  supabase.from('documents').select('id, title, category, published_at, document_reads(user_id)').neq('category', 'video').order('published_at', { ascending: false }).limit(5),
+  onlyMyDocuments(supabase.from('documents').select('id, title, category, published_at, document_reads(user_id)').neq('category', 'video'), holderIds, role).order('published_at', { ascending: false }).limit(5),
   supabase.from('posts').select('slug, title, excerpt, published_at').order('published_at', { ascending: false }).limit(3),
   supabase.from('meetings').select('id, title, starts_at, proxy_deadline, status').in('status', ['upcoming', 'open']).order('starts_at').limit(1),
-  supabase.from('documents').select('id, title, summary, published_at').eq('category', 'video').order('published_at', { ascending: false }).limit(1).maybeSingle(),
-  supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').eq('user_id', Astro.locals.user!.id),
+  onlyMyDocuments(supabase.from('documents').select('id, title, summary, published_at').eq('category', 'video'), holderIds, role).order('published_at', { ascending: false }).limit(1).maybeSingle(),
+  supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').eq('user_id', userId),
 ]);
 
 const price = prices.at(-1);
@@ -24,7 +27,6 @@ const totalShares = positions.reduce((sum, p) => sum + p.row.shares, 0);
 const liquidity = settings?.value as { title: string; body: string; url: string; label: string } | undefined;
 const meeting = meetings?.[0];
 const firstName = Astro.locals.profile?.first_name || 'there';
-const userId = Astro.locals.user!.id;
 const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-lk-green/30 bg-lk-green/10', warning: 'border-lk-orange/40 bg-lk-orange/10' };
 ---
 

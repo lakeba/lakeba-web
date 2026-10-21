@@ -1,6 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { ANTHROPIC_API_KEY } from 'astro:env/server';
+import { myHolderIds, onlyMyDocuments } from './scope';
 
 export type Passage = { document_id: string; title: string; page: number | null; content: string };
 export type Citation = { n: number; documentId: string; title: string; page: number | null; quote: string };
@@ -20,9 +21,14 @@ const client = ANTHROPIC_API_KEY ? new Anthropic({ apiKey: ANTHROPIC_API_KEY }) 
 export const askEnabled = Boolean(client);
 
 /** Finds passages the user may read (RLS applies), then asks Claude for a cited answer. */
-export async function ask(supabase: SupabaseClient, question: string): Promise<AskResult> {
-  const { data } = await supabase.rpc('search_documents', { query: question, max_results: 8 });
-  const passages = (data ?? []) as Passage[];
+export async function ask(supabase: SupabaseClient, question: string, userId: string, role: string | undefined): Promise<AskResult> {
+  const holderIds = await myHolderIds(supabase, userId);
+  const [{ data }, { data: mine }] = await Promise.all([
+    supabase.rpc('search_documents', { query: question, max_results: 20 }),
+    onlyMyDocuments(supabase.from('documents').select('id'), holderIds, role),
+  ]);
+  const allowed = new Set((mine ?? []).map((d) => d.id));
+  const passages = ((data ?? []) as Passage[]).filter((p) => allowed.has(p.document_id)).slice(0, 8);
   if (!passages.length) return { kind: 'nothing' };
   if (!client) return { kind: 'passages', passages, reason: 'no_api_key' };
 

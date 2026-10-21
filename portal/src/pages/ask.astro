@@ -19,7 +19,7 @@ if (Astro.request.method === 'POST') {
   else if (Number(count ?? 0) >= 20) error = 'You have asked a lot of questions this hour. Please try again later.';
   else {
     await supabase.rpc('log_event', { event_action: 'ask_question', event_detail: { length: question.length } });
-    result = await ask(supabase, question);
+    result = await ask(supabase, question, Astro.locals.user!.id, Astro.locals.profile?.role);
   }
 }
 const examples = ['What was revenue last financial year?', 'When is the next AGM and what will we vote on?', 'How does the LakebaOS co-founding program work?'];

@@ -5,7 +5,7 @@ import { holdingStatementPdf } from '../../lib/statement';
 /** Personal holding statement PDF for one of the user's holders. */
 export const GET: APIRoute = async ({ params, url, locals }) => {
   const supabase = locals.supabase;
-  const positions = await loadPositions(supabase); // RLS: only the user's holders
+  const positions = await loadPositions(supabase, locals.user!.id);
   const shareClass = url.searchParams.get('class');
   const position = positions.find((p) => p.holder.id === params.holderId && (!shareClass || p.row.share_class_id === shareClass));
   if (!position) return new Response('Not found', { status: 404 });

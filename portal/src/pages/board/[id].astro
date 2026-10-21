@@ -19,10 +19,10 @@ if (Astro.request.method === 'POST') {
   error = 'Your reply could not be sent.';
 }
 
-// RLS returns only the user's own query and hides internal notes.
+// Only the user's own question, without internal notes (admins could read them via RLS).
 const [{ data: query }, { data: messages }] = await Promise.all([
-  supabase.from('queries').select('subject, status, due_at, created_at').eq('id', id).maybeSingle(),
-  supabase.from('query_messages').select('id, body, created_at, author_id, profiles(first_name, last_name, role)').eq('query_id', id).order('created_at'),
+  supabase.from('queries').select('subject, status, due_at, created_at').eq('id', id).eq('user_id', userId).maybeSingle(),
+  supabase.from('query_messages').select('id, body, created_at, author_id, profiles(first_name, last_name, role)').eq('query_id', id).eq('internal', false).order('created_at'),
 ]);
 if (!query) return new Response('Not found', { status: 404 });
 const sent = Astro.url.searchParams.get('sent') === '1';

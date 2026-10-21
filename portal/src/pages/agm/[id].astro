@@ -39,8 +39,8 @@ if (Astro.request.method === 'POST') {
 }
 
 const [{ data: votes }, { data: questions }] = await Promise.all([
-  supabase.from('proxy_votes').select('resolution_id, holder_id, vote').in('resolution_id', (resolutions ?? []).map((r) => r.id)),
-  supabase.from('meeting_questions').select('body, answer, created_at').eq('meeting_id', id).order('created_at'),
+  supabase.from('proxy_votes').select('resolution_id, holder_id, vote').in('resolution_id', (resolutions ?? []).map((r) => r.id)).in('holder_id', (owned ?? []).map((o) => o.holder_id)),
+  supabase.from('meeting_questions').select('body, answer, created_at').eq('meeting_id', id).eq('user_id', userId).order('created_at'),
 ]);
 const voteOf = (holderId: string, resolutionId: string) => votes?.find((v) => v.holder_id === holderId && v.resolution_id === resolutionId)?.vote;
 const outcomeLabel: Record<string, string> = { carried: 'Carried', not_carried: 'Not carried', withdrawn: 'Withdrawn' };
