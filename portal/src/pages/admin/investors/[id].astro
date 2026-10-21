@@ -14,6 +14,7 @@ const svc = serviceClient();
 const self = Astro.locals.user?.id === id;
 let error = '';
 let notice = '';
+let shareLink = '';
 
 const { data: target } = await supabase.from('profiles').select('id, email, first_name, last_name, role, phone').eq('id', id!).single();
 if (!target) return new Response('Not found', { status: 404 });
@@ -51,9 +52,9 @@ if (Astro.request.method === 'POST') {
     await log('admin_reset_mfa');
     notice = 'Two-step verification removed. They can set it up again after signing in.';
   } else if (intent === 'reset-password') {
-    const { error: resetError } = await sendPasswordReset(target.email, Astro.url.origin);
+    const { error: resetError, url: resetUrl } = await sendPasswordReset(target.email, Astro.url.origin);
     if (resetError) error = resetError;
-    else { await log('admin_sent_password_reset'); notice = `Password reset email sent to ${target.email}.`; }
+    else { await log('admin_sent_password_reset'); notice = `Password reset email sent to ${target.email}.`; shareLink = resetUrl ?? ''; }
   }
 }
 
@@ -69,6 +70,7 @@ const auth = authData?.user;
 const banned = Boolean(auth?.banned_until && new Date(auth.banned_until) > new Date());
 const mfaOn = (factorData?.factors ?? []).some((f) => f.status === 'verified');
 const linked = new Set((links ?? []).map((l) => l.holder_id));
+import ShareLink from '../../../components/ShareLink.astro';
 ---
 
 <Admin title={displayName(profile)}>
@@ -76,6 +78,7 @@ const linked = new Set((links ?? []).map((l) => l.holder_id));
   <PageHeader title={displayName(profile)} subtitle={`${profile?.email}${profile?.phone ? ` · ${profile.phone}` : ''}`} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+  {shareLink && <ShareLink url={shareLink} label="Password reset link" />}
 
   <div class="grid gap-4 xl:grid-cols-2">
     <section class="card">

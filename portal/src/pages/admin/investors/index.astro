@@ -12,6 +12,7 @@ const supabase = Astro.locals.supabase;
 const svc = serviceClient();
 let error = '';
 let notice = '';
+let shareLink = '';
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -21,7 +22,7 @@ if (Astro.request.method === 'POST') {
   if (!email || !roles.includes(role as never)) {
     error = 'Enter an email and choose a role.';
   } else {
-    const { error: inviteError, userId } = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') });
+    const { error: inviteError, userId, url: inviteUrl } = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') });
     if (inviteError || !userId) {
       error = inviteError ?? 'Could not send the invitation.';
     } else {
@@ -31,6 +32,7 @@ if (Astro.request.method === 'POST') {
       }
       await supabase.rpc('log_event', { event_action: 'admin_invited_user', event_detail: { email, role, holder_id: holderId || null } });
       notice = `Invitation sent to ${email}.`;
+      shareLink = inviteUrl ?? '';
     }
   }
 }
@@ -48,12 +50,14 @@ const isBanned = (id: string) => {
   const until = authById.get(id)?.banned_until;
   return Boolean(until && new Date(until) > new Date());
 };
+import ShareLink from '../../../components/ShareLink.astro';
 ---
 
 <Admin title="Investors">
   <PageHeader title="Investors" subtitle="Accounts, roles and which holding entities each person can see." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+  {shareLink && <ShareLink url={shareLink} label="Invitation link" />}
 
   <details class="card mb-6" open={Boolean(error)}>
     <summary class="cursor-pointer font-display text-lg font-bold text-white">Invite someone</summary>

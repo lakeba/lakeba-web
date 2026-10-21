@@ -15,7 +15,8 @@
     "db:stop": "supabase stop",
     "db:reset": "supabase db reset",
     "seed:dev": "node --env-file=.env scripts/seed-dev.mjs",
-    "test:rls": "node --env-file=.env scripts/check-rls.mjs"
+    "test:rls": "node --env-file=.env scripts/check-rls.mjs",
+    "start": "node --env-file=.env dist/server/entry.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.137.0",

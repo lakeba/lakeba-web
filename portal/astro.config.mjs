@@ -8,6 +8,15 @@ import tailwindcss from '@tailwindcss/vite';
 // https://astro.build/config
 export default defineConfig({
   output: 'server',
+  // Host names the portal may be reached on. Astro checks requests (and the
+  // origin of form posts) against these. Add the production domain here.
+  security: {
+    allowedDomains: [
+      { hostname: 'localhost' },
+      { hostname: '127.0.0.1' },
+      { hostname: '100.117.227.8' }, // this Mac on the Tailscale network
+    ],
+  },
   adapter: node({ mode: 'standalone' }),
   server: { port: 4322 },
   env: {
