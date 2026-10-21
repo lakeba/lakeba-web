@@ -1,0 +1,19 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import Markdown from '../../components/Markdown.astro';
+import { longDate } from '../../lib/format';
+
+const { data: post } = await Astro.locals.supabase.from('posts').select('title, excerpt, body_md, cover_url, published_at').eq('slug', Astro.params.slug!).maybeSingle();
+if (!post) return new Response('Not found', { status: 404 });
+---
+
+<Portal title={post.title}>
+  <article class="mx-auto max-w-2xl">
+    <a href="/news" class="text-sm text-white/50 hover:text-white">← All news</a>
+    <p class="mt-8 text-sm text-white/45">{longDate.format(new Date(post.published_at!))}</p>
+    <h1 class="mt-2 text-4xl font-extrabold">{post.title}</h1>
+    {post.excerpt && <p class="mt-4 text-lg text-white/65">{post.excerpt}</p>}
+    {post.cover_url && <img src={post.cover_url} alt="" class="mt-8 w-full rounded-3xl" />}
+    <div class="mt-8"><Markdown source={post.body_md} /></div>
+  </article>
+</Portal>

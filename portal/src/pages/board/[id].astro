@@ -1,0 +1,65 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import Alert from '../../components/Alert.astro';
+import { field } from '../../lib/forms';
+import { dateTime, shortDate } from '../../lib/format';
+
+const supabase = Astro.locals.supabase;
+const userId = Astro.locals.user!.id;
+const id = Astro.params.id!;
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const body = field(form, 'body');
+  const { error: insertError } = body
+    ? await supabase.from('query_messages').insert({ query_id: id, author_id: userId, body })
+    : { error: new Error('empty') };
+  if (!insertError) return Astro.redirect(`/board/${id}`);
+  error = 'Your reply could not be sent.';
+}
+
+// RLS returns only the user's own query and hides internal notes.
+const [{ data: query }, { data: messages }] = await Promise.all([
+  supabase.from('queries').select('subject, status, due_at, created_at').eq('id', id).maybeSingle(),
+  supabase.from('query_messages').select('id, body, created_at, author_id, profiles(first_name, last_name, role)').eq('query_id', id).order('created_at'),
+]);
+if (!query) return new Response('Not found', { status: 404 });
+const sent = Astro.url.searchParams.get('sent') === '1';
+---
+
+<Portal title={query.subject}>
+  <div class="mx-auto max-w-3xl">
+    <a href="/board" class="text-sm text-white/50 hover:text-white">← Board Q&amp;A</a>
+    <h1 class="mt-6 text-3xl font-extrabold">{query.subject}</h1>
+    <p class="mt-2 text-sm text-white/45">
+      Asked {shortDate.format(new Date(query.created_at))} ·
+      {query.status === 'open' ? `Reply due by ${shortDate.format(new Date(query.due_at))}` : query.status === 'answered' ? 'Answered' : 'Closed'}
+    </p>
+    {sent && <div class="mt-6"><Alert tone="success">Your question has been sent. The board aims to reply by {shortDate.format(new Date(query.due_at))}.</Alert></div>}
+
+    <ol class="mt-8 space-y-4">
+      {(messages ?? []).map((m) => {
+        const mine = m.author_id === userId;
+        const author = m.profiles as unknown as { first_name: string; last_name: string; role: string } | null;
+        return (
+          <li class:list={['flex', mine ? 'justify-end' : 'justify-start']}>
+            <div class:list={['max-w-[85%] rounded-3xl p-5', mine ? 'bg-lk-blue/20 rounded-br-md' : 'glass rounded-bl-md']}>
+              <p class="text-xs text-white/45">{mine ? 'You' : `${author?.first_name ?? ''} ${author?.last_name ?? ''}`.trim() || 'Lakeba'}{!mine && ' · Lakeba'} · {dateTime.format(new Date(m.created_at))}</p>
+              <p class="mt-2 whitespace-pre-line text-white/85">{m.body}</p>
+            </div>
+          </li>
+        );
+      })}
+    </ol>
+
+    {query.status !== 'closed' && (
+      <form method="post" class="card mt-8 space-y-4">
+        {error && <Alert tone="error">{error}</Alert>}
+        <label for="body" class="label">Add a reply</label>
+        <textarea id="body" name="body" rows="4" maxlength="10000" required class="field"></textarea>
+        <button class="btn-primary">Send reply</button>
+      </form>
+    )}
+  </div>
+</Portal>

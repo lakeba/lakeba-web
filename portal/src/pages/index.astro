@@ -1,74 +1,175 @@
 ---
 import Portal from '../layouts/Portal.astro';
-
-type Holding = { shares: number; as_at: string; share_class_id: string; share_classes: { code: string; name: string } | null };
-type Holder = { id: string; name: string; kind: string; holdings: Holding[] };
+import Sparkline from '../components/Sparkline.astro';
+import { loadPositions, loadPrices, sourceLabels } from '../lib/holdings';
+import { aud, audPrecise, categoryLabels, holderKinds, longDate, percent, shares, shortDate } from '../lib/format';
 
 const supabase = Astro.locals.supabase;
-// Row-level security limits these to the holders this user is linked to.
-const [{ data: holders }, { data: onIssue }] = await Promise.all([
-  supabase.from('holders').select('id, name, kind, holdings(shares, as_at, share_class_id, share_classes(code, name))').order('name'),
-  supabase.rpc('shares_on_issue'),
+const positions = await loadPositions(supabase);
+const classId = positions[0]?.row.share_class_id;
+
+const [prices, { data: announcements }, { data: settings }, { data: docs }, { data: posts }, { data: meetings }, { data: video }, { count: openQueries }] = await Promise.all([
+  classId ? loadPrices(supabase, classId) : Promise.resolve([]),
+  supabase.from('announcements').select('id, title, body, link_url, link_label, tone').order('starts_at', { ascending: false }).limit(2),
+  supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle(),
+  supabase.from('documents').select('id, title, category, published_at, document_reads(user_id)').neq('category', 'video').order('published_at', { ascending: false }).limit(5),
+  supabase.from('posts').select('slug, title, excerpt, published_at').order('published_at', { ascending: false }).limit(3),
+  supabase.from('meetings').select('id, title, starts_at, proxy_deadline, status').in('status', ['upcoming', 'open']).order('starts_at').limit(1),
+  supabase.from('documents').select('id, title, summary, published_at').eq('category', 'video').order('published_at', { ascending: false }).limit(1).maybeSingle(),
+  supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').eq('user_id', Astro.locals.user!.id),
 ]);
-const totals = new Map<string, number>((onIssue ?? []).map((r: { share_class_id: string; total: number }) => [r.share_class_id, Number(r.total)]));
 
-/** Latest holding for each share class of a holder. */
-const latest = (h: Holder) =>
-  Object.values(
-    h.holdings.reduce<Record<string, Holding>>((acc, row) => {
-      if (!acc[row.share_class_id] || acc[row.share_class_id].as_at < row.as_at) acc[row.share_class_id] = row;
-      return acc;
-    }, {}),
-  );
-
-const fmt = new Intl.NumberFormat('en-AU');
-const pct = new Intl.NumberFormat('en-AU', { style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2 });
-const date = new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
-const kindLabel: Record<string, string> = { individual: 'Individual', company: 'Company', trust: 'Trust', super_fund: 'Super fund' };
+const price = prices.at(-1);
+const totalShares = positions.reduce((sum, p) => sum + p.row.shares, 0);
+const liquidity = settings?.value as { title: string; body: string; url: string; label: string } | undefined;
+const meeting = meetings?.[0];
 const firstName = Astro.locals.profile?.first_name || 'there';
+const userId = Astro.locals.user!.id;
+const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-lk-green/30 bg-lk-green/10', warning: 'border-lk-orange/40 bg-lk-orange/10' };
 ---
 
 <Portal title="Dashboard">
-  <p class="eyebrow">Investor portal</p>
-  <h1 class="mt-4 text-4xl font-extrabold sm:text-5xl">Welcome, {firstName}</h1>
-  <p class="mt-3 text-white/55">Your holdings in Lakeba Group Limited.</p>
+  {(announcements ?? []).map((a) => (
+    <div class:list={['mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-5 py-3.5 text-sm', toneStyles[a.tone as keyof typeof toneStyles]]}>
+      <p><span class="font-semibold text-white">{a.title}</span>{a.body && <span class="text-white/65"> · {a.body}</span>}</p>
+      {a.link_url && <a href={a.link_url} class="font-semibold text-white underline-offset-4 hover:underline">{a.link_label ?? 'Learn more'} →</a>}
+    </div>
+  ))}
 
-  <section class="mt-10 grid gap-4 lg:grid-cols-2">
-    {(holders as Holder[] | null)?.length ? (
-      (holders as Holder[]).flatMap((h) =>
-        latest(h).map((row) => {
-          const total = totals.get(row.share_class_id) ?? 0;
-          return (
-            <article class="card">
-              <div class="flex items-start justify-between gap-4">
-                <div>
-                  <h2 class="text-lg font-bold">{h.name}</h2>
-                  <p class="text-sm text-white/45">{kindLabel[h.kind]} · {row.share_classes?.name}</p>
-                </div>
-                <span class="rounded-full bg-lk-blue/15 px-3 py-1 font-mono text-xs text-lk-blue">{row.share_classes?.code}</span>
-              </div>
-              <dl class="mt-8 grid grid-cols-2 gap-6">
-                <div>
-                  <dt class="text-xs uppercase tracking-widest text-white/40">Your shares</dt>
-                  <dd class="mt-1 font-display text-3xl font-bold text-white">{fmt.format(row.shares)}</dd>
-                </div>
-                <div>
-                  <dt class="text-xs uppercase tracking-widest text-white/40">Of total on issue</dt>
-                  <dd class="mt-1 font-display text-3xl font-bold text-white">{total ? pct.format(row.shares / total) : '—'}</dd>
-                </div>
-              </dl>
-              <p class="mt-6 border-t border-white/5 pt-4 text-xs text-white/40">
-                As at {date.format(new Date(row.as_at))} · {fmt.format(total)} {row.share_classes?.name.toLowerCase()} on issue
-              </p>
-            </article>
-          );
-        }),
-      )
-    ) : (
+  <div class="mt-6 flex flex-wrap items-end justify-between gap-6">
+    <div>
+      <p class="eyebrow">Investor portal</p>
+      <h1 class="mt-4 text-4xl font-extrabold sm:text-5xl">Welcome, {firstName}</h1>
+      <p class="mt-3 text-white/55">Your investment in Lakeba Group Limited.</p>
+    </div>
+    {positions.length > 0 && (
+      <div class="flex flex-wrap gap-x-8 gap-y-4">
+        <div><p class="text-xs uppercase tracking-widest text-white/40">Total shares</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{shares.format(totalShares)}</p></div>
+        {price && <div><p class="text-xs uppercase tracking-widest text-white/40">Indicative value</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{aud.format(totalShares * price.price)}</p></div>}
+      </div>
+    )}
+  </div>
+
+  <!-- Holdings -->
+  <section class="mt-10 grid gap-4 lg:grid-cols-2" aria-label="Holdings">
+    {positions.length ? positions.map((p) => (
+      <article class="card">
+        <div class="flex items-start justify-between gap-4">
+          <div>
+            <h2 class="text-lg font-bold">{p.holder.name}</h2>
+            <p class="text-sm text-white/45">{holderKinds[p.holder.kind]} · {p.row.share_classes?.name}</p>
+          </div>
+          <a href={`/statement/${p.holder.id}?class=${p.row.share_class_id}`} class="btn-ghost px-3 py-2 text-xs">Holding statement ↓</a>
+        </div>
+        <dl class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">Shares</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{shares.format(p.row.shares)}</dd></div>
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">Of total</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{p.total ? percent.format(p.row.shares / p.total) : '—'}</dd></div>
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">Indicative</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{price ? aud.format(p.row.shares * price.price) : '—'}</dd></div>
+        </dl>
+        <p class="mt-6 border-t border-white/5 pt-4 text-xs text-white/40">As at {longDate.format(new Date(p.row.as_at))} · {shares.format(p.total)} {p.row.share_classes?.name.toLowerCase()} on issue</p>
+      </article>
+    )) : (
       <div class="card lg:col-span-2">
         <h2 class="text-lg font-bold">No holdings linked yet</h2>
-        <p class="mt-2 text-sm text-white/55">If you are a shareholder, contact <a class="text-lk-blue hover:underline" href="mailto:info@lakeba.com">info@lakeba.com</a> and we'll link your holding to this account.</p>
+        <p class="mt-2 text-sm text-white/55">If you are a shareholder, ask a question in <a class="text-lk-blue hover:underline" href="/board">Board Q&amp;A</a> or email info@lakeba.com and we'll link your holding to this account.</p>
       </div>
     )}
   </section>
+
+  <div class="mt-4 grid gap-4 lg:grid-cols-3">
+    <!-- Reference price -->
+    {prices.length > 0 && price && (
+      <section class="card lg:col-span-2">
+        <div class="flex flex-wrap items-start justify-between gap-4">
+          <div>
+            <h2 class="text-lg font-bold">Reference price</h2>
+            <p class="text-sm text-white/45">{sourceLabels[price.source]} · {shortDate.format(new Date(price.priced_on))}</p>
+          </div>
+          <p class="font-display text-3xl font-bold text-white">{audPrecise.format(price.price)}</p>
+        </div>
+        <Sparkline class="mt-6 h-28 w-full" points={prices.map((pr) => ({ label: `${shortDate.format(new Date(pr.priced_on))}: ${audPrecise.format(pr.price)} (${sourceLabels[pr.source]})`, value: pr.price }))} />
+        <p class="mt-3 text-xs text-white/35">Indicative only. Lakeba shares are unlisted; values use the latest capital raise, secondary trade or directors’ valuation and are not financial advice.</p>
+      </section>
+    )}
+
+    <!-- Secondary trading -->
+    {liquidity && (
+      <section class="card flex flex-col bg-gradient-to-br from-lk-green/15 to-transparent">
+        <p class="eyebrow w-fit">Liquidity</p>
+        <h2 class="mt-4 text-lg font-bold">{liquidity.title}</h2>
+        <p class="mt-2 flex-1 text-sm text-white/60">{liquidity.body}</p>
+        <a href={liquidity.url} target="_blank" rel="noopener" class="btn-primary mt-6">{liquidity.label} ↗</a>
+      </section>
+    )}
+  </div>
+
+  <div class="mt-4 grid gap-4 lg:grid-cols-3">
+    <!-- Latest documents -->
+    <section class="card lg:col-span-2">
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-bold">Latest documents</h2>
+        <a href="/documents" class="text-sm text-lk-blue hover:underline">All documents →</a>
+      </div>
+      <ul class="mt-4 divide-y divide-white/5">
+        {(docs ?? []).map((d) => {
+          const unread = !(d.document_reads as { user_id: string }[]).some((r) => r.user_id === userId);
+          return (
+            <li>
+              <a href={`/documents/${d.id}`} class="flex flex-col gap-1 py-3 hover:text-white sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <span class="flex items-center gap-3">
+                  {unread ? <span class="size-2 shrink-0 rounded-full bg-lk-orange" title="New" /> : <span class="size-2 shrink-0" />}
+                  <span class:list={[unread ? 'font-semibold text-white' : 'text-white/75']}>{d.title}</span>
+                </span>
+                <span class="pl-5 text-xs text-white/40 sm:shrink-0 sm:pl-0">{categoryLabels[d.category]} · {shortDate.format(new Date(d.published_at!))}</span>
+              </a>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+
+    <!-- AGM + Q&A -->
+    <div class="grid gap-4">
+      {meeting && (
+        <a href={`/agm/${meeting.id}`} class="card block transition hover:bg-white/[0.07]">
+          <p class="text-xs uppercase tracking-widest text-lk-orange">Upcoming meeting</p>
+          <h2 class="mt-2 text-lg font-bold">{meeting.title}</h2>
+          <p class="mt-1 text-sm text-white/55">{longDate.format(new Date(meeting.starts_at))}</p>
+          <p class="mt-4 text-sm text-white/70">Lodge your proxy by {shortDate.format(new Date(meeting.proxy_deadline))} →</p>
+        </a>
+      )}
+      <a href="/board" class="card block transition hover:bg-white/[0.07]">
+        <p class="text-xs uppercase tracking-widest text-white/40">Board Q&amp;A</p>
+        <p class="mt-2 font-display text-3xl font-bold text-white">{openQueries ?? 0}</p>
+        <p class="text-sm text-white/55">{openQueries === 1 ? 'question' : 'questions'} awaiting a reply · the board replies within 7 working days</p>
+      </a>
+    </div>
+  </div>
+
+  <div class="mt-4 grid gap-4 lg:grid-cols-3">
+    <!-- Shareholder update video -->
+    {video && (
+      <section class="card lg:col-span-2">
+        <h2 class="text-lg font-bold">{video.title}</h2>
+        {video.summary && <p class="mt-1 text-sm text-white/55">{video.summary}</p>}
+        <video class="mt-5 aspect-video w-full rounded-2xl bg-black" controls preload="none" src={`/documents/${video.id}`}></video>
+      </section>
+    )}
+    <!-- News -->
+    <section class:list={['card', !video && 'lg:col-span-3']}>
+      <div class="flex items-center justify-between">
+        <h2 class="text-lg font-bold">News</h2>
+        <a href="/news" class="text-sm text-lk-blue hover:underline">All news →</a>
+      </div>
+      <ul class="mt-4 space-y-4">
+        {(posts ?? []).map((n) => (
+          <li><a href={`/news/${n.slug}`} class="group block">
+            <p class="text-xs text-white/40">{shortDate.format(new Date(n.published_at!))}</p>
+            <p class="font-semibold text-white group-hover:underline">{n.title}</p>
+            <p class="line-clamp-2 text-sm text-white/55">{n.excerpt}</p>
+          </a></li>
+        ))}
+      </ul>
+    </section>
+  </div>
 </Portal>

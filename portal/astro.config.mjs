@@ -15,6 +15,11 @@ export default defineConfig({
       SUPABASE_URL: envField.string({ context: 'server', access: 'secret' }),
       SUPABASE_PUBLISHABLE_KEY: envField.string({ context: 'server', access: 'secret' }),
       TURNSTILE_SITE_KEY: envField.string({ context: 'server', access: 'public', optional: true }),
+      // Admin-only operations (inviting users, sending notifications). Never sent to the browser.
+      SUPABASE_SECRET_KEY: envField.string({ context: 'server', access: 'secret' }),
+      SMTP_URL: envField.string({ context: 'server', access: 'secret', optional: true }),
+      MAIL_FROM: envField.string({ context: 'server', access: 'public', default: 'Lakeba Investor Relations <investors@lakeba.com>' }),
+      ANTHROPIC_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
     },
   },
   vite: {

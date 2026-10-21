@@ -1,0 +1,99 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { sendInvite } from '../../../lib/admin-auth';
+import { field } from '../../../lib/forms';
+import { displayName, roles } from '../../../lib/admin-forms';
+import { shortDate } from '../../../lib/format';
+
+const supabase = Astro.locals.supabase;
+const svc = serviceClient();
+let error = '';
+let notice = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const email = field(form, 'email').toLowerCase();
+  const role = field(form, 'role');
+  const holderId = field(form, 'holder_id');
+  if (!email || !roles.includes(role as never)) {
+    error = 'Enter an email and choose a role.';
+  } else {
+    const { error: inviteError, userId } = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') });
+    if (inviteError || !userId) {
+      error = inviteError ?? 'Could not send the invitation.';
+    } else {
+      await svc.from('profiles').update({ role }).eq('id', userId).throwOnError();
+      if (holderId) {
+        await supabase.from('holder_members').upsert({ holder_id: holderId, user_id: userId, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner' }).throwOnError();
+      }
+      await supabase.rpc('log_event', { event_action: 'admin_invited_user', event_detail: { email, role, holder_id: holderId || null } });
+      notice = `Invitation sent to ${email}.`;
+    }
+  }
+}
+
+const [{ data: profiles }, { data: links }, { data: holders }, { data: authUsers }] = await Promise.all([
+  supabase.from('profiles').select('id, email, first_name, last_name, role').order('last_name'),
+  supabase.from('holder_members').select('user_id, access, holders(name)'),
+  supabase.from('holders').select('id, name').order('name'),
+  svc.auth.admin.listUsers({ perPage: 1000 }),
+]);
+const authById = new Map((authUsers?.users ?? []).map((u) => [u.id, u]));
+const holdersOf = (id: string) => (links ?? []).filter((l) => l.user_id === id).map((l) => (l.holders as { name: string } | null)?.name).filter(Boolean);
+const factorsOf = (id: string) => (authById.get(id)?.factors ?? []).filter((f) => f.status === 'verified').length;
+const isBanned = (id: string) => {
+  const until = authById.get(id)?.banned_until;
+  return Boolean(until && new Date(until) > new Date());
+};
+---
+
+<Admin title="Investors">
+  <PageHeader title="Investors" subtitle="Accounts, roles and which holding entities each person can see." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+
+  <details class="card mb-6" open={Boolean(error)}>
+    <summary class="cursor-pointer font-display text-lg font-bold text-white">Invite someone</summary>
+    <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
+      <div><label class="label" for="email">Email</label><input class="field" id="email" name="email" type="email" required /></div>
+      <div><label class="label" for="role">Role</label>
+        <select class="field" id="role" name="role">{roles.map((r) => <option value={r}>{r}</option>)}</select></div>
+      <div><label class="label" for="first_name">First name</label><input class="field" id="first_name" name="first_name" /></div>
+      <div><label class="label" for="last_name">Last name</label><input class="field" id="last_name" name="last_name" /></div>
+      <div><label class="label" for="holder_id">Link to holder (optional)</label>
+        <select class="field" id="holder_id" name="holder_id"><option value="">—</option>{(holders ?? []).map((h) => <option value={h.id}>{h.name}</option>)}</select></div>
+      <div><label class="label" for="access">Access</label>
+        <select class="field" id="access" name="access"><option value="owner">Owner (can vote)</option><option value="viewer">Viewer (read only)</option></select></div>
+      <div class="sm:col-span-2"><button class="btn-primary">Send invitation</button></div>
+    </form>
+  </details>
+
+  <div class="card overflow-x-auto !p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40">
+        <tr><th class="px-5 py-3 font-medium">Name</th><th class="px-5 py-3 font-medium">Role</th><th class="px-5 py-3 font-medium">Holders</th><th class="px-5 py-3 font-medium">Two-step</th><th class="px-5 py-3 font-medium">Last sign-in</th></tr>
+      </thead>
+      <tbody class="divide-y divide-white/5">
+        {(profiles ?? []).map((p) => {
+          const auth = authById.get(p.id);
+          return (
+            <tr class="hover:bg-white/[0.02]">
+              <td class="px-5 py-3">
+                <a href={`/admin/investors/${p.id}`} class="font-medium text-white hover:underline">{displayName(p)}</a>
+                <span class="block text-xs text-white/40">{p.email}</span>
+                {isBanned(p.id) && <span class="mt-1 inline-block rounded-full bg-lk-red/15 px-2 py-0.5 text-[11px] text-red-200">Disabled</span>}
+              </td>
+              <td class="px-5 py-3 capitalize text-white/70">{p.role}</td>
+              <td class="px-5 py-3 text-white/60">{holdersOf(p.id).join(', ') || '—'}</td>
+              <td class="px-5 py-3">{factorsOf(p.id) ? <span class="text-lk-green">On</span> : <span class="text-white/40">Off</span>}</td>
+              <td class="px-5 py-3 text-white/50">{auth?.last_sign_in_at ? shortDate.format(new Date(auth.last_sign_in_at)) : auth?.invited_at ? 'Invited' : 'Never'}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </div>
+</Admin>

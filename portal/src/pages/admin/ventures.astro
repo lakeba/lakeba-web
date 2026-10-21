@@ -1,0 +1,131 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import { field } from '../../lib/forms';
+import { slugify } from '../../lib/admin-forms';
+import { audPrecise, shortDate } from '../../lib/format';
+import { sourceLabels } from '../../lib/holdings';
+
+const supabase = Astro.locals.supabase;
+const editId = Astro.url.searchParams.get('venture');
+const ventureStatuses = ['active', 'building', 'exited'];
+let error = '';
+let notice = '';
+const log = (action: string, detail: Record<string, unknown>) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const id = field(form, 'id');
+
+  if (intent === 'save-venture') {
+    const stake = field(form, 'lakeba_stake');
+    const row = {
+      name: field(form, 'name'), slug: slugify(field(form, 'slug') || field(form, 'name')), tagline: field(form, 'tagline'), stage: field(form, 'stage'),
+      lakeba_stake: stake === '' ? null : Number(stake), website: field(form, 'website') || null,
+      status: ventureStatuses.includes(field(form, 'status')) ? field(form, 'status') : 'active', sort: Number(field(form, 'sort') || 0),
+    };
+    const { error: e } = id ? await supabase.from('ventures').update(row).eq('id', id) : await supabase.from('ventures').insert(row);
+    if (e) error = e.code === '23505' ? 'Another venture uses that slug.' : e.message;
+    else { await log('admin_saved_venture', { name: row.name }); notice = 'Venture saved.'; }
+  } else if (intent === 'delete-venture') {
+    await supabase.from('ventures').delete().eq('id', id).throwOnError();
+    notice = 'Venture deleted.';
+  } else if (intent === 'add-update') {
+    const { error: e } = await supabase.from('venture_updates').insert({ venture_id: field(form, 'venture_id'), title: field(form, 'title'), body: field(form, 'body'), happened_on: field(form, 'happened_on') });
+    if (e) error = e.message; else { await log('admin_added_venture_update', { venture_id: field(form, 'venture_id') }); notice = 'Milestone added.'; }
+  } else if (intent === 'delete-update') {
+    await supabase.from('venture_updates').delete().eq('id', id).throwOnError();
+    notice = 'Milestone deleted.';
+  } else if (intent === 'add-price') {
+    const price = Number(field(form, 'price'));
+    if (!(price >= 0)) error = 'Enter a price of 0 or more.';
+    else {
+      const { error: e } = await supabase.from('reference_prices').insert({ share_class_id: field(form, 'share_class_id'), price, priced_on: field(form, 'priced_on'), source: field(form, 'source'), note: field(form, 'note') || null });
+      if (e) error = e.code === '23505' ? 'A price from that source on that date already exists.' : e.message;
+      else { await log('admin_added_reference_price', { price, priced_on: field(form, 'priced_on') }); notice = 'Reference price added.'; }
+    }
+  } else if (intent === 'delete-price') {
+    await supabase.from('reference_prices').delete().eq('id', id).throwOnError();
+    notice = 'Reference price deleted.';
+  }
+}
+
+const [{ data: ventures }, { data: updates }, { data: prices }, { data: classes }] = await Promise.all([
+  supabase.from('ventures').select('*').order('sort'),
+  supabase.from('venture_updates').select('id, venture_id, title, happened_on').order('happened_on', { ascending: false }),
+  supabase.from('reference_prices').select('id, price, priced_on, source, note, share_classes(code)').order('priced_on', { ascending: false }),
+  supabase.from('share_classes').select('id, code, name').order('code'),
+]);
+const v = editId ? ventures?.find((x) => x.id === editId) : null;
+const today = new Date().toISOString().slice(0, 10);
+---
+
+<Admin title="Ventures & prices">
+  <PageHeader title="Ventures & prices" subtitle="The portfolio look-through and the reference prices behind each shareholder's indicative value." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+
+  <section class="card mb-6">
+    <div class="flex items-center justify-between"><h2 class="text-lg font-bold">Ventures</h2>{v && <a href="/admin/ventures" class="text-sm text-lk-blue hover:underline">New venture</a>}</div>
+    <ul class="mt-4 divide-y divide-white/5 text-sm">
+      {(ventures ?? []).map((x) => (
+        <li class="py-3">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <span><a href={`?venture=${x.id}`} class="font-medium text-white/85 hover:underline">{x.name}</a> <span class="text-xs capitalize text-white/40">{x.status} · {x.stage}{x.lakeba_stake != null ? ` · ${Number(x.lakeba_stake)}%` : ''}</span></span>
+            <form method="post" class="text-xs"><input type="hidden" name="id" value={x.id} /><button name="intent" value="delete-venture" class="text-white/50 hover:text-red-200" onclick="return confirm('Delete this venture and its milestones?')">Delete</button></form>
+          </div>
+          <ul class="mt-2 space-y-1 pl-4 text-xs text-white/50">
+            {(updates ?? []).filter((u) => u.venture_id === x.id).slice(0, 4).map((u) => (
+              <li class="flex justify-between gap-3"><span>{shortDate.format(new Date(u.happened_on))} · {u.title}</span>
+                <form method="post"><input type="hidden" name="id" value={u.id} /><button name="intent" value="delete-update" class="hover:text-red-200">Remove</button></form></li>
+            ))}
+          </ul>
+        </li>
+      ))}
+    </ul>
+    <form method="post" class="mt-4 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-3">
+      <h3 class="font-display font-bold text-white sm:col-span-3">{v ? `Edit ${v.name}` : 'Add a venture'}</h3>
+      {v && <input type="hidden" name="id" value={v.id} />}
+      <div><label class="label" for="name">Name</label><input class="field" id="name" name="name" required value={v?.name} /></div>
+      <div><label class="label" for="slug">Slug (blank = from name)</label><input class="field" id="slug" name="slug" value={v?.slug} /></div>
+      <div><label class="label" for="stage">Stage</label><input class="field" id="stage" name="stage" value={v?.stage} placeholder="MVP, Growth, Scale-up…" /></div>
+      <div class="sm:col-span-3"><label class="label" for="tagline">One-line description</label><input class="field" id="tagline" name="tagline" value={v?.tagline} /></div>
+      <div><label class="label" for="stake">Lakeba stake (%)</label><input class="field" id="stake" name="lakeba_stake" type="number" step="0.01" min="0" max="100" value={v?.lakeba_stake} /></div>
+      <div><label class="label" for="vstatus">Status</label><select class="field" id="vstatus" name="status">{ventureStatuses.map((s) => <option value={s} selected={s === v?.status}>{s}</option>)}</select></div>
+      <div><label class="label" for="sort">Order</label><input class="field" id="sort" name="sort" type="number" value={v?.sort ?? 0} /></div>
+      <div class="sm:col-span-2"><label class="label" for="website">Website</label><input class="field" id="website" name="website" type="url" value={v?.website} /></div>
+      <div class="flex items-end"><button name="intent" value="save-venture" class="btn-primary">{v ? 'Save venture' : 'Add venture'}</button></div>
+    </form>
+    <form method="post" class="mt-4 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-3">
+      <h3 class="font-display font-bold text-white sm:col-span-3">Add a milestone</h3>
+      <div><label class="label" for="venture_id">Venture</label><select class="field" id="venture_id" name="venture_id" required>{(ventures ?? []).map((x) => <option value={x.id} selected={x.id === v?.id}>{x.name}</option>)}</select></div>
+      <div><label class="label" for="u-title">Title</label><input class="field" id="u-title" name="title" required /></div>
+      <div><label class="label" for="happened_on">Date</label><input class="field" id="happened_on" name="happened_on" type="date" value={today} required /></div>
+      <div class="sm:col-span-3"><label class="label" for="u-body">Details</label><textarea class="field" id="u-body" name="body" rows="2"></textarea></div>
+      <div><button name="intent" value="add-update" class="btn-ghost">Add milestone</button></div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2 class="text-lg font-bold">Reference prices</h2>
+    <p class="mt-1 text-sm text-white/55">The latest price per share class sets each shareholder's indicative value. It is shown as indicative, not a valuation.</p>
+    <ul class="mt-4 divide-y divide-white/5 text-sm">
+      {(prices ?? []).map((p) => (
+        <li class="flex flex-wrap items-center justify-between gap-3 py-3">
+          <span><span class="font-medium text-white/85">{audPrecise.format(Number(p.price))}</span> <span class="text-xs text-white/40">{(p.share_classes as { code: string } | null)?.code} · {shortDate.format(new Date(p.priced_on))} · {sourceLabels[p.source]}{p.note ? ` · ${p.note}` : ''}</span></span>
+          <form method="post" class="text-xs"><input type="hidden" name="id" value={p.id} /><button name="intent" value="delete-price" class="text-white/50 hover:text-red-200">Delete</button></form>
+        </li>
+      ))}
+    </ul>
+    <form method="post" class="mt-4 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-3">
+      <div><label class="label" for="share_class_id">Share class</label><select class="field" id="share_class_id" name="share_class_id">{(classes ?? []).map((c) => <option value={c.id}>{c.name}</option>)}</select></div>
+      <div><label class="label" for="price">Price per share (AUD)</label><input class="field" id="price" name="price" type="number" step="0.0001" min="0" required /></div>
+      <div><label class="label" for="priced_on">Date</label><input class="field" id="priced_on" name="priced_on" type="date" value={today} required /></div>
+      <div><label class="label" for="source">Source</label><select class="field" id="source" name="source">{Object.entries(sourceLabels).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
+      <div class="sm:col-span-2"><label class="label" for="note">Note</label><input class="field" id="note" name="note" placeholder="e.g. Series C round" /></div>
+      <div><button name="intent" value="add-price" class="btn-ghost">Add price</button></div>
+    </form>
+  </section>
+</Admin>

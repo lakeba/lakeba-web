@@ -1,0 +1,72 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import Empty from '../../components/Empty.astro';
+import { field } from '../../lib/forms';
+import { shortDate } from '../../lib/format';
+
+const supabase = Astro.locals.supabase;
+const userId = Astro.locals.user!.id;
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const subject = field(form, 'subject');
+  const body = field(form, 'body');
+  if (form.get('terms') !== 'on') error = 'Please accept the terms for shareholder queries.';
+  else if (subject.length < 3 || body.length < 1) error = 'Add a subject and your question.';
+  else {
+    const { data: created, error: insertError } = await supabase.from('queries').insert({ user_id: userId, subject }).select('id').single();
+    if (insertError || !created) error = 'Your question could not be sent. Only shareholders can ask the board.';
+    else {
+      await supabase.from('query_messages').insert({ query_id: created.id, author_id: userId, body }).throwOnError();
+      await supabase.rpc('log_event', { event_action: 'query_created', event_detail: { query_id: created.id } });
+      return Astro.redirect(`/board/${created.id}?sent=1`);
+    }
+  }
+}
+
+const { data: queries } = await supabase.from('queries').select('id, subject, status, due_at, created_at, updated_at').order('updated_at', { ascending: false });
+const statusStyles: Record<string, string> = { open: 'bg-lk-orange/15 text-lk-orange', answered: 'bg-lk-green/15 text-lk-green', closed: 'bg-white/10 text-white/55' };
+const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 'Answered', closed: 'Closed' };
+---
+
+<Portal title="Board Q&A">
+  <PageHeader eyebrow="Board Q&A" title="Ask the board" subtitle="Questions about the company’s operations, performance or governance. We aim to reply within 7 working days." />
+
+  <div class="grid gap-8 lg:grid-cols-[1fr_24rem]">
+    <section>
+      <h2 class="mb-4 text-lg font-bold">Your questions</h2>
+      {queries?.length ? (
+        <ul class="grid gap-3">
+          {queries.map((q) => (
+            <li><a href={`/board/${q.id}`} class="card flex flex-wrap items-center justify-between gap-3 p-5 transition hover:bg-white/[0.07]">
+              <div>
+                <p class="font-semibold text-white">{q.subject}</p>
+                <p class="text-xs text-white/40">Asked {shortDate.format(new Date(q.created_at))}{q.status === 'open' && ` · reply due by ${shortDate.format(new Date(q.due_at))}`}</p>
+              </div>
+              <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', statusStyles[q.status]]}>{statusLabel[q.status]}</span>
+            </a></li>
+          ))}
+        </ul>
+      ) : <Empty title="No questions yet">Use the form to send your first question to the board.</Empty>}
+    </section>
+
+    <section class="card h-fit">
+      <h2 class="text-lg font-bold">New question</h2>
+      {error && <div class="mt-4"><Alert tone="error">{error}</Alert></div>}
+      <form method="post" class="mt-5 space-y-4">
+        <div><label for="subject" class="label">Subject</label><input id="subject" name="subject" maxlength="200" required class="field" /></div>
+        <div><label for="body" class="label">Your question</label><textarea id="body" name="body" rows="6" maxlength="10000" required class="field"></textarea></div>
+        <label class="flex gap-3 text-sm text-white/60">
+          <input type="checkbox" name="terms" required class="mt-1 accent-lk-blue" />
+          <span>I agree to the <details class="inline"><summary class="inline cursor-pointer text-lk-blue">terms for responding to shareholder queries</summary>
+            <span class="mt-2 block text-xs text-white/50">Queries should relate to the company’s operations, financial performance or governance. The company will acknowledge receipt and aims to respond within 7 working days, and may decline queries that are irrelevant, inappropriate or unlawful. Responses are general information, not financial advice.</span>
+          </details></span>
+        </label>
+        <button class="btn-primary w-full">Send to the board</button>
+      </form>
+    </section>
+  </div>
+</Portal>

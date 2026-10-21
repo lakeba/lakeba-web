@@ -1,0 +1,64 @@
+---
+import Portal from '../layouts/Portal.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Alert from '../components/Alert.astro';
+import { field } from '../lib/forms';
+import { holderKinds } from '../lib/format';
+
+const supabase = Astro.locals.supabase;
+const userId = Astro.locals.user!.id;
+let notice = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const { error } = await supabase.from('profiles').update({
+    first_name: field(form, 'first_name'),
+    last_name: field(form, 'last_name'),
+    phone: field(form, 'phone') || null,
+    notify_email: form.get('notify_email') === 'on',
+  }).eq('id', userId);
+  if (!error) await supabase.rpc('log_event', { event_action: 'profile_updated' });
+  notice = error ? 'Your changes could not be saved.' : 'Saved.';
+}
+
+const [{ data: profile }, { data: links }] = await Promise.all([
+  supabase.from('profiles').select('email, first_name, last_name, phone, notify_email').eq('id', userId).single(),
+  supabase.from('holder_members').select('access, holders(name, kind, registry_ref)').eq('user_id', userId),
+]);
+---
+
+<Portal title="Profile">
+  <PageHeader eyebrow="Profile" title="Your details" />
+  <div class="grid max-w-4xl gap-4 lg:grid-cols-2">
+    <form method="post" class="card space-y-4">
+      <h2 class="text-lg font-bold">Contact details</h2>
+      {notice && <Alert tone={notice === 'Saved.' ? 'success' : 'error'}>{notice}</Alert>}
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div><label for="first_name" class="label">First name</label><input id="first_name" name="first_name" value={profile?.first_name} autocomplete="given-name" class="field" /></div>
+        <div><label for="last_name" class="label">Last name</label><input id="last_name" name="last_name" value={profile?.last_name} autocomplete="family-name" class="field" /></div>
+      </div>
+      <div><label for="phone" class="label">Phone</label><input id="phone" name="phone" type="tel" value={profile?.phone ?? ''} autocomplete="tel" class="field" /></div>
+      <div><p class="label">Email</p><p class="text-white/70">{profile?.email}</p><p class="mt-1 text-xs text-white/40">To change your sign-in email, ask in Board Q&amp;A.</p></div>
+      <label class="flex items-center gap-3 text-sm text-white/70">
+        <input type="checkbox" name="notify_email" checked={profile?.notify_email} class="size-4 accent-lk-blue" />
+        Email me when new documents, meetings or replies are published
+      </label>
+      <button class="btn-primary">Save</button>
+    </form>
+    <section class="card h-fit">
+      <h2 class="text-lg font-bold">Holding entities</h2>
+      <p class="mt-1 text-sm text-white/55">Holdings this login can see.</p>
+      <ul class="mt-5 divide-y divide-white/5">
+        {(links ?? []).map((l) => {
+          const h = l.holders as unknown as { name: string; kind: string; registry_ref: string | null };
+          return (
+            <li class="flex items-center justify-between gap-4 py-3">
+              <div><p class="font-semibold text-white">{h.name}</p><p class="text-xs text-white/40">{holderKinds[h.kind]}{h.registry_ref && ` · ${h.registry_ref}`}</p></div>
+              <span class="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/60">{l.access === 'owner' ? 'Owner' : 'View only'}</span>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
+  </div>
+</Portal>

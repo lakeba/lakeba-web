@@ -1,0 +1,153 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { field } from '../../../lib/forms';
+import { displayName, parseLocal, toLocalInput } from '../../../lib/admin-forms';
+import { dateTime, shares } from '../../../lib/format';
+import { notifyMembers } from '../../../lib/notify';
+
+const { id } = Astro.params;
+const supabase = Astro.locals.supabase;
+const statuses = ['upcoming', 'open', 'closed', 'results'];
+const outcomes = { '': 'Not decided', carried: 'Carried', not_carried: 'Not carried', withdrawn: 'Withdrawn' };
+let error = '';
+let notice = '';
+const log = (action: string, detail: Record<string, unknown> = {}) => supabase.rpc('log_event', { event_action: action, event_detail: { meeting_id: id, ...detail } });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'save-meeting') {
+    const { data: before } = await supabase.from('meetings').select('status, title').eq('id', id!).single();
+    const status = statuses.includes(field(form, 'status')) ? field(form, 'status') : 'upcoming';
+    const { error: e } = await supabase.from('meetings').update({
+      title: field(form, 'title'), starts_at: parseLocal(field(form, 'starts_at')), proxy_deadline: parseLocal(field(form, 'proxy_deadline')),
+      location: field(form, 'location') || null, livestream_url: field(form, 'livestream_url') || null, status,
+      notice_document_id: field(form, 'notice_document_id') || null, minutes_document_id: field(form, 'minutes_document_id') || null,
+    }).eq('id', id!);
+    if (e) error = e.code === '23514' ? 'The proxy deadline must be before the meeting starts.' : e.message;
+    else {
+      await log('admin_updated_meeting', { status });
+      if (status === 'open' && before?.status !== 'open') {
+        await notifyMembers({ kind: 'meeting', title: `${field(form, 'title')}: proxy voting is open`, body: 'Read the notice of meeting, lodge your proxy votes and send questions in advance.', link: `/agm/${id}`, origin: Astro.url.origin });
+        notice = 'Meeting opened. Shareholders have been notified.';
+      } else notice = 'Meeting saved.';
+    }
+  } else if (intent === 'add-resolution') {
+    const { error: e } = await supabase.from('resolutions').insert({
+      meeting_id: id, number: Number(field(form, 'number')), title: field(form, 'title'), description: field(form, 'description'),
+      kind: field(form, 'kind') === 'special' ? 'special' : 'ordinary',
+    });
+    if (e) error = e.code === '23505' ? 'That resolution number is already used.' : e.message;
+    else { await log('admin_added_resolution'); notice = 'Resolution added.'; }
+  } else if (intent === 'outcome') {
+    await supabase.from('resolutions').update({ outcome: field(form, 'outcome') || null }).eq('id', field(form, 'resolution_id')).throwOnError();
+    await log('admin_set_outcome', { resolution_id: field(form, 'resolution_id'), outcome: field(form, 'outcome') });
+    notice = 'Outcome saved.';
+  } else if (intent === 'delete-resolution') {
+    await supabase.from('resolutions').delete().eq('id', field(form, 'resolution_id')).throwOnError();
+    notice = 'Resolution deleted.';
+  } else if (intent === 'answer') {
+    await supabase.from('meeting_questions').update({ answer: field(form, 'answer'), answered_at: new Date().toISOString() }).eq('id', field(form, 'question_id')).throwOnError();
+    await log('admin_answered_meeting_question');
+    notice = 'Answer saved.';
+  }
+}
+
+const [{ data: m }, { data: resolutions }, { data: tally }, { data: questions }, { data: docs }] = await Promise.all([
+  supabase.from('meetings').select('*').eq('id', id!).single(),
+  supabase.from('resolutions').select('*').eq('meeting_id', id!).order('number'),
+  supabase.rpc('resolution_tally', { target_meeting: id }),
+  supabase.from('meeting_questions').select('id, body, answer, answered_at, created_at, profiles(first_name, last_name, email)').eq('meeting_id', id!).order('created_at'),
+  supabase.from('documents').select('id, title').in('category', ['agm', 'governance', 'report']).order('created_at', { ascending: false }),
+]);
+if (!m) return new Response('Not found', { status: 404 });
+
+type Tally = { resolution_id: string; vote: 'for' | 'against' | 'abstain'; holders: number; shares: number };
+const votesFor = (rid: string, vote: Tally['vote']) => ((tally ?? []) as Tally[]).find((t) => t.resolution_id === rid && t.vote === vote);
+const votedShares = (rid: string) => ['for', 'against'].reduce((a, v) => a + Number(votesFor(rid, v as Tally['vote'])?.shares ?? 0), 0);
+---
+
+<Admin title={m.title}>
+  <a href="/admin/agm" class="text-sm text-white/50 hover:text-white">← Meetings</a>
+  <PageHeader title={m.title} subtitle={`${dateTime.format(new Date(m.starts_at))} · proxies close ${dateTime.format(new Date(m.proxy_deadline))}`}>
+    <a href={`/agm/${m.id}`} class="btn-ghost">View as shareholder</a>
+  </PageHeader>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+
+  <details class="card mb-6">
+    <summary class="cursor-pointer font-display text-lg font-bold text-white">Meeting details and status <span class="ml-2 rounded-full bg-white/10 px-2.5 py-0.5 text-xs font-normal capitalize text-white/70">{m.status}</span></summary>
+    <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
+      <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={m.title} required /></div>
+      <div><label class="label" for="starts_at">Starts</label><input class="field" id="starts_at" name="starts_at" type="datetime-local" value={toLocalInput(m.starts_at)} required /></div>
+      <div><label class="label" for="proxy_deadline">Proxy deadline</label><input class="field" id="proxy_deadline" name="proxy_deadline" type="datetime-local" value={toLocalInput(m.proxy_deadline)} required /></div>
+      <div><label class="label" for="location">Location</label><input class="field" id="location" name="location" value={m.location} /></div>
+      <div><label class="label" for="livestream_url">Livestream link</label><input class="field" id="livestream_url" name="livestream_url" type="url" value={m.livestream_url} /></div>
+      <div><label class="label" for="notice">Notice of meeting</label><select class="field" id="notice" name="notice_document_id"><option value="">—</option>{(docs ?? []).map((d) => <option value={d.id} selected={d.id === m.notice_document_id}>{d.title}</option>)}</select></div>
+      <div><label class="label" for="minutes">Minutes</label><select class="field" id="minutes" name="minutes_document_id"><option value="">—</option>{(docs ?? []).map((d) => <option value={d.id} selected={d.id === m.minutes_document_id}>{d.title}</option>)}</select></div>
+      <div><label class="label" for="status">Status</label><select class="field" id="status" name="status">{statuses.map((s) => <option value={s} selected={s === m.status}>{s}</option>)}</select>
+        <p class="mt-1 text-xs text-white/40">Moving to “open” notifies shareholders. “Results” shows outcomes.</p></div>
+      <div class="flex items-end"><button name="intent" value="save-meeting" class="btn-primary">Save meeting</button></div>
+    </form>
+  </details>
+
+  <section class="card mb-6">
+    <h2 class="text-lg font-bold">Resolutions and proxy votes</h2>
+    <div class="mt-4 space-y-4">
+      {(resolutions ?? []).map((r) => {
+        const total = votedShares(r.id);
+        return (
+          <article class="rounded-2xl border border-white/10 p-5">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div><p class="font-semibold text-white">{r.number}. {r.title} <span class="ml-1 text-xs font-normal capitalize text-white/40">{r.kind}</span></p><p class="mt-1 text-sm text-white/55">{r.description}</p></div>
+              <form method="post" class="flex items-center gap-2 text-sm">
+                <input type="hidden" name="resolution_id" value={r.id} />
+                <select name="outcome" class="field !w-auto !py-1.5 text-sm">{Object.entries(outcomes).map(([v, l]) => <option value={v} selected={(r.outcome ?? '') === v}>{l}</option>)}</select>
+                <button name="intent" value="outcome" class="btn-ghost !px-3 !py-1.5 text-sm">Set</button>
+                <button name="intent" value="delete-resolution" class="text-xs text-white/40 hover:text-red-200" onclick="return confirm('Delete this resolution and its votes?')">Delete</button>
+              </form>
+            </div>
+            <div class="mt-4 grid grid-cols-3 gap-3 text-sm">
+              {(['for', 'against', 'abstain'] as const).map((v) => {
+                const t = votesFor(r.id, v);
+                const share = v !== 'abstain' && total ? Number(t?.shares ?? 0) / total : null;
+                return (
+                  <div class="rounded-xl bg-white/[0.03] p-3">
+                    <p class="text-xs uppercase tracking-widest text-white/40">{v}</p>
+                    <p class="mt-1 font-display text-xl font-bold text-white">{shares.format(Number(t?.shares ?? 0))}</p>
+                    <p class="text-xs text-white/45">{Number(t?.holders ?? 0)} holder(s){share !== null ? ` · ${(share * 100).toFixed(1)}%` : ''}</p>
+                  </div>
+                );
+              })}
+            </div>
+          </article>
+        );
+      })}
+    </div>
+    <form method="post" class="mt-5 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-[6rem_1fr_10rem]">
+      <div><label class="label" for="number">No.</label><input class="field" id="number" name="number" type="number" min="1" value={(resolutions?.length ?? 0) + 1} required /></div>
+      <div><label class="label" for="r-title">Title</label><input class="field" id="r-title" name="title" required /></div>
+      <div><label class="label" for="r-kind">Type</label><select class="field" id="r-kind" name="kind"><option value="ordinary">Ordinary</option><option value="special">Special</option></select></div>
+      <div class="sm:col-span-3"><label class="label" for="r-desc">Explanation</label><textarea class="field" id="r-desc" name="description" rows="2"></textarea></div>
+      <div><button name="intent" value="add-resolution" class="btn-ghost">Add resolution</button></div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2 class="text-lg font-bold">Questions sent in advance</h2>
+    <div class="mt-4 space-y-4">
+      {(questions ?? []).map((q) => (
+        <form method="post" class="rounded-2xl border border-white/10 p-5">
+          <p class="text-xs text-white/45">{displayName(q.profiles as never)} · {dateTime.format(new Date(q.created_at))}</p>
+          <p class="mt-1 text-white/85">{q.body}</p>
+          <input type="hidden" name="question_id" value={q.id} />
+          <textarea class="field mt-3" name="answer" rows="2" placeholder="Answer (shown to the shareholder)">{q.answer}</textarea>
+          <button name="intent" value="answer" class="btn-ghost mt-3 !py-2 text-sm">{q.answered_at ? 'Update answer' : 'Save answer'}</button>
+        </form>
+      ))}
+      {!questions?.length && <p class="text-sm text-white/45">No questions yet.</p>}
+    </div>
+  </section>
+</Admin>

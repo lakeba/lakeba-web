@@ -1,0 +1,136 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import Alert from '../../components/Alert.astro';
+import { field } from '../../lib/forms';
+import { dateTime, longDate } from '../../lib/format';
+
+const supabase = Astro.locals.supabase;
+const userId = Astro.locals.user!.id;
+const id = Astro.params.id!;
+let notice: { tone: 'success' | 'error'; text: string } | null = null;
+
+const { data: meeting } = await supabase
+  .from('meetings')
+  .select('id, title, kind, starts_at, location, livestream_url, proxy_deadline, status, notice_document_id, minutes_document_id')
+  .eq('id', id)
+  .maybeSingle();
+if (!meeting) return new Response('Not found', { status: 404 });
+
+const { data: resolutions } = await supabase.from('resolutions').select('id, number, title, description, kind, outcome').eq('meeting_id', id).order('number');
+// Only owners can vote; read-only (viewer) access cannot lodge proxies.
+const { data: owned } = await supabase.from('holder_members').select('holder_id, holders(name)').eq('user_id', userId).eq('access', 'owner');
+const votingOpen = ['upcoming', 'open'].includes(meeting.status) && new Date(meeting.proxy_deadline) > new Date();
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  if (field(form, 'intent') === 'proxy' && votingOpen) {
+    const rows = (owned ?? []).flatMap((o) =>
+      (resolutions ?? []).map((r) => ({ resolution_id: r.id, holder_id: o.holder_id, vote: field(form, `vote-${o.holder_id}-${r.id}`), lodged_by: userId })),
+    ).filter((r) => ['for', 'against', 'abstain'].includes(r.vote));
+    const { error } = rows.length ? await supabase.from('proxy_votes').upsert(rows, { onConflict: 'resolution_id,holder_id' }) : { error: null };
+    if (!error && rows.length) await supabase.rpc('log_event', { event_action: 'proxy_lodged', event_detail: { meeting_id: id, votes: rows.length } });
+    notice = error ? { tone: 'error', text: 'Your proxy could not be lodged. The deadline may have passed.' } : { tone: 'success', text: `Proxy lodged for ${rows.length} vote${rows.length === 1 ? '' : 's'}. You can change it until the deadline.` };
+  }
+  if (field(form, 'intent') === 'question') {
+    const body = field(form, 'body');
+    const { error } = await supabase.from('meeting_questions').insert({ meeting_id: id, user_id: userId, body });
+    notice = error ? { tone: 'error', text: 'Your question could not be sent.' } : { tone: 'success', text: 'Thanks — your question has been sent to the board for the meeting.' };
+  }
+}
+
+const [{ data: votes }, { data: questions }] = await Promise.all([
+  supabase.from('proxy_votes').select('resolution_id, holder_id, vote').in('resolution_id', (resolutions ?? []).map((r) => r.id)),
+  supabase.from('meeting_questions').select('body, answer, created_at').eq('meeting_id', id).order('created_at'),
+]);
+const voteOf = (holderId: string, resolutionId: string) => votes?.find((v) => v.holder_id === holderId && v.resolution_id === resolutionId)?.vote;
+const outcomeLabel: Record<string, string> = { carried: 'Carried', not_carried: 'Not carried', withdrawn: 'Withdrawn' };
+const choices = [['for', 'For'], ['against', 'Against'], ['abstain', 'Abstain']] as const;
+---
+
+<Portal title={meeting.title}>
+  <a href="/agm" class="text-sm text-white/50 hover:text-white">← Meetings</a>
+  <div class="mt-6 grid gap-8 lg:grid-cols-[1fr_22rem]">
+    <div>
+      <p class="eyebrow">{meeting.kind === 'agm' ? 'Annual General Meeting' : 'General meeting'}</p>
+      <h1 class="mt-4 text-4xl font-extrabold">{meeting.title}</h1>
+      <p class="mt-3 text-white/60">{dateTime.format(new Date(meeting.starts_at))}{meeting.location && ` · ${meeting.location}`}</p>
+      {notice && <div class="mt-6"><Alert tone={notice.tone}>{notice.text}</Alert></div>}
+
+      <section class="mt-10">
+        <h2 class="text-xl font-bold">Resolutions</h2>
+        {votingOpen && owned?.length ? (
+          <form method="post" class="mt-5 space-y-4">
+            <input type="hidden" name="intent" value="proxy" />
+            {(resolutions ?? []).map((r) => (
+              <fieldset class="card p-5">
+                <legend class="sr-only">Resolution {r.number}</legend>
+                <p class="text-xs uppercase tracking-widest text-white/40">Resolution {r.number} · {r.kind === 'special' ? 'Special' : 'Ordinary'}</p>
+                <p class="mt-1 font-semibold text-white">{r.title}</p>
+                {r.description && <p class="mt-1 text-sm text-white/55">{r.description}</p>}
+                {(owned ?? []).map((o) => (
+                  <div class="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-white/5 pt-4">
+                    <p class="text-sm text-white/70">{(o.holders as unknown as { name: string }).name}</p>
+                    <div class="flex gap-2" role="radiogroup">
+                      {choices.map(([value, label]) => (
+                        <label class="cursor-pointer">
+                          <input type="radio" name={`vote-${o.holder_id}-${r.id}`} value={value} checked={voteOf(o.holder_id, r.id) === value} class="peer sr-only" />
+                          <span class="block rounded-lg border border-white/10 px-3 py-1.5 text-sm text-white/60 peer-checked:border-lk-blue peer-checked:bg-lk-blue/20 peer-checked:text-white peer-focus-visible:ring-2 peer-focus-visible:ring-lk-blue">{label}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </fieldset>
+            ))}
+            <div class="flex flex-wrap items-center justify-between gap-4">
+              <p class="text-sm text-white/50">Your proxy directs the chair to vote as shown. Deadline: {dateTime.format(new Date(meeting.proxy_deadline))}.</p>
+              <button class="btn-primary">Lodge proxy</button>
+            </div>
+          </form>
+        ) : (
+          <ol class="mt-5 space-y-3">
+            {(resolutions ?? []).map((r) => (
+              <li class="card flex flex-wrap items-start justify-between gap-4 p-5">
+                <div>
+                  <p class="text-xs uppercase tracking-widest text-white/40">Resolution {r.number}</p>
+                  <p class="mt-1 font-semibold text-white">{r.title}</p>
+                  {r.description && <p class="mt-1 text-sm text-white/55">{r.description}</p>}
+                </div>
+                {r.outcome && <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', r.outcome === 'carried' ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{outcomeLabel[r.outcome]}</span>}
+              </li>
+            ))}
+          </ol>
+        )}
+        {!votingOpen && meeting.status !== 'results' && <p class="mt-4 text-sm text-white/50">Proxy voting is closed.</p>}
+      </section>
+    </div>
+
+    <aside class="space-y-4">
+      <section class="card">
+        <h2 class="text-lg font-bold">Papers</h2>
+        <ul class="mt-4 space-y-2 text-sm">
+          {meeting.notice_document_id && <li><a href={`/documents/${meeting.notice_document_id}`} class="text-lk-blue hover:underline">Notice of meeting ↗</a></li>}
+          {meeting.minutes_document_id && <li><a href={`/documents/${meeting.minutes_document_id}`} class="text-lk-blue hover:underline">Minutes ↗</a></li>}
+          {meeting.livestream_url && <li><a href={meeting.livestream_url} target="_blank" rel="noopener" class="text-lk-blue hover:underline">Join the livestream ↗</a></li>}
+          {!meeting.notice_document_id && !meeting.minutes_document_id && !meeting.livestream_url && <li class="text-white/45">Papers will be published here.</li>}
+        </ul>
+      </section>
+      <section class="card">
+        <h2 class="text-lg font-bold">Ask before the meeting</h2>
+        <form method="post" class="mt-4 space-y-3">
+          <input type="hidden" name="intent" value="question" />
+          <textarea name="body" rows="4" maxlength="2000" required aria-label="Your question" class="field" placeholder="Your question for the board"></textarea>
+          <button class="btn-ghost w-full">Send question</button>
+        </form>
+        {(questions ?? []).length > 0 && (
+          <ul class="mt-5 space-y-3 border-t border-white/5 pt-4 text-sm">
+            {(questions ?? []).map((q) => (
+              <li><p class="text-white/80">{q.body}</p><p class="mt-1 text-white/50">{q.answer ? `Answer: ${q.answer}` : 'Awaiting answer'}</p></li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <p class="px-2 text-xs text-white/35">Meeting date: {longDate.format(new Date(meeting.starts_at))}</p>
+    </aside>
+  </div>
+</Portal>

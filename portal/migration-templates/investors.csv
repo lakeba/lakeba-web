@@ -1,0 +1,3 @@
+email,first_name,last_name,phone,role,registry_ref,access
+jane@example.com,Jane,Example,+61 400 000 000,investor,HOLD-0001,owner
+accountant@example.com,Alex,Adviser,,investor,HOLD-0001,viewer

@@ -1,0 +1,91 @@
+---
+import Portal from '../layouts/Portal.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Alert from '../components/Alert.astro';
+import { ask, askEnabled, type AskResult } from '../lib/ask';
+import { field } from '../lib/forms';
+
+const supabase = Astro.locals.supabase;
+let question = '';
+let result: AskResult | null = null;
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  question = field(await Astro.request.formData(), 'question').slice(0, 500);
+  // Simple fair-use limit: 20 questions per hour per user.
+  const since = new Date(Date.now() - 3600_000).toISOString();
+  const { data: count } = await supabase.rpc('my_recent_event_count', { event_action: 'ask_question', since });
+  if (question.length < 3) error = 'Type a question first.';
+  else if (Number(count ?? 0) >= 20) error = 'You have asked a lot of questions this hour. Please try again later.';
+  else {
+    await supabase.rpc('log_event', { event_action: 'ask_question', event_detail: { length: question.length } });
+    result = await ask(supabase, question);
+  }
+}
+const examples = ['What was revenue last financial year?', 'When is the next AGM and what will we vote on?', 'How does the LakebaOS co-founding program work?'];
+const reasons = {
+  no_api_key: 'AI answers are not switched on yet. Here are the most relevant passages.',
+  refused: 'This question could not be answered automatically. Here are the most relevant passages; you can also ask the board.',
+  error: 'The assistant is unavailable right now. Here are the most relevant passages.',
+};
+---
+
+<Portal title="Ask Lakeba">
+  <PageHeader eyebrow="Ask Lakeba" title="Ask about your company" subtitle="Answers come only from the documents published in this portal, with links to the source pages." />
+
+  <div class="max-w-3xl">
+    <form method="post" class="card flex flex-col gap-3 p-4 sm:flex-row">
+      <input name="question" value={question} maxlength="500" required aria-label="Your question" placeholder="e.g. What did the directors say about the FY26 outlook?" class="field flex-1" />
+      <button class="btn-primary">Ask</button>
+    </form>
+    {!result && !error && (
+      <div class="mt-4 flex flex-wrap gap-2">
+        {examples.map((e) => (
+          <form method="post"><input type="hidden" name="question" value={e} /><button class="rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/60 transition hover:border-white/30 hover:text-white">{e}</button></form>
+        ))}
+      </div>
+    )}
+
+    {error && <div class="mt-6"><Alert tone="error">{error}</Alert></div>}
+
+    {result?.kind === 'nothing' && (
+      <div class="mt-6"><Alert>No published document mentions that. Try other words, or <a href="/board" class="underline">ask the board</a>.</Alert></div>
+    )}
+
+    {result?.kind === 'answer' && (
+      <section class="card mt-6">
+        <div class="space-y-1 leading-relaxed text-white/85">
+          <p>{result.parts.map((p) => (
+            <>{p.text}{p.refs.map((n) => <a href={`#cite-${n}`} class="ml-0.5 align-super text-[11px] font-semibold text-lk-blue">[{n}]</a>)}</>
+          ))}</p>
+        </div>
+        {result.citations.length > 0 && (
+          <ol class="mt-6 space-y-3 border-t border-white/5 pt-5 text-sm">
+            {result.citations.map((c) => (
+              <li id={`cite-${c.n}`} class="flex gap-3">
+                <span class="font-semibold text-lk-blue">[{c.n}]</span>
+                <span><a href={`/documents/${c.documentId}`} target="_blank" rel="noopener" class="font-semibold text-white hover:underline">{c.title}{c.page && `, page ${c.page}`} ↗</a>
+                <span class="mt-1 block text-white/50">“{c.quote.trim()}”</span></span>
+              </li>
+            ))}
+          </ol>
+        )}
+        <p class="mt-6 text-xs text-white/35">AI-generated from company documents. Check the sources; this is not financial advice. Still unsure? <a href="/board" class="underline">Ask the board</a>.</p>
+      </section>
+    )}
+
+    {result?.kind === 'passages' && (
+      <section class="mt-6 space-y-3">
+        <Alert>{reasons[result.reason]}</Alert>
+        {result.passages.slice(0, 5).map((p) => (
+          <a href={`/documents/${p.document_id}`} target="_blank" rel="noopener" class="card block p-5 transition hover:bg-white/[0.07]">
+            <p class="text-sm font-semibold text-white">{p.title}{p.page && `, page ${p.page}`} ↗</p>
+            <p class="mt-2 line-clamp-4 text-sm text-white/55">{p.content}</p>
+          </a>
+        ))}
+      </section>
+    )}
+
+    {!askEnabled && !result && Astro.locals.profile?.role === 'admin' && <p class="mt-8 text-xs text-white/35">AI answers are off: set ANTHROPIC_API_KEY to enable them. Search still works.</p>}
+  </div>
+</Portal>

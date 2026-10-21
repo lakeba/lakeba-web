@@ -1,0 +1,144 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import { field } from '../../lib/forms';
+import { parseLocal, slugify } from '../../lib/admin-forms';
+import { dateTime, shortDate } from '../../lib/format';
+import { notifyMembers } from '../../lib/notify';
+
+const supabase = Astro.locals.supabase;
+const editPost = Astro.url.searchParams.get('post');
+const tones = ['info', 'success', 'warning'];
+let error = '';
+let notice = '';
+const log = (action: string, detail: Record<string, unknown>) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const id = field(form, 'id');
+
+  if (intent === 'save-announcement') {
+    const row = {
+      title: field(form, 'title'), body: field(form, 'body') || null, link_url: field(form, 'link_url') || null, link_label: field(form, 'link_label') || null,
+      tone: tones.includes(field(form, 'tone')) ? field(form, 'tone') : 'info',
+      starts_at: parseLocal(field(form, 'starts_at')) ?? new Date().toISOString(), ends_at: parseLocal(field(form, 'ends_at')),
+    };
+    const { error: e } = id ? await supabase.from('announcements').update(row).eq('id', id) : await supabase.from('announcements').insert(row);
+    if (e) error = e.message; else { await log('admin_saved_announcement', { title: row.title }); notice = 'Announcement saved.'; }
+  } else if (intent === 'end-announcement') {
+    await supabase.from('announcements').update({ ends_at: new Date().toISOString() }).eq('id', id).throwOnError();
+    notice = 'Announcement ended.';
+  } else if (intent === 'delete-announcement') {
+    await supabase.from('announcements').delete().eq('id', id).throwOnError();
+    notice = 'Announcement deleted.';
+  } else if (intent === 'save-post') {
+    const title = field(form, 'title');
+    const slug = slugify(field(form, 'slug') || title);
+    const publish = field(form, 'publish');
+    const { data: existing } = id ? await supabase.from('posts').select('published_at').eq('id', id).single() : { data: null };
+    const publishedAt = publish === 'yes' ? existing?.published_at ?? new Date().toISOString() : null;
+    const row = { title, slug, excerpt: field(form, 'excerpt'), body_md: String(form.get('body_md') ?? ''), cover_url: field(form, 'cover_url') || null, published_at: publishedAt };
+    const { error: e } = id ? await supabase.from('posts').update(row).eq('id', id) : await supabase.from('posts').insert(row);
+    if (e) error = e.code === '23505' ? 'Another post already uses that web address (slug).' : e.message;
+    else {
+      await log('admin_saved_post', { slug, published: Boolean(publishedAt) });
+      const newlyPublished = publishedAt && !existing?.published_at;
+      if (newlyPublished && field(form, 'notify') === 'yes') {
+        await notifyMembers({ kind: 'news', title, body: row.excerpt || 'A new update is available in the investor portal.', link: `/news/${slug}`, origin: Astro.url.origin });
+      }
+      notice = newlyPublished ? 'Post published.' : 'Post saved.';
+    }
+  } else if (intent === 'delete-post') {
+    await supabase.from('posts').delete().eq('id', id).throwOnError();
+    notice = 'Post deleted.';
+  } else if (intent === 'save-liquidity') {
+    const value = { title: field(form, 'title'), body: field(form, 'body'), url: field(form, 'url'), label: field(form, 'label') };
+    await supabase.from('portal_settings').upsert({ key: 'liquidity', value, updated_at: new Date().toISOString() }).throwOnError();
+    await log('admin_saved_setting', { key: 'liquidity' });
+    notice = 'Secondary trading card saved.';
+  }
+}
+
+const [{ data: announcements }, { data: posts }, { data: liquidityRow }] = await Promise.all([
+  supabase.from('announcements').select('*').order('starts_at', { ascending: false }),
+  supabase.from('posts').select('id, slug, title, excerpt, body_md, cover_url, published_at, created_at').order('created_at', { ascending: false }),
+  supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle(),
+]);
+const liquidity = (liquidityRow?.value ?? {}) as Record<string, string>;
+const post = editPost ? posts?.find((p) => p.id === editPost) : null;
+const now = new Date();
+const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.starts_at) <= now && (!a.ends_at || new Date(a.ends_at) > now);
+---
+
+<Admin title="News & announcements">
+  <PageHeader title="News & announcements" subtitle="The banner at the top of the dashboard, news posts, and the secondary trading card." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+
+  <section class="card mb-6">
+    <h2 class="text-lg font-bold">Announcement banner</h2>
+    <ul class="mt-4 divide-y divide-white/5 text-sm">
+      {(announcements ?? []).map((a) => (
+        <li class="flex flex-wrap items-center justify-between gap-3 py-3">
+          <span><span class="font-medium text-white/85">{a.title}</span> <span class:list={['ml-2 rounded-full px-2 py-0.5 text-[11px]', live(a) ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/50']}>{live(a) ? 'Showing' : new Date(a.starts_at) > now ? 'Scheduled' : 'Ended'}</span>
+            <span class="block text-xs text-white/40">{dateTime.format(new Date(a.starts_at))}{a.ends_at ? ` → ${dateTime.format(new Date(a.ends_at))}` : ''}</span></span>
+          <form method="post" class="flex gap-3 text-xs"><input type="hidden" name="id" value={a.id} />
+            {live(a) && <button name="intent" value="end-announcement" class="text-white/50 hover:text-white">End now</button>}
+            <button name="intent" value="delete-announcement" class="text-white/50 hover:text-red-200">Delete</button></form>
+        </li>
+      ))}
+    </ul>
+    <form method="post" class="mt-4 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-2">
+      <div class="sm:col-span-2"><label class="label" for="a-title">Title</label><input class="field" id="a-title" name="title" required /></div>
+      <div class="sm:col-span-2"><label class="label" for="a-body">Text</label><input class="field" id="a-body" name="body" /></div>
+      <div><label class="label" for="a-link">Link (optional)</label><input class="field" id="a-link" name="link_url" placeholder="/documents or https://…" /></div>
+      <div><label class="label" for="a-label">Link label</label><input class="field" id="a-label" name="link_label" /></div>
+      <div><label class="label" for="a-tone">Style</label><select class="field" id="a-tone" name="tone">{tones.map((t) => <option value={t}>{t}</option>)}</select></div>
+      <div class="grid grid-cols-2 gap-3">
+        <div><label class="label" for="a-start">Starts</label><input class="field" id="a-start" name="starts_at" type="datetime-local" /></div>
+        <div><label class="label" for="a-end">Ends</label><input class="field" id="a-end" name="ends_at" type="datetime-local" /></div>
+      </div>
+      <div><button name="intent" value="save-announcement" class="btn-ghost">Add announcement</button></div>
+    </form>
+  </section>
+
+  <section class="card mb-6">
+    <div class="flex items-center justify-between"><h2 class="text-lg font-bold">News posts</h2>{post && <a href="/admin/content" class="text-sm text-lk-blue hover:underline">New post</a>}</div>
+    <ul class="mt-4 divide-y divide-white/5 text-sm">
+      {(posts ?? []).map((p) => (
+        <li class="flex flex-wrap items-center justify-between gap-3 py-3">
+          <span><a href={`?post=${p.id}`} class="font-medium text-white/85 hover:underline">{p.title}</a>
+            <span class="block text-xs text-white/40">{p.published_at ? `Published ${shortDate.format(new Date(p.published_at))}` : 'Draft'} · /news/{p.slug}</span></span>
+          <form method="post" class="text-xs"><input type="hidden" name="id" value={p.id} /><button name="intent" value="delete-post" class="text-white/50 hover:text-red-200" onclick="return confirm('Delete this post?')">Delete</button></form>
+        </li>
+      ))}
+    </ul>
+    <form method="post" class="mt-4 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-2">
+      <h3 class="font-display font-bold text-white sm:col-span-2">{post ? `Edit “${post.title}”` : 'New post'}</h3>
+      {post && <input type="hidden" name="id" value={post.id} />}
+      <div><label class="label" for="p-title">Title</label><input class="field" id="p-title" name="title" required value={post?.title} /></div>
+      <div><label class="label" for="p-slug">Web address (blank = from title)</label><input class="field" id="p-slug" name="slug" value={post?.slug} /></div>
+      <div class="sm:col-span-2"><label class="label" for="p-excerpt">Excerpt</label><input class="field" id="p-excerpt" name="excerpt" value={post?.excerpt} /></div>
+      <div class="sm:col-span-2"><label class="label" for="p-body">Body (Markdown)</label><textarea class="field font-mono text-sm" id="p-body" name="body_md" rows="10">{post?.body_md}</textarea></div>
+      <div><label class="label" for="p-cover">Cover image URL (optional)</label><input class="field" id="p-cover" name="cover_url" value={post?.cover_url} /></div>
+      <div class="flex flex-col justify-end gap-2 text-sm text-white/70">
+        <label class="flex items-center gap-2"><input type="checkbox" name="publish" value="yes" checked={Boolean(post?.published_at)} /> Published</label>
+        <label class="flex items-center gap-2"><input type="checkbox" name="notify" value="yes" /> Notify shareholders when first published</label>
+      </div>
+      <div><button name="intent" value="save-post" class="btn-primary">{post ? 'Save post' : 'Create post'}</button></div>
+    </form>
+  </section>
+
+  <section class="card">
+    <h2 class="text-lg font-bold">Secondary trading card</h2>
+    <form method="post" class="mt-4 grid gap-4 sm:grid-cols-2">
+      <div><label class="label" for="l-title">Title</label><input class="field" id="l-title" name="title" value={liquidity.title} /></div>
+      <div><label class="label" for="l-label">Button label</label><input class="field" id="l-label" name="label" value={liquidity.label} /></div>
+      <div class="sm:col-span-2"><label class="label" for="l-body">Text</label><textarea class="field" id="l-body" name="body" rows="2">{liquidity.body}</textarea></div>
+      <div class="sm:col-span-2"><label class="label" for="l-url">Link</label><input class="field" id="l-url" name="url" type="url" value={liquidity.url} /></div>
+      <div><button name="intent" value="save-liquidity" class="btn-ghost">Save</button></div>
+    </form>
+  </section>
+</Admin>

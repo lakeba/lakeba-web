@@ -1,0 +1,154 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import Empty from '../../components/Empty.astro';
+import { field } from '../../lib/forms';
+import { parseLocal } from '../../lib/admin-forms';
+import { categoryLabels, dateTime, fileSize } from '../../lib/format';
+import { notifyMembers } from '../../lib/notify';
+import { pdfChunks } from '../../lib/pdf-text';
+
+const supabase = Astro.locals.supabase;
+const categories = Object.keys(categoryLabels);
+const audiences = { all_investors: 'All investors', board: 'Board only', holder: 'One holder' };
+let error = '';
+let notice = '';
+
+const safeName = (name: string) => name.toLowerCase().replace(/[^a-z0-9.]+/g, '-').replace(/^-+|-+$/g, '').slice(-80) || 'file';
+
+/** Stores the extracted text of a PDF so "Ask Lakeba" and search can use it. */
+async function indexPdf(documentId: string, bytes: Uint8Array) {
+  try {
+    const chunks = await pdfChunks(bytes);
+    if (chunks.length) {
+      await supabase.from('document_chunks').insert(chunks.map((c, i) => ({ document_id: documentId, chunk_index: i, page: c.page, content: c.content }))).throwOnError();
+    }
+    return chunks.length;
+  } catch {
+    return 0; // Scanned or protected PDFs have no extractable text.
+  }
+}
+
+const announce = (title: string, summary: string | null) =>
+  notifyMembers({ kind: 'document', title: `New document: ${title}`, body: summary || `“${title}” has been added to your documents.`, link: '/documents', origin: Astro.url.origin });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const id = field(form, 'id');
+
+  if (intent === 'upload') {
+    const file = form.get('file');
+    const title = field(form, 'title');
+    const category = field(form, 'category');
+    const audience = field(form, 'audience');
+    const holderId = field(form, 'holder_id');
+    const when = field(form, 'publish');
+    if (!(file instanceof File) || !file.size) error = 'Choose a file to upload.';
+    else if (!title || !categories.includes(category) || !(audience in audiences)) error = 'Fill in the title, category and audience.';
+    else if (audience === 'holder' && !holderId) error = 'Choose the holder this document is for.';
+    else {
+      const publishedAt = when === 'now' ? new Date().toISOString() : when === 'schedule' ? parseLocal(field(form, 'publish_at')) : null;
+      const path = `${category}/${new Date().getFullYear()}/${crypto.randomUUID()}-${safeName(file.name)}`;
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const { error: uploadError } = await supabase.storage.from('documents').upload(path, bytes, { contentType: file.type || 'application/octet-stream' });
+      if (uploadError) error = uploadError.message;
+      else {
+        const summary = field(form, 'summary') || null;
+        const { data: doc, error: insertError } = await supabase.from('documents').insert({
+          title, summary, category, audience, holder_id: audience === 'holder' ? holderId : null,
+          file_path: path, mime_type: file.type || 'application/octet-stream', size_bytes: file.size,
+          published_at: publishedAt, created_by: Astro.locals.user!.id,
+        }).select('id').single();
+        if (insertError || !doc) {
+          await supabase.storage.from('documents').remove([path]);
+          error = insertError?.message ?? 'Could not save the document.';
+        } else {
+          const passages = file.type === 'application/pdf' ? await indexPdf(doc.id, bytes) : 0;
+          await supabase.rpc('log_event', { event_action: 'admin_uploaded_document', event_detail: { document_id: doc.id, title } });
+          if (when === 'now' && audience === 'all_investors') await announce(title, summary);
+          notice = `Uploaded “${title}”${passages ? ` (${passages} passages indexed for search)` : ''}.`;
+        }
+      }
+    }
+  } else if (intent === 'publish' || intent === 'unpublish') {
+    const { data: doc } = await supabase.from('documents')
+      .update({ published_at: intent === 'publish' ? new Date().toISOString() : null }).eq('id', id).select('title, summary, audience').single();
+    if (doc) {
+      await supabase.rpc('log_event', { event_action: `admin_${intent}ed_document`, event_detail: { document_id: id, title: doc.title } });
+      if (intent === 'publish' && doc.audience === 'all_investors') await announce(doc.title, doc.summary);
+      notice = intent === 'publish' ? `Published “${doc.title}”.` : `“${doc.title}” is now a draft.`;
+    }
+  } else if (intent === 'delete') {
+    const { data: doc } = await supabase.from('documents').select('title, file_path').eq('id', id).single();
+    if (doc) {
+      await supabase.storage.from('documents').remove([doc.file_path]);
+      await supabase.from('documents').delete().eq('id', id).throwOnError();
+      await supabase.rpc('log_event', { event_action: 'admin_deleted_document', event_detail: { document_id: id, title: doc.title } });
+      notice = `Deleted “${doc.title}”.`;
+    }
+  }
+}
+
+const [{ data: docs }, { data: reads }, { data: holders }] = await Promise.all([
+  supabase.from('documents').select('id, title, category, audience, size_bytes, published_at, created_at, holders(name)').order('created_at', { ascending: false }),
+  supabase.from('document_reads').select('document_id'),
+  supabase.from('holders').select('id, name').order('name'),
+]);
+const readCount = new Map<string, number>();
+for (const r of reads ?? []) readCount.set(r.document_id, (readCount.get(r.document_id) ?? 0) + 1);
+const now = new Date();
+const status = (p: string | null) => (!p ? 'Draft' : new Date(p) > now ? 'Scheduled' : 'Published');
+const statusStyle: Record<string, string> = { Draft: 'bg-white/10 text-white/60', Scheduled: 'bg-lk-orange/15 text-lk-orange', Published: 'bg-lk-green/15 text-lk-green' };
+---
+
+<Admin title="Documents">
+  <PageHeader title="Documents" subtitle="Files are stored privately; investors get short-lived links only for documents they are allowed to see." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+
+  <details class="card mb-6" open={Boolean(error)}>
+    <summary class="cursor-pointer font-display text-lg font-bold text-white">Upload a document</summary>
+    <form method="post" enctype="multipart/form-data" class="mt-6 grid gap-4 sm:grid-cols-2">
+      <div class="sm:col-span-2"><input type="file" name="file" required class="block text-sm text-white/70 file:mr-4 file:rounded-lg file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-white" /></div>
+      <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" required /></div>
+      <div class="sm:col-span-2"><label class="label" for="summary">Summary (shown in the list and the notification)</label><textarea class="field" id="summary" name="summary" rows="2"></textarea></div>
+      <div><label class="label" for="category">Category</label><select class="field" id="category" name="category">{categories.map((c) => <option value={c}>{categoryLabels[c]}</option>)}</select></div>
+      <div><label class="label" for="audience">Who can see it</label><select class="field" id="audience" name="audience">{Object.entries(audiences).map(([v, l]) => <option value={v}>{l}</option>)}</select></div>
+      <div><label class="label" for="holder_id">Holder (for “One holder”)</label><select class="field" id="holder_id" name="holder_id"><option value="">—</option>{(holders ?? []).map((h) => <option value={h.id}>{h.name}</option>)}</select></div>
+      <div><label class="label" for="publish">Publishing</label>
+        <select class="field" id="publish" name="publish"><option value="now">Publish now and notify</option><option value="schedule">Schedule</option><option value="draft">Save as draft</option></select></div>
+      <div><label class="label" for="publish_at">Scheduled time</label><input class="field" id="publish_at" name="publish_at" type="datetime-local" /></div>
+      <div class="sm:col-span-2"><button name="intent" value="upload" class="btn-primary">Upload</button></div>
+    </form>
+  </details>
+
+  {docs?.length ? (
+    <div class="card overflow-x-auto !p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-3 font-medium">Document</th><th class="px-5 py-3 font-medium">Audience</th><th class="px-5 py-3 font-medium">Status</th><th class="px-5 py-3 text-right font-medium">Readers</th><th class="px-5 py-3"></th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {docs.map((d) => {
+            const s = status(d.published_at);
+            return (
+              <tr>
+                <td class="px-5 py-3"><a href={`/documents/${d.id}`} class="font-medium text-white hover:underline">{d.title}</a><span class="block text-xs text-white/40">{categoryLabels[d.category]} · {fileSize(d.size_bytes)}</span></td>
+                <td class="px-5 py-3 text-white/60">{d.audience === 'holder' ? (d.holders as { name: string } | null)?.name : audiences[d.audience as keyof typeof audiences]}</td>
+                <td class="px-5 py-3"><span class={`rounded-full px-2.5 py-0.5 text-xs ${statusStyle[s]}`}>{s}</span>{d.published_at && <span class="mt-1 block text-xs text-white/40">{dateTime.format(new Date(d.published_at))}</span>}</td>
+                <td class="px-5 py-3 text-right text-white/70">{readCount.get(d.id) ?? 0}</td>
+                <td class="px-5 py-3">
+                  <form method="post" class="flex justify-end gap-3 text-xs">
+                    <input type="hidden" name="id" value={d.id} />
+                    {s === 'Published' ? <button name="intent" value="unpublish" class="text-white/50 hover:text-white">Unpublish</button> : <button name="intent" value="publish" class="text-lk-blue hover:underline">Publish now</button>}
+                    <button name="intent" value="delete" class="text-white/50 hover:text-red-200" onclick="return confirm('Delete this document for everyone?')">Delete</button>
+                  </form>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  ) : <Empty title="No documents yet">Upload the first report, notice or update above.</Empty>}
+</Admin>

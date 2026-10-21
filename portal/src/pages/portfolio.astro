@@ -1,0 +1,60 @@
+---
+import Portal from '../layouts/Portal.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Empty from '../components/Empty.astro';
+import { shortDate } from '../lib/format';
+
+const { data: ventures } = await Astro.locals.supabase
+  .from('ventures')
+  .select('slug, name, tagline, stage, lakeba_stake, website, status, venture_updates(title, body, happened_on)')
+  .order('sort');
+const groups = [
+  { status: 'active', title: 'Active ventures' },
+  { status: 'building', title: 'Building with LakebaOS', note: 'Ventures co-founded through LakebaOS, where Lakeba holds up to 49%.' },
+  { status: 'exited', title: 'Exits' },
+];
+const accents = ['from-lk-blue/25', 'from-lk-orange/25', 'from-lk-green/25', 'from-lk-red/25'];
+---
+
+<Portal title="Portfolio">
+  <PageHeader eyebrow="Portfolio" title="What your shares own" subtitle="Lakeba’s ventures, its stake in each, and their latest milestones." />
+  {ventures?.length ? groups.map((g) => {
+    const items = ventures.filter((v) => v.status === g.status);
+    return items.length > 0 && (
+      <section class="mb-12">
+        <h2 class="text-xl font-bold">{g.title}</h2>
+        {g.note && <p class="mt-1 text-sm text-white/50">{g.note}</p>}
+        <div class="mt-5 grid gap-4 md:grid-cols-2">
+          {items.map((v, i) => {
+            const updates = [...(v.venture_updates as { title: string; body: string; happened_on: string }[])].sort((a, b) => b.happened_on.localeCompare(a.happened_on));
+            return (
+              <article class="card relative overflow-hidden">
+                <div class:list={['pointer-events-none absolute inset-0 bg-gradient-to-br to-transparent opacity-50', accents[i % accents.length]]}></div>
+                <div class="relative">
+                  <div class="flex items-start justify-between gap-4">
+                    <div>
+                      <h3 class="text-2xl font-bold">{v.name}</h3>
+                      <p class="mt-1 text-sm text-white/60">{v.tagline}</p>
+                    </div>
+                    {v.lakeba_stake != null && (
+                      <div class="text-right"><p class="font-display text-3xl font-bold text-white">{Number(v.lakeba_stake)}%</p><p class="text-[11px] uppercase tracking-widest text-white/40">Lakeba stake</p></div>
+                    )}
+                  </div>
+                  <p class="mt-4 inline-block rounded-full border border-white/10 px-3 py-1 text-xs text-white/60">{v.stage}</p>
+                  {updates.length > 0 && (
+                    <ol class="mt-6 space-y-3 border-l border-white/10 pl-4">
+                      {updates.slice(0, 3).map((u) => (
+                        <li><p class="text-xs text-white/40">{shortDate.format(new Date(u.happened_on))}</p><p class="text-sm font-semibold text-white">{u.title}</p>{u.body && <p class="text-sm text-white/55">{u.body}</p>}</li>
+                      ))}
+                    </ol>
+                  )}
+                  {v.website && <a href={v.website} target="_blank" rel="noopener" class="mt-6 inline-block text-sm text-lk-blue hover:underline">Website ↗</a>}
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      </section>
+    );
+  }) : <Empty title="No ventures listed yet">The portfolio will appear here once it is published.</Empty>}
+</Portal>

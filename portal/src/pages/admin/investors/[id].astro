@@ -1,0 +1,131 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { sendPasswordReset } from '../../../lib/admin-auth';
+import { field } from '../../../lib/forms';
+import { displayName, roles } from '../../../lib/admin-forms';
+import { dateTime } from '../../../lib/format';
+
+const { id } = Astro.params;
+const supabase = Astro.locals.supabase;
+const svc = serviceClient();
+const self = Astro.locals.user?.id === id;
+let error = '';
+let notice = '';
+
+const { data: target } = await supabase.from('profiles').select('id, email, first_name, last_name, role, phone').eq('id', id!).single();
+if (!target) return new Response('Not found', { status: 404 });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const log = (action: string, detail: Record<string, unknown> = {}) =>
+    supabase.rpc('log_event', { event_action: action, event_detail: { user_id: id, email: target.email, ...detail } });
+
+  if (self && ['role', 'disable', 'reset-mfa'].includes(intent)) {
+    error = 'You cannot change your own role, access or two-step verification here.';
+  } else if (intent === 'role') {
+    const role = field(form, 'role');
+    if (roles.includes(role as never)) {
+      await svc.from('profiles').update({ role }).eq('id', id!).throwOnError();
+      await log('admin_changed_role', { role });
+      notice = 'Role updated.';
+    }
+  } else if (intent === 'link') {
+    const { error: linkError } = await supabase.from('holder_members').upsert({ holder_id: field(form, 'holder_id'), user_id: id, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner' });
+    if (linkError) error = linkError.message;
+    else { await log('admin_linked_holder', { holder_id: field(form, 'holder_id') }); notice = 'Holder linked.'; }
+  } else if (intent === 'unlink') {
+    await supabase.from('holder_members').delete().eq('user_id', id!).eq('holder_id', field(form, 'holder_id')).throwOnError();
+    await log('admin_unlinked_holder', { holder_id: field(form, 'holder_id') });
+    notice = 'Holder unlinked.';
+  } else if (intent === 'disable' || intent === 'enable') {
+    const { error: banError } = await svc.auth.admin.updateUserById(id!, { ban_duration: intent === 'disable' ? '876000h' : 'none' });
+    if (banError) error = banError.message;
+    else { await log(intent === 'disable' ? 'admin_disabled_user' : 'admin_enabled_user'); notice = intent === 'disable' ? 'Access disabled.' : 'Access restored.'; }
+  } else if (intent === 'reset-mfa') {
+    const { data } = await svc.auth.admin.mfa.listFactors({ userId: id! });
+    for (const f of data?.factors ?? []) await svc.auth.admin.mfa.deleteFactor({ userId: id!, id: f.id });
+    await log('admin_reset_mfa');
+    notice = 'Two-step verification removed. They can set it up again after signing in.';
+  } else if (intent === 'reset-password') {
+    const { error: resetError } = await sendPasswordReset(target.email, Astro.url.origin);
+    if (resetError) error = resetError;
+    else { await log('admin_sent_password_reset'); notice = `Password reset email sent to ${target.email}.`; }
+  }
+}
+
+const [{ data: profile }, { data: authData }, { data: factorData }, { data: links }, { data: holders }, { data: events }] = await Promise.all([
+  supabase.from('profiles').select('id, email, first_name, last_name, role, phone').eq('id', id!).single(),
+  svc.auth.admin.getUserById(id!),
+  svc.auth.admin.mfa.listFactors({ userId: id! }),
+  supabase.from('holder_members').select('holder_id, access, holders(name)').eq('user_id', id!),
+  supabase.from('holders').select('id, name').order('name'),
+  supabase.from('audit_log').select('action, created_at').eq('user_id', id!).order('created_at', { ascending: false }).limit(15),
+]);
+const auth = authData?.user;
+const banned = Boolean(auth?.banned_until && new Date(auth.banned_until) > new Date());
+const mfaOn = (factorData?.factors ?? []).some((f) => f.status === 'verified');
+const linked = new Set((links ?? []).map((l) => l.holder_id));
+---
+
+<Admin title={displayName(profile)}>
+  <a href="/admin/investors" class="text-sm text-white/50 hover:text-white">← Investors</a>
+  <PageHeader title={displayName(profile)} subtitle={`${profile?.email}${profile?.phone ? ` · ${profile.phone}` : ''}`} />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+
+  <div class="grid gap-4 xl:grid-cols-2">
+    <section class="card">
+      <h2 class="text-lg font-bold">Account</h2>
+      <dl class="mt-4 grid grid-cols-2 gap-4 text-sm">
+        <div><dt class="text-white/40">Status</dt><dd class:list={[banned ? 'text-red-200' : 'text-white/80']}>{banned ? 'Disabled' : auth?.last_sign_in_at ? 'Active' : 'Invited'}</dd></div>
+        <div><dt class="text-white/40">Two-step</dt><dd class:list={[mfaOn ? 'text-lk-green' : 'text-white/50']}>{mfaOn ? 'On' : 'Off'}</dd></div>
+        <div><dt class="text-white/40">Last sign-in</dt><dd class="text-white/80">{auth?.last_sign_in_at ? dateTime.format(new Date(auth.last_sign_in_at)) : '—'}</dd></div>
+        <div><dt class="text-white/40">Created</dt><dd class="text-white/80">{auth?.created_at ? dateTime.format(new Date(auth.created_at)) : '—'}</dd></div>
+      </dl>
+      <form method="post" class="mt-6 flex flex-wrap items-end gap-3">
+        <div class="grow"><label class="label" for="role">Role</label>
+          <select class="field" id="role" name="role" disabled={self}>{roles.map((r) => <option value={r} selected={r === profile?.role}>{r}</option>)}</select></div>
+        <button name="intent" value="role" class="btn-ghost" disabled={self}>Save role</button>
+      </form>
+      <form method="post" class="mt-6 flex flex-wrap gap-3 border-t border-white/5 pt-6">
+        <button name="intent" value="reset-password" class="btn-ghost">Send password reset</button>
+        {!self && mfaOn && <button name="intent" value="reset-mfa" class="btn-ghost">Reset two-step</button>}
+        {!self && (banned
+          ? <button name="intent" value="enable" class="btn-ghost">Restore access</button>
+          : <button name="intent" value="disable" class="btn-ghost !border-lk-red/40 !text-red-200">Disable access</button>)}
+      </form>
+    </section>
+
+    <section class="card">
+      <h2 class="text-lg font-bold">Holding entities</h2>
+      <ul class="mt-4 divide-y divide-white/5 text-sm">
+        {(links ?? []).map((l) => (
+          <li class="flex items-center justify-between gap-4 py-3">
+            <span><span class="text-white/85">{(l.holders as { name: string } | null)?.name}</span> <span class="text-xs capitalize text-white/40">{l.access}</span></span>
+            <form method="post"><input type="hidden" name="holder_id" value={l.holder_id} /><button name="intent" value="unlink" class="text-xs text-white/50 hover:text-white">Unlink</button></form>
+          </li>
+        ))}
+        {!links?.length && <li class="py-3 text-white/45">Not linked to any holder.</li>}
+      </ul>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-3 border-t border-white/5 pt-4">
+        <div class="grow"><label class="label" for="holder_id">Holder</label>
+          <select class="field" id="holder_id" name="holder_id" required>{(holders ?? []).filter((h) => !linked.has(h.id)).map((h) => <option value={h.id}>{h.name}</option>)}</select></div>
+        <div><label class="label" for="access">Access</label>
+          <select class="field" id="access" name="access"><option value="owner">Owner</option><option value="viewer">Viewer</option></select></div>
+        <button name="intent" value="link" class="btn-ghost">Link</button>
+      </form>
+    </section>
+  </div>
+
+  <section class="card mt-4">
+    <h2 class="text-lg font-bold">Recent activity</h2>
+    <ul class="mt-4 divide-y divide-white/5 text-sm">
+      {(events ?? []).map((e) => <li class="flex justify-between py-2.5"><span class="font-mono text-white/80">{e.action}</span><span class="text-white/40">{dateTime.format(new Date(e.created_at))}</span></li>)}
+      {!events?.length && <li class="py-2.5 text-white/45">No activity yet.</li>}
+    </ul>
+  </section>
+</Admin>

@@ -1,0 +1,92 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Empty from '../../components/Empty.astro';
+import { categoryLabels, fileSize, shortDate } from '../../lib/format';
+
+const params = Astro.url.searchParams;
+const category = params.get('category') ?? '';
+const year = params.get('year') ?? '';
+const q = (params.get('q') ?? '').trim();
+const userId = Astro.locals.user!.id;
+
+// Visibility (audience, publish date) is enforced by row-level security.
+let query = Astro.locals.supabase
+  .from('documents')
+  .select('id, title, summary, category, mime_type, size_bytes, published_at, document_reads(user_id)')
+  .order('published_at', { ascending: false });
+if (category && category in categoryLabels) query = query.eq('category', category);
+if (/^\d{4}$/.test(year)) query = query.gte('published_at', `${year}-01-01`).lt('published_at', `${Number(year) + 1}-01-01`);
+if (q) query = query.ilike('title', `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
+const { data: documents } = await query;
+
+const { data: all } = await Astro.locals.supabase.from('documents').select('category, published_at');
+const counts = new Map<string, number>();
+const years = new Set<string>();
+for (const d of all ?? []) {
+  counts.set(d.category, (counts.get(d.category) ?? 0) + 1);
+  if (d.published_at) years.add(d.published_at.slice(0, 4));
+}
+const link = (overrides: Record<string, string>) => {
+  const p = new URLSearchParams({ ...(category && { category }), ...(year && { year }), ...(q && { q }), ...overrides });
+  for (const [k, v] of [...p]) if (!v) p.delete(k);
+  return `/documents${p.size ? `?${p}` : ''}`;
+};
+const kind = (mime: string) => (mime === 'application/pdf' ? 'PDF' : mime.startsWith('video/') ? 'Video' : mime.split('/')[1]?.toUpperCase() ?? 'File');
+---
+
+<Portal title="Documents">
+  <PageHeader eyebrow="Documents" title="Reports & documents" subtitle="Annual reports, AGM papers, shareholder updates and governance documents." />
+
+  <div class="grid gap-8 lg:grid-cols-[14rem_1fr]">
+    <aside class="space-y-6">
+      <form method="get" action="/documents">
+        {category && <input type="hidden" name="category" value={category} />}
+        {year && <input type="hidden" name="year" value={year} />}
+        <label for="q" class="label">Search titles</label>
+        <input id="q" name="q" type="search" value={q} placeholder="e.g. annual report" class="field" />
+      </form>
+      <nav aria-label="Categories" class="flex flex-wrap gap-1 text-sm lg:flex-col">
+        <a href={link({ category: '' })} class:list={['rounded-lg px-3 py-2', !category ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>All documents</a>
+        {Object.entries(categoryLabels).filter(([k]) => counts.has(k)).map(([k, label]) => (
+          <a href={link({ category: k })} class:list={['flex justify-between rounded-lg px-3 py-2', category === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>
+            <span>{label}</span><span class="text-white/35">{counts.get(k)}</span>
+          </a>
+        ))}
+      </nav>
+      {years.size > 1 && (
+        <div class="flex flex-wrap gap-2 text-sm">
+          <a href={link({ year: '' })} class:list={['rounded-full border px-3 py-1', !year ? 'border-lk-blue text-white' : 'border-white/10 text-white/55']}>Any year</a>
+          {[...years].sort().reverse().map((y) => (
+            <a href={link({ year: y })} class:list={['rounded-full border px-3 py-1', year === y ? 'border-lk-blue text-white' : 'border-white/10 text-white/55']}>{y}</a>
+          ))}
+        </div>
+      )}
+    </aside>
+
+    <section>
+      {documents?.length ? (
+        <ul class="grid gap-3">
+          {documents.map((d) => {
+            const unread = !(d.document_reads as { user_id: string }[]).some((r) => r.user_id === userId);
+            return (
+              <li class="card flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">
+                <div class="min-w-0">
+                  <p class="flex items-center gap-2 text-xs text-white/40">
+                    {unread && <span class="rounded-full bg-lk-orange/20 px-2 py-0.5 font-semibold text-lk-orange">New</span>}
+                    {categoryLabels[d.category]} · {shortDate.format(new Date(d.published_at!))} · {kind(d.mime_type)} {fileSize(d.size_bytes)}
+                  </p>
+                  <h2 class="mt-1 text-lg font-bold">{d.title}</h2>
+                  {d.summary && <p class="mt-1 text-sm text-white/55">{d.summary}</p>}
+                </div>
+                <a href={`/documents/${d.id}`} target="_blank" rel="noopener" class="btn-ghost shrink-0">{d.mime_type.startsWith('video/') ? 'Watch' : 'Open'}</a>
+              </li>
+            );
+          })}
+        </ul>
+      ) : (
+        <Empty title="No documents found">{q || category || year ? 'Try a different search or filter.' : 'Documents will appear here when they are published.'}</Empty>
+      )}
+    </section>
+  </div>
+</Portal>

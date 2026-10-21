@@ -1,0 +1,90 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { field } from '../../../lib/forms';
+import { displayName } from '../../../lib/admin-forms';
+import { dateTime, longDate } from '../../../lib/format';
+import { notifyMembers } from '../../../lib/notify';
+
+const { id } = Astro.params;
+const supabase = Astro.locals.supabase;
+const me = Astro.locals.user!.id;
+let error = '';
+let notice = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'reply' || intent === 'note') {
+    const body = field(form, 'body');
+    if (!body) error = 'Write a message first.';
+    else {
+      await supabase.from('query_messages').insert({ query_id: id, author_id: me, body, internal: intent === 'note' }).throwOnError();
+      if (intent === 'reply') {
+        const { data: q } = await supabase.from('queries').select('user_id, subject').eq('id', id!).single();
+        if (q) await notifyMembers({ kind: 'query_reply', title: `Reply to your question: ${q.subject}`, body: 'The Lakeba team has replied to your question in the investor portal.', link: `/board/${id}`, userIds: [q.user_id], origin: Astro.url.origin });
+        await supabase.rpc('log_event', { event_action: 'admin_replied_query', event_detail: { query_id: id } });
+        notice = 'Reply sent. The shareholder has been notified.';
+      } else notice = 'Internal note added.';
+    }
+  } else if (intent === 'update') {
+    const status = field(form, 'status');
+    const assigned = field(form, 'assigned_to') || null;
+    await supabase.from('queries').update({ status, assigned_to: assigned, updated_at: new Date().toISOString() }).eq('id', id!).throwOnError();
+    await supabase.rpc('log_event', { event_action: 'admin_updated_query', event_detail: { query_id: id, status, assigned_to: assigned } });
+    notice = 'Question updated.';
+  }
+}
+
+const [{ data: q }, { data: messages }, { data: staff }] = await Promise.all([
+  supabase.from('queries').select('id, subject, status, due_at, created_at, assigned_to, owner:profiles!queries_user_id_fkey(first_name, last_name, email, phone)').eq('id', id!).single(),
+  supabase.from('query_messages').select('id, body, internal, created_at, author_id, author:profiles(first_name, last_name, email, role)').eq('query_id', id!).order('created_at'),
+  supabase.from('profiles').select('id, first_name, last_name, email').in('role', ['admin', 'board']).order('first_name'),
+]);
+if (!q) return new Response('Not found', { status: 404 });
+const owner = q.owner as unknown as { first_name: string; last_name: string; email: string; phone: string | null };
+const late = q.status === 'open' && new Date(q.due_at) < new Date();
+---
+
+<Admin title={q.subject}>
+  <a href="/admin/queries" class="text-sm text-white/50 hover:text-white">← Board Q&amp;A</a>
+  <PageHeader title={q.subject} subtitle={`From ${displayName(owner)} (${owner.email}${owner.phone ? `, ${owner.phone}` : ''}) · asked ${longDate.format(new Date(q.created_at))}`} />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+
+  <div class="grid gap-4 xl:grid-cols-[1fr_18rem]">
+    <div class="space-y-3">
+      {(messages ?? []).map((m) => {
+        const author = m.author as unknown as { first_name: string; last_name: string; email: string; role: string } | null;
+        const staffMsg = author?.role === 'admin' || author?.role === 'board';
+        return (
+          <article class:list={['rounded-2xl border p-5', m.internal ? 'border-dashed border-lk-orange/40 bg-lk-orange/[0.05]' : staffMsg ? 'border-lk-blue/30 bg-lk-blue/[0.06]' : 'border-white/10 bg-white/[0.03]']}>
+            <p class="text-xs text-white/45">
+              <span class="font-semibold text-white/75">{displayName(author)}</span>
+              {m.internal ? ' · internal note (not visible to the shareholder)' : staffMsg ? ' · Lakeba' : ''} · {dateTime.format(new Date(m.created_at))}
+            </p>
+            <p class="mt-2 whitespace-pre-line text-white/85">{m.body}</p>
+          </article>
+        );
+      })}
+      <form method="post" class="card space-y-4">
+        <label class="label" for="body">Your message</label>
+        <textarea class="field" id="body" name="body" rows="5" required></textarea>
+        <div class="flex flex-wrap gap-3">
+          <button name="intent" value="reply" class="btn-primary">Send reply to shareholder</button>
+          <button name="intent" value="note" class="btn-ghost">Add internal note</button>
+        </div>
+      </form>
+    </div>
+
+    <form method="post" class="card h-fit space-y-4">
+      <p class:list={['text-sm', late ? 'font-semibold text-lk-orange' : 'text-white/60']}>{late ? 'Overdue — was due ' : 'Due '}{longDate.format(new Date(q.due_at))}</p>
+      <div><label class="label" for="status">Status</label>
+        <select class="field" id="status" name="status">{['open', 'answered', 'closed'].map((s) => <option value={s} selected={s === q.status}>{s}</option>)}</select></div>
+      <div><label class="label" for="assigned_to">Assigned to</label>
+        <select class="field" id="assigned_to" name="assigned_to"><option value="">—</option>{(staff ?? []).map((s) => <option value={s.id} selected={s.id === q.assigned_to}>{displayName(s)}</option>)}</select></div>
+      <button name="intent" value="update" class="btn-ghost w-full">Save</button>
+    </form>
+  </div>
+</Admin>

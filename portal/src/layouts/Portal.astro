@@ -3,15 +3,26 @@ import '../styles/portal.css';
 import Mark from '../../../src/components/Mark.astro';
 interface Props { title: string }
 const { title } = Astro.props;
-const { profile } = Astro.locals;
+const { profile, supabase, user } = Astro.locals;
 const path = Astro.url.pathname;
+const isAdmin = profile?.role === 'admin';
+
 const nav = [
   { href: '/', label: 'Dashboard' },
-  { href: '/account/security', label: 'Security' },
-  ...(profile?.role === 'admin' ? [{ href: '/admin', label: 'Admin' }] : []),
+  { href: '/documents', label: 'Documents' },
+  { href: '/portfolio', label: 'Portfolio' },
+  { href: '/agm', label: 'AGM' },
+  { href: '/news', label: 'News' },
+  { href: '/ask', label: 'Ask Lakeba' },
+  { href: '/board', label: 'Board Q&A' },
+  ...(isAdmin ? [{ href: '/admin', label: 'Admin' }] : []),
 ];
-const isActive = (href: string) => (href === '/' ? path === '/' : path.startsWith(href));
+const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
 const initials = `${profile?.first_name?.[0] ?? ''}${profile?.last_name?.[0] ?? ''}`.toUpperCase() || '·';
+
+const { count: unread } = user
+  ? await supabase.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null)
+  : { count: 0 };
 ---
 
 <!doctype html>
@@ -24,34 +35,49 @@ const initials = `${profile?.first_name?.[0] ?? ''}${profile?.last_name?.[0] ?? 
     <title>{title} · Lakeba Investor Portal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
   </head>
   <body class="overflow-x-clip">
-    <div aria-hidden="true" class="pointer-events-none fixed inset-x-0 top-0 -z-10 h-[30rem]">
+    <div aria-hidden="true" class="pointer-events-none fixed inset-x-0 top-0 -z-10 h-[30rem] overflow-hidden">
       <div class="absolute -top-48 left-1/4 h-[30rem] w-[30rem] rounded-full bg-lk-blue/15 blur-[120px]"></div>
     </div>
     <header class="sticky top-0 z-40 border-b border-white/5 bg-ink/80 backdrop-blur-xl">
       <div class="container-x flex h-16 items-center justify-between gap-4">
-        <a href="/" class="flex items-center gap-2.5">
+        <a href="/" class="flex shrink-0 items-center gap-2.5">
           <Mark class="size-7" />
           <span class="font-display text-lg font-bold text-white">lakeba</span>
           <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">Investors</span>
         </a>
-        <nav class="flex items-center gap-1 text-sm">
-          {nav.map((n) => (
-            <a href={n.href} class:list={['rounded-lg px-3 py-2 transition', isActive(n.href) ? 'bg-white/10 text-white' : 'text-white/60 hover:text-white']} aria-current={isActive(n.href) ? 'page' : undefined}>{n.label}</a>
-          ))}
-        </nav>
-        <div class="flex items-center gap-3">
-          <span class="grid size-9 place-items-center rounded-full bg-gradient-to-br from-lk-blue to-lk-green font-display text-sm font-bold text-white" title={profile?.email}>{initials}</span>
-          <form method="post" action="/logout">
-            <button class="text-sm text-white/60 hover:text-white">Sign out</button>
-          </form>
+        <div class="flex items-center gap-2">
+          <a href="/inbox" class="relative grid size-9 place-items-center rounded-full text-white/60 transition hover:bg-white/5 hover:text-white" aria-label={`Inbox${unread ? `, ${unread} unread` : ''}`}>
+            <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1112 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 003.4 0" /></svg>
+            {unread ? <span class="absolute -top-0.5 -right-0.5 grid min-w-4 place-items-center rounded-full bg-lk-orange px-1 text-[10px] font-bold text-ink">{unread > 9 ? '9+' : unread}</span> : null}
+          </a>
+          <details class="relative">
+            <summary class="grid size-9 cursor-pointer list-none place-items-center rounded-full bg-gradient-to-br from-lk-blue to-lk-green font-display text-sm font-bold text-white" title={profile?.email}>{initials}</summary>
+            <div class="glass absolute right-0 mt-2 w-56 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
+              <p class="truncate px-3 py-2 text-xs text-white/45">{profile?.email}</p>
+              <a href="/profile" class="block rounded-lg px-3 py-2 hover:bg-white/5">Profile</a>
+              <a href="/account/security" class="block rounded-lg px-3 py-2 hover:bg-white/5">Security</a>
+              <a href="/inbox" class="block rounded-lg px-3 py-2 hover:bg-white/5">Inbox</a>
+              <form method="post" action="/logout"><button class="w-full rounded-lg px-3 py-2 text-left text-white/70 hover:bg-white/5 hover:text-white">Sign out</button></form>
+            </div>
+          </details>
         </div>
       </div>
+      <nav class="container-x -mb-px flex gap-1 overflow-x-auto pb-px text-sm [scrollbar-width:none]" aria-label="Portal">
+        {nav.map((n) => (
+          <a href={n.href} aria-current={isActive(n.href) ? 'page' : undefined}
+            class:list={['shrink-0 border-b-2 px-3 py-3 transition', isActive(n.href) ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{n.label}</a>
+        ))}
+      </nav>
     </header>
     <main class="container-x py-10">
       <slot />
     </main>
+    <footer class="container-x flex flex-col justify-between gap-2 border-t border-white/5 py-8 text-xs text-white/35 sm:flex-row">
+      <p>© {new Date().getFullYear()} Lakeba Group Limited</p>
+      <p>Questions: <a href="/board" class="hover:text-white">Board Q&amp;A</a> · <a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a></p>
+    </footer>
   </body>
 </html>

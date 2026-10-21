@@ -1,0 +1,30 @@
+---
+// Small line chart for a price series; no client JavaScript.
+interface Props { points: { label: string; value: number }[]; class?: string }
+const { points, class: cls = '' } = Astro.props;
+const w = 320;
+const h = 90;
+const pad = 6;
+const values = points.map((p) => p.value);
+const min = Math.min(...values);
+const max = Math.max(...values);
+const x = (i: number) => pad + (i * (w - pad * 2)) / Math.max(1, points.length - 1);
+const y = (v: number) => h - pad - ((v - min) / (max - min || 1)) * (h - pad * 2);
+const line = points.map((p, i) => `${i ? 'L' : 'M'}${x(i).toFixed(1)},${y(p.value).toFixed(1)}`).join(' ');
+const area = `${line} L${x(points.length - 1).toFixed(1)},${h} L${x(0).toFixed(1)},${h} Z`;
+const id = `spark-${Math.random().toString(36).slice(2, 8)}`;
+---
+
+{points.length > 1 && (
+  <svg viewBox={`0 0 ${w} ${h}`} class={cls} role="img" aria-label={`Reference price from ${points[0].label} to ${points.at(-1)?.label}`}>
+    <defs>
+      <linearGradient id={id} x1="0" x2="0" y1="0" y2="1">
+        <stop offset="0" stop-color="#276ae7" stop-opacity="0.35" />
+        <stop offset="1" stop-color="#276ae7" stop-opacity="0" />
+      </linearGradient>
+    </defs>
+    <path d={area} fill={`url(#${id})`} />
+    <path d={line} fill="none" stroke="#5b8ff0" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
+    {points.map((p, i) => <circle cx={x(i)} cy={y(p.value)} r="3" fill="#050b16" stroke="#5b8ff0" stroke-width="1.5"><title>{p.label}</title></circle>)}
+  </svg>
+)}

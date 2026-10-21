@@ -1,0 +1,57 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import Empty from '../../../components/Empty.astro';
+import { field } from '../../../lib/forms';
+import { parseLocal } from '../../../lib/admin-forms';
+import { dateTime } from '../../../lib/format';
+
+const supabase = Astro.locals.supabase;
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const { data, error: e } = await supabase.from('meetings').insert({
+    title: field(form, 'title'), kind: field(form, 'kind') === 'egm' ? 'egm' : 'agm',
+    starts_at: parseLocal(field(form, 'starts_at')), proxy_deadline: parseLocal(field(form, 'proxy_deadline')),
+    location: field(form, 'location') || null, livestream_url: field(form, 'livestream_url') || null,
+  }).select('id').single();
+  if (e || !data) error = e?.code === '23514' ? 'The proxy deadline must be before the meeting starts.' : e?.message ?? 'Could not create the meeting.';
+  else {
+    await supabase.rpc('log_event', { event_action: 'admin_created_meeting', event_detail: { meeting_id: data.id } });
+    return Astro.redirect(`/admin/agm/${data.id}`);
+  }
+}
+
+const { data: meetings } = await supabase.from('meetings').select('id, title, kind, starts_at, status, resolutions(count)').order('starts_at', { ascending: false });
+---
+
+<Admin title="Meetings">
+  <PageHeader title="Meetings" subtitle="AGMs and EGMs: notices, resolutions, proxy votes and shareholder questions." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+
+  <details class="card mb-6" open={Boolean(error)}>
+    <summary class="cursor-pointer font-display text-lg font-bold text-white">New meeting</summary>
+    <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
+      <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" required placeholder="2027 Annual General Meeting" /></div>
+      <div><label class="label" for="kind">Type</label><select class="field" id="kind" name="kind"><option value="agm">AGM</option><option value="egm">EGM</option></select></div>
+      <div><label class="label" for="location">Location</label><input class="field" id="location" name="location" /></div>
+      <div><label class="label" for="starts_at">Starts</label><input class="field" id="starts_at" name="starts_at" type="datetime-local" required /></div>
+      <div><label class="label" for="proxy_deadline">Proxy deadline</label><input class="field" id="proxy_deadline" name="proxy_deadline" type="datetime-local" required /></div>
+      <div class="sm:col-span-2"><label class="label" for="livestream_url">Livestream link</label><input class="field" id="livestream_url" name="livestream_url" type="url" /></div>
+      <div><button class="btn-primary">Create meeting</button></div>
+    </form>
+  </details>
+
+  {meetings?.length ? (
+    <div class="grid gap-4">
+      {meetings.map((m) => (
+        <a href={`/admin/agm/${m.id}`} class="card flex flex-wrap items-center justify-between gap-4 transition hover:bg-white/[0.07]">
+          <span><span class="font-display text-lg font-bold text-white">{m.title}</span><span class="block text-sm text-white/50">{dateTime.format(new Date(m.starts_at))} · {(m.resolutions as unknown as { count: number }[])[0]?.count ?? 0} resolutions</span></span>
+          <span class="rounded-full bg-white/10 px-3 py-1 text-xs capitalize text-white/70">{m.status}</span>
+        </a>
+      ))}
+    </div>
+  ) : <Empty title="No meetings yet">Create the next AGM above.</Empty>}
+</Admin>
