@@ -15,6 +15,7 @@ export default defineConfig({
       { hostname: 'localhost' },
       { hostname: '127.0.0.1' },
       { hostname: '100.117.227.8' }, // this Mac on the Tailscale network
+      { hostname: 'giuseppe-macbook-pro.tail21d16f.ts.net', protocol: 'https' }, // same, via Tailscale HTTPS
     ],
   },
   adapter: node({ mode: 'standalone' }),
