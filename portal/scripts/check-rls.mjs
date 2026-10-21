@@ -73,14 +73,15 @@ const two = await signIn('investor.two@lakeba.test');
   check('investor two sees only their own holder', JSON.stringify(names) === JSON.stringify(['Riverside Super Fund']), names.join(', '));
 }
 
-// Admin: no extra access until the session passes MFA. Start from no factors,
-// so earlier manual testing doesn't change the outcome.
+// Admin: no extra access until the session passes MFA. Uses a temporary admin
+// so the seeded admin's own two-step setup is left alone.
 const service = createClient(url, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
-const adminUser = (await service.auth.admin.listUsers()).data.users.find((u) => u.email === 'admin@lakeba.test');
-for (const f of (await service.auth.admin.mfa.listFactors({ userId: adminUser.id })).data?.factors ?? []) {
-  await service.auth.admin.mfa.deleteFactor({ userId: adminUser.id, id: f.id });
-}
-const admin = await signIn('admin@lakeba.test');
+const tempAdminEmail = `rls-admin.${Date.now()}@lakeba.test`;
+const tempAdminPassword = `Ad${crypto.randomUUID()}9A`;
+const { data: tempAdmin } = await service.auth.admin.createUser({ email: tempAdminEmail, password: tempAdminPassword, email_confirm: true });
+await service.from('profiles').update({ role: 'admin' }).eq('id', tempAdmin.user.id).throwOnError();
+const admin = client();
+await admin.auth.signInWithPassword({ email: tempAdminEmail, password: tempAdminPassword });
 {
   check('admin without MFA sees no holders', (await holderNames(admin)).length === 0);
   const { data: enrolled, error } = await admin.auth.mfa.enroll({ factorType: 'totp', friendlyName: `rls-check-${Date.now()}` });
@@ -90,7 +91,6 @@ const admin = await signIn('admin@lakeba.test');
   check('admin with MFA sees all holders', (await holderNames(admin)).length === 3);
   const { data: log } = await admin.from('audit_log').select('id');
   check('admin with MFA can read the audit log', Array.isArray(log));
-  await admin.auth.mfa.unenroll({ factorId: enrolled.id });
 }
 
 // ---------------------------------------------------------------------------
@@ -98,7 +98,7 @@ const admin = await signIn('admin@lakeba.test');
 // ---------------------------------------------------------------------------
 const A1 = '00000000-0000-4000-8000-0000000000a1';
 const A3 = '00000000-0000-4000-8000-0000000000a3';
-const created = { documents: [], meetings: [], users: [] };
+const created = { documents: [], meetings: [], users: [tempAdmin.user.id] };
 const fixtureDoc = async (fields) => {
   const path = `test/${crypto.randomUUID()}.pdf`;
   await service.storage.from('documents').upload(path, new Uint8Array([37, 80, 68, 70]), { contentType: 'application/pdf' });
@@ -132,6 +132,17 @@ try {
   check('Ask search never returns passages the investor cannot read', (hits ?? []).length === 0, `${hits?.length} hits`);
   const { data: twoHits } = await two.rpc('search_documents', { query: 'zebracorn' });
   check('Ask search returns passages the investor can read', (twoHits ?? []).length === 1, `${twoHits?.length} hits`);
+
+  // Official shares on issue
+  const ORD = '00000000-0000-4000-8000-000000000001';
+  const { error: officialErr } = await one.from('share_classes').update({ official_on_issue: 1, official_as_at: '2026-01-01' }).eq('id', ORD).select();
+  const { data: ordAfterAttempt } = await service.from('share_classes').select('official_on_issue').eq('id', ORD).single();
+  check('investor cannot set official shares on issue', Boolean(officialErr) || ordAfterAttempt.official_on_issue === null);
+  await service.from('share_classes').update({ official_on_issue: 12_000_000, official_as_at: '2026-06-30' }).eq('id', ORD).throwOnError();
+  const { data: withOfficial } = await one.rpc('shares_on_issue');
+  const ord = withOfficial.find((c) => c.code === 'ORD');
+  check('percentages use the official figure when set', Number(ord.total) === 12_000_000 && Number(ord.computed_total) === 10_000_000 && ord.is_official, JSON.stringify(ord));
+  await service.from('share_classes').update({ official_on_issue: null, official_as_at: null }).eq('id', ORD).throwOnError();
 
   // Board Q&A
   const { data: q2 } = await two.from('queries').insert({ user_id: (await two.auth.getUser()).data.user.id, subject: 'RLS fixture question' }).select('id').single();

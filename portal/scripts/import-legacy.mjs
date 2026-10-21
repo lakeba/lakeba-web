@@ -121,6 +121,7 @@ for (const v of investors) {
       : await svc.auth.admin.createUser({ email: v.email, email_confirm: false, user_metadata: meta });
     if (error) { console.log(`  ! ${v.email}: ${error.message}`); continue; }
     user = data.user;
+    users.push(user); // later rows for the same login (more holdings) reuse it
     if (invite) await sendInvite(v.email, `${portalUrl}/auth/confirm?token_hash=${encodeURIComponent(data.properties.hashed_token)}&type=invite`);
   }
   await svc.from('profiles').update({ role: v.role || 'investor', phone: v.phone || null }).eq('id', user.id).throwOnError();

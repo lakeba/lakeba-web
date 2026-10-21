@@ -74,12 +74,12 @@ const today = new Date().toISOString().slice(0, 10);
         <li class="py-3">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <span><a href={`?venture=${x.id}`} class="font-medium text-white/85 hover:underline">{x.name}</a> <span class="text-xs capitalize text-white/40">{x.status} · {x.stage}{x.lakeba_stake != null ? ` · ${Number(x.lakeba_stake)}%` : ''}</span></span>
-            <form method="post" class="text-xs"><input type="hidden" name="id" value={x.id} /><button name="intent" value="delete-venture" class="text-white/50 hover:text-red-200" onclick="return confirm('Delete this venture and its milestones?')">Delete</button></form>
+            <form method="post" class="text-xs"><input type="hidden" name="id" value={x.id} /><button name="intent" value="delete-venture" class="text-white/50 hover:text-lk-red" onclick="return confirm('Delete this venture and its milestones?')">Delete</button></form>
           </div>
           <ul class="mt-2 space-y-1 pl-4 text-xs text-white/50">
             {(updates ?? []).filter((u) => u.venture_id === x.id).slice(0, 4).map((u) => (
               <li class="flex justify-between gap-3"><span>{shortDate.format(new Date(u.happened_on))} · {u.title}</span>
-                <form method="post"><input type="hidden" name="id" value={u.id} /><button name="intent" value="delete-update" class="hover:text-red-200">Remove</button></form></li>
+                <form method="post"><input type="hidden" name="id" value={u.id} /><button name="intent" value="delete-update" class="hover:text-lk-red">Remove</button></form></li>
             ))}
           </ul>
         </li>
@@ -115,7 +115,7 @@ const today = new Date().toISOString().slice(0, 10);
       {(prices ?? []).map((p) => (
         <li class="flex flex-wrap items-center justify-between gap-3 py-3">
           <span><span class="font-medium text-white/85">{audPrecise.format(Number(p.price))}</span> <span class="text-xs text-white/40">{(p.share_classes as { code: string } | null)?.code} · {shortDate.format(new Date(p.priced_on))} · {sourceLabels[p.source]}{p.note ? ` · ${p.note}` : ''}</span></span>
-          <form method="post" class="text-xs"><input type="hidden" name="id" value={p.id} /><button name="intent" value="delete-price" class="text-white/50 hover:text-red-200">Delete</button></form>
+          <form method="post" class="text-xs"><input type="hidden" name="id" value={p.id} /><button name="intent" value="delete-price" class="text-white/50 hover:text-lk-red">Delete</button></form>
         </li>
       ))}
     </ul>

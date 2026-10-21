@@ -86,7 +86,7 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
             <span class="block text-xs text-white/40">{dateTime.format(new Date(a.starts_at))}{a.ends_at ? ` → ${dateTime.format(new Date(a.ends_at))}` : ''}</span></span>
           <form method="post" class="flex gap-3 text-xs"><input type="hidden" name="id" value={a.id} />
             {live(a) && <button name="intent" value="end-announcement" class="text-white/50 hover:text-white">End now</button>}
-            <button name="intent" value="delete-announcement" class="text-white/50 hover:text-red-200">Delete</button></form>
+            <button name="intent" value="delete-announcement" class="text-white/50 hover:text-lk-red">Delete</button></form>
         </li>
       ))}
     </ul>
@@ -111,7 +111,7 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
         <li class="flex flex-wrap items-center justify-between gap-3 py-3">
           <span><a href={`?post=${p.id}`} class="font-medium text-white/85 hover:underline">{p.title}</a>
             <span class="block text-xs text-white/40">{p.published_at ? `Published ${shortDate.format(new Date(p.published_at))}` : 'Draft'} · /news/{p.slug}</span></span>
-          <form method="post" class="text-xs"><input type="hidden" name="id" value={p.id} /><button name="intent" value="delete-post" class="text-white/50 hover:text-red-200" onclick="return confirm('Delete this post?')">Delete</button></form>
+          <form method="post" class="text-xs"><input type="hidden" name="id" value={p.id} /><button name="intent" value="delete-post" class="text-white/50 hover:text-lk-red" onclick="return confirm('Delete this post?')">Delete</button></form>
         </li>
       ))}
     </ul>

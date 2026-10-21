@@ -1,6 +1,8 @@
 ---
 import '../styles/portal.css';
 import Mark from '../../../src/components/Mark.astro';
+import ThemeInit from '../../../src/components/ThemeInit.astro';
+import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 interface Props { title: string; subtitle?: string }
 const { title, subtitle } = Astro.props;
 ---
@@ -12,12 +14,14 @@ const { title, subtitle } = Astro.props;
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <ThemeInit />
     <title>{title} · Lakeba Investor Portal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
   </head>
   <body class="relative grid place-items-center overflow-x-clip px-4 py-12">
+    <ThemeToggle class="fixed top-4 right-4" />
     <div aria-hidden="true" class="pointer-events-none fixed inset-0 -z-10">
       <div class="absolute inset-0 grid-bg"></div>
       <div class="absolute -top-40 left-1/2 h-[36rem] w-[36rem] -translate-x-full rounded-full bg-lk-blue/20 blur-[120px]"></div>

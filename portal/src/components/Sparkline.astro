@@ -25,6 +25,6 @@ const id = `spark-${Math.random().toString(36).slice(2, 8)}`;
     </defs>
     <path d={area} fill={`url(#${id})`} />
     <path d={line} fill="none" stroke="#5b8ff0" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" />
-    {points.map((p, i) => <circle cx={x(i)} cy={y(p.value)} r="3" fill="#050b16" stroke="#5b8ff0" stroke-width="1.5"><title>{p.label}</title></circle>)}
+    {points.map((p, i) => <circle cx={x(i)} cy={y(p.value)} r="3" fill="var(--color-ink)" stroke="#5b8ff0" stroke-width="1.5"><title>{p.label}</title></circle>)}
   </svg>
 )}

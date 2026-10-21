@@ -45,7 +45,7 @@ if (Astro.request.method === 'POST') {
         <li>1. Scan this code with your authenticator app.</li>
         <li>2. Enter the 6-digit code it shows.</li>
       </ol>
-      <div class="mx-auto w-fit rounded-2xl bg-white p-3"><img src={qr} alt="QR code for your authenticator app" width="176" height="176" /></div>
+      <div class="mx-auto w-fit rounded-2xl bg-[#fff] p-3"><img src={qr} alt="QR code for your authenticator app" width="176" height="176" /></div>
       <details class="text-sm text-white/55">
         <summary class="cursor-pointer">Can't scan? Enter this key instead</summary>
         <code class="mt-2 block break-all rounded-lg bg-white/5 p-3 font-mono text-white/80">{secret}</code>

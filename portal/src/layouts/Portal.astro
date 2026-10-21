@@ -1,6 +1,8 @@
 ---
 import '../styles/portal.css';
 import Mark from '../../../src/components/Mark.astro';
+import ThemeInit from '../../../src/components/ThemeInit.astro';
+import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 interface Props { title: string }
 const { title } = Astro.props;
 const { profile, supabase, user } = Astro.locals;
@@ -32,6 +34,7 @@ const { count: unread } = user
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <ThemeInit />
     <title>{title} · Lakeba Investor Portal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -49,6 +52,7 @@ const { count: unread } = user
           <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">Investors</span>
         </a>
         <div class="flex items-center gap-2">
+          <ThemeToggle />
           <a href="/inbox" class="relative grid size-9 place-items-center rounded-full text-white/60 transition hover:bg-white/5 hover:text-white" aria-label={`Inbox${unread ? `, ${unread} unread` : ''}`}>
             <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1112 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 003.4 0" /></svg>
             {unread ? <span class="absolute -top-0.5 -right-0.5 grid min-w-4 place-items-center rounded-full bg-lk-orange px-1 text-[10px] font-bold text-ink">{unread > 9 ? '9+' : unread}</span> : null}

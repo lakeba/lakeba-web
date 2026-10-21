@@ -53,7 +53,7 @@ const perks = [
 <style>
   @property --sweep { syntax: '<percentage>'; inherits: false; initial-value: 0%; }
   .equity {
-    background: conic-gradient(from -90deg, #276ae7 0%, #35a954 calc(var(--sweep) * 0.51), rgb(255 255 255 / 0.06) calc(var(--sweep) * 0.51), rgb(255 255 255 / 0.06) calc(var(--sweep) * 0.51 + 0.6%), #eb802b calc(var(--sweep) * 0.51 + 0.6%), #dd3b2d var(--sweep), rgb(255 255 255 / 0.04) var(--sweep));
+    background: conic-gradient(from -90deg, #276ae7 0%, #35a954 calc(var(--sweep) * 0.51), color-mix(in oklab, var(--color-white) 8%, transparent) calc(var(--sweep) * 0.51), color-mix(in oklab, var(--color-white) 8%, transparent) calc(var(--sweep) * 0.51 + 0.6%), #eb802b calc(var(--sweep) * 0.51 + 0.6%), #dd3b2d var(--sweep), color-mix(in oklab, var(--color-white) 6%, transparent) var(--sweep));
     --sweep: 100%;
     filter: drop-shadow(0 0 40px rgb(39 106 231 / 0.35));
   }

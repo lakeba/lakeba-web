@@ -16,7 +16,22 @@ let csvText = '';
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = field(form, 'intent');
-  if (intent === 'create-holder') {
+  if (intent === 'set-official') {
+    const raw = field(form, 'official_on_issue').replace(/[,\s]/g, '');
+    const asAt = field(form, 'official_as_at');
+    const clear = raw === '';
+    if (!clear && (!/^\d+$/.test(raw) || !/^\d{4}-\d{2}-\d{2}$/.test(asAt))) error = 'Enter a whole number of shares and the date it is correct as at.';
+    else {
+      const { error: updateError } = await supabase.from('share_classes')
+        .update({ official_on_issue: clear ? null : Number(raw), official_as_at: clear ? null : asAt })
+        .eq('id', field(form, 'class_id'));
+      if (updateError) error = updateError.message;
+      else {
+        await supabase.rpc('log_event', { event_action: 'admin_set_official_on_issue', event_detail: { class_id: field(form, 'class_id'), official_on_issue: clear ? null : Number(raw), as_at: asAt || null } });
+        notice = clear ? 'Official figure removed; the portal total is used.' : 'Official shares on issue saved.';
+      }
+    }
+  } else if (intent === 'create-holder') {
     const kind = field(form, 'kind');
     const { error: insertError } = await supabase.from('holders').insert({ name: field(form, 'name'), kind, registry_ref: field(form, 'registry_ref') || null });
     if (insertError) error = insertError.code === '23505' ? 'That registry reference is already used.' : insertError.message;
@@ -57,10 +72,30 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 
-  <div class="mb-6 grid gap-4 sm:grid-cols-3">
-    {(onIssue ?? []).map((c: { code: string; name: string; total: number }) => (
-      <div class="card !p-5"><p class="text-xs uppercase tracking-widest text-white/40">{c.name} on issue</p><p class="mt-2 font-display text-3xl font-bold text-white">{shares.format(Number(c.total))}</p></div>
-    ))}
+  <div class="mb-6 grid gap-4 lg:grid-cols-2">
+    {(onIssue ?? []).map((c: { share_class_id: string; code: string; name: string; total: number; computed_total: number; official_as_at: string | null; is_official: boolean }) => {
+      const gap = Number(c.total) - Number(c.computed_total);
+      return (
+        <div class="card !p-5">
+          <p class="text-xs uppercase tracking-widest text-white/40">{c.name} on issue</p>
+          <p class="mt-2 font-display text-3xl font-bold text-white">{shares.format(Number(c.total))}</p>
+          <p class="mt-1 text-xs text-white/45">
+            {c.is_official ? `Official figure as at ${shortDate.format(new Date(c.official_as_at!))}` : 'No official figure: sum of holdings in the portal'}
+          </p>
+          <p class="mt-3 text-sm text-white/60">
+            Held by portal holders: {shares.format(Number(c.computed_total))}
+            {c.is_official && gap !== 0 && <span class:list={['ml-1', gap > 0 ? 'text-white/50' : 'text-lk-red']}>({gap > 0 ? `${shares.format(gap)} held outside the portal` : `${shares.format(-gap)} more than the official figure`})</span>}
+          </p>
+          <form method="post" class="mt-4 flex flex-wrap items-end gap-2">
+            <input type="hidden" name="intent" value="set-official" />
+            <input type="hidden" name="class_id" value={c.share_class_id} />
+            <label class="grow"><span class="label">Official shares on issue</span><input class="field" name="official_on_issue" inputmode="numeric" placeholder="from the share register" /></label>
+            <label><span class="label">As at</span><input class="field" type="date" name="official_as_at" value={c.official_as_at ?? ''} /></label>
+            <button class="btn-ghost">Save</button>
+          </form>
+        </div>
+      );
+    })}
   </div>
 
   <section class="card mb-6">

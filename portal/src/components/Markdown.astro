@@ -9,10 +9,10 @@ const html = await marked.parse(Astro.props.source);
 <div class="prose-portal" set:html={html} />
 
 <style>
-  .prose-portal :global(p) { margin: 0 0 1rem; line-height: 1.75; color: rgb(255 255 255 / 0.75); }
-  .prose-portal :global(h2), .prose-portal :global(h3) { margin: 2rem 0 0.75rem; font-family: var(--font-display); font-weight: 700; color: white; }
-  .prose-portal :global(ul) { margin: 0 0 1rem 1.25rem; list-style: disc; color: rgb(255 255 255 / 0.75); }
+  .prose-portal :global(p) { margin: 0 0 1rem; line-height: 1.75; color: color-mix(in oklab, var(--color-white) 75%, transparent); }
+  .prose-portal :global(h2), .prose-portal :global(h3) { margin: 2rem 0 0.75rem; font-family: var(--font-display); font-weight: 700; color: var(--color-white); }
+  .prose-portal :global(ul) { margin: 0 0 1rem 1.25rem; list-style: disc; color: color-mix(in oklab, var(--color-white) 75%, transparent); }
   .prose-portal :global(li) { margin: 0.25rem 0; }
   .prose-portal :global(a) { color: #5b8ff0; text-decoration: underline; }
-  .prose-portal :global(strong) { color: white; }
+  .prose-portal :global(strong) { color: var(--color-white); }
 </style>

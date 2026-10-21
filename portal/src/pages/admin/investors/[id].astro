@@ -81,7 +81,7 @@ const linked = new Set((links ?? []).map((l) => l.holder_id));
     <section class="card">
       <h2 class="text-lg font-bold">Account</h2>
       <dl class="mt-4 grid grid-cols-2 gap-4 text-sm">
-        <div><dt class="text-white/40">Status</dt><dd class:list={[banned ? 'text-red-200' : 'text-white/80']}>{banned ? 'Disabled' : auth?.last_sign_in_at ? 'Active' : 'Invited'}</dd></div>
+        <div><dt class="text-white/40">Status</dt><dd class:list={[banned ? 'text-lk-red' : 'text-white/80']}>{banned ? 'Disabled' : auth?.last_sign_in_at ? 'Active' : 'Invited'}</dd></div>
         <div><dt class="text-white/40">Two-step</dt><dd class:list={[mfaOn ? 'text-lk-green' : 'text-white/50']}>{mfaOn ? 'On' : 'Off'}</dd></div>
         <div><dt class="text-white/40">Last sign-in</dt><dd class="text-white/80">{auth?.last_sign_in_at ? dateTime.format(new Date(auth.last_sign_in_at)) : '—'}</dd></div>
         <div><dt class="text-white/40">Created</dt><dd class="text-white/80">{auth?.created_at ? dateTime.format(new Date(auth.created_at)) : '—'}</dd></div>
@@ -96,7 +96,7 @@ const linked = new Set((links ?? []).map((l) => l.holder_id));
         {!self && mfaOn && <button name="intent" value="reset-mfa" class="btn-ghost">Reset two-step</button>}
         {!self && (banned
           ? <button name="intent" value="enable" class="btn-ghost">Restore access</button>
-          : <button name="intent" value="disable" class="btn-ghost !border-lk-red/40 !text-red-200">Disable access</button>)}
+          : <button name="intent" value="disable" class="btn-ghost !border-lk-red/40 !text-lk-red">Disable access</button>)}
       </form>
     </section>
 

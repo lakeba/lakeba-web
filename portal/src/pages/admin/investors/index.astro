@@ -84,7 +84,7 @@ const isBanned = (id: string) => {
               <td class="px-5 py-3">
                 <a href={`/admin/investors/${p.id}`} class="font-medium text-white hover:underline">{displayName(p)}</a>
                 <span class="block text-xs text-white/40">{p.email}</span>
-                {isBanned(p.id) && <span class="mt-1 inline-block rounded-full bg-lk-red/15 px-2 py-0.5 text-[11px] text-red-200">Disabled</span>}
+                {isBanned(p.id) && <span class="mt-1 inline-block rounded-full bg-lk-red/15 px-2 py-0.5 text-[11px] text-lk-red">Disabled</span>}
               </td>
               <td class="px-5 py-3 capitalize text-white/70">{p.role}</td>
               <td class="px-5 py-3 text-white/60">{holdersOf(p.id).join(', ') || '—'}</td>

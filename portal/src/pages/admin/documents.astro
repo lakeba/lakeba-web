@@ -141,7 +141,7 @@ const statusStyle: Record<string, string> = { Draft: 'bg-white/10 text-white/60'
                   <form method="post" class="flex justify-end gap-3 text-xs">
                     <input type="hidden" name="id" value={d.id} />
                     {s === 'Published' ? <button name="intent" value="unpublish" class="text-white/50 hover:text-white">Unpublish</button> : <button name="intent" value="publish" class="text-lk-blue hover:underline">Publish now</button>}
-                    <button name="intent" value="delete" class="text-white/50 hover:text-red-200" onclick="return confirm('Delete this document for everyone?')">Delete</button>
+                    <button name="intent" value="delete" class="text-white/50 hover:text-lk-red" onclick="return confirm('Delete this document for everyone?')">Delete</button>
                   </form>
                 </td>
               </tr>

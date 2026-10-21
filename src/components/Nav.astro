@@ -1,5 +1,6 @@
 ---
 import Mark from './Mark.astro';
+import ThemeToggle from './ThemeToggle.astro';
 const links = [
   { href: '#os', label: 'LakebaOS' },
   { href: '#program', label: 'Program' },
@@ -22,9 +23,12 @@ const links = [
           <li><a href={l.href} class="rounded-lg px-3 py-2 text-sm text-white/65 transition hover:bg-white/5 hover:text-white">{l.label}</a></li>
         ))}
       </ul>
-      <a href="https://lakeba.com/os/apply" class="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/85">
-        Apply <span class="hidden sm:inline">for funding</span> →
-      </a>
+      <div class="flex items-center gap-1">
+        <ThemeToggle />
+        <a href="https://lakeba.com/os/apply" class="rounded-xl bg-white px-4 py-2 text-sm font-semibold text-ink transition hover:bg-white/85">
+          Apply <span class="hidden sm:inline">for funding</span> →
+        </a>
+      </div>
     </nav>
   </div>
 </header>
