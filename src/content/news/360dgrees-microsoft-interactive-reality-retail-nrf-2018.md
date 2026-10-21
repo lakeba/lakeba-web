@@ -1,0 +1,14 @@
+---
+title: "360dgrees and Microsoft – showcasing how interactive reality is shaping the face of connected retail at NRF 2018"
+date: 2018-01-24T23:32:17Z
+excerpt: "With retail environments across the globe undergoing a highly disruptive digital transformation, 360dgrees.com and Microsoft...."
+venture: "Lakeba Group"
+categories: ["Press Releases"]
+cover: "./images/360dgrees-microsoft-interactive-reality-retail-nrf-2018/cover.webp"
+external: false
+wordpressId: 5722
+---
+
+With retail environments across the globe undergoing a highly disruptive digital transformation, **360dgrees.com and Microsoft** have developed an immersive, interactive solution to help retailers delight customers and drive profitability. The solution not only enables a vastly improved customer experience but can benefit retailers across the supply chain, and drive cultural alignment across geographies and brand portfolios. Regarded as one of the top retail events in the world, **[NRF](https://nrfbigshow.nrf.com/) attracts over 35,000 attendees from over 95 countries** and provides a fantastic opportunity for attendees to experience first-hand the 360dgrees solution. Retailers, like all companies operating in the new digital economy, understand the necessity to turn data into usable insights and 360dgrees, which is delivered over Microsoft’s Azure platform, has a patented analytics layer which provides a unique picture on staff and customers which becomes valuable IP across the organisation. 360dgrees delivers more impactful, standardised training of retail staff, regardless of their geographic location. From warehousing to marketing to in-store sales staff, 360dgrees can enable staff to both experience the consequences of their actions and experience the environment from the customer’s perspective. The business benefits range from more efficient supply chain management through to building greater empathy and affinity with the customer. For customers, 360dgrees provides more rewarding experiences for shoppers to drive sales, loyalty and advocacy. This includes providing retailers, real-time, deep insights for more personalised communication of offers and promotions. **Toby Ellis CEO of 360dgrees** said: *“The calibre of people and organisation's connecting at NRF has been staggering. Thanks to the [360dgrees.com](https://www.linkedin.com/company/10455538/) team, Picture Perfect Productions and [Microsoft](https://www.linkedin.com/company/1035/) for making it the succes it's been". "We really wish to* *keep empowering retails through a solution which can not only provide a unique training solution for staff across the organisation but also deliver a heightened experience for customers”.*
+
+### **Visit our new [360dgrees website](http://360dgrees.com/) and stay up to date on our [360dgrees blog](http://360dgrees.com/blog/)**

@@ -1,0 +1,55 @@
+---
+import { Image } from 'astro:assets';
+import { render } from 'astro:content';
+import Layout from '../../layouts/Layout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import NewsCard from '../../components/NewsCard.astro';
+import { allNews, newsDate, ventureClass, type NewsEntry } from '../../lib/news';
+import { href } from '../../lib/paths';
+
+export async function getStaticPaths() {
+  const news = await allNews();
+  return news.map((entry) => ({ params: { slug: entry.id }, props: { entry, news } }));
+}
+
+interface Props { entry: NewsEntry; news: NewsEntry[] }
+const { entry, news } = Astro.props;
+const { title, date, excerpt, venture, cover, source, external } = entry.data;
+const { Content } = await render(entry);
+const related = news.filter((n) => n.id !== entry.id && n.data.venture === venture).slice(0, 3);
+const sourceHref = source?.url.startsWith('../') ? href(`/news/${source.url.slice(3)}`) : source?.url;
+---
+
+<Layout title={`${title} — Lakeba News`} description={excerpt}>
+  <Nav />
+  <main class="pt-32 pb-24">
+    <article class="container-x max-w-3xl">
+      <a href={href('/news/')} class="text-sm text-white/50 hover:text-white">← News & Media</a>
+      <div class="mt-8 flex flex-wrap items-center gap-2 text-sm">
+        <span class:list={['rounded-full px-3 py-1 font-semibold', ventureClass(venture)]}>{venture}</span>
+        <time datetime={date.toISOString()} class="text-white/50">{newsDate.format(date)}</time>
+      </div>
+      <h1 class="mt-4 text-3xl font-extrabold leading-tight sm:text-5xl">{title}</h1>
+      {external && <p class="mt-5 text-lg text-white/65">{excerpt}</p>}
+      {cover && <Image src={cover} alt="" widths={[640, 960, 1400]} sizes="(min-width: 768px) 768px, 100vw" class="mt-8 w-full rounded-3xl" loading="eager" />}
+
+      {!external && <div class="news-prose mt-10"><Content /></div>}
+
+      {source && (
+        <div class="glass mt-10 flex flex-wrap items-center justify-between gap-4 rounded-2xl p-5">
+          <p class="text-sm text-white/60">{external ? 'This story was published on' : 'Originally published on'} <span class="font-semibold text-white">{source.name}</span></p>
+          <a href={sourceHref} target="_blank" rel="noopener" class="rounded-xl bg-lk-blue px-4 py-2 text-sm font-semibold text-white">{external ? 'Read the story' : 'View original'} ↗</a>
+        </div>
+      )}
+    </article>
+
+    {related.length > 0 && (
+      <section class="container-x mt-20">
+        <h2 class="text-2xl font-bold">More from {venture}</h2>
+        <div class="mt-6 grid gap-5 md:grid-cols-3">{related.map((n) => <NewsCard entry={n} />)}</div>
+      </section>
+    )}
+  </main>
+  <Footer />
+</Layout>

@@ -1,0 +1,77 @@
+---
+import Layout from '../../layouts/Layout.astro';
+import Nav from '../../components/Nav.astro';
+import Footer from '../../components/Footer.astro';
+import NewsCard from '../../components/NewsCard.astro';
+import { allNews } from '../../lib/news';
+
+const news = await allNews();
+const [lead, ...rest] = news;
+const ventures = [...new Set(news.map((n) => n.data.venture))].sort((a, b) => (a === 'Lakeba Group' ? -1 : b === 'Lakeba Group' ? 1 : a.localeCompare(b)));
+const years = [...new Set(news.map((n) => n.data.date.getFullYear()))].sort((a, b) => b - a);
+---
+
+<Layout title="News & Media — Lakeba" description="Press releases, announcements and media coverage from Lakeba and its ventures.">
+  <Nav />
+  <main class="pt-32 pb-24">
+    <div class="container-x">
+      <span class="eyebrow">News & Media</span>
+      <h1 class="mt-5 text-4xl font-extrabold sm:text-6xl">What’s new at Lakeba</h1>
+      <p class="mt-4 max-w-2xl text-lg text-white/60">Press releases, announcements and coverage from Lakeba and its ventures, since 2015.</p>
+
+      <div class="mt-10 flex flex-wrap items-center gap-2" role="group" aria-label="Filter by venture">
+        <button type="button" data-filter-venture="" aria-pressed="true" class="filter-chip">All</button>
+        {ventures.map((v) => <button type="button" data-filter-venture={v} aria-pressed="false" class="filter-chip">{v}</button>)}
+        <label class="ml-auto flex items-center gap-2 text-sm text-white/55">
+          Year
+          <select data-filter-year class="rounded-xl border border-white/10 bg-ink px-3 py-2 text-white">
+            <option value="">All</option>
+            {years.map((y) => <option value={y}>{y}</option>)}
+          </select>
+        </label>
+      </div>
+
+      <div class="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3" data-news-grid>
+        {lead && <NewsCard entry={lead} large />}
+        {rest.map((n) => <NewsCard entry={n} />)}
+      </div>
+      <p data-news-empty hidden class="mt-10 text-center text-white/50">No news for this selection.</p>
+      <p class="mt-10 text-center text-sm text-white/40"><span data-news-count>{news.length}</span> articles</p>
+    </div>
+  </main>
+  <Footer />
+</Layout>
+
+<style>
+  .filter-chip { border-radius: 9999px; border: 1px solid var(--color-line); padding: 0.4rem 0.9rem; font-size: 0.875rem; color: color-mix(in oklab, var(--color-white) 65%, transparent); transition: all 150ms; }
+  .filter-chip:hover { color: var(--color-white); }
+  .filter-chip[aria-pressed='true'] { background: var(--color-lk-blue); border-color: var(--color-lk-blue); color: #fff; }
+</style>
+
+<script>
+  // Client-side filtering; the full list is in the HTML for search engines.
+  document.addEventListener('astro:page-load', () => {
+    const grid = document.querySelector('[data-news-grid]');
+    if (!grid) return;
+    const cards = [...grid.querySelectorAll<HTMLElement>('.news-card')];
+    const chips = [...document.querySelectorAll<HTMLButtonElement>('[data-filter-venture]')];
+    const year = document.querySelector<HTMLSelectElement>('[data-filter-year]')!;
+    let venture = '';
+    const apply = () => {
+      let shown = 0;
+      for (const c of cards) {
+        const ok = (!venture || c.dataset.venture === venture) && (!year.value || c.dataset.year === year.value);
+        c.hidden = !ok;
+        if (ok) shown++;
+      }
+      document.querySelector<HTMLElement>('[data-news-count]')!.textContent = String(shown);
+      document.querySelector<HTMLElement>('[data-news-empty]')!.hidden = shown > 0;
+    };
+    chips.forEach((chip) => chip.addEventListener('click', () => {
+      venture = chip.dataset.filterVenture ?? '';
+      chips.forEach((c) => c.setAttribute('aria-pressed', String(c === chip)));
+      apply();
+    }));
+    year.addEventListener('change', apply);
+  });
+</script>

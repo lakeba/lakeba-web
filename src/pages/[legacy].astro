@@ -1,0 +1,25 @@
+---
+// Old WordPress addresses (lakeba.com/<post>/) forward to the news section,
+// so existing links and search results keep working after the move.
+import { allNews } from '../lib/news';
+import { href } from '../lib/paths';
+
+export async function getStaticPaths() {
+  return (await allNews()).map((entry) => ({ params: { legacy: entry.id } }));
+}
+
+const target = href(`/news/${Astro.params.legacy}/`);
+const canonical = new URL(target, Astro.site).href;
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Moved</title>
+    <meta http-equiv="refresh" content={`0; url=${target}`} />
+    <link rel="canonical" href={canonical} />
+    <meta name="robots" content="noindex" />
+  </head>
+  <body><p>This article has moved to <a href={target}>{canonical}</a>.</p></body>
+</html>

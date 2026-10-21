@@ -20,6 +20,8 @@ export default defineConfig({
       SMTP_URL: envField.string({ context: 'server', access: 'secret', optional: true }),
       MAIL_FROM: envField.string({ context: 'server', access: 'public', default: 'Lakeba Investor Relations <investors@lakeba.com>' }),
       ANTHROPIC_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // Where public News & Media articles live (the marketing site).
+      PUBLIC_SITE_URL: envField.string({ context: 'server', access: 'public', default: 'https://lakeba.github.io/lakeba-web' }),
     },
   },
   vite: {

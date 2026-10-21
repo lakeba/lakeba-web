@@ -1,0 +1,19 @@
+---
+import NewsCard from './NewsCard.astro';
+import { allNews } from '../lib/news';
+import { href } from '../lib/paths';
+const latest = (await allNews()).slice(0, 3);
+---
+
+<section id="news" class="py-28">
+  <div class="container-x">
+    <div class="reveal flex flex-wrap items-end justify-between gap-6">
+      <div>
+        <span class="eyebrow">News & Media</span>
+        <h2 class="mt-5 text-4xl font-extrabold sm:text-5xl">Latest from Lakeba</h2>
+      </div>
+      <a href={href('/news/')} class="rounded-2xl border border-white/15 px-5 py-3 font-semibold text-white transition hover:bg-white/5">All news →</a>
+    </div>
+    <div class="reveal mt-12 grid gap-5 md:grid-cols-3">{latest.map((n) => <NewsCard entry={n} />)}</div>
+  </div>
+</section>

@@ -3,25 +3,27 @@ import Portal from '../../layouts/Portal.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
 import { longDate } from '../../lib/format';
+import { loadNews } from '../../lib/news';
 
-const { data: posts } = await Astro.locals.supabase.from('posts').select('slug, title, excerpt, cover_url, published_at').order('published_at', { ascending: false });
-const [lead, ...rest] = posts ?? [];
+const news = await loadNews(Astro.locals.supabase);
+const [lead, ...rest] = news;
+const target = (external: boolean) => (external ? { target: '_blank', rel: 'noopener' } : {});
 ---
 
 <Portal title="News">
-  <PageHeader eyebrow="News" title="News for shareholders" subtitle="Company and portfolio news, in one place." />
+  <PageHeader eyebrow="News" title="News for shareholders" subtitle="Shareholder updates and Lakeba’s public News & Media, in one place." />
   {lead ? (
     <>
-      <a href={`/news/${lead.slug}`} class="card group block bg-gradient-to-br from-lk-blue/15 to-transparent sm:p-10">
-        <p class="text-xs text-white/45">{longDate.format(new Date(lead.published_at!))}</p>
+      <a href={lead.href} {...target(lead.external)} class="card group block bg-gradient-to-br from-lk-blue/15 to-transparent sm:p-10">
+        <p class="text-xs text-white/45"><span class="font-semibold text-lk-blue">{lead.label}</span> · {longDate.format(lead.date)}</p>
         <h2 class="mt-2 max-w-3xl text-3xl font-extrabold group-hover:underline">{lead.title}</h2>
         <p class="mt-3 max-w-2xl text-white/60">{lead.excerpt}</p>
-        <p class="mt-6 text-sm font-semibold text-lk-blue">Read →</p>
+        <p class="mt-6 text-sm font-semibold text-lk-blue">{lead.external ? 'Read on lakeba.com ↗' : 'Read →'}</p>
       </a>
       <div class="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {rest.map((p) => (
-          <a href={`/news/${p.slug}`} class="card group block">
-            <p class="text-xs text-white/45">{longDate.format(new Date(p.published_at!))}</p>
+          <a href={p.href} {...target(p.external)} class="card group block">
+            <p class="text-xs text-white/45"><span class="font-semibold text-lk-blue">{p.label}</span> · {longDate.format(p.date)}</p>
             <h2 class="mt-2 text-lg font-bold group-hover:underline">{p.title}</h2>
             <p class="mt-2 line-clamp-3 text-sm text-white/55">{p.excerpt}</p>
           </a>

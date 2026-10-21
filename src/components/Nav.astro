@@ -1,19 +1,21 @@
 ---
 import Mark from './Mark.astro';
 import ThemeToggle from './ThemeToggle.astro';
+import { href } from '../lib/paths';
 const links = [
-  { href: '#os', label: 'LakebaOS' },
-  { href: '#program', label: 'Program' },
-  { href: '#team', label: 'AI Team' },
-  { href: '#fund', label: 'Fund' },
-  { href: '#track', label: 'Track record' },
+  { href: href('/#os'), label: 'LakebaOS' },
+  { href: href('/#program'), label: 'Program' },
+  { href: href('/#team'), label: 'AI Team' },
+  { href: href('/#fund'), label: 'Fund' },
+  { href: href('/#track'), label: 'Track record' },
+  { href: href('/news/'), label: 'News' },
 ];
 ---
 
 <header class="fixed inset-x-0 top-0 z-50">
   <div class="container-x pt-3">
     <nav class="glass flex items-center justify-between rounded-2xl px-4 py-2.5 shadow-2xl shadow-black/30">
-      <a href="#top" class="flex items-center gap-2.5" aria-label="Lakeba home">
+      <a href={href('/')} class="flex items-center gap-2.5" aria-label="Lakeba home">
         <Mark class="size-7" />
         <span class="font-display text-lg font-bold tracking-tight text-white">lakeba</span>
         <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 font-mono text-[10px] text-white/70 sm:inline">OS</span>

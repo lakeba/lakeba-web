@@ -1,10 +1,11 @@
 ---
 import Mark from './Mark.astro';
+import { href } from '../lib/paths';
 const offices = ['Sydney', 'India', 'Indonesia', 'Italy', 'United Kingdom', 'United States'];
 const cols = [
-  { h: 'LakebaOS', l: [['How it works', '#program'], ['AI team', '#team'], ['GitHub', 'https://github.com/lakeba/agent-team'], ['Download', 'https://lakeba.github.io/agent-team/#desktop']] },
-  { h: 'Lakeba', l: [['Portfolio', 'https://lakeba.com/portfolios/'], ['About us', 'https://lakeba.com/about-us/'], ['Our team', 'https://lakeba.com/our-team/'], ['Investors', 'https://lakeba.com/']] },
-  { h: 'Founders', l: [['Fund offer', '#fund'], ['Apply', 'https://lakeba.com/os/apply'], ['Contact', 'mailto:info@lakeba.com']] },
+  { h: 'LakebaOS', l: [['How it works', href('/#program')], ['AI team', href('/#team')], ['GitHub', 'https://github.com/lakeba/agent-team'], ['Download', 'https://lakeba.github.io/agent-team/#desktop']] },
+  { h: 'Lakeba', l: [['News & Media', href('/news/')], ['Portfolio', 'https://lakeba.com/portfolios/'], ['About us', 'https://lakeba.com/about-us/'], ['Our team', 'https://lakeba.com/our-team/'], ['Investors', 'https://lakeba.com/']] },
+  { h: 'Founders', l: [['Fund offer', href('/#fund')], ['Apply', 'https://lakeba.com/os/apply'], ['Contact', 'mailto:info@lakeba.com']] },
 ];
 ---
 
