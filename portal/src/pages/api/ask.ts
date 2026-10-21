@@ -3,8 +3,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { buildKnowledgeBase } from '../../lib/knowledge';
 import { serviceClient } from '../../lib/admin';
 import { buildMessages, client, costUsd, DECLINE, FULL_CONTEXT_LIMIT, loadHouseRules, MODEL, searchPassages, sourcesFor, systemPrompt, validateTurns, type ChatTurn, type SourceRef } from '../../lib/ask';
-
-const QUESTIONS_PER_HOUR = 30;
+import { checkAskAllowed, loadLimits, precheckOnTopic, PRECHECK_MODEL } from '../../lib/ask-limits';
 
 /**
  * Streams an Ask Lakeba answer as server-sent events:
@@ -13,6 +12,7 @@ const QUESTIONS_PER_HOUR = 30;
  *   data: {"exchange": "<id>"}   the stored record, so the answer can be rated
  *   data: {"error": "..."}       if something went wrong
  * Every exchange is stored for admin review (Admin → Ask review).
+ * Cost protection (lib/ask-limits.ts) runs before anything reaches Claude.
  */
 export const POST: APIRoute = async ({ request, locals, url }) => {
   if (request.headers.get('origin') !== url.origin) return new Response('Forbidden', { status: 403 });
@@ -27,9 +27,10 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   const invalid = validateTurns(turns);
   if (invalid) return Response.json({ error: invalid }, { status: 400 });
 
-  const since = new Date(Date.now() - 3600_000).toISOString();
-  const { data: recent } = await supabase.rpc('my_recent_event_count', { event_action: 'ask_question', since });
-  if (Number(recent ?? 0) >= QUESTIONS_PER_HOUR) return Response.json({ error: 'You have asked a lot of questions this hour. Please try again later.' }, { status: 429 });
+  const svc = serviceClient();
+  const limits = await loadLimits(svc);
+  const gate = await checkAskAllowed(svc, locals.user!.id, limits, url.origin);
+  if (!gate.ok) return Response.json({ error: gate.error }, { status: gate.status });
   await supabase.rpc('log_event', { event_action: 'ask_question', event_detail: { length: turns.at(-1)!.content.length, turn: Math.ceil(turns.length / 2) } });
 
   const encoder = new TextEncoder();
@@ -41,20 +42,34 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
       // What gets stored for review once the answer is complete (or stopped).
       const record: { answer: string; sources: SourceRef[]; error: string | null; usage: Record<string, unknown> } = { answer: '', sources: [], error: null, usage: {} };
       try {
-        const [kb, houseRules] = await Promise.all([buildKnowledgeBase(), loadHouseRules(serviceClient())]);
-        if (!client || kb.approxTokens > FULL_CONTEXT_LIMIT) {
-          // AI answers off: point to the most relevant passages instead.
+        if (!client || gate.budgetReached) {
+          // AI answers off or today's budget used: point to the most relevant passages instead.
           const passages = await searchPassages(supabase, turns.at(-1)!.content);
-          record.answer = passages.length ? 'AI answers are not switched on yet. These passages look most relevant:' : 'AI answers are not switched on yet, and no published document matches that question.';
+          const why = !client ? 'AI answers are not switched on yet.' : 'Ask Lakeba has reached its daily limit for AI answers; they resume at midnight (Sydney time).';
+          record.answer = passages.length ? `${why} These passages look most relevant:` : `${why} No published document matches that question.`;
           record.sources = passages.map((p) => ({ title: p.title, detail: p.page ? `page ${p.page}` : null, href: `/documents/${p.document_id}` }));
-          record.error = 'ai_off';
+          record.error = !client ? 'ai_off' : 'budget';
           send({ text: record.answer });
           send({ sources: record.sources });
           return;
         }
+        // Cheap pre-check: clearly off-topic questions are declined without sending the knowledge base.
+        if (limits.precheck) {
+          const check = await precheckOnTopic(turns);
+          if (!check.onTopic) {
+            record.answer = DECLINE;
+            record.usage = { model: PRECHECK_MODEL, cost_usd: check.costUsd };
+            send({ text: DECLINE });
+            send({ sources: [] });
+            return;
+          }
+          record.usage = { cost_usd: check.costUsd };
+        }
+        const [kb, houseRules] = await Promise.all([buildKnowledgeBase(), loadHouseRules(svc)]);
+        if (kb.approxTokens > FULL_CONTEXT_LIMIT) throw new Error('Knowledge base too large to send in full');
         const response = client.beta.messages.stream({
           model: MODEL,
-          max_tokens: 16000,
+          max_tokens: limits.maxAnswerTokens,
           output_config: { effort: 'medium' },
           // Re-runs on a fallback model if a safety classifier declines.
           betas: ['server-side-fallback-2026-07-01'],
@@ -69,6 +84,11 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           }
         }
         const message = await response.finalMessage();
+        if (message.stop_reason === 'max_tokens') {
+          const note = '\n\n*(Answer shortened. Ask a more specific question for more detail.)*';
+          record.answer += note;
+          send({ text: note });
+        }
         if (message.stop_reason === 'refusal') {
           const note = '\n\nI can’t answer that one. Please ask the board through Board Q&A.';
           record.answer += note;
@@ -82,7 +102,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           cache_read_tokens: message.usage.cache_read_input_tokens,
           cache_write_tokens: message.usage.cache_creation_input_tokens,
           output_tokens: message.usage.output_tokens,
-          cost_usd: costUsd(message.usage),
+          cost_usd: costUsd(message.usage) + Number(record.usage.cost_usd ?? 0),
         };
         await supabase.rpc('log_event', {
           event_action: 'ask_answered',
@@ -103,7 +123,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           send({ error: 'Ask Lakeba is unavailable right now. Please try again shortly.' });
         }
       } finally {
-        const { data: stored } = await serviceClient().from('ask_exchanges').insert({
+        const { data: stored } = await svc.from('ask_exchanges').insert({
           user_id: locals.user!.id,
           conversation_id: conversationId,
           turn: Math.ceil(turns.length / 2),

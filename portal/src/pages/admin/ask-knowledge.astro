@@ -9,6 +9,7 @@ import { shortDate, dateTime } from '../../lib/format';
 import { buildKnowledgeBase } from '../../lib/knowledge';
 import { askEnabled, buildMessages, client, CORE_RULES, HOUSE_RULES_MAX, loadHouseRules, MODEL, systemPrompt } from '../../lib/ask';
 import { serviceClient } from '../../lib/admin';
+import { DEFAULT_LIMITS, loadLimits, spendToday } from '../../lib/ask-limits';
 
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
@@ -25,7 +26,32 @@ if (Astro.request.method === 'POST') {
   const id = field(form, 'id');
   const log = (action: string, detail: object = {}) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
 
-  if (intent === 'house-rules') {
+  if (intent === 'limits') {
+    const num = (name: string, min: number, max: number) => {
+      const v = Number(field(form, name));
+      return Number.isFinite(v) && v >= min && v <= max ? v : null;
+    };
+    const value = {
+      perHour: num('perHour', 1, 100), perDay: num('perDay', 1, 500),
+      dailyBudgetUsd: num('dailyBudgetUsd', 1, 10000), maxAnswerTokens: num('maxAnswerTokens', 1000, 16000),
+      precheck: form.get('precheck') === 'on',
+    };
+    if (Object.values(value).some((v) => v === null)) error = 'Check the limits: questions per hour 1–100, per day 1–500, budget USD 1–10,000, answer length 1,000–16,000 tokens.';
+    else {
+      const { error: e } = await supabase.from('ask_settings').upsert({ key: 'limits', value, updated_by: userId, updated_at: new Date().toISOString() });
+      if (e) error = e.message; else { await log('admin_updated_ask_limits', value); notice = 'Usage limits saved.'; }
+    }
+  } else if (intent === 'restore') {
+    const { error: e } = await supabase.from('ask_user_pauses').delete().eq('user_id', field(form, 'user_id'));
+    if (e) error = e.message; else { await log('admin_restored_ask_access', { user_id: field(form, 'user_id') }); notice = 'Ask Lakeba access restored.'; }
+  } else if (intent === 'pause') {
+    const { data: p } = await supabase.from('profiles').select('id').eq('email', field(form, 'email').toLowerCase()).maybeSingle();
+    if (!p) error = 'No account with that email.';
+    else {
+      const { error: e } = await supabase.from('ask_user_pauses').upsert({ user_id: p.id, reason: field(form, 'reason') || 'Paused by an admin', paused_by: userId });
+      if (e) error = e.message; else { await log('admin_paused_ask_access', { user_id: p.id }); notice = 'Ask Lakeba paused for that account.'; }
+    }
+  } else if (intent === 'house-rules') {
     const text = field(form, 'house_rules');
     if (text.length > HOUSE_RULES_MAX) error = `House rules can be at most ${HOUSE_RULES_MAX.toLocaleString()} characters.`;
     else {
@@ -76,6 +102,14 @@ let query = supabase.from('ask_approved_answers').select('id, question, answer, 
 if (view === 'live') query = query.eq('active', true).gte('review_by', today);
 if (view === 'due') query = query.eq('active', true).lte('review_by', soon);
 if (view === 'inactive') query = query.eq('active', false);
+const svcRead = serviceClient();
+const [limits, spent, { data: pauses }] = await Promise.all([
+  loadLimits(svcRead),
+  spendToday(svcRead),
+  supabase.from('ask_user_pauses').select('user_id, reason, paused_by, paused_at, profiles!ask_user_pauses_user_id_fkey(email)').order('paused_at', { ascending: false }),
+]);
+const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD' });
+const budgetPct = Math.min(100, Math.round((spent / limits.dailyBudgetUsd) * 100));
 const [{ data: answers }, rules, kb, { count: liveCount }, { count: dueCount }] = await Promise.all([
   query,
   loadHouseRules(serviceClient()),
@@ -105,6 +139,51 @@ const expired = (d: string) => d < today;
       </p>
       {askEnabled && <form method="post"><button name="intent" value="count" class="btn-ghost !px-3 !py-2 text-sm">Check exact size (free)</button></form>}
     </div>
+  </section>
+
+  <section class="card mb-6">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <h2 class="text-lg font-bold">Usage and costs</h2>
+      <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', budgetPct >= 100 ? 'bg-lk-red/15 text-lk-red' : budgetPct >= 80 ? 'bg-lk-orange/15 text-lk-orange' : 'bg-lk-green/15 text-lk-green']}>
+        Today: {usd.format(spent)} of {usd.format(limits.dailyBudgetUsd)} budget{budgetPct >= 100 && ' — AI answers paused until midnight'}
+      </span>
+    </div>
+    <div class="mt-3 h-2 overflow-hidden rounded-full bg-white/10"><div class:list={['h-full rounded-full', budgetPct >= 100 ? 'bg-lk-red' : budgetPct >= 80 ? 'bg-lk-orange' : 'bg-lk-green']} style={`width:${budgetPct}%`}></div></div>
+    <form method="post" class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <label><span class="label">Questions per hour, per account</span><input type="number" name="perHour" min="1" max="100" value={limits.perHour} class="field !py-2" /></label>
+      <label><span class="label">Questions per day, per account</span><input type="number" name="perDay" min="1" max="500" value={limits.perDay} class="field !py-2" /></label>
+      <label><span class="label">Daily budget, all accounts (USD)</span><input type="number" name="dailyBudgetUsd" min="1" max="10000" step="1" value={limits.dailyBudgetUsd} class="field !py-2" /></label>
+      <label><span class="label">Longest answer (tokens)</span><input type="number" name="maxAnswerTokens" min="1000" max="16000" step="500" value={limits.maxAnswerTokens} class="field !py-2" /></label>
+      <label class="flex items-center gap-2 text-sm text-white/70 sm:col-span-2 lg:col-span-3"><input type="checkbox" name="precheck" checked={limits.precheck} class="size-4 accent-lk-blue" /> Screen out clearly off-topic questions with Claude Haiku 5.5 before the knowledge base is sent (costs a fraction of a cent)</label>
+      <button name="intent" value="limits" class="btn-primary !py-2">Save limits</button>
+    </form>
+    <p class="mt-3 text-xs text-white/40">
+      Defaults: {DEFAULT_LIMITS.perHour}/hour, {DEFAULT_LIMITS.perDay}/day, {usd.format(DEFAULT_LIMITS.dailyBudgetUsd)} a day, {DEFAULT_LIMITS.maxAnswerTokens.toLocaleString()} tokens.
+      When the budget is reached, Ask shows matching passages until midnight (Sydney) and admins get an alert. An account that reaches its daily limit two days in a row is paused automatically.
+    </p>
+    <p class="mt-2 rounded-xl border border-lk-orange/30 bg-lk-orange/10 px-3 py-2 text-xs text-white/80">
+      <strong>Hard stop:</strong> also set a monthly spend limit for this API key’s workspace in the Anthropic Console (your organisation’s limits settings), with email alerts. It applies even if something in the portal goes wrong.
+    </p>
+
+    <h3 class="mt-6 font-bold">Paused accounts</h3>
+    {(pauses ?? []).length ? (
+      <ul class="mt-2 divide-y divide-white/5 text-sm">
+        {(pauses ?? []).map((p) => (
+          <li class="flex flex-wrap items-center justify-between gap-3 py-2.5">
+            <span><span class="text-white">{(p.profiles as unknown as { email: string } | null)?.email}</span> <span class="text-white/45">· {p.reason} · {dateTime.format(new Date(p.paused_at))}{p.paused_by ? '' : ' · automatic'}</span></span>
+            <form method="post"><input type="hidden" name="user_id" value={p.user_id} /><button name="intent" value="restore" class="text-lk-blue hover:underline">Restore access</button></form>
+          </li>
+        ))}
+      </ul>
+    ) : <p class="mt-2 text-sm text-white/45">No accounts are paused.</p>}
+    <details class="mt-3 text-sm">
+      <summary class="cursor-pointer text-white/55">Pause an account by hand</summary>
+      <form method="post" class="mt-2 flex flex-wrap gap-2">
+        <input name="email" type="email" placeholder="Email" class="field !w-auto !py-2" />
+        <input name="reason" placeholder="Reason (optional)" class="field !w-auto !py-2" />
+        <button name="intent" value="pause" class="btn-ghost !py-2">Pause</button>
+      </form>
+    </details>
   </section>
 
   <section class="card mb-6">

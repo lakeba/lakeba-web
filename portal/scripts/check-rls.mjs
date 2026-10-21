@@ -162,6 +162,10 @@ try {
   const testTables = await Promise.all(['ask_test_cases', 'ask_test_runs', 'ask_test_results'].map((t) => one.from(t).select('id')));
   check('investors cannot see the Ask test set', testTables.every((t) => (t.data ?? []).length === 0));
 
+  // Paused Ask accounts are admin-only
+  const { data: pausesSeen } = await one.from('ask_user_pauses').select('user_id');
+  check('investors cannot see or change Ask pauses', (pausesSeen ?? []).length === 0);
+
   // Official shares on issue
   const ORD = '00000000-0000-4000-8000-000000000001';
   const { error: officialErr } = await one.from('share_classes').update({ official_on_issue: 1, official_as_at: '2026-01-01' }).eq('id', ORD).select();

@@ -2,6 +2,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { serviceClient } from './admin';
 import { buildKnowledgeBase } from './knowledge';
 import { buildMessages, client, costUsd, DECLINE, loadHouseRules, MODEL, systemPrompt } from './ask';
+import { loadLimits } from './ask-limits';
 
 export type TestCase = {
   id: string; question: string; expected_answer: string | null;
@@ -56,10 +57,11 @@ export async function runTestSet(runId: string) {
   const svc = serviceClient();
   try {
     if (!client) throw new Error('ANTHROPIC_API_KEY is not set');
-    const [{ data: cases }, kb, rules] = await Promise.all([
+    const [{ data: cases }, kb, rules, limits] = await Promise.all([
       svc.from('ask_test_cases').select('id, question, expected_answer, must_include, must_not_include, expect_decline').eq('active', true).order('created_at'),
       buildKnowledgeBase(),
       loadHouseRules(svc),
+      loadLimits(svc),
     ]);
     const system = systemPrompt(rules);
 
@@ -69,7 +71,7 @@ export async function runTestSet(runId: string) {
       try {
         const reply = await client!.beta.messages.create({
           model: MODEL,
-          max_tokens: 16000,
+          max_tokens: limits.maxAnswerTokens, // same cap as shareholders get
           output_config: { effort: 'medium' },
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
