@@ -9,6 +9,10 @@ Group=portal
 WorkingDirectory=/srv/lakeba-portal/current
 EnvironmentFile=/etc/lakeba-portal/portal.env
 Environment=NODE_ENV=production HOST=127.0.0.1 PORT=4321
+# Writable state (ProtectSystem=strict makes everything else read-only):
+# /var/lib/lakeba-portal, e.g. the Ask retrieval embedding model.
+StateDirectory=lakeba-portal
+Environment=MODEL_CACHE_DIR=/var/lib/lakeba-portal/models
 ExecStart=/usr/bin/node dist/server/entry.mjs
 Restart=always
 RestartSec=3

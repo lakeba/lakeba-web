@@ -37,20 +37,20 @@ export type KnowledgeBase = {
   approvedCount: number;
 };
 
-const sydneyToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(new Date());
+export const sydneyToday = () => new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(new Date());
 
 const day = new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' });
-const fmtDate = (d: string | Date) => day.format(new Date(d));
+export const fmtDate = (d: string | Date) => day.format(new Date(d));
 const int = new Intl.NumberFormat('en-AU');
 
 /** The company a knowledge base is for: the given one, or Lakeba Group. */
-async function resolveCompany(svc: ReturnType<typeof serviceClient>, company?: AskCompany | null): Promise<AskCompany> {
+export async function resolveCompany(svc: ReturnType<typeof serviceClient>, company?: AskCompany | null): Promise<AskCompany> {
   if (company) return company;
   const { data } = await svc.from('entities').select('id, code, display_name, legal_name, relationship').eq('relationship', 'group').single();
   return data as AskCompany;
 }
 
-async function factsSheet(svc: ReturnType<typeof serviceClient>, company: AskCompany) {
+export async function factsSheet(svc: ReturnType<typeof serviceClient>, company: AskCompany) {
   const entityId = company.id;
   const isGroup = company.relationship === 'group';
   const [{ data: classes }, { data: holdings }, { data: prices }, { data: ventures }, { data: meetings }, { data: liquidity }] = await Promise.all([
@@ -107,7 +107,7 @@ async function factsSheet(svc: ReturnType<typeof serviceClient>, company: AskCom
 }
 
 /** Markdown article body as plain text for the model. */
-const articleText = (md: string) =>
+export const articleText = (md: string) =>
   md.replace(/!\[[^\]]*\]\([^)]*\)/g, '').replace(/<iframe[^>]*><\/iframe>/g, '').replace(/\[([^\]]+)\]\([^)]*\)/g, '$1').replace(/\n{3,}/g, '\n\n').trim();
 
 /** The knowledge base for one company (Lakeba Group when none is given). */

@@ -39,6 +39,8 @@ export default defineConfig({
   },
   vite: {
     plugins: [tailwindcss()],
+    // Local embeddings (Ask retrieval) use a native runtime: load it from node_modules, don't bundle it.
+    ssr: { external: ['@huggingface/transformers', 'onnxruntime-node'] },
     // The portal shares brand styles and the logo with the marketing site.
     server: { fs: { allow: ['..'] } },
   },

@@ -4,6 +4,7 @@ import { buildKnowledgeBase } from '../../lib/knowledge';
 import { serviceClient } from '../../lib/admin';
 import { askName, buildMessages, client, costUsd, declineFor, FULL_CONTEXT_LIMIT, isDecline, loadHouseRules, MODEL, searchPassages, sourcesFor, systemPrompt, validateTurns, type ChatTurn, type SourceRef } from '../../lib/ask';
 import { checkAskAllowed, loadLimits, precheckOnTopic, PRECHECK_MODEL } from '../../lib/ask-limits';
+import { loadRetrieval, retrieveKnowledgeBase, standaloneQuery } from '../../lib/retrieval';
 
 /**
  * Streams an Ask Lakeba answer as server-sent events:
@@ -30,7 +31,11 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   if (invalid) return Response.json({ error: invalid }, { status: 400 });
 
   const svc = serviceClient();
-  const limits = await loadLimits(svc);
+  const [limits, retrieval] = await Promise.all([loadLimits(svc), loadRetrieval(svc)]);
+  // Full knowledge base, or only the best-matching passages (Admin → Ask knowledge).
+  // Admins may pick the mode per question, for comparing the two.
+  const admin = locals.profile?.role === 'admin' && locals.user?.aal === 'aal2';
+  let mode: 'full' | 'retrieval' = admin && ['full', 'retrieval'].includes(body?.mode) ? body.mode : retrieval.enabled ? 'retrieval' : 'full';
   const gate = await checkAskAllowed(svc, locals.user!.id, limits, url.origin);
   if (!gate.ok) return Response.json({ error: gate.error }, { status: gate.status });
   await supabase.rpc('log_event', { event_action: 'ask_question', event_detail: { length: turns.at(-1)!.content.length, turn: Math.ceil(turns.length / 2) } });
@@ -42,7 +47,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
         try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`)); } catch { /* browser went away */ }
       };
       // What gets stored for review once the answer is complete (or stopped).
-      const record: { answer: string; sources: SourceRef[]; error: string | null; usage: Record<string, unknown> } = { answer: '', sources: [], error: null, usage: {} };
+      const record: { answer: string; sources: SourceRef[]; error: string | null; usage: Record<string, unknown>; query: string | null } = { answer: '', sources: [], error: null, usage: {}, query: null };
       try {
         if (!client || gate.budgetReached) {
           // AI answers off or today's budget used: point to the most relevant passages instead.
@@ -67,7 +72,21 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           }
           record.usage = { cost_usd: check.costUsd };
         }
-        const [kb, houseRules] = await Promise.all([buildKnowledgeBase(company), loadHouseRules(svc, company)]);
+        let kb;
+        const houseRules = await loadHouseRules(svc, company);
+        if (mode === 'retrieval') {
+          try {
+            const rewritten = await standaloneQuery(turns);
+            record.query = rewritten.query;
+            record.usage = { cost_usd: Number(record.usage.cost_usd ?? 0) + rewritten.costUsd };
+            kb = await retrieveKnowledgeBase(company, rewritten.query, retrieval.passages);
+          } catch (error) {
+            // Never leave a shareholder without an answer: fall back to the full documents.
+            console.error('Ask retrieval failed; answering from the full documents', error);
+            mode = 'full';
+          }
+        }
+        kb ??= await buildKnowledgeBase(company);
         if (kb.approxTokens > FULL_CONTEXT_LIMIT) throw new Error('Knowledge base too large to send in full');
         const response = client.beta.messages.stream({
           model: MODEL,
@@ -128,6 +147,8 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
         const { data: stored } = await svc.from('ask_exchanges').insert({
           user_id: locals.user!.id,
           entity_id: company.id,
+          mode,
+          retrieval_query: record.query,
           conversation_id: conversationId,
           turn: Math.ceil(turns.length / 2),
           question: turns.at(-1)!.content,

@@ -12,6 +12,7 @@ import { adminScope } from '../../lib/admin-company';
 import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
 import { DEFAULT_LIMITS, loadLimits, spendToday } from '../../lib/ask-limits';
+import { ensureIndex, loadRetrieval } from '../../lib/retrieval';
 
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
@@ -32,9 +33,24 @@ if (Astro.request.method === 'POST') {
   const id = field(form, 'id');
   const log = (action: string, detail: object = {}) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
 
-  // Usage limits and pauses are portal-wide: group admins only.
-  if (['limits', 'restore', 'pause'].includes(intent) && !scope.isGroupAdmin) return new Response('Forbidden', { status: 403 });
-  if (intent === 'limits') {
+  // Usage limits, pauses and the answer mode are portal-wide: group admins only.
+  if (['limits', 'restore', 'pause', 'retrieval', 'reindex'].includes(intent) && !scope.isGroupAdmin) return new Response('Forbidden', { status: 403 });
+  if (intent === 'retrieval') {
+    const passages = Math.round(Number(field(form, 'passages')));
+    if (!(passages >= 10 && passages <= 80)) error = 'Passages per question: 10–80.';
+    else {
+      const value = { enabled: field(form, 'mode') === 'retrieval', passages };
+      const { error: e } = await supabase.from('ask_settings').upsert({ key: 'retrieval', value, updated_by: userId, updated_at: new Date().toISOString() });
+      if (e) error = e.message; else { await log('admin_updated_ask_retrieval', value); notice = value.enabled ? `Ask now answers from the ${passages} best-matching passages.` : 'Ask now answers from the full documents.'; }
+    }
+  } else if (intent === 'reindex') {
+    try {
+      const done = await ensureIndex(serviceClient(), true);
+      notice = `Search index up to date (${done.documents} document passages and ${done.news} news articles indexed now).`;
+    } catch (e) {
+      error = `The search index could not be built: ${e instanceof Error ? e.message : String(e)}`;
+    }
+  } else if (intent === 'limits') {
     const num = (name: string, min: number, max: number) => {
       const v = Number(field(form, name));
       return Number.isFinite(v) && v >= min && v <= max ? v : null;
@@ -111,10 +127,12 @@ if (view === 'live') query = query.eq('active', true).gte('review_by', today);
 if (view === 'due') query = query.eq('active', true).lte('review_by', soon);
 if (view === 'inactive') query = query.eq('active', false);
 const svcRead = serviceClient();
-const [limits, spent, { data: pauses }] = await Promise.all([
+const [limits, spent, { data: pauses }, retrieval, { count: unindexed }] = await Promise.all([
   loadLimits(svcRead),
   spendToday(svcRead),
   supabase.from('ask_user_pauses').select('user_id, reason, paused_by, paused_at, profiles!ask_user_pauses_user_id_fkey(email)').order('paused_at', { ascending: false }),
+  loadRetrieval(svcRead),
+  svcRead.from('document_chunks').select('id', { count: 'exact', head: true }).is('embedding', null),
 ]);
 const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD' });
 const budgetPct = Math.min(100, Math.round((spent / limits.dailyBudgetUsd) * 100));
@@ -195,6 +213,21 @@ const expired = (d: string) => d < today;
       </form>
     </details>
   </section>
+  )}
+
+  {scope.isGroupAdmin && (
+    <section class="card mb-6">
+      <h2 class="text-lg font-bold">How Ask answers</h2>
+      <p class="mt-1 text-sm text-white/55">Full documents: every question carries the whole knowledge base (cached for an hour; about US$1.57 for the first question after a quiet hour, then about US$0.06). Best-matching passages: the facts sheet, approved answers and only the passages that best match the question (about US$0.08 every time). Passages are found on this server; no document text goes to another provider for that.</p>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-4">
+        <label class="flex items-center gap-2 text-sm text-white/80"><input type="radio" name="mode" value="full" checked={!retrieval.enabled} class="accent-lk-blue" /> Full documents</label>
+        <label class="flex items-center gap-2 text-sm text-white/80"><input type="radio" name="mode" value="retrieval" checked={retrieval.enabled} class="accent-lk-blue" /> Best-matching passages</label>
+        <div><label class="label" for="passages">Passages per question</label><input class="field w-24" id="passages" name="passages" type="number" min="10" max="80" value={retrieval.passages} /></div>
+        <button name="intent" value="retrieval" class="btn-ghost">Save</button>
+        <button name="intent" value="reindex" class="btn-ghost">Rebuild search index</button>
+      </form>
+      <p class="mt-3 text-xs text-white/40">{unindexed ? `${unindexed} document passages are waiting to be indexed (done automatically on the next question).` : 'All document passages are indexed.'}</p>
+    </section>
   )}
 
   <section class="card mb-6">

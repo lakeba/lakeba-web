@@ -25,6 +25,13 @@ Files for all of this are in `portal/deploy/vultr/`.
 - **Ask Lakeba key**: `ssh -t root@<server> lakeba-set-anthropic-key` checks a Claude API key
   with Anthropic, stores it and restarts the portal (an empty key turns AI answers off).
   Set a spend limit in the Anthropic Console first.
+- **Ask retrieval** (built 23 October 2026, **switched off**): instead of the full documents,
+  Ask can answer from the best-matching passages (Admin → Ask knowledge → *How Ask answers*).
+  Tested on the Mac: about US$0.10 a question at any time (full documents: about US$1.58 for
+  the first question after a quiet hour, then about US$0.06), but less complete answers
+  (2 of 17 test questions materially worse). If it fails, Ask falls back to full documents.
+  Before using it in production: apply migration `20261025000000_ask_retrieval`, install
+  the updated `lakeba-portal.service` (writable model folder), then Rebuild search index.
 - **Logs**: `journalctl -u lakeba-portal -f`, `supabase-lakeba logs -f auth`.
 - **Restart**: `systemctl restart lakeba-portal`; Supabase: `supabase-lakeba restart`.
 - **Supabase updates**: back up (`lakeba-backup`), then in `/opt/supabase`:

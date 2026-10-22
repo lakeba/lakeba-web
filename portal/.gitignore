@@ -13,3 +13,4 @@ demo-db/supabase/.temp/
 demo-db/supabase/.branches/
 .demo-users.json
 demo-data/
+.models/
