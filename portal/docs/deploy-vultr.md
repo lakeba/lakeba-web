@@ -22,6 +22,9 @@ Files for all of this are in `portal/deploy/vultr/`.
   `/opt/lakeba-migrations/` on the server and run
   `bash /opt/lakeba-migrations/migrate.sh /opt/lakeba-migrations` *before* deploying
   code that needs them. Each migration runs once, in a transaction.
+- **Ask Lakeba key**: `ssh -t root@<server> lakeba-set-anthropic-key` checks a Claude API key
+  with Anthropic, stores it and restarts the portal (an empty key turns AI answers off).
+  Set a spend limit in the Anthropic Console first.
 - **Logs**: `journalctl -u lakeba-portal -f`, `supabase-lakeba logs -f auth`.
 - **Restart**: `systemctl restart lakeba-portal`; Supabase: `supabase-lakeba restart`.
 - **Supabase updates**: back up (`lakeba-backup`), then in `/opt/supabase`:
