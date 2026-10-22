@@ -18,8 +18,10 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   if (request.headers.get('origin') !== url.origin) return new Response('Forbidden', { status: 403 });
   const supabase = locals.supabase;
 
-  const { data: member } = await supabase.rpc('is_portal_member');
-  if (!member) return Response.json({ error: 'Ask Lakeba is available once your account is linked to a shareholding.' }, { status: 403 });
+  // Ask Lakeba answers from Lakeba Group's documents, so it is for people who can see the group.
+  const { data: groupId } = await supabase.rpc('group_entity_id');
+  const { data: member } = groupId ? await supabase.rpc('can_see_entity', { target: groupId }) : { data: false };
+  if (!member) return Response.json({ error: 'Ask Lakeba is available to Lakeba Group shareholders.' }, { status: 403 });
 
   const body = await request.json().catch(() => null);
   const turns = body?.turns as ChatTurn[];

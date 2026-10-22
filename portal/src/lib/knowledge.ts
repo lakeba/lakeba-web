@@ -42,13 +42,19 @@ const day = new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', ye
 const fmtDate = (d: string | Date) => day.format(new Date(d));
 const int = new Intl.NumberFormat('en-AU');
 
-async function factsSheet(svc: ReturnType<typeof serviceClient>) {
+// Ask Lakeba answers about Lakeba Group (per-company knowledge bases come in Phase 3).
+async function groupEntityId(svc: ReturnType<typeof serviceClient>) {
+  const { data } = await svc.rpc('group_entity_id');
+  return data as string;
+}
+
+async function factsSheet(svc: ReturnType<typeof serviceClient>, groupId: string) {
   const [{ data: classes }, { data: holdings }, { data: prices }, { data: ventures }, { data: meetings }, { data: liquidity }] = await Promise.all([
-    svc.from('share_classes').select('id, code, name, voting, official_on_issue, official_as_at').order('code'),
+    svc.from('share_classes').select('id, code, name, voting, official_on_issue, official_as_at').eq('entity_id', groupId).order('code'),
     svc.from('holdings').select('holder_id, share_class_id, shares, as_at'),
-    svc.from('reference_prices').select('price, currency, priced_on, source, note, share_classes(name)').order('priced_on'),
+    svc.from('reference_prices').select('price, currency, priced_on, source, note, share_classes!inner(name, entity_id)').eq('share_classes.entity_id', groupId).order('priced_on'),
     svc.from('ventures').select('name, tagline, stage, lakeba_stake, status, venture_updates(title, body, happened_on)').order('sort'),
-    svc.from('meetings').select('title, starts_at, location, proxy_deadline, status, resolutions(number, title, kind, outcome)').order('starts_at'),
+    svc.from('meetings').select('title, starts_at, location, proxy_deadline, status, resolutions(number, title, kind, outcome)').eq('entity_id', groupId).order('starts_at'),
     svc.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle(),
   ]);
 
@@ -103,11 +109,14 @@ const articleText = (md: string) =>
 export async function buildKnowledgeBase(): Promise<KnowledgeBase> {
   const svc = serviceClient();
   const now = new Date().toISOString();
+  const groupId = await groupEntityId(svc);
   const [facts, { data: docs }, news, { data: approved }] = await Promise.all([
-    factsSheet(svc),
+    factsSheet(svc, groupId),
     svc.from('documents')
       .select('id, title, category, published_at, document_chunks(chunk_index, page, content)')
-      .eq('in_knowledge_base', true).eq('audience', 'all_investors').not('published_at', 'is', null).lte('published_at', now)
+      .eq('in_knowledge_base', true).eq('audience', 'all_investors')
+      // Group documents, plus venture documents shared with group shareholders.
+      .or(`entity_id.eq.${groupId},shared_with_group.eq.true`).not('published_at', 'is', null).lte('published_at', now)
       .order('published_at').order('id'),
     getCollection('publicNews'),
     // Approved answers count until their review-by date.
