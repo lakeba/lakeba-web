@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# One-time setup of a fresh Vultr server (Ubuntu 24.04 LTS, Sydney) for the
+# One-time setup of a fresh Vultr server (Ubuntu 24.04 or 26.04 LTS, Sydney) for the
 # Lakeba Investor Portal. Run as root:
 #
 #   DEPLOY_PUBKEY="ssh-ed25519 AAAA… github-actions" bash setup.sh
@@ -27,8 +27,16 @@ ufw allow 80/tcp
 ufw allow 443/tcp
 ufw --force enable
 
-# SSH: keys only.
-sed -i -E 's/^#?PasswordAuthentication .*/PasswordAuthentication no/; s/^#?PermitRootLogin .*/PermitRootLogin prohibit-password/' /etc/ssh/sshd_config
+# SSH: keys only. A drop-in that sorts first wins over cloud-init's
+# 50-cloud-init.conf, which turns password login on (sshd uses the first value).
+# Make sure your own key is in /root/.ssh/authorized_keys before running this.
+[[ -s /root/.ssh/authorized_keys ]] || { echo "Add an SSH key for root first (password login is about to be turned off)."; exit 1; }
+cat > /etc/ssh/sshd_config.d/00-lakeba.conf <<'SSHD'
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin prohibit-password
+SSHD
+sshd -t
 systemctl reload ssh
 
 # Node.js 24 LTS from NodeSource's signed apt repository.
