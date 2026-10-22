@@ -14,6 +14,7 @@ export default defineConfig({
     allowedDomains: [
       { hostname: 'localhost' },
       { hostname: '127.0.0.1' },
+      { hostname: '192.168.1.141' }, // this Mac on the local network (plain HTTP)
       { hostname: '100.117.227.8' }, // this Mac on the Tailscale network
       { hostname: 'giuseppe-macbook-pro.tail21d16f.ts.net', protocol: 'https' }, // same, via Tailscale HTTPS
     ],
