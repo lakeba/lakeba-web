@@ -28,3 +28,4 @@ pnpm-debug.log*
 
 # internal notes about the live site; keep out of this public repo
 docs/investor-portal-plan.md
+private/

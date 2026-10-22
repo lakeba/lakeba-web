@@ -37,6 +37,8 @@ const sendInvite = (to, link) => mailer.sendMail({
 const KINDS = ['individual', 'company', 'trust', 'super_fund'];
 const ROLES = ['investor', 'board', 'admin'];
 const CATEGORIES = ['report', 'agm', 'update', 'governance', 'register', 'video', 'other'];
+// Registers list other people's holdings, so they default to the board.
+const defaultAudience = (d) => d.audience || (d.category === 'register' ? 'board' : 'all_investors');
 const MIME = { '.pdf': 'application/pdf', '.mp4': 'video/mp4', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' };
 
 const problems = [];
@@ -77,7 +79,7 @@ for (const d of documents) {
   if (!MIME[extname(d.file).toLowerCase()]) problems.push(`documents.csv line ${d._line}: unsupported file type ${extname(d.file)}`);
   if (!CATEGORIES.includes(d.category)) problems.push(`documents.csv line ${d._line}: category must be one of ${CATEGORIES.join(', ')}`);
   if (d.published_at && !isDate(d.published_at)) problems.push(`documents.csv line ${d._line}: published_at must be YYYY-MM-DD`);
-  const audience = d.audience || 'all_investors';
+  const audience = defaultAudience(d);
   if (!['all_investors', 'board', 'holder'].includes(audience)) problems.push(`documents.csv line ${d._line}: audience must be all_investors, board or holder`);
   if (audience === 'holder' && !knownRefs.has(d.registry_ref)) problems.push(`documents.csv line ${d._line}: holder documents need a known registry_ref`);
 }
@@ -138,7 +140,7 @@ for (const d of documents) {
   const path = `${d.category}/${year}/${crypto.randomUUID()}-${d.file.split('/').pop().replace(/[^A-Za-z0-9._-]+/g, '-')}`;
   const { error } = await svc.storage.from('documents').upload(path, bytes, { contentType: mime });
   if (error) { console.log(`  ! ${d.file}: ${error.message}`); continue; }
-  const audience = d.audience || 'all_investors';
+  const audience = defaultAudience(d);
   const { data: row } = await svc.from('documents').insert({
     title: d.title, summary: d.summary || null, category: d.category, file_path: path, mime_type: mime, size_bytes: bytes.length,
     audience, holder_id: audience === 'holder' ? holderByRef.get(d.registry_ref) : null,
