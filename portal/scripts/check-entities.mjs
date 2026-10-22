@@ -74,7 +74,9 @@ async function withTwoStep(client) {
 try {
   const { data: entities } = await svc.from('entities').select('id, code');
   const E = Object.fromEntries(entities.map((e) => [e.code, e.id]));
-  const { data: lkbOrd } = await svc.from('share_classes').select('id').eq('entity_id', E.LKB).eq('code', 'ORD').single().throwOnError();
+  // A temporary group class, so the test also runs on an empty database.
+  const { data: lkbOrd } = await svc.from('share_classes').insert({ entity_id: E.LKB, code: `G${String(run).slice(-6)}`, name: `${TAG} Lakeba ordinary` }).select('id').single().throwOnError();
+  created.classes.push(lkbOrd.id);
   const { data: ezfClass } = await svc.from('share_classes').insert({ entity_id: E.EZF, code: `T${String(run).slice(-6)}`, name: `${TAG} Ezifin ordinary` }).select('id').single().throwOnError();
   created.classes.push(ezfClass.id);
   await svc.from('reference_prices').insert({ share_class_id: ezfClass.id, price: 1.23, priced_on: '2026-06-30', source: 'valuation', note: TAG }).throwOnError();

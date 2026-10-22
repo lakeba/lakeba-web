@@ -1,0 +1,33 @@
+# Lakeba overrides for the official self-hosted Supabase (kept separate so
+# update.sh can refresh the official files). Only db, auth, rest, storage and
+# the gateway run; Studio, realtime, functions, imgproxy, meta and the pooler
+# stay off. Nothing listens outside the server: the gateway is on 127.0.0.1
+# and only the portal (and Caddy, for /auth/v1/verify) talk to it.
+services:
+  api-gw:
+    depends_on: !override
+      auth:
+        condition: service_started
+      rest:
+        condition: service_started
+      storage:
+        condition: service_started
+    ports: !override
+      - "127.0.0.1:8000:8000/tcp"
+  storage:
+    depends_on: !override
+      db:
+        condition: service_healthy
+      rest:
+        condition: service_started
+    environment:
+      FILE_SIZE_LIMIT: 524288000
+      ENABLE_IMAGE_TRANSFORMATION: "false"
+  auth:
+    environment:
+      GOTRUE_PASSWORD_MIN_LENGTH: 12
+      GOTRUE_PASSWORD_REQUIRED_CHARACTERS: "abcdefghijklmnopqrstuvwxyz:ABCDEFGHIJKLMNOPQRSTUVWXYZ:0123456789"
+      GOTRUE_MFA_TOTP_ENROLL_ENABLED: "true"
+      GOTRUE_MFA_TOTP_VERIFY_ENABLED: "true"
+      GOTRUE_MFA_MAX_ENROLLED_FACTORS: 10
+      GOTRUE_MAILER_OTP_EXP: 3600

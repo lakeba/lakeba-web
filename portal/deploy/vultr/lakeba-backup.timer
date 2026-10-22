@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Lakeba portal backup (02:30 Sydney time)
+
+[Timer]
+OnCalendar=*-*-* 02:30:00 Australia/Sydney
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

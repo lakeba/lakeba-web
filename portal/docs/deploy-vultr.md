@@ -1,128 +1,74 @@
-# Going live: Vultr (portal) + Supabase (database, sign-in, files)
+# Production: one Vultr server (portal + self-hosted Supabase)
 
-Production runs in Sydney:
+Live at **https://investors.lakeba.com** since 22 October 2026.
 
-- **Portal**: a Vultr Cloud Compute server (Ubuntu 24.04 LTS), Node 24 LTS
-  behind Caddy, which serves `https://investors.lakeba.com` with an automatic
-  certificate. Files for it are in `portal/deploy/vultr/`.
-- **Database, sign-in and document storage**: a Supabase Pro project in
-  Sydney (ap-southeast-2).
-- **Email**: a real SMTP service sending from a lakeba.com address.
+| | |
+|---|---|
+| Server | Vultr Cloud Compute, Sydney, 2 vCPU / 4 GB, Ubuntu 26.04 LTS, `139.180.180.225` |
+| Portal | Node 24 LTS, systemd service `lakeba-portal` on `127.0.0.1:4321`, releases in `/srv/lakeba-portal` |
+| HTTPS | Caddy, automatic Let's Encrypt certificate (`/etc/caddy/Caddyfile`) |
+| Supabase | Official self-hosted Docker setup in `/opt/supabase` (release recorded in `.supabase-version`), only db, auth, rest, storage and the gateway; gateway on `127.0.0.1:8000` |
+| Secrets | `/opt/supabase/.env` (root only), `/etc/lakeba-portal/portal.env` (root + service) |
+| Backups | nightly 02:30 Sydney to `/var/backups/lakeba` (14 days): database, files, settings |
+| Firewall | ufw: SSH (keys only), 80, 443. Supabase and Postgres are not reachable from outside. |
 
-Steps marked **(you)** need an account owner. The rest can be run by whoever
-deploys.
+Files for all of this are in `portal/deploy/vultr/`.
 
-## 1. Supabase project
+## Everyday
 
-1. **(you)** Create an organisation on supabase.com, choose **Pro**, create a
-   project in **Sydney**. Keep the database password somewhere safe. Turning on
-   point-in-time recovery is recommended (Settings → Add-ons).
-2. Apply the database, from `portal/`:
-   ```
-   npx supabase link --project-ref <project-ref>
-   npx supabase db push
-   ```
-   This creates every table, rule and the private `documents` bucket.
-3. **Authentication → Sign In / Providers**
-   - Turn **off** "Allow new users to sign up". Only invited people get
-     accounts; invitations still work.
-   - Email: minimum password length **12**, require lower, upper and digits.
-4. **Authentication → URL Configuration**
-   - Site URL: `https://investors.lakeba.com`
-   - Redirect URLs: `https://investors.lakeba.com/**`
-5. **Authentication → Multi-Factor**: TOTP (authenticator app) **enabled**.
-6. **Authentication → Emails → SMTP Settings**: add the same SMTP service the
-   portal uses, sender `investors@lakeba.com`. Without it Supabase sends only a
-   few test emails an hour. Decide the **email link expiry** here: invitation,
-   welcome and reset links last this long (the local setup uses 1 hour).
-7. **Settings → API Keys**: note the URL, the publishable key and a secret key
-   for `portal.env`.
+- **Deploy a new version**: merge to main, then GitHub → Actions → **Deploy portal** → Run.
+  It builds, uploads, installs, checks the portal starts, and rolls back if not.
+- **Database changes**: copy the new files from `portal/supabase/migrations/` to
+  `/opt/lakeba-migrations/` on the server and run
+  `bash /opt/lakeba-migrations/migrate.sh /opt/lakeba-migrations` *before* deploying
+  code that needs them. Each migration runs once, in a transaction.
+- **Logs**: `journalctl -u lakeba-portal -f`, `supabase-lakeba logs -f auth`.
+- **Restart**: `systemctl restart lakeba-portal`; Supabase: `supabase-lakeba restart`.
+- **Supabase updates**: back up (`lakeba-backup`), then in `/opt/supabase`:
+  `sh update.sh --dry-run`, `sh update.sh`, `supabase-lakeba pull`,
+  `supabase-lakeba up -d db auth rest storage api-gw`.
+- **OS reboots**: security updates install automatically; reboot in a quiet hour
+  when `/var/run/reboot-required` exists (everything restarts on its own).
 
-## 2. Email
+## Backups and restore
 
-**(you)** Pick the service (Microsoft 365, Azure Communication Services Email,
-Postmark, …). Whoever manages lakeba.com DNS adds its **SPF** and **DKIM**
-records so mail isn't marked as spam. You need an SMTP URL like
-`smtp://user:password@smtp.example.com:587`.
+`lakeba-backup` (timer `lakeba-backup.timer`) writes, per night:
+`database.dump` (pg_dump custom format), `storage.tgz` (document files),
+`supabase-config.tgz` and `portal.env` (secrets needed to restore), and
+`SHA256SUMS`. A restore into a scratch database was tested on 22 October 2026
+and matched the live database.
 
-## 3. Vultr server
+These copies are on the same server: they protect against mistakes, not against
+losing the server. Vultr's automatic backups cover the whole machine; an
+off-server copy (e.g. Vultr Object Storage) is still to be set up.
 
-1. **(you)** Vultr → Deploy → Cloud Compute (shared CPU), **Sydney**,
-   **Ubuntu 24.04 LTS**, 1–2 vCPU / 2 GB. Add your own SSH key. Turn on
-   **automatic backups**.
-2. **DNS (you)**: add `investors.lakeba.com` → an **A record** to the server's
-   IPv4 address (and AAAA for IPv6 if shown).
-3. Make a deploy key for GitHub Actions on your computer:
-   ```
-   ssh-keygen -t ed25519 -N "" -C github-actions -f lakeba-deploy
-   ```
-4. Copy `portal/deploy/vultr/` to the server and run the setup as root:
-   ```
-   scp -r portal/deploy/vultr root@<server-ip>:/root/lakeba-setup
-   ssh root@<server-ip> 'DEPLOY_PUBKEY="$(cat)" bash /root/lakeba-setup/setup.sh' < lakeba-deploy.pub
-   ```
-   It installs Node 24 and Caddy, turns on the firewall (SSH, HTTP and HTTPS
-   only) and automatic security updates, switches SSH to keys only, and creates
-   the service.
-5. Fill in the secrets on the server:
-   `sudo nano /etc/lakeba-portal/portal.env` (Supabase URL and keys, SMTP URL;
-   leave `ANTHROPIC_API_KEY` empty until the spend limit is set in the
-   Anthropic Console).
+Restore the database from a backup folder `D`:
+```
+docker exec -i supabase-db pg_restore -U supabase_admin -d postgres --clean --if-exists < D/database.dump
+tar -xzf D/storage.tgz -C /opt/supabase/volumes
+```
 
-## 4. GitHub deploy
+## Still to do before inviting shareholders
 
-1. GitHub → repository → Settings → Environments → **New environment**
-   `production`. Optionally add yourself as a required reviewer.
-2. In that environment, add the secrets:
-   - `VULTR_HOST`: the server's IP
-   - `VULTR_SSH_KEY`: the contents of `lakeba-deploy` (the private half)
-   - `VULTR_KNOWN_HOSTS`: the output of `ssh-keyscan -t ed25519 <server-ip>`
-3. Actions → **Deploy portal** → Run workflow. It builds the portal, uploads it,
-   installs it and checks that it starts; if the new version doesn't start,
-   it switches back to the previous one. Then open https://investors.lakeba.com.
+1. **Email**: an SMTP service sending from a lakeba.com address, with SPF and
+   DKIM in lakeba.com's DNS (Azure DNS). Then set `SMTP_URL` in `portal.env` and
+   the `SMTP_*` values in `/opt/supabase/.env`, and restart both.
+2. **First admin**: create the account (`supabase-lakeba exec` or the admin API),
+   set `role = 'admin'` in `public.profiles`, sign in and set up two-step.
+3. **Data**: Admin → Import data with the checked workbook; then documents and
+   settings with `scripts/copy-content.mjs` (through an SSH tunnel to port 8000).
+4. **Check**: `scripts/check-entities.mjs` against the server (35 checks; it
+   passed on the empty database on 22 October 2026).
 
-## 5. First admin
+## Rebuilding the server from scratch
 
-1. Supabase → Authentication → Users → **Add user** → *Send invitation* to your
-   own address (or create the user with a password).
-2. Supabase → SQL Editor:
-   ```sql
-   update public.profiles set role = 'admin' where email = 'you@lakeba.com';
-   ```
-3. Sign in at https://investors.lakeba.com. You are asked to set up two-step
-   sign-in before anything else.
-
-## 6. Data
-
-1. **Investors**: Admin → Import data → upload the checked workbook → Check →
-   Apply. Nothing is emailed.
-2. **Content** (documents with their files and search text, settings, Ask
-   answers): from `portal/` on the Mac, with the hosted keys in
-   `.env.production` (same names as `.env`; this file is never committed):
-   ```
-   node scripts/copy-content.mjs --from .env --to .env.production            # dry run
-   node scripts/copy-content.mjs --from .env --to .env.production --apply
-   ```
-   Run it after the import, so documents for a single holder find their holder.
-3. **Check** the company separation against the live database:
-   ```
-   node --env-file=.env.production scripts/check-entities.mjs
-   ```
-   It creates and removes its own test rows. All checks must pass.
-
-## 7. Invite
-
-Start with a pilot: Admin → Investors → pick a company → *Welcome …
-shareholders*, tick a few friendly shareholders, send. Then the rest, up to 50
-per send.
-
-## 8. After go-live
-
-- Stop the Mac's portal and its Tailscale and local-network access, so there is
-  one portal.
-- Updates: merge to main, then run **Deploy portal**. Database changes:
-  `npx supabase db push` before deploying code that needs them.
-- Logs on the server: `journalctl -u lakeba-portal -f`. Restart:
-  `sudo systemctl restart lakeba-portal`.
-- OS reboots for kernel updates are not automatic: reboot in a quiet hour when
-  `/var/run/reboot-required` exists.
+1. New Ubuntu server in Sydney with your SSH key; DNS A record to its IP.
+2. `DEPLOY_PUBKEY="…" bash setup.sh` (from `portal/deploy/vultr/`).
+3. Install Docker (official apt repository) and run Supabase's official
+   `setup.sh -y --skip-deps --project-dir supabase` in `/opt`; copy in
+   `docker-compose.lakeba.yml` and restore `supabase-config.tgz` from a backup
+   (it holds the keys the data was made with).
+4. `supabase-lakeba up -d db auth rest storage api-gw`, restore `database.dump`
+   and `storage.tgz`, put back `portal.env`, install `backup.sh` and its timer.
+5. Update the GitHub `production` secrets (`VULTR_HOST`, `VULTR_KNOWN_HOSTS`)
+   and run **Deploy portal**.

@@ -6,7 +6,15 @@ investors.lakeba.com {
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		-Server
 	}
-	reverse_proxy 127.0.0.1:4321
+	# Links in Supabase's own emails (sign-in link, password reset) are
+	# verified by Supabase Auth, which runs on this server. Only this path is
+	# passed through; the rest of the Supabase API stays private.
+	handle /auth/v1/verify* {
+		reverse_proxy 127.0.0.1:8000
+	}
+	handle {
+		reverse_proxy 127.0.0.1:4321
+	}
 }
 
 # Anything else (the bare IP, other names): nothing to see.
