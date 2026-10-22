@@ -1,5 +1,7 @@
 import { defineMiddleware } from 'astro:middleware';
 import { createSupabase } from './lib/supabase';
+import { loadCompanyContext } from './lib/companies';
+import { companyAdminMayOpen } from './lib/admin-company';
 
 /** Pages reachable without signing in. */
 const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go'];
@@ -15,6 +17,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.user = null;
   locals.profile = null;
   locals.mfaEnrolled = false;
+  locals.companies = [];
+  locals.company = null;
+  locals.group = null;
+  locals.adminOf = [];
 
   // getClaims() validates the JWT signature rather than trusting the cookie.
   const { data } = await locals.supabase.auth.getClaims();
@@ -43,13 +49,23 @@ export const onRequest = defineMiddleware(async (context, next) => {
     .single();
   locals.profile = profile;
 
-  // Admins cannot use the portal until they have enrolled MFA.
-  if (profile?.role === 'admin' && !locals.mfaEnrolled && !matches(path, MFA_PATHS)) {
+  const companyContext = await loadCompanyContext(locals.supabase, context.cookies);
+  locals.companies = companyContext.companies;
+  locals.company = companyContext.current;
+  locals.group = companyContext.group;
+  locals.adminOf = companyContext.adminOf;
+
+  // Admins (and company admins) cannot use the portal until they have enrolled MFA.
+  const companyAdmin = locals.adminOf.length > 0;
+  if ((profile?.role === 'admin' || companyAdmin) && !locals.mfaEnrolled && !matches(path, MFA_PATHS)) {
     return redirect('/mfa/setup?required=1');
   }
 
-  if (matches(path, ['/admin']) && !(profile?.role === 'admin' && locals.user.aal === 'aal2')) {
-    return new Response('Forbidden', { status: 403 });
+  if (matches(path, ['/admin'])) {
+    const groupAdmin = profile?.role === 'admin' && locals.user.aal === 'aal2';
+    // Company admins manage their company's content and see its register; the rest stays with group admins.
+    const allowed = groupAdmin || (companyAdmin && locals.user.aal === 'aal2' && companyAdminMayOpen(path));
+    if (!allowed) return new Response('Forbidden', { status: 403 });
   }
 
   if (matches(path, ['/login', '/forgot-password'])) return redirect('/');

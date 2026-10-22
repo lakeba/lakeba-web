@@ -17,6 +17,8 @@ import { sourceNames, TRACKED_LINKS, trackedHref } from '../../lib/links';
  */
 const supabase = Astro.locals.supabase;
 const svc = serviceClient();
+// Lakeba's LinkedIn page is for Lakeba Group shareholders.
+const { data: groupId } = await svc.rpc('group_entity_id');
 const DEFAULT_TITLE = 'Follow Lakeba on LinkedIn';
 const DEFAULT_BODY = 'Lakeba Group is now sharing news from the group, our ventures and LakebaOS on LinkedIn. Follow the page to see announcements as they happen, and help them reach more people.';
 const ASK_QUESTION = 'Is Lakeba on LinkedIn?';
@@ -46,14 +48,14 @@ if (Astro.request.method === 'POST') {
         tone: 'info', ends_at: new Date(Date.now() + days * 86400_000).toISOString(),
       }).throwOnError();
     }
-    const sent = await notifyMembers({ kind: 'linkedin', title, body, link: trackedHref('linkedin', 'notification'), emailLink: trackedHref('linkedin', 'email'), email, origin: Astro.url.origin });
+    const sent = await notifyMembers({ kind: 'linkedin', entityId: groupId, title, body, link: trackedHref('linkedin', 'notification'), emailLink: trackedHref('linkedin', 'email'), email, origin: Astro.url.origin });
     await log('linkedin_campaign_sent', { kind: 'all', recipients: sent, email, banner: field(form, 'banner') === 'yes' });
     notice = `Sent to ${sent} members${email ? ' (email to those who opted in)' : ''}.`;
   } else if (intent === 'remind') {
     const clicked = await clickedIds();
-    const pending = (await memberIds()).filter((id) => !clicked.has(id));
+    const pending = (await memberIds(groupId)).filter((id) => !clicked.has(id));
     const sent = pending.length
-      ? await notifyMembers({ kind: 'linkedin', userIds: pending, title: `Reminder: ${title}`, body, link: trackedHref('linkedin', 'notification'), emailLink: trackedHref('linkedin', 'email'), email, origin: Astro.url.origin })
+      ? await notifyMembers({ kind: 'linkedin', entityId: groupId, userIds: pending, title: `Reminder: ${title}`, body, link: trackedHref('linkedin', 'notification'), emailLink: trackedHref('linkedin', 'email'), email, origin: Astro.url.origin })
       : 0;
     await log('linkedin_campaign_sent', { kind: 'reminder', recipients: sent, email });
     notice = sent ? `Reminder sent to ${sent} members who haven’t clicked yet.` : 'Everyone has already clicked the link.';
@@ -64,7 +66,7 @@ if (Astro.request.method === 'POST') {
 }
 
 const [members, clicked, { data: clicks }, { data: sends }, { data: askAnswer }, { data: emailOn }] = await Promise.all([
-  memberIds(),
+  memberIds(groupId),
   clickedIds(),
   supabase.from('link_clicks').select('source, user_id, created_at').eq('link', 'linkedin').order('created_at', { ascending: false }),
   supabase.from('audit_log').select('detail, created_at').eq('action', 'linkedin_campaign_sent').order('created_at', { ascending: false }).limit(10),
@@ -93,7 +95,7 @@ const pct = members.length ? Math.round((membersClicked / members.length) * 100)
 
   <section class="card mb-6">
     <h2 class="flex items-center gap-2 text-lg font-bold"><LinkedInIcon class="size-5 text-[#0A66C2]" /> Invite shareholders</h2>
-    <p class="mt-1 text-sm text-white/55">Sends an inbox notification to all {members.length} members (shareholders and board), and an email to the {optedIn} of them who have email notifications on. Every link goes through the portal’s tracked link, so clicks show up here.</p>
+    <p class="mt-1 text-sm text-white/55">Sends an inbox notification to all {members.length} Lakeba Group members (shareholders and board), and an email to the {optedIn} of them who have email notifications on. Every link goes through the portal’s tracked link, so clicks show up here.</p>
     <form method="post" class="mt-5 grid gap-4" onsubmit="return confirm(event.submitter?.value === 'remind' ? 'Send a reminder to members who haven’t clicked yet?' : 'Send the LinkedIn invitation to all members now?')">
       <div><label class="label" for="c-title">Title</label><input class="field" id="c-title" name="title" value={DEFAULT_TITLE} maxlength="120" /></div>
       <div><label class="label" for="c-body">Message</label><textarea class="field" id="c-body" name="body" rows="3" maxlength="600">{DEFAULT_BODY}</textarea></div>

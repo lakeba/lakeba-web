@@ -6,14 +6,15 @@ import LinkedInCard from '../../components/LinkedInCard.astro';
 import { longDate } from '../../lib/format';
 import { loadNews } from '../../lib/news';
 
-const news = await loadNews(Astro.locals.supabase);
+const { company } = Astro.locals;
+const news = await loadNews(Astro.locals.supabase, undefined, company);
 const [lead, ...rest] = news;
 const target = (external: boolean) => (external ? { target: '_blank', rel: 'noopener' } : {});
 ---
 
 <Portal title="News">
-  <PageHeader eyebrow="News" title="News for shareholders" subtitle="Shareholder updates and Lakeba’s public News & Media, in one place." />
-  <LinkedInCard src="news" compact />
+  <PageHeader eyebrow="News" title="News for shareholders" subtitle={company && company.relationship !== 'group' ? `${company.display_name} shareholder updates, plus Lakeba’s public News & Media.` : 'Shareholder updates and Lakeba’s public News & Media, in one place.'} />
+  {company?.relationship === 'group' && <LinkedInCard src="news" compact />}
   {lead ? (
     <>
       <a href={lead.href} {...target(lead.external)} class="card group block bg-gradient-to-br from-lk-blue/15 to-transparent sm:p-10">

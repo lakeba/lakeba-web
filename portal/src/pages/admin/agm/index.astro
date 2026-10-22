@@ -6,13 +6,20 @@ import Empty from '../../../components/Empty.astro';
 import { field } from '../../../lib/forms';
 import { parseLocal } from '../../../lib/admin-forms';
 import { dateTime } from '../../../lib/format';
+import { adminScope, formCompany } from '../../../lib/admin-company';
+import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
+import CompanySelect from '../../../components/CompanySelect.astro';
 
 const supabase = Astro.locals.supabase;
+const scope = await adminScope(Astro.locals, Astro.url);
+const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 let error = '';
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
-  const { data, error: e } = await supabase.from('meetings').insert({
+  const company = formCompany(scope, field(form, 'entity_id'));
+  const { data, error: e } = !company ? { data: null, error: { code: 'company', message: 'Choose the company holding the meeting.' } } : await supabase.from('meetings').insert({
+    entity_id: company.id,
     title: field(form, 'title'), kind: field(form, 'kind') === 'egm' ? 'egm' : 'agm',
     starts_at: parseLocal(field(form, 'starts_at')), proxy_deadline: parseLocal(field(form, 'proxy_deadline')),
     location: field(form, 'location') || null, livestream_url: field(form, 'livestream_url') || null,
@@ -24,16 +31,18 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const { data: meetings } = await supabase.from('meetings').select('id, title, kind, starts_at, status, resolutions(count)').order('starts_at', { ascending: false });
+const { data: meetings } = await supabase.from('meetings').select('id, entity_id, title, kind, starts_at, status, resolutions(count)').in('entity_id', scope.ids).order('starts_at', { ascending: false });
 ---
 
 <Admin title="Meetings">
   <PageHeader title="Meetings" subtitle="AGMs and EGMs: notices, resolutions, proxy votes and shareholder questions." />
+  <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 
   <details class="card mb-6" open={Boolean(error)}>
     <summary class="cursor-pointer font-display text-lg font-bold text-white">New meeting</summary>
     <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
+      <div class="sm:col-span-2"><CompanySelect scope={scope} /></div>
       <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" required placeholder="2027 Annual General Meeting" /></div>
       <div><label class="label" for="kind">Type</label><select class="field" id="kind" name="kind"><option value="agm">AGM</option><option value="egm">EGM</option></select></div>
       <div><label class="label" for="location">Location</label><input class="field" id="location" name="location" /></div>
@@ -48,7 +57,7 @@ const { data: meetings } = await supabase.from('meetings').select('id, title, ki
     <div class="grid gap-4">
       {meetings.map((m) => (
         <a href={`/admin/agm/${m.id}`} class="card flex flex-wrap items-center justify-between gap-4 transition hover:bg-white/[0.07]">
-          <span><span class="font-display text-lg font-bold text-white">{m.title}</span><span class="block text-sm text-white/50">{dateTime.format(new Date(m.starts_at))} · {(m.resolutions as unknown as { count: number }[])[0]?.count ?? 0} resolutions</span></span>
+          <span><span class="font-display text-lg font-bold text-white">{m.title}</span><span class="block text-sm text-white/50">{scope.companies.length > 1 && `${companyName(m.entity_id)} · `}{dateTime.format(new Date(m.starts_at))} · {(m.resolutions as unknown as { count: number }[])[0]?.count ?? 0} resolutions</span></span>
           <span class="rounded-full bg-white/10 px-3 py-1 text-xs capitalize text-white/70">{m.status}</span>
         </a>
       ))}

@@ -1,6 +1,8 @@
 ---
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
+import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
+import { adminScope } from '../../lib/admin-company';
 import Alert from '../../components/Alert.astro';
 import Empty from '../../components/Empty.astro';
 import Markdown from '../../components/Markdown.astro';
@@ -8,6 +10,8 @@ import { field } from '../../lib/forms';
 import { dateTime } from '../../lib/format';
 
 const supabase = Astro.locals.supabase;
+const scope = await adminScope(Astro.locals, Astro.url);
+const companyName = (id: string | null) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 const RETENTION_MONTHS = 12;
 const PAGE = 20;
 let notice = '';
@@ -22,12 +26,13 @@ if (Astro.request.method === 'POST') {
   if (status === 'test') {
     // The question becomes a test case; who asked is not copied.
     const id = field(form, 'id');
-    const { data: ex } = await supabase.from('ask_exchanges').select('question, answer, corrected_answer, declined, review_status').eq('id', id).single();
+    const { data: ex } = await supabase.from('ask_exchanges').select('entity_id, question, answer, corrected_answer, declined, review_status').eq('id', id).single();
     const { data: existing } = await supabase.from('ask_test_cases').select('id').eq('source_exchange_id', id).maybeSingle();
     if (existing) notice = 'This question is already in the test set.';
     else if (ex) {
       const decline = ex.declined || ex.review_status === 'out_of_scope';
       const { error: e } = await supabase.from('ask_test_cases').insert({
+        entity_id: ex.entity_id ?? undefined,
         question: ex.question,
         expected_answer: decline ? null : ex.corrected_answer ?? ex.answer,
         expect_decline: decline,
@@ -55,12 +60,12 @@ if (Astro.request.method === 'POST') {
         notice = status === 'unreviewed' ? 'Moved back to the queue.' : 'Review saved.';
         // Good and corrected answers can become approved answers, used by Ask straight away.
         if ((status === 'good' || status === 'corrected') && form.get('approve') === 'on') {
-          const { data: ex } = await supabase.from('ask_exchanges').select('question, answer').eq('id', id).single();
+          const { data: ex } = await supabase.from('ask_exchanges').select('entity_id, question, answer').eq('id', id).single();
           const { data: existing } = await supabase.from('ask_approved_answers').select('id').eq('source_exchange_id', id).maybeSingle();
           const answer = status === 'corrected' ? corrected : ex!.answer;
           const { error: approveError } = existing
             ? await supabase.from('ask_approved_answers').update({ answer, active: true, updated_by: Astro.locals.user!.id, updated_at: new Date().toISOString() }).eq('id', existing.id)
-            : await supabase.from('ask_approved_answers').insert({ question: ex!.question, answer, source_exchange_id: id, created_by: Astro.locals.user!.id, updated_by: Astro.locals.user!.id });
+            : await supabase.from('ask_approved_answers').insert({ entity_id: ex!.entity_id ?? undefined, question: ex!.question, answer, source_exchange_id: id, created_by: Astro.locals.user!.id, updated_by: Astro.locals.user!.id });
           if (approveError) error = `Review saved, but the approved answer could not be: ${approveError.message}`;
           else {
             await supabase.rpc('log_event', { event_action: 'admin_approved_ask_answer', event_detail: { exchange_id: id } });
@@ -84,7 +89,7 @@ type Exchange = {
   corrected_answer: string | null; review_note: string | null; reviewer_id: string | null; reviewed_at: string | null; created_at: string;
 };
 
-let query = supabase.from('ask_exchanges').select('*').order('created_at', { ascending: false }).limit(500);
+let query = supabase.from('ask_exchanges').select('*').in('entity_id', scope.ids).order('created_at', { ascending: false }).limit(500);
 if (view === 'queue') query = query.eq('review_status', 'unreviewed');
 if (view === 'unhelpful') query = query.eq('feedback', -1);
 if (view === 'declined') query = query.eq('declined', true);
@@ -145,7 +150,8 @@ const statusStyle: Record<string, string> = { unreviewed: 'bg-white/10 text-whit
 ---
 
 <Admin title="Ask review">
-  <PageHeader title="Ask Lakeba review" subtitle={`Every question and answer, for checking and correcting. Only admins can see who asked; records are deleted after ${RETENTION_MONTHS} months.`} />
+  <PageHeader title="Ask review" subtitle={`Every question and answer, for checking and correcting. Only admins can see who asked; records are deleted after ${RETENTION_MONTHS} months.`} />
+  <AdminCompanyFilter scope={scope} />
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 

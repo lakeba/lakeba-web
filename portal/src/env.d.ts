@@ -12,5 +12,11 @@ declare namespace App {
     } | null;
     /** Whether the user has a verified MFA factor. */
     mfaEnrolled: boolean;
+    /** Companies this person belongs to and the one being viewed (signed-in pages). */
+    companies: import('./lib/companies').Company[];
+    company: import('./lib/companies').Company | null;
+    group: import('./lib/companies').Company | null;
+    /** Companies this person administers as a company admin. */
+    adminOf: string[];
   }
 }

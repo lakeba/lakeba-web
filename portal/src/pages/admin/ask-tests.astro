@@ -1,6 +1,9 @@
 ---
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
+import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
+import CompanySelect from '../../components/CompanySelect.astro';
+import { adminScope, formCompany } from '../../lib/admin-company';
 import Alert from '../../components/Alert.astro';
 import Empty from '../../components/Empty.astro';
 import Markdown from '../../components/Markdown.astro';
@@ -11,6 +14,8 @@ import { buildKnowledgeBase } from '../../lib/knowledge';
 import { runTestSet, STARTER_TESTS } from '../../lib/ask-tests';
 
 const supabase = Astro.locals.supabase;
+const scope = await adminScope(Astro.locals, Astro.url);
+const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 const userId = Astro.locals.user!.id;
 let notice = '';
 let error = '';
@@ -58,7 +63,7 @@ if (Astro.request.method === 'POST') {
     if (v.question.length < 3) error = 'Write the question.';
     else if (!v.expected_answer && !v.expect_decline && !v.must_include.length && !v.must_not_include.length) error = 'Add an expected answer or at least one check.';
     else {
-      const { error: e } = intent === 'add' ? await supabase.from('ask_test_cases').insert({ ...v, created_by: userId }) : await supabase.from('ask_test_cases').update(v).eq('id', id);
+      const { error: e } = intent === 'add' ? await supabase.from('ask_test_cases').insert({ ...v, entity_id: (formCompany(scope, field(form, 'entity_id')) ?? scope.defaultCompany)?.id, created_by: userId }) : await supabase.from('ask_test_cases').update(v).eq('id', id);
       if (e) error = e.message; else { await log(`admin_${intent === 'add' ? 'added' : 'updated'}_ask_test`, { id }); notice = intent === 'add' ? 'Test added.' : 'Test saved.'; }
     }
   } else if (intent === 'toggle') {
@@ -78,7 +83,7 @@ if (Astro.request.method === 'POST') {
 }
 
 const [{ data: cases }, { data: runs }, kb] = await Promise.all([
-  supabase.from('ask_test_cases').select('*').order('created_at'),
+  supabase.from('ask_test_cases').select('*').in('entity_id', scope.ids).order('created_at'),
   supabase.from('ask_test_runs').select('*').order('started_at', { ascending: false }).limit(10),
   buildKnowledgeBase(),
 ]);
@@ -107,7 +112,8 @@ const running = run?.status === 'running';
 
 <Admin title="Ask tests">
   {running && <meta http-equiv="refresh" content="5" />}
-  <PageHeader title="Ask Lakeba test set" subtitle="Re-run these questions after changing documents, house rules, approved answers, the prompt or the model, and see what got worse." />
+  <AdminCompanyFilter scope={scope} />
+  <PageHeader title="Ask test set" subtitle="Re-run these questions after changing documents, house rules, approved answers, the prompt or the model, and see what got worse." />
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 
@@ -188,6 +194,7 @@ const running = run?.status === 'running';
     <details class="card mb-4 !p-5">
       <summary class="cursor-pointer font-semibold text-lk-blue">+ Add a test</summary>
       <form method="post" class="mt-4 space-y-3">
+        <CompanySelect scope={scope} />
         <input name="question" maxlength="1000" placeholder="Question" class="field" />
         <textarea name="expected_answer" rows="4" maxlength="8000" placeholder="Expected answer (optional; Claude grades the answer against it)" class="field"></textarea>
         <div class="grid gap-3 sm:grid-cols-2">
@@ -204,6 +211,7 @@ const running = run?.status === 'running';
         {(cases ?? []).map((c) => (
           <li class:list={['card !p-4', !c.active && 'opacity-55']}>
             <div class="flex flex-wrap items-center gap-2 text-xs text-white/45">
+              {scope.companies.length > 1 && <span class="rounded-full bg-white/10 px-2 py-0.5">{companyName(c.entity_id)}</span>}
               {c.expected_answer && <span class="rounded-full bg-lk-blue/15 px-2 py-0.5 text-lk-blue">graded</span>}
               {c.expect_decline && <span class="rounded-full bg-white/10 px-2 py-0.5">should decline</span>}
               {c.must_include.length > 0 && <span>mentions: {c.must_include.join(', ')}</span>}

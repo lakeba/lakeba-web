@@ -4,22 +4,26 @@ import Mark from '../../../src/components/Mark.astro';
 import ThemeInit from '../../../src/components/ThemeInit.astro';
 import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 import LinkedInIcon from '../components/LinkedInIcon.astro';
+import { brandName } from '../lib/companies';
 interface Props { title: string }
 const { title } = Astro.props;
-const { profile, supabase, user } = Astro.locals;
+const { profile, supabase, user, company, companies, adminOf } = Astro.locals;
 const path = Astro.url.pathname;
-const isAdmin = profile?.role === 'admin';
+const canAdmin = profile?.role === 'admin' || adminOf.length > 0;
+const isGroup = company?.relationship === 'group';
+const brand = brandName(company);
 
 const nav = [
   { href: '/', label: 'Dashboard' },
   { href: '/documents', label: 'Documents' },
-  { href: '/portfolio', label: 'Portfolio' },
-  { href: '/agm', label: 'AGM' },
+  ...(isGroup ? [{ href: '/portfolio', label: 'Portfolio' }] : []),
+  { href: '/agm', label: 'Meetings' },
   { href: '/news', label: 'News' },
-  { href: '/ask', label: 'Ask Lakeba' },
+  ...(company ? [{ href: '/ask', label: `Ask ${brand}` }] : []),
   { href: '/board', label: 'Board Q&A' },
-  ...(isAdmin ? [{ href: '/admin', label: 'Admin' }] : []),
+  ...(canAdmin ? [{ href: '/admin', label: 'Admin' }] : []),
 ];
+const switchHref = (code: string) => `/company/${code}?next=${encodeURIComponent(path)}`;
 const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
 const initials = `${profile?.first_name?.[0] ?? ''}${profile?.last_name?.[0] ?? ''}`.toUpperCase() || '·';
 
@@ -36,7 +40,7 @@ const { count: unread } = user
     <meta name="robots" content="noindex, nofollow" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <ThemeInit />
-    <title>{title} · Lakeba Investor Portal</title>
+    <title>{title} · {brand} Investor Portal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -49,9 +53,32 @@ const { count: unread } = user
       <div class="container-x flex h-16 items-center justify-between gap-4">
         <a href="/" class="flex shrink-0 items-center gap-2.5">
           <Mark class="size-7" />
-          <span class="font-display text-lg font-bold text-white">lakeba</span>
+          <span class:list={["font-display text-lg font-bold text-white", company && (companies.length > 1 || !isGroup) && "hidden sm:inline"]}>lakeba</span>
           <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">Investors</span>
         </a>
+        {company && (companies.length > 1 ? (
+          <details class="relative mr-auto">
+            <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label="Switch company">
+              <span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>
+              <span class="max-w-[10rem] truncate font-medium">{company.display_name}</span>
+              <svg viewBox="0 0 20 20" class="size-4 text-white/45" fill="currentColor" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </summary>
+            <div class="glass absolute left-0 mt-2 w-64 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
+              <p class="px-3 py-2 text-xs text-white/45">Your companies</p>
+              {companies.map((c) => (
+                <a href={switchHref(c.code)} aria-current={c.id === company.id ? 'true' : undefined} class:list={['flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-white/5', c.id === company.id && 'bg-white/5 text-white']}>
+                  <span class="size-2.5 shrink-0 rounded-full" style={`background:${c.brand_color ?? '#2563EB'}`}></span>
+                  <span class="truncate">{c.display_name}</span>
+                  {c.id === company.id && <span class="ml-auto text-xs text-white/40">Viewing</span>}
+                </a>
+              ))}
+            </div>
+          </details>
+        ) : !isGroup && (
+          <span class="mr-auto flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm font-medium text-white/85">
+            <span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>{company.display_name}
+          </span>
+        ))}
         <div class="flex items-center gap-2">
           <ThemeToggle />
           <a href="/inbox" class="relative grid size-9 place-items-center rounded-full text-white/60 transition hover:bg-white/5 hover:text-white" aria-label={`Inbox${unread ? `, ${unread} unread` : ''}`}>
@@ -81,7 +108,7 @@ const { count: unread } = user
       <slot />
     </main>
     <footer class="container-x flex flex-col justify-between gap-2 border-t border-white/5 py-8 text-xs text-white/35 sm:flex-row">
-      <p>© {new Date().getFullYear()} Lakeba Group Limited</p>
+      <p>{isGroup || !company ? `© ${new Date().getFullYear()} Lakeba Group Limited` : `${company.display_name} Investor Portal, powered by Lakeba`}</p>
       <p>Questions: <a href="/board" class="hover:text-white">Board Q&amp;A</a> · <a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
     </footer>
   </body>

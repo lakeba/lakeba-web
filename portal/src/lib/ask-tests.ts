@@ -1,11 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { serviceClient } from './admin';
 import { buildKnowledgeBase } from './knowledge';
-import { buildMessages, client, costUsd, DECLINE, loadHouseRules, MODEL, systemPrompt } from './ask';
+import { buildMessages, client, costUsd, isDecline, loadHouseRules, MODEL, systemPrompt, type AskCompany } from './ask';
 import { loadLimits } from './ask-limits';
 
 export type TestCase = {
-  id: string; question: string; expected_answer: string | null;
+  id: string; entity_id?: string; question: string; expected_answer: string | null;
   must_include: string[]; must_not_include: string[]; expect_decline: boolean;
 };
 export type Check = { name: string; passed: boolean };
@@ -39,7 +39,7 @@ const textOf = (m: Anthropic.Beta.BetaMessage) => m.content.flatMap((b) => (b.ty
 /** The quick checks: phrases, and whether the question was (rightly) declined. */
 export function quickChecks(c: TestCase, answer: string): Check[] {
   const lower = answer.toLowerCase();
-  const declined = answer.trim().startsWith(DECLINE);
+  const declined = isDecline(answer);
   const checks: Check[] = [];
   for (const t of c.must_include) checks.push({ name: `mentions “${t}”`, passed: lower.includes(t.toLowerCase()) });
   for (const t of c.must_not_include) checks.push({ name: `does not mention “${t}”`, passed: !lower.includes(t.toLowerCase()) });
@@ -57,18 +57,25 @@ export async function runTestSet(runId: string) {
   const svc = serviceClient();
   try {
     if (!client) throw new Error('ANTHROPIC_API_KEY is not set');
-    const [{ data: cases }, kb, rules, limits] = await Promise.all([
-      svc.from('ask_test_cases').select('id, question, expected_answer, must_include, must_not_include, expect_decline').eq('active', true).order('created_at'),
-      buildKnowledgeBase(),
-      loadHouseRules(svc),
+    const [{ data: cases }, { data: entities }, limits] = await Promise.all([
+      svc.from('ask_test_cases').select('id, entity_id, question, expected_answer, must_include, must_not_include, expect_decline').eq('active', true).order('created_at'),
+      svc.from('entities').select('id, code, display_name, legal_name, relationship'),
       loadLimits(svc),
     ]);
-    const system = systemPrompt(rules);
+    // Each case runs against its own company's knowledge base and rules (built once per company).
+    const contexts = new Map<string, Promise<{ kb: Awaited<ReturnType<typeof buildKnowledgeBase>>; system: string }>>();
+    const contextFor = (entityId?: string) => {
+      const company = ((entities ?? []) as AskCompany[]).find((e) => e.id === entityId) ?? null;
+      const key = company?.id ?? 'group';
+      if (!contexts.has(key)) contexts.set(key, Promise.all([buildKnowledgeBase(company), loadHouseRules(svc, company)]).then(([kb, rules]) => ({ kb, system: systemPrompt(rules, company) })));
+      return contexts.get(key)!;
+    };
 
     const runOne = async (c: TestCase) => {
       let answer = '';
       let cost = 0;
       try {
+        const { kb, system } = await contextFor(c.entity_id);
         const reply = await client!.beta.messages.create({
           model: MODEL,
           max_tokens: limits.maxAnswerTokens, // same cap as shareholders get

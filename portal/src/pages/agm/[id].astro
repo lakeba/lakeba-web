@@ -3,6 +3,7 @@ import Portal from '../../layouts/Portal.astro';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
 import { dateTime, longDate } from '../../lib/format';
+import { loadPositions } from '../../lib/holdings';
 
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
@@ -11,14 +12,20 @@ let notice: { tone: 'success' | 'error'; text: string } | null = null;
 
 const { data: meeting } = await supabase
   .from('meetings')
-  .select('id, title, kind, starts_at, location, livestream_url, proxy_deadline, status, notice_document_id, minutes_document_id')
+  .select('id, entity_id, title, kind, starts_at, location, livestream_url, proxy_deadline, status, notice_document_id, minutes_document_id')
   .eq('id', id)
   .maybeSingle();
 if (!meeting) return new Response('Not found', { status: 404 });
 
 const { data: resolutions } = await supabase.from('resolutions').select('id, number, title, description, kind, outcome').eq('meeting_id', id).order('number');
 // Only owners can vote; read-only (viewer) access cannot lodge proxies.
-const { data: owned } = await supabase.from('holder_members').select('holder_id, holders(name)').eq('user_id', userId).eq('access', 'owner');
+// …and only for holders with voting shares in this meeting's company.
+const [{ data: ownedLinks }, positions] = await Promise.all([
+  supabase.from('holder_members').select('holder_id, holders(name)').eq('user_id', userId).eq('access', 'owner'),
+  loadPositions(supabase, userId),
+]);
+const votesHere = (holderId: string) => positions.some((p) => p.holder.id === holderId && p.row.shares > 0 && p.row.share_classes?.entity_id === meeting.entity_id && p.row.share_classes.voting);
+const owned = (ownedLinks ?? []).filter((o) => votesHere(o.holder_id));
 const votingOpen = ['upcoming', 'open'].includes(meeting.status) && new Date(meeting.proxy_deadline) > new Date();
 
 if (Astro.request.method === 'POST') {

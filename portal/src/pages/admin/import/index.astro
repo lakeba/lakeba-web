@@ -1,0 +1,98 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import Markdown from '../../../components/Markdown.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { runImport } from '../../../lib/investor-import.mjs';
+
+/*
+ * Import the investor data workbook. Upload → dry run with a reconciliation
+ * report → Apply. The upload is kept in private storage between the two steps
+ * (imports/<id>.xlsx) and removed after it is applied or replaced.
+ */
+const supabase = Astro.locals.supabase;
+const svc = serviceClient();
+const MAX_BYTES = 10 * 1024 * 1024;
+let error = '';
+let report = '';
+let uploadId = '';
+let fileName = '';
+let canApply = false;
+let applied = false;
+const log = (action: string, detail: Record<string, unknown>) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'check') {
+    const file = form.get('file');
+    if (!(file instanceof File) || !file.size) error = 'Choose the workbook to check.';
+    else if (file.size > MAX_BYTES) error = 'That file is larger than 10 MB.';
+    else if (!/\.xlsx$/i.test(file.name)) error = 'Upload the .xlsx workbook.';
+    else {
+      const data = new Uint8Array(await file.arrayBuffer());
+      try {
+        const result = await runImport({ data, name: file.name, svc, apply: false, target: 'this portal' });
+        report = result.lines.join('\n');
+        fileName = file.name;
+        canApply = !result.problems.length;
+        if (canApply) {
+          uploadId = crypto.randomUUID();
+          await svc.storage.from('documents').upload(`imports/${uploadId}.xlsx`, data, { contentType: file.type || 'application/octet-stream' });
+        }
+        await log('admin_checked_import', { file: file.name, problems: result.problems.length });
+      } catch (e) {
+        error = `This file could not be read: ${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+  } else if (intent === 'apply') {
+    uploadId = field(form, 'upload_id');
+    fileName = field(form, 'file_name');
+    if (!/^[0-9a-f-]{36}$/.test(uploadId)) error = 'Upload the file again.';
+    else {
+      const { data: blob } = await svc.storage.from('documents').download(`imports/${uploadId}.xlsx`);
+      if (!blob) error = 'That upload has expired. Upload the file again.';
+      else {
+        const result = await runImport({ data: new Uint8Array(await blob.arrayBuffer()), name: fileName, svc, apply: true, target: 'this portal' });
+        report = result.lines.join('\n');
+        applied = result.applied;
+        if (!applied) error = 'Nothing was imported: the file has problems (see below).';
+        await svc.storage.from('documents').remove([`imports/${uploadId}.xlsx`]);
+        await log('admin_applied_import', { file: fileName, applied });
+        uploadId = '';
+      }
+    }
+  }
+}
+---
+
+<Admin title="Import data">
+  <PageHeader title="Import data" subtitle="Load companies, share classes, holders, people, access, holdings, boards and prices from the investor data workbook." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {applied && <div class="mb-6"><Alert tone="success">Imported {fileName}. Check Admin → Holders &amp; holdings and Investors. No invitations were sent.</Alert></div>}
+
+  <section class="card mb-6">
+    <h2 class="text-lg font-bold">1. Check a workbook</h2>
+    <p class="mt-1 text-sm text-white/55">Nothing changes at this step. You get a report: problems to fix, what’s new or changed, and how each class adds up against its official number on issue.</p>
+    <form method="post" enctype="multipart/form-data" class="mt-4 flex flex-wrap items-end gap-3">
+      <div class="grow"><label class="label" for="file">Workbook (.xlsx)</label><input class="field" id="file" name="file" type="file" accept=".xlsx" required /></div>
+      <button name="intent" value="check" class="btn-primary">Check</button>
+    </form>
+    <p class="mt-3 text-xs text-white/40">Need the file? <a href="/admin/import/template.xlsx" class="text-lk-blue hover:underline">Download the blank template</a>. Nothing in the portal is ever deleted by an import, and no emails are sent.</p>
+  </section>
+
+  {report && (
+    <section class="card mb-6">
+      {canApply && uploadId && (
+        <form method="post" class="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-lk-green/30 bg-lk-green/10 px-5 py-4" onsubmit="return confirm('Apply this import to the portal?')">
+          <p class="text-sm"><span class="font-semibold text-white">2. Ready to import {fileName}.</span> <span class="text-white/65">Review the report, then apply.</span></p>
+          <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} />
+          <button name="intent" value="apply" class="btn-primary">Apply import</button>
+        </form>
+      )}
+      <Markdown source={report} />
+    </section>
+  )}
+</Admin>

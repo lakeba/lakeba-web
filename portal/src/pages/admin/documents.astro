@@ -9,9 +9,13 @@ import { categoryLabels, dateTime, fileSize } from '../../lib/format';
 import { notifyMembers } from '../../lib/notify';
 import { pdfChunks } from '../../lib/pdf-text';
 import { buildKnowledgeBase, NEWS_FROM } from '../../lib/knowledge';
-import { askEnabled } from '../../lib/ask';
+import { askEnabled, askName } from '../../lib/ask';
+import { adminScope, formCompany } from '../../lib/admin-company';
+import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
+import CompanySelect from '../../components/CompanySelect.astro';
 
 const supabase = Astro.locals.supabase;
+const scope = await adminScope(Astro.locals, Astro.url);
 const categories = Object.keys(categoryLabels);
 const audiences = { all_investors: 'All investors', board: 'Board only', holder: 'One holder' };
 let error = '';
@@ -32,8 +36,13 @@ async function indexPdf(documentId: string, bytes: Uint8Array) {
   }
 }
 
-const announce = (title: string, summary: string | null) =>
-  notifyMembers({ kind: 'document', title: `New document: ${title}`, body: summary || `“${title}” has been added to your documents.`, link: '/documents', origin: Astro.url.origin });
+// Tells that company's shareholders (and the group's, when shared with the group).
+const announce = async (title: string, summary: string | null, entityId: string, shared: boolean) => {
+  const note = { kind: 'document', title: `New document: ${title}`, body: summary || `“${title}” has been added to your documents.`, link: '/documents', origin: Astro.url.origin };
+  await notifyMembers({ ...note, entityId });
+  const group = scope.companies.find((c) => c.relationship === 'group');
+  if (shared && group && group.id !== entityId) await notifyMembers({ ...note, entityId: group.id });
+};
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -47,18 +56,22 @@ if (Astro.request.method === 'POST') {
     const audience = field(form, 'audience');
     const holderId = field(form, 'holder_id');
     const when = field(form, 'publish');
-    if (!(file instanceof File) || !file.size) error = 'Choose a file to upload.';
+    const company = formCompany(scope, field(form, 'entity_id'));
+    const shared = company?.relationship !== 'group' && form.get('shared_with_group') === 'on';
+    if (!company) error = 'Choose the company this document belongs to.';
+    else if (!(file instanceof File) || !file.size) error = 'Choose a file to upload.';
     else if (!title || !categories.includes(category) || !(audience in audiences)) error = 'Fill in the title, category and audience.';
     else if (audience === 'holder' && !holderId) error = 'Choose the holder this document is for.';
     else {
       const publishedAt = when === 'now' ? new Date().toISOString() : when === 'schedule' ? parseLocal(field(form, 'publish_at')) : null;
-      const path = `${category}/${new Date().getFullYear()}/${crypto.randomUUID()}-${safeName(file.name)}`;
+      const path = `entity/${company.id}/${category}/${new Date().getFullYear()}/${crypto.randomUUID()}-${safeName(file.name)}`;
       const bytes = new Uint8Array(await file.arrayBuffer());
       const { error: uploadError } = await supabase.storage.from('documents').upload(path, bytes, { contentType: file.type || 'application/octet-stream' });
       if (uploadError) error = uploadError.message;
       else {
         const summary = field(form, 'summary') || null;
         const { data: doc, error: insertError } = await supabase.from('documents').insert({
+          entity_id: company.id, shared_with_group: shared,
           title, summary, category, audience, holder_id: audience === 'holder' ? holderId : null,
           file_path: path, mime_type: file.type || 'application/octet-stream', size_bytes: file.size,
           published_at: publishedAt, created_by: Astro.locals.user!.id,
@@ -70,7 +83,7 @@ if (Astro.request.method === 'POST') {
         } else {
           const passages = file.type === 'application/pdf' ? await indexPdf(doc.id, bytes) : 0;
           await supabase.rpc('log_event', { event_action: 'admin_uploaded_document', event_detail: { document_id: doc.id, title } });
-          if (when === 'now' && audience === 'all_investors') await announce(title, summary);
+          if (when === 'now' && audience === 'all_investors') await announce(title, summary, company.id, shared);
           notice = `Uploaded “${title}”${passages ? ` (${passages} passages indexed for search)` : ''}.`;
         }
       }
@@ -84,11 +97,17 @@ if (Astro.request.method === 'POST') {
     }
   } else if (intent === 'publish' || intent === 'unpublish') {
     const { data: doc } = await supabase.from('documents')
-      .update({ published_at: intent === 'publish' ? new Date().toISOString() : null }).eq('id', id).select('title, summary, audience').single();
+      .update({ published_at: intent === 'publish' ? new Date().toISOString() : null }).eq('id', id).select('title, summary, audience, entity_id, shared_with_group').single();
     if (doc) {
       await supabase.rpc('log_event', { event_action: `admin_${intent}ed_document`, event_detail: { document_id: id, title: doc.title } });
-      if (intent === 'publish' && doc.audience === 'all_investors') await announce(doc.title, doc.summary);
+      if (intent === 'publish' && doc.audience === 'all_investors') await announce(doc.title, doc.summary, doc.entity_id, doc.shared_with_group);
       notice = intent === 'publish' ? `Published “${doc.title}”.` : `“${doc.title}” is now a draft.`;
+    }
+  } else if (intent === 'share-on' || intent === 'share-off') {
+    const { data: doc } = await supabase.from('documents').update({ shared_with_group: intent === 'share-on' }).eq('id', id).select('title').single();
+    if (doc) {
+      await supabase.rpc('log_event', { event_action: intent === 'share-on' ? 'admin_shared_document_with_group' : 'admin_unshared_document', event_detail: { document_id: id, title: doc.title } });
+      notice = intent === 'share-on' ? `Lakeba Group shareholders can now see “${doc.title}”.` : `“${doc.title}” is no longer shared with Lakeba Group shareholders.`;
     }
   } else if (intent === 'delete') {
     const { data: doc } = await supabase.from('documents').select('title, file_path').eq('id', id).single();
@@ -102,7 +121,7 @@ if (Astro.request.method === 'POST') {
 }
 
 const [{ data: docs }, { data: reads }, { data: holders }] = await Promise.all([
-  supabase.from('documents').select('id, title, category, audience, size_bytes, published_at, created_at, in_knowledge_base, holders(name)').order('created_at', { ascending: false }),
+  supabase.from('documents').select('id, entity_id, shared_with_group, title, category, audience, size_bytes, published_at, created_at, in_knowledge_base, holders(name)').in('entity_id', scope.ids).order('created_at', { ascending: false }),
   supabase.from('document_reads').select('document_id'),
   supabase.from('holders').select('id, name').order('name'),
 ]);
@@ -113,16 +132,20 @@ const status = (p: string | null) => (!p ? 'Draft' : new Date(p) > now ? 'Schedu
 const statusStyle: Record<string, string> = { Draft: 'bg-white/10 text-white/60', Scheduled: 'bg-lk-orange/15 text-lk-orange', Published: 'bg-lk-green/15 text-lk-green' };
 // Ask Lakeba knowledge base summary. Costs: Claude Opus 5.5 at $4/M input,
 // $20/M output, cache reads $0.20/M; a cache write with 1-hour TTL is 2× input.
-const kb = await buildKnowledgeBase();
+const kbCompany = scope.selected ?? scope.defaultCompany;
+const kb = await buildKnowledgeBase(kbCompany);
+const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
+const groupCompany = scope.companies.find((c) => c.relationship === 'group');
 const kbCost = { warm: (kb.approxTokens * 0.2 + 1500 * 20) / 1e6, cold: (kb.approxTokens * 8 + 1500 * 20) / 1e6 };
 const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
 ---
 
 <Admin title="Documents">
   <PageHeader title="Documents" subtitle="Files are stored privately; investors get short-lived links only for documents they are allowed to see." />
+  <AdminCompanyFilter scope={scope} />
   <section class="card mb-6 !p-5">
     <div class="flex flex-wrap items-center justify-between gap-3">
-      <h2 class="text-lg font-bold">Ask Lakeba knowledge base</h2>
+      <h2 class="text-lg font-bold">{askName(kbCompany)} knowledge base</h2>
       <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', askEnabled ? 'bg-lk-green/15 text-lk-green' : 'bg-lk-orange/15 text-lk-orange']}>{askEnabled ? 'AI answers on (Claude Opus 5.5)' : 'AI answers off: ANTHROPIC_API_KEY not set'}</span>
     </div>
     <p class="mt-2 text-sm text-white/60">
@@ -137,6 +160,7 @@ const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD',
   <details class="card mb-6" open={Boolean(error)}>
     <summary class="cursor-pointer font-display text-lg font-bold text-white">Upload a document</summary>
     <form method="post" enctype="multipart/form-data" class="mt-6 grid gap-4 sm:grid-cols-2">
+      <div class="sm:col-span-2"><CompanySelect scope={scope} /></div>
       <div class="sm:col-span-2"><input type="file" name="file" required class="block text-sm text-white/70 file:mr-4 file:rounded-lg file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-white" /></div>
       <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" required /></div>
       <div class="sm:col-span-2"><label class="label" for="summary">Summary (shown in the list and the notification)</label><textarea class="field" id="summary" name="summary" rows="2"></textarea></div>
@@ -146,7 +170,8 @@ const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD',
       <div><label class="label" for="publish">Publishing</label>
         <select class="field" id="publish" name="publish"><option value="now">Publish now and notify</option><option value="schedule">Schedule</option><option value="draft">Save as draft</option></select></div>
       <div><label class="label" for="publish_at">Scheduled time</label><input class="field" id="publish_at" name="publish_at" type="datetime-local" /></div>
-      <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="in_knowledge_base" checked class="size-4 accent-lk-blue" /> Use in Ask Lakeba (ignored for registers, which are never used)</label>
+      <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="in_knowledge_base" checked class="size-4 accent-lk-blue" /> Use in Ask (ignored for registers, which are never used)</label>
+      {groupCompany && scope.companies.length > 1 && <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="shared_with_group" class="size-4 accent-lk-blue" /> Also share with Lakeba Group shareholders (venture documents only, e.g. a venture’s annual report)</label>}
       <div class="sm:col-span-2"><button name="intent" value="upload" class="btn-primary">Upload</button></div>
     </form>
   </details>
@@ -160,7 +185,7 @@ const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD',
             const s = status(d.published_at);
             return (
               <tr>
-                <td class="px-5 py-3"><a href={`/documents/${d.id}`} class="font-medium text-white hover:underline">{d.title}</a><span class="block text-xs text-white/40">{categoryLabels[d.category]} · {fileSize(d.size_bytes)}{d.in_knowledge_base && d.audience === 'all_investors' && <span class="ml-1 rounded-full bg-lk-blue/15 px-2 py-0.5 text-lk-blue">Ask Lakeba</span>}</span></td>
+                <td class="px-5 py-3"><a href={`/documents/${d.id}`} class="font-medium text-white hover:underline">{d.title}</a><span class="block text-xs text-white/40">{scope.companies.length > 1 && `${companyName(d.entity_id)} · `}{categoryLabels[d.category]} · {fileSize(d.size_bytes)}{d.in_knowledge_base && d.audience === 'all_investors' && <span class="ml-1 rounded-full bg-lk-blue/15 px-2 py-0.5 text-lk-blue">Ask</span>}{d.shared_with_group && <span class="ml-1 rounded-full bg-white/10 px-2 py-0.5 text-white/60">Shared with group</span>}</span></td>
                 <td class="px-5 py-3 text-white/60">{d.audience === 'holder' ? (d.holders as { name: string } | null)?.name : audiences[d.audience as keyof typeof audiences]}</td>
                 <td class="px-5 py-3"><span class={`rounded-full px-2.5 py-0.5 text-xs ${statusStyle[s]}`}>{s}</span>{d.published_at && <span class="mt-1 block text-xs text-white/40">{dateTime.format(new Date(d.published_at))}</span>}</td>
                 <td class="px-5 py-3 text-right text-white/70">{readCount.get(d.id) ?? 0}</td>
@@ -171,6 +196,9 @@ const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD',
                     {d.category !== 'register' && (d.in_knowledge_base
                       ? <button name="intent" value="kb-off" class="text-white/50 hover:text-white">Remove from Ask</button>
                       : <button name="intent" value="kb-on" class="text-lk-blue hover:underline">Use in Ask</button>)}
+                    {groupCompany && d.entity_id !== groupCompany.id && (d.shared_with_group
+                      ? <button name="intent" value="share-off" class="text-white/50 hover:text-white">Stop sharing with group</button>
+                      : <button name="intent" value="share-on" class="text-lk-blue hover:underline">Share with group</button>)}
                     <button name="intent" value="delete" class="text-white/50 hover:text-lk-red" onclick="return confirm('Delete this document for everyone?')">Delete</button>
                   </form>
                 </td>

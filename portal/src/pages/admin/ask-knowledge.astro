@@ -7,12 +7,18 @@ import Markdown from '../../components/Markdown.astro';
 import { field } from '../../lib/forms';
 import { shortDate, dateTime } from '../../lib/format';
 import { buildKnowledgeBase } from '../../lib/knowledge';
-import { askEnabled, buildMessages, client, CORE_RULES, HOUSE_RULES_MAX, loadHouseRules, MODEL, systemPrompt } from '../../lib/ask';
+import { askEnabled, askName, buildMessages, client, coreRules, HOUSE_RULES_MAX, houseRulesKey, loadHouseRules, MODEL, systemPrompt } from '../../lib/ask';
+import { adminScope } from '../../lib/admin-company';
+import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
 import { DEFAULT_LIMITS, loadLimits, spendToday } from '../../lib/ask-limits';
 
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
+// One company at a time: its knowledge base, house rules and approved answers.
+const scope = await adminScope(Astro.locals, Astro.url);
+const company = scope.selected ?? scope.defaultCompany;
+const companyId = company?.id ?? '00000000-0000-0000-0000-000000000000';
 let notice = '';
 let error = '';
 let exactTokens: number | null = null;
@@ -26,6 +32,8 @@ if (Astro.request.method === 'POST') {
   const id = field(form, 'id');
   const log = (action: string, detail: object = {}) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
 
+  // Usage limits and pauses are portal-wide: group admins only.
+  if (['limits', 'restore', 'pause'].includes(intent) && !scope.isGroupAdmin) return new Response('Forbidden', { status: 403 });
   if (intent === 'limits') {
     const num = (name: string, min: number, max: number) => {
       const v = Number(field(form, name));
@@ -55,7 +63,7 @@ if (Astro.request.method === 'POST') {
     const text = field(form, 'house_rules');
     if (text.length > HOUSE_RULES_MAX) error = `House rules can be at most ${HOUSE_RULES_MAX.toLocaleString()} characters.`;
     else {
-      const { error: e } = await supabase.from('ask_settings').upsert({ key: 'house_rules', value: { text }, updated_by: userId, updated_at: new Date().toISOString() });
+      const { error: e } = await supabase.from('ask_settings').upsert({ key: houseRulesKey(company), value: { text }, updated_by: userId, updated_at: new Date().toISOString() });
       if (e) error = e.message; else { await log('admin_updated_ask_house_rules', { length: text.length }); notice = 'House rules saved. Ask Lakeba uses them from the next question.'; }
     }
   } else if (intent === 'add' || intent === 'save') {
@@ -63,7 +71,7 @@ if (Astro.request.method === 'POST') {
     if (values.question.length < 3 || !values.answer) error = 'Write both the question and the answer.';
     else {
       const { error: e } = intent === 'add'
-        ? await supabase.from('ask_approved_answers').insert({ ...values, created_by: userId })
+        ? await supabase.from('ask_approved_answers').insert({ ...values, entity_id: companyId, created_by: userId })
         : await supabase.from('ask_approved_answers').update(values).eq('id', id);
       if (e) error = e.message; else { await log(intent === 'add' ? 'admin_added_approved_answer' : 'admin_updated_approved_answer', { id }); notice = intent === 'add' ? 'Approved answer added.' : 'Approved answer saved.'; }
     }
@@ -78,7 +86,7 @@ if (Astro.request.method === 'POST') {
     const { data: dup } = await supabase.from('ask_test_cases').select('id').eq('question', a?.question ?? '').maybeSingle();
     if (dup) notice = 'This question is already in the test set.';
     else {
-      const { error: e } = await supabase.from('ask_test_cases').insert({ question: a!.question, expected_answer: a!.answer, notes: 'From approved answers', created_by: userId });
+      const { error: e } = await supabase.from('ask_test_cases').insert({ entity_id: companyId, question: a!.question, expected_answer: a!.answer, notes: 'From approved answers', created_by: userId });
       if (e) error = e.message; else notice = 'Added to the test set.';
     }
   } else if (intent === 'delete') {
@@ -86,9 +94,9 @@ if (Astro.request.method === 'POST') {
     if (e) error = e.message; else { await log('admin_deleted_approved_answer', { id }); notice = 'Approved answer deleted.'; }
   } else if (intent === 'count' && client) {
     // Token counting is free; it also checks the request is well-formed.
-    const [kb, rules] = await Promise.all([buildKnowledgeBase(), loadHouseRules(serviceClient())]);
+    const [kb, rules] = await Promise.all([buildKnowledgeBase(company), loadHouseRules(serviceClient(), company)]);
     try {
-      const counted = await client.beta.messages.countTokens({ model: MODEL, system: systemPrompt(rules), messages: buildMessages(kb, [{ role: 'user', content: 'Example question' }]) });
+      const counted = await client.beta.messages.countTokens({ model: MODEL, system: systemPrompt(rules, company), messages: buildMessages(kb, [{ role: 'user', content: 'Example question' }]) });
       exactTokens = counted.input_tokens;
     } catch (e) {
       error = `Could not count tokens: ${e instanceof Error ? e.message : String(e)}`;
@@ -98,7 +106,7 @@ if (Astro.request.method === 'POST') {
 
 const view = Astro.url.searchParams.get('view') ?? 'live';
 const soon = (() => { const d = new Date(); d.setDate(d.getDate() + 14); return d.toISOString().slice(0, 10); })();
-let query = supabase.from('ask_approved_answers').select('id, question, answer, review_by, active, source_exchange_id, updated_at').order('updated_at', { ascending: false });
+let query = supabase.from('ask_approved_answers').select('id, question, answer, review_by, active, source_exchange_id, updated_at').eq('entity_id', companyId).order('updated_at', { ascending: false });
 if (view === 'live') query = query.eq('active', true).gte('review_by', today);
 if (view === 'due') query = query.eq('active', true).lte('review_by', soon);
 if (view === 'inactive') query = query.eq('active', false);
@@ -112,10 +120,10 @@ const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD' 
 const budgetPct = Math.min(100, Math.round((spent / limits.dailyBudgetUsd) * 100));
 const [{ data: answers }, rules, kb, { count: liveCount }, { count: dueCount }] = await Promise.all([
   query,
-  loadHouseRules(serviceClient()),
-  buildKnowledgeBase(),
-  supabase.from('ask_approved_answers').select('id', { count: 'exact', head: true }).eq('active', true).gte('review_by', today),
-  supabase.from('ask_approved_answers').select('id', { count: 'exact', head: true }).eq('active', true).lte('review_by', soon),
+  loadHouseRules(serviceClient(), company),
+  buildKnowledgeBase(company),
+  supabase.from('ask_approved_answers').select('id', { count: 'exact', head: true }).eq('entity_id', companyId).eq('active', true).gte('review_by', today),
+  supabase.from('ask_approved_answers').select('id', { count: 'exact', head: true }).eq('entity_id', companyId).eq('active', true).lte('review_by', soon),
 ]);
 const tabs = [
   { id: 'live', label: `Live (${liveCount ?? 0})` },
@@ -127,7 +135,8 @@ const expired = (d: string) => d < today;
 ---
 
 <Admin title="Ask knowledge">
-  <PageHeader title="Ask Lakeba knowledge" subtitle="Approved answers and house rules shape what Ask Lakeba says. Changes apply from the next question." />
+  <PageHeader title={`${askName(company)} knowledge`} subtitle={`Approved answers and house rules shape what ${askName(company)} says. Changes apply from the next question.`} />
+  <AdminCompanyFilter scope={scope} allowAll={false} />
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 
@@ -141,6 +150,7 @@ const expired = (d: string) => d < today;
     </div>
   </section>
 
+  {scope.isGroupAdmin && (
   <section class="card mb-6">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h2 class="text-lg font-bold">Usage and costs</h2>
@@ -185,6 +195,7 @@ const expired = (d: string) => d < today;
       </form>
     </details>
   </section>
+  )}
 
   <section class="card mb-6">
     <h2 class="text-lg font-bold">House rules</h2>
@@ -194,7 +205,7 @@ const expired = (d: string) => d < today;
       <div class="flex flex-wrap items-center justify-between gap-3">
         <details class="text-sm text-white/55">
           <summary class="cursor-pointer">Core rules (locked)</summary>
-          <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white/[0.03] p-3 text-xs text-white/60">{CORE_RULES}</pre>
+          <pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap rounded-xl bg-white/[0.03] p-3 text-xs text-white/60">{coreRules(company)}</pre>
         </details>
         <button name="intent" value="house-rules" class="btn-primary !py-2">Save house rules</button>
       </div>

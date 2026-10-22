@@ -1,33 +1,73 @@
 import { serviceClient } from './admin';
 import { sendMail } from './mail';
 
-/** Everyone the portal notifies by default: shareholders' members and the board. */
-export async function memberIds() {
+type Svc = ReturnType<typeof serviceClient>;
+
+/**
+ * Everyone the portal notifies by default for a company: people linked to a
+ * holder with shares in it, plus its board. Without a company: every member
+ * of every company (shareholders and the group board).
+ */
+export async function memberIds(entityId?: string) {
   const svc = serviceClient();
-  const [{ data: members }, { data: board }] = await Promise.all([
-    svc.from('holder_members').select('user_id'),
-    svc.from('profiles').select('id').eq('role', 'board'),
+  if (!entityId) {
+    const [{ data: members }, { data: board }, { data: boards }] = await Promise.all([
+      svc.from('holder_members').select('user_id'),
+      svc.from('profiles').select('id').eq('role', 'board'),
+      svc.from('entity_board').select('user_id'),
+    ]);
+    return [...new Set([...(members ?? []).map((m) => m.user_id), ...(board ?? []).map((b) => b.id), ...(boards ?? []).map((b) => b.user_id)])];
+  }
+  const [{ data: entity }, { data: classes }, { data: boards }] = await Promise.all([
+    svc.from('entities').select('relationship').eq('id', entityId).single(),
+    svc.from('share_classes').select('id').eq('entity_id', entityId),
+    svc.from('entity_board').select('user_id, ends_on').eq('entity_id', entityId),
   ]);
-  return [...new Set([...(members ?? []).map((m) => m.user_id), ...(board ?? []).map((b) => b.id)])];
+  const holderIds = new Set<string>();
+  const classIds = (classes ?? []).map((c) => c.id);
+  for (let from = 0; classIds.length; from += 1000) {
+    const { data } = await svc.from('holdings').select('holder_id').in('share_class_id', classIds).range(from, from + 999);
+    for (const h of data ?? []) holderIds.add(h.holder_id);
+    if ((data ?? []).length < 1000) break;
+  }
+  const { data: members } = holderIds.size ? await svc.from('holder_members').select('user_id').in('holder_id', [...holderIds]) : { data: [] };
+  const groupBoard = entity?.relationship === 'group' ? (await svc.from('profiles').select('id').eq('role', 'board')).data ?? [] : [];
+  const today = new Date().toISOString().slice(0, 10);
+  return [...new Set([
+    ...(members ?? []).map((m) => m.user_id),
+    ...(boards ?? []).filter((b) => !b.ends_on || b.ends_on >= today).map((b) => b.user_id),
+    ...groupBoard.map((b) => b.id),
+  ])];
+}
+
+async function companyOf(svc: Svc, entityId?: string) {
+  if (!entityId) return null;
+  const { data } = await svc.from('entities').select('code, display_name, relationship, brand_color').eq('id', entityId).single();
+  return data;
 }
 
 /**
- * Tells every portal member (or the given users) about something new: an
+ * Tells a company's members (or the given users) about something new: an
  * in-app notification for each, plus an email for those who opted in.
- * `emailLink` lets the email carry a different link (e.g. a tracked one).
+ * With entityId, links open the portal on that company and emails carry its
+ * name. `emailLink` lets the email carry a different link (e.g. a tracked one).
  */
-export async function notifyMembers({ title, body, link, kind, userIds, origin, emailLink, email = true }: {
-  title: string; body: string; link: string; kind: string; userIds?: string[]; origin: string; emailLink?: string; email?: boolean;
+export async function notifyMembers({ title, body, link, kind, userIds, origin, emailLink, email = true, entityId }: {
+  title: string; body: string; link: string; kind: string; userIds?: string[]; origin: string; emailLink?: string; email?: boolean; entityId?: string;
 }) {
   const svc = serviceClient();
-  const recipients = userIds ?? (await memberIds());
+  const recipients = userIds ?? (await memberIds(entityId));
   if (!recipients.length) return 0;
+  const company = await companyOf(svc, entityId);
+  // Open the portal on the right company first (tracked /go/ links work signed out, so they stay as they are).
+  const via = (href: string) => (company && href.startsWith('/') && !href.startsWith('/go/') ? `/company/${company.code}?next=${encodeURIComponent(href)}` : href);
 
-  await svc.from('notifications').insert(recipients.map((user_id) => ({ user_id, kind, title, body, link }))).throwOnError();
+  await svc.from('notifications').insert(recipients.map((user_id) => ({ user_id, kind, title, body, link: via(link), entity_id: entityId ?? null }))).throwOnError();
   if (!email) return recipients.length;
   const { data: profiles } = await svc.from('profiles').select('email, notify_email').in('id', recipients);
+  const brand = company && company.relationship !== 'group' ? company.display_name : 'Lakeba';
   await Promise.allSettled(
-    (profiles ?? []).filter((p) => p.notify_email).map((p) => sendMail({ to: p.email, subject: title, text: body, link: new URL(emailLink ?? link, origin).href })),
+    (profiles ?? []).filter((p) => p.notify_email).map((p) => sendMail({ to: p.email, subject: title, text: body, link: new URL(via(emailLink ?? link), origin).href, brand, color: brand === 'Lakeba' ? undefined : company?.brand_color ?? undefined })),
   );
   return recipients.length;
 }

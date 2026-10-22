@@ -1,0 +1,19 @@
+---
+import type { AdminScope } from '../lib/admin-company';
+interface Props { scope: AdminScope; /** false on pages that work on one company at a time */ allowAll?: boolean }
+const { scope, allowAll = true } = Astro.props;
+const active = scope.selected ?? (allowAll ? null : scope.defaultCompany);
+const path = Astro.url.pathname;
+const href = (code?: string) => (code ? `${path}?company=${code}` : path);
+---
+
+{scope.companies.length > 1 && (
+  <nav class="mb-6 flex flex-wrap gap-2 text-sm" aria-label="Company">
+    {allowAll && <a href={href()} aria-current={!active ? 'page' : undefined} class:list={['rounded-full border px-3 py-1', !active ? 'border-lk-blue text-white' : 'border-white/10 text-white/55 hover:text-white']}>All companies</a>}
+    {scope.companies.map((c) => (
+      <a href={href(c.code)} aria-current={active?.id === c.id ? 'page' : undefined} class:list={['flex items-center gap-1.5 rounded-full border px-3 py-1', active?.id === c.id ? 'border-lk-blue text-white' : 'border-white/10 text-white/55 hover:text-white']}>
+        <span class="size-2 rounded-full" style={`background:${c.brand_color ?? '#2563EB'}`}></span>{c.display_name}
+      </a>
+    ))}
+  </nav>
+)}

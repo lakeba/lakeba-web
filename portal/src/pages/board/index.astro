@@ -8,6 +8,9 @@ import { shortDate } from '../../lib/format';
 
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
+const { company } = Astro.locals;
+const entityId = company?.id ?? '00000000-0000-0000-0000-000000000000';
+const boardName = company && company.relationship !== 'group' ? `the ${company.display_name} board` : 'the board';
 let error = '';
 
 if (Astro.request.method === 'POST') {
@@ -17,7 +20,7 @@ if (Astro.request.method === 'POST') {
   if (form.get('terms') !== 'on') error = 'Please accept the terms for shareholder queries.';
   else if (subject.length < 3 || body.length < 1) error = 'Add a subject and your question.';
   else {
-    const { data: created, error: insertError } = await supabase.from('queries').insert({ user_id: userId, subject }).select('id').single();
+    const { data: created, error: insertError } = await supabase.from('queries').insert({ user_id: userId, subject, entity_id: entityId }).select('id').single();
     if (insertError || !created) error = 'Your question could not be sent. Only shareholders can ask the board.';
     else {
       await supabase.from('query_messages').insert({ query_id: created.id, author_id: userId, body }).throwOnError();
@@ -27,13 +30,13 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const { data: queries } = await supabase.from('queries').select('id, subject, status, due_at, created_at, updated_at').eq('user_id', userId).order('updated_at', { ascending: false });
+const { data: queries } = await supabase.from('queries').select('id, subject, status, due_at, created_at, updated_at').eq('user_id', userId).eq('entity_id', entityId).order('updated_at', { ascending: false });
 const statusStyles: Record<string, string> = { open: 'bg-lk-orange/15 text-lk-orange', answered: 'bg-lk-green/15 text-lk-green', closed: 'bg-white/10 text-white/55' };
 const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 'Answered', closed: 'Closed' };
 ---
 
 <Portal title="Board Q&A">
-  <PageHeader eyebrow="Board Q&A" title="Ask the board" subtitle="Questions about the company’s operations, performance or governance. We aim to reply within 7 working days." />
+  <PageHeader eyebrow={company?.display_name ?? 'Board Q&A'} title={`Ask ${boardName}`} subtitle={`Questions about ${company && company.relationship !== 'group' ? company.display_name : 'the company'}’s operations, performance or governance. We aim to reply within 7 working days.`} />
 
   <div class="grid gap-8 lg:grid-cols-[1fr_24rem]">
     <section>
@@ -65,7 +68,7 @@ const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 
             <span class="mt-2 block text-xs text-white/50">Queries should relate to the company’s operations, financial performance or governance. The company will acknowledge receipt and aims to respond within 7 working days, and may decline queries that are irrelevant, inappropriate or unlawful. Responses are general information, not financial advice.</span>
           </details></span>
         </label>
-        <button class="btn-primary w-full">Send to the board</button>
+        <button class="btn-primary w-full">Send to {boardName}</button>
       </form>
     </section>
   </div>

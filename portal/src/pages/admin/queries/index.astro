@@ -4,13 +4,18 @@ import PageHeader from '../../../components/PageHeader.astro';
 import Empty from '../../../components/Empty.astro';
 import { displayName } from '../../../lib/admin-forms';
 import { shortDate } from '../../../lib/format';
+import { adminScope, withCompany } from '../../../lib/admin-company';
+import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
 
 const supabase = Astro.locals.supabase;
+const scope = await adminScope(Astro.locals, Astro.url);
+const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 const filter = Astro.url.searchParams.get('status') ?? 'open';
 const statuses = ['open', 'answered', 'closed', 'all'];
 let query = supabase
   .from('queries')
-  .select('id, subject, status, due_at, created_at, updated_at, owner:profiles!queries_user_id_fkey(first_name, last_name, email), assignee:profiles!queries_assigned_to_fkey(first_name, last_name, email)')
+  .select('id, entity_id, subject, status, due_at, created_at, updated_at, owner:profiles!queries_user_id_fkey(first_name, last_name, email), assignee:profiles!queries_assigned_to_fkey(first_name, last_name, email)')
+  .in('entity_id', scope.ids)
   .order('due_at');
 if (filter !== 'all') query = query.eq('status', filter);
 const { data: queries } = await query;
@@ -19,9 +24,10 @@ const now = new Date().toISOString();
 
 <Admin title="Board Q&A">
   <PageHeader title="Board Q&A" subtitle="Shareholder questions. The terms promise a reply within 7 working days." />
+  <AdminCompanyFilter scope={scope} />
   <nav class="mb-6 flex gap-2 text-sm">
     {statuses.map((s) => (
-      <a href={`?status=${s}`} class:list={['rounded-full px-4 py-1.5 capitalize transition', filter === s ? 'bg-white text-ink' : 'bg-white/5 text-white/60 hover:text-white']}>{s}</a>
+      <a href={withCompany(scope, `?status=${s}`)} class:list={['rounded-full px-4 py-1.5 capitalize transition', filter === s ? 'bg-white text-ink' : 'bg-white/5 text-white/60 hover:text-white']}>{s}</a>
     ))}
   </nav>
   {queries?.length ? (
@@ -33,7 +39,7 @@ const now = new Date().toISOString();
             const late = q.status === 'open' && q.due_at < now;
             return (
               <tr class:list={[late && 'bg-lk-orange/[0.04]']}>
-                <td class="px-5 py-3"><a href={`/admin/queries/${q.id}`} class="font-medium text-white hover:underline">{q.subject}</a><span class="block text-xs text-white/40">Asked {shortDate.format(new Date(q.created_at))}</span></td>
+                <td class="px-5 py-3"><a href={`/admin/queries/${q.id}`} class="font-medium text-white hover:underline">{q.subject}</a><span class="block text-xs text-white/40">{scope.companies.length > 1 && `${companyName(q.entity_id)} · `}Asked {shortDate.format(new Date(q.created_at))}</span></td>
                 <td class="px-5 py-3 text-white/70">{displayName(q.owner as never)}</td>
                 <td class="px-5 py-3 capitalize text-white/70">{q.status}</td>
                 <td class:list={['px-5 py-3', late ? 'font-semibold text-lk-orange' : 'text-white/60']}>{late ? 'Overdue · ' : ''}{shortDate.format(new Date(q.due_at))}</td>

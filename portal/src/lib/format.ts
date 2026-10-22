@@ -1,5 +1,7 @@
 export const shares = new Intl.NumberFormat('en-AU');
 export const percent = new Intl.NumberFormat('en-AU', { style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** For small shares such as look-through interests (three significant digits). */
+export const smallPercent = new Intl.NumberFormat('en-AU', { style: 'percent', maximumSignificantDigits: 3 });
 export const aud = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
 export const audPrecise = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', minimumFractionDigits: 2, maximumFractionDigits: 4 });
 export const longDate = new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' });

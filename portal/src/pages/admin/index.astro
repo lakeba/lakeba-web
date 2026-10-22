@@ -4,16 +4,19 @@ import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
 import { dateTime, shortDate } from '../../lib/format';
 import { displayName } from '../../lib/admin-forms';
+import { adminScope } from '../../lib/admin-company';
+import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 
 const supabase = Astro.locals.supabase;
+const scope = await adminScope(Astro.locals, Astro.url);
 const now = new Date().toISOString();
 const [investors, holders, open, overdue, published, { data: queue }, { data: events }, { data: reads }] = await Promise.all([
   supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'investor'),
   supabase.from('holders').select('id', { count: 'exact', head: true }),
-  supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open'),
-  supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').lt('due_at', now),
-  supabase.from('documents').select('id', { count: 'exact', head: true }).lte('published_at', now),
-  supabase.from('queries').select('id, subject, due_at, profiles!queries_user_id_fkey(first_name, last_name, email)').eq('status', 'open').order('due_at').limit(8),
+  supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').in('entity_id', scope.ids),
+  supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').lt('due_at', now).in('entity_id', scope.ids),
+  supabase.from('documents').select('id', { count: 'exact', head: true }).lte('published_at', now).in('entity_id', scope.ids),
+  supabase.from('queries').select('id, subject, due_at, profiles!queries_user_id_fkey(first_name, last_name, email)').eq('status', 'open').in('entity_id', scope.ids).order('due_at').limit(8),
   supabase.from('audit_log').select('action, created_at, user_id').order('created_at', { ascending: false }).limit(15),
   supabase.from('document_reads').select('last_read_at, documents(title), profiles(first_name, last_name, email)').order('last_read_at', { ascending: false }).limit(8),
 ]);
@@ -32,7 +35,8 @@ const stats = [
 ---
 
 <Admin title="Overview">
-  <PageHeader title="Portal administration" subtitle="Investors, holdings, documents and shareholder questions." />
+  <PageHeader title="Portal administration" subtitle={scope.isGroupAdmin ? 'Investors, holdings, documents and shareholder questions.' : `Administration for ${scope.companies.map((c) => c.display_name).join(', ')}.`} />
+  <AdminCompanyFilter scope={scope} />
 
   <div class="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
     {stats.map((s) => (
@@ -84,6 +88,7 @@ const stats = [
     </section>
   </div>
 
+  {scope.isGroupAdmin && (
   <section class="card mt-4">
     <div class="flex items-center justify-between">
       <h2 class="text-lg font-bold">Recent activity</h2>
@@ -100,4 +105,5 @@ const stats = [
       </ul>
     ) : <Empty title="No activity yet">Sign-ins and changes will appear here.</Empty>}
   </section>
+  )}
 </Admin>

@@ -6,8 +6,13 @@ import { field } from '../../lib/forms';
 import { parseLocal, slugify } from '../../lib/admin-forms';
 import { dateTime, shortDate } from '../../lib/format';
 import { notifyMembers } from '../../lib/notify';
+import { adminScope, formCompany } from '../../lib/admin-company';
+import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
+import CompanySelect from '../../components/CompanySelect.astro';
 
 const supabase = Astro.locals.supabase;
+const scope = await adminScope(Astro.locals, Astro.url);
+const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 const editPost = Astro.url.searchParams.get('post');
 const tones = ['info', 'success', 'warning'];
 let error = '';
@@ -19,8 +24,12 @@ if (Astro.request.method === 'POST') {
   const intent = field(form, 'intent');
   const id = field(form, 'id');
 
-  if (intent === 'save-announcement') {
+  const company = formCompany(scope, field(form, 'entity_id'));
+  if ((intent === 'save-announcement' || intent === 'save-post') && !company) {
+    error = 'Choose the company.';
+  } else if (intent === 'save-announcement') {
     const row = {
+      entity_id: company!.id,
       title: field(form, 'title'), body: field(form, 'body') || null, link_url: field(form, 'link_url') || null, link_label: field(form, 'link_label') || null,
       tone: tones.includes(field(form, 'tone')) ? field(form, 'tone') : 'info',
       starts_at: parseLocal(field(form, 'starts_at')) ?? new Date().toISOString(), ends_at: parseLocal(field(form, 'ends_at')),
@@ -39,21 +48,21 @@ if (Astro.request.method === 'POST') {
     const publish = field(form, 'publish');
     const { data: existing } = id ? await supabase.from('posts').select('published_at').eq('id', id).single() : { data: null };
     const publishedAt = publish === 'yes' ? existing?.published_at ?? new Date().toISOString() : null;
-    const row = { title, slug, excerpt: field(form, 'excerpt'), body_md: String(form.get('body_md') ?? ''), cover_url: field(form, 'cover_url') || null, published_at: publishedAt };
+    const row = { entity_id: company!.id, title, slug, excerpt: field(form, 'excerpt'), body_md: String(form.get('body_md') ?? ''), cover_url: field(form, 'cover_url') || null, published_at: publishedAt };
     const { error: e } = id ? await supabase.from('posts').update(row).eq('id', id) : await supabase.from('posts').insert(row);
     if (e) error = e.code === '23505' ? 'Another post already uses that web address (slug).' : e.message;
     else {
       await log('admin_saved_post', { slug, published: Boolean(publishedAt) });
       const newlyPublished = publishedAt && !existing?.published_at;
       if (newlyPublished && field(form, 'notify') === 'yes') {
-        await notifyMembers({ kind: 'news', title, body: row.excerpt || 'A new update is available in the investor portal.', link: `/news/${slug}`, origin: Astro.url.origin });
+        await notifyMembers({ kind: 'news', entityId: company!.id, title, body: row.excerpt || 'A new update is available in the investor portal.', link: `/news/${slug}`, origin: Astro.url.origin });
       }
       notice = newlyPublished ? 'Post published.' : 'Post saved.';
     }
   } else if (intent === 'delete-post') {
     await supabase.from('posts').delete().eq('id', id).throwOnError();
     notice = 'Post deleted.';
-  } else if (intent === 'save-liquidity') {
+  } else if (intent === 'save-liquidity' && scope.isGroupAdmin) {
     const value = { title: field(form, 'title'), body: field(form, 'body'), url: field(form, 'url'), label: field(form, 'label') };
     await supabase.from('portal_settings').upsert({ key: 'liquidity', value, updated_at: new Date().toISOString() }).throwOnError();
     await log('admin_saved_setting', { key: 'liquidity' });
@@ -62,8 +71,8 @@ if (Astro.request.method === 'POST') {
 }
 
 const [{ data: announcements }, { data: posts }, { data: liquidityRow }] = await Promise.all([
-  supabase.from('announcements').select('*').order('starts_at', { ascending: false }),
-  supabase.from('posts').select('id, slug, title, excerpt, body_md, cover_url, published_at, created_at').order('created_at', { ascending: false }),
+  supabase.from('announcements').select('*').in('entity_id', scope.ids).order('starts_at', { ascending: false }),
+  supabase.from('posts').select('id, entity_id, slug, title, excerpt, body_md, cover_url, published_at, created_at').in('entity_id', scope.ids).order('created_at', { ascending: false }),
   supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle(),
 ]);
 const liquidity = (liquidityRow?.value ?? {}) as Record<string, string>;
@@ -74,6 +83,7 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
 
 <Admin title="News & announcements">
   <PageHeader title="News & announcements" subtitle="The banner at the top of the dashboard, news posts, and the secondary trading card." />
+  <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 
@@ -82,7 +92,7 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
     <ul class="mt-4 divide-y divide-white/5 text-sm">
       {(announcements ?? []).map((a) => (
         <li class="flex flex-wrap items-center justify-between gap-3 py-3">
-          <span><span class="font-medium text-white/85">{a.title}</span> <span class:list={['ml-2 rounded-full px-2 py-0.5 text-[11px]', live(a) ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/50']}>{live(a) ? 'Showing' : new Date(a.starts_at) > now ? 'Scheduled' : 'Ended'}</span>
+          <span>{scope.companies.length > 1 && <span class="mr-2 text-xs text-white/45">{companyName(a.entity_id)}</span>}<span class="font-medium text-white/85">{a.title}</span> <span class:list={['ml-2 rounded-full px-2 py-0.5 text-[11px]', live(a) ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/50']}>{live(a) ? 'Showing' : new Date(a.starts_at) > now ? 'Scheduled' : 'Ended'}</span>
             <span class="block text-xs text-white/40">{dateTime.format(new Date(a.starts_at))}{a.ends_at ? ` → ${dateTime.format(new Date(a.ends_at))}` : ''}</span></span>
           <form method="post" class="flex gap-3 text-xs"><input type="hidden" name="id" value={a.id} />
             {live(a) && <button name="intent" value="end-announcement" class="text-white/50 hover:text-white">End now</button>}
@@ -91,6 +101,7 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
       ))}
     </ul>
     <form method="post" class="mt-4 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-2">
+      <div class="sm:col-span-2"><CompanySelect scope={scope} id="a-entity" /></div>
       <div class="sm:col-span-2"><label class="label" for="a-title">Title</label><input class="field" id="a-title" name="title" required /></div>
       <div class="sm:col-span-2"><label class="label" for="a-body">Text</label><input class="field" id="a-body" name="body" /></div>
       <div><label class="label" for="a-link">Link (optional)</label><input class="field" id="a-link" name="link_url" placeholder="/documents or https://…" /></div>
@@ -110,7 +121,7 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
       {(posts ?? []).map((p) => (
         <li class="flex flex-wrap items-center justify-between gap-3 py-3">
           <span><a href={`?post=${p.id}`} class="font-medium text-white/85 hover:underline">{p.title}</a>
-            <span class="block text-xs text-white/40">{p.published_at ? `Published ${shortDate.format(new Date(p.published_at))}` : 'Draft'} · /news/{p.slug}</span></span>
+            <span class="block text-xs text-white/40">{scope.companies.length > 1 && `${companyName(p.entity_id)} · `}{p.published_at ? `Published ${shortDate.format(new Date(p.published_at))}` : 'Draft'} · /news/{p.slug}</span></span>
           <form method="post" class="text-xs"><input type="hidden" name="id" value={p.id} /><button name="intent" value="delete-post" class="text-white/50 hover:text-lk-red" onclick="return confirm('Delete this post?')">Delete</button></form>
         </li>
       ))}
@@ -118,6 +129,7 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
     <form method="post" class="mt-4 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-2">
       <h3 class="font-display font-bold text-white sm:col-span-2">{post ? `Edit “${post.title}”` : 'New post'}</h3>
       {post && <input type="hidden" name="id" value={post.id} />}
+      <div class="sm:col-span-2"><CompanySelect scope={scope} id="p-entity" value={post?.entity_id} /></div>
       <div><label class="label" for="p-title">Title</label><input class="field" id="p-title" name="title" required value={post?.title} /></div>
       <div><label class="label" for="p-slug">Web address (blank = from title)</label><input class="field" id="p-slug" name="slug" value={post?.slug} /></div>
       <div class="sm:col-span-2"><label class="label" for="p-excerpt">Excerpt</label><input class="field" id="p-excerpt" name="excerpt" value={post?.excerpt} /></div>
@@ -131,8 +143,8 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
     </form>
   </section>
 
-  <section class="card">
-    <h2 class="text-lg font-bold">Secondary trading card</h2>
+  {scope.isGroupAdmin && <section class="card">
+    <h2 class="text-lg font-bold">Secondary trading card (Lakeba Group)</h2>
     <form method="post" class="mt-4 grid gap-4 sm:grid-cols-2">
       <div><label class="label" for="l-title">Title</label><input class="field" id="l-title" name="title" value={liquidity.title} /></div>
       <div><label class="label" for="l-label">Button label</label><input class="field" id="l-label" name="label" value={liquidity.label} /></div>
@@ -140,5 +152,5 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
       <div class="sm:col-span-2"><label class="label" for="l-url">Link</label><input class="field" id="l-url" name="url" type="url" value={liquidity.url} /></div>
       <div><button name="intent" value="save-liquidity" class="btn-ghost">Save</button></div>
     </form>
-  </section>
+  </section>}
 </Admin>

@@ -2,11 +2,33 @@
 import Portal from '../layouts/Portal.astro';
 import PageHeader from '../components/PageHeader.astro';
 import Empty from '../components/Empty.astro';
-import { shortDate } from '../lib/format';
+import { percent, shortDate, smallPercent } from '../lib/format';
+import { inCompany, isShareClass, loadPositions } from '../lib/holdings';
 
-const { data: ventures } = await Astro.locals.supabase
+// The group's portfolio view is for Lakeba Group shareholders (RLS enforces it too).
+const { group, user } = Astro.locals;
+if (!group) return Astro.redirect('/');
+const supabase = Astro.locals.supabase;
+const [positions, { data: stakes }, { data: groupClasses }, { data: onIssue }] = await Promise.all([
+  loadPositions(supabase, user!.id), supabase.rpc('lakeba_stakes'),
+  supabase.from('share_classes').select('id').eq('entity_id', group.id).eq('counts_toward_pct', true),
+  supabase.rpc('shares_on_issue'),
+]);
+// Look-through: your share of Lakeba (all classes that count toward %) × Lakeba's share of each company.
+const counted = new Set((groupClasses ?? []).map((c) => c.id));
+const groupOnIssue = ((onIssue ?? []) as { share_class_id: string; total: number }[]).filter((c) => counted.has(c.share_class_id)).reduce((a, c) => a + Number(c.total), 0);
+const myGroupShares = inCompany(positions, group.id).filter(isShareClass).reduce((a, p) => a + p.row.shares, 0);
+const myGroupPct = groupOnIssue ? myGroupShares / groupOnIssue : 0;
+type Stake = { entity_id: string; code: string; display_name: string; register_pct: number | null; stated_pct: number | null; stated_as_at: string | null };
+const stakeOf = new Map(((stakes ?? []) as Stake[]).map((s) => [s.entity_id, s]));
+const lakebaPct = (entityId: string | null) => {
+  const st = entityId ? stakeOf.get(entityId) : undefined;
+  return st ? Number(st.register_pct ?? st.stated_pct ?? NaN) : NaN;
+};
+
+const { data: ventures } = await supabase
   .from('ventures')
-  .select('slug, name, tagline, stage, lakeba_stake, website, status, venture_updates(title, body, happened_on)')
+  .select('slug, name, tagline, stage, lakeba_stake, website, status, entity_id, venture_updates(title, body, happened_on)')
   .order('sort');
 const groups = [
   { status: 'active', title: 'Active ventures' },
@@ -18,6 +40,11 @@ const accents = ['from-lk-blue/25', 'from-lk-orange/25', 'from-lk-green/25', 'fr
 
 <Portal title="Portfolio">
   <PageHeader eyebrow="Portfolio" title="What your shares own" subtitle="Lakeba’s ventures, its stake in each, and their latest milestones." />
+  {myGroupPct > 0 && (
+    <p class="mb-8 max-w-3xl rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-sm text-white/65">
+      You hold <span class="font-semibold text-white">{percent.format(myGroupPct)}</span> of Lakeba Group. Each card shows your indicative <span class="font-semibold text-white">look-through</span> interest: your share of Lakeba × Lakeba’s share of that company. It is indirect ownership through Lakeba, not shares you hold yourself.
+    </p>
+  )}
   {ventures?.length ? groups.map((g) => {
     const items = ventures.filter((v) => v.status === g.status);
     return items.length > 0 && (
@@ -41,6 +68,9 @@ const accents = ['from-lk-blue/25', 'from-lk-orange/25', 'from-lk-green/25', 'fr
                     )}
                   </div>
                   <p class="mt-4 inline-block rounded-full border border-white/10 px-3 py-1 text-xs text-white/60">{v.stage}</p>
+                  {myGroupPct > 0 && Number.isFinite(lakebaPct(v.entity_id)) && (
+                    <p class="mt-3 text-sm text-white/60">Your look-through interest: <span class="font-semibold text-white">{smallPercent.format(myGroupPct * lakebaPct(v.entity_id))}</span></p>
+                  )}
                   {updates.length > 0 && (
                     <ol class="mt-6 space-y-3 border-l border-white/10 pl-4">
                       {updates.slice(0, 3).map((u) => (

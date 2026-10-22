@@ -5,11 +5,15 @@ const transport = SMTP_URL ? nodemailer.createTransport(SMTP_URL) : null;
 
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
-/** Sends a short branded email. Without SMTP configured, it is skipped. */
-export async function sendMail({ to, subject, text, link, linkLabel }: { to: string; subject: string; text: string; link?: string; linkLabel?: string }) {
+/**
+ * Sends a short branded email. Without SMTP configured, it is skipped.
+ * brand: the company it is from ("Lakeba" by default, e.g. "Ezifin" for a venture).
+ */
+export async function sendMail({ to, subject, text, link, linkLabel, brand = 'Lakeba', color = '#276ae7' }: { to: string; subject: string; text: string; link?: string; linkLabel?: string; brand?: string; color?: string }) {
+  const isLakeba = brand === 'Lakeba';
   if (!transport) return;
   const button = link
-    ? `<p style="margin:28px 0"><a href="${escape(link)}" style="background:#276ae7;color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:600">${escape(linkLabel ?? 'Open the portal')}</a></p>`
+    ? `<p style="margin:28px 0"><a href="${escape(link)}" style="background:${escape(color)};color:#fff;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:600">${escape(linkLabel ?? 'Open the portal')}</a></p>`
     : '';
   await transport.sendMail({
     from: MAIL_FROM,
@@ -17,8 +21,8 @@ export async function sendMail({ to, subject, text, link, linkLabel }: { to: str
     subject,
     text: link ? `${text}\n\n${link}` : text,
     html: `<div style="font-family:Inter,Arial,sans-serif;max-width:560px;color:#0b1d37">
-      <p style="font-weight:700;font-size:18px">lakeba · Investors</p>
+      <p style="font-weight:700;font-size:18px">${isLakeba ? 'lakeba · Investors' : `${escape(brand)} · Investors <span style="font-weight:400;font-size:12px;color:#6b7a90">powered by Lakeba</span>`}</p>
       <p style="line-height:1.6">${escape(text).replace(/\n/g, '<br>')}</p>${button}
-      <p style="color:#6b7a90;font-size:12px">You receive this as a Lakeba shareholder. Change email preferences in your portal profile.</p></div>`,
+      <p style="color:#6b7a90;font-size:12px">You receive this as a${/^[AEIOU]/i.test(brand) ? 'n' : ''} ${escape(brand)} shareholder. Change email preferences in your portal profile.</p></div>`,
   });
 }

@@ -19,7 +19,7 @@ if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = field(form, 'intent');
   if (intent === 'save-meeting') {
-    const { data: before } = await supabase.from('meetings').select('status, title').eq('id', id!).single();
+    const { data: before } = await supabase.from('meetings').select('status, title, entity_id').eq('id', id!).single();
     const status = statuses.includes(field(form, 'status')) ? field(form, 'status') : 'upcoming';
     const { error: e } = await supabase.from('meetings').update({
       title: field(form, 'title'), starts_at: parseLocal(field(form, 'starts_at')), proxy_deadline: parseLocal(field(form, 'proxy_deadline')),
@@ -30,7 +30,7 @@ if (Astro.request.method === 'POST') {
     else {
       await log('admin_updated_meeting', { status });
       if (status === 'open' && before?.status !== 'open') {
-        await notifyMembers({ kind: 'meeting', title: `${field(form, 'title')}: proxy voting is open`, body: 'Read the notice of meeting, lodge your proxy votes and send questions in advance.', link: `/agm/${id}`, origin: Astro.url.origin });
+        await notifyMembers({ kind: 'meeting', entityId: before?.entity_id, title: `${field(form, 'title')}: proxy voting is open`, body: 'Read the notice of meeting, lodge your proxy votes and send questions in advance.', link: `/agm/${id}`, origin: Astro.url.origin });
         notice = 'Meeting opened. Shareholders have been notified.';
       } else notice = 'Meeting saved.';
     }

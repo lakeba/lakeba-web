@@ -3,27 +3,29 @@ import Portal from '../../layouts/Portal.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
 import { categoryLabels, fileSize, shortDate } from '../../lib/format';
-import { myHolderIds, onlyMyDocuments } from '../../lib/scope';
+import { myHolderIds, onBoardOf, onlyMyDocuments } from '../../lib/scope';
 
 const params = Astro.url.searchParams;
 const category = params.get('category') ?? '';
 const year = params.get('year') ?? '';
 const q = (params.get('q') ?? '').trim();
 const userId = Astro.locals.user!.id;
-const holderIds = await myHolderIds(Astro.locals.supabase, userId);
 const role = Astro.locals.profile?.role;
+const { company } = Astro.locals;
+const [holderIds, onBoard] = await Promise.all([myHolderIds(Astro.locals.supabase, userId), onBoardOf(Astro.locals.supabase, userId, company, role)]);
+const scope = { holderIds, onBoard, company };
 
 // Visibility (audience, publish date) is enforced by row-level security.
 let query = onlyMyDocuments(
-  Astro.locals.supabase.from('documents').select('id, title, summary, category, mime_type, size_bytes, published_at, document_reads(user_id)'),
-  holderIds, role,
+  Astro.locals.supabase.from('documents').select('id, title, summary, category, mime_type, size_bytes, published_at, entity_id, entities(display_name), document_reads(user_id)'),
+  scope,
 ).order('published_at', { ascending: false });
 if (category && category in categoryLabels) query = query.eq('category', category);
 if (/^\d{4}$/.test(year)) query = query.gte('published_at', `${year}-01-01`).lt('published_at', `${Number(year) + 1}-01-01`);
 if (q) query = query.ilike('title', `%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
 const { data: documents } = await query;
 
-const { data: all } = await onlyMyDocuments(Astro.locals.supabase.from('documents').select('category, published_at'), holderIds, role);
+const { data: all } = await onlyMyDocuments(Astro.locals.supabase.from('documents').select('category, published_at'), scope);
 const counts = new Map<string, number>();
 const years = new Set<string>();
 for (const d of all ?? []) {
@@ -39,7 +41,7 @@ const kind = (mime: string) => (mime === 'application/pdf' ? 'PDF' : mime.starts
 ---
 
 <Portal title="Documents">
-  <PageHeader eyebrow="Documents" title="Reports & documents" subtitle="Annual reports, AGM papers, shareholder updates and governance documents." />
+  <PageHeader eyebrow={company?.display_name ?? 'Documents'} title="Reports & documents" subtitle="Annual reports, meeting papers, shareholder updates and governance documents." />
 
   <div class="grid gap-8 lg:grid-cols-[14rem_1fr]">
     <aside class="space-y-6">
@@ -78,6 +80,7 @@ const kind = (mime: string) => (mime === 'application/pdf' ? 'PDF' : mime.starts
                   <p class="flex items-center gap-2 text-xs text-white/40">
                     {unread && <span class="rounded-full bg-lk-orange/20 px-2 py-0.5 font-semibold text-lk-orange">New</span>}
                     {categoryLabels[d.category]} · {shortDate.format(new Date(d.published_at!))} · {kind(d.mime_type)} {fileSize(d.size_bytes)}
+                    {d.entity_id !== company?.id && <span class="rounded-full bg-white/10 px-2 py-0.5 text-white/60">Shared by {(d.entities as unknown as { display_name: string } | null)?.display_name}</span>}
                   </p>
                   <h2 class="mt-1 text-lg font-bold">{d.title}</h2>
                   {d.summary && <p class="mt-1 text-sm text-white/55">{d.summary}</p>}

@@ -6,8 +6,11 @@ import { field } from '../../lib/forms';
 import { holderKindValues } from '../../lib/admin-forms';
 import { applyImport, parseHoldingsCsv, previewImport, type Preview } from '../../lib/admin-import';
 import { holderKinds, shares, shortDate } from '../../lib/format';
+import { adminScope } from '../../lib/admin-company';
+import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 
 const supabase = Astro.locals.supabase;
+const scope = await adminScope(Astro.locals, Astro.url);
 let error = '';
 let notice = '';
 let preview: Preview | null = null;
@@ -16,6 +19,8 @@ let csvText = '';
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = field(form, 'intent');
+  // Company admins can record official totals; register changes stay with group admins.
+  if (!scope.isGroupAdmin && intent !== 'set-official') return new Response('Forbidden', { status: 403 });
   if (intent === 'set-official') {
     const raw = field(form, 'official_on_issue').replace(/[,\s]/g, '');
     const asAt = field(form, 'official_as_at');
@@ -55,10 +60,17 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const [{ data: holders }, { data: onIssue }] = await Promise.all([
+const [{ data: allHolders }, { data: allOnIssue }, { data: classes }] = await Promise.all([
   supabase.from('holders').select('id, name, kind, registry_ref, holdings(shares, as_at, share_class_id, share_classes(code))').order('name'),
   supabase.rpc('shares_on_issue'),
+  supabase.from('share_classes').select('id, entity_id, entities(code, display_name)').in('entity_id', scope.ids),
 ]);
+// Only the classes and holders of the companies in view.
+const classCompany = new Map((classes ?? []).map((c) => [c.id, c.entities as unknown as { code: string; display_name: string }]));
+const many = scope.companies.length > 1;
+const classCode = (classId: string, code: string | undefined) => (many ? `${classCompany.get(classId)?.code}-${code}` : code);
+const onIssue = (allOnIssue ?? []).filter((c: { share_class_id: string }) => classCompany.has(c.share_class_id));
+const holders = (allHolders ?? []).filter((h) => (h.holdings as { share_class_id: string }[]).some((r) => classCompany.has(r.share_class_id)) || (scope.isGroupAdmin && !scope.selected && !h.holdings.length));
 type H = { shares: number; as_at: string; share_class_id: string; share_classes: { code: string } | null };
 const latestOf = (rows: H[]) => Object.values(rows.reduce<Record<string, H>>((acc, r) => {
   if (!acc[r.share_class_id] || acc[r.share_class_id].as_at < r.as_at) acc[r.share_class_id] = r;
@@ -69,6 +81,7 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
 
 <Admin title="Holders & holdings">
   <PageHeader title="Holders & holdings" subtitle="Holding entities, their latest positions, and imports from the share registry." />
+  <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 
@@ -77,7 +90,7 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
       const gap = Number(c.total) - Number(c.computed_total);
       return (
         <div class="card !p-5">
-          <p class="text-xs uppercase tracking-widest text-white/40">{c.name} on issue</p>
+          <p class="text-xs uppercase tracking-widest text-white/40">{many && `${classCompany.get(c.share_class_id)?.display_name} · `}{c.name} on issue</p>
           <p class="mt-2 font-display text-3xl font-bold text-white">{shares.format(Number(c.total))}</p>
           <p class="mt-1 text-xs text-white/45">
             {c.is_official ? `Official figure as at ${shortDate.format(new Date(c.official_as_at!))}` : 'No official figure: sum of holdings in the portal'}
@@ -98,8 +111,9 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
     })}
   </div>
 
-  <section class="card mb-6">
-    <h2 class="text-lg font-bold">Import from the share registry</h2>
+  {scope.isGroupAdmin && <section class="card mb-6">
+    <h2 class="text-lg font-bold">Import from the share registry (Lakeba Group)</h2>
+    <p class="mt-1 text-sm text-white/55">For every company at once, use <a href="/admin/import" class="text-lk-blue hover:underline">Import data</a> with the investor data workbook.</p>
     <p class="mt-1 text-sm text-white/55">CSV columns: <code class="font-mono text-white/75">registry_ref, holder_name, kind, share_class_code, shares, as_at</code>. Rows add a dated holding; earlier history is kept.</p>
     <form method="post" enctype="multipart/form-data" class="mt-5 space-y-4">
       <input type="file" name="file" accept=".csv,text/csv" class="block text-sm text-white/70 file:mr-4 file:rounded-lg file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-white" />
@@ -141,9 +155,9 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
         )}
       </div>
     )}
-  </section>
+  </section>}
 
-  <details class="card mb-6">
+  {scope.isGroupAdmin && <details class="card mb-6">
     <summary class="cursor-pointer font-display text-lg font-bold text-white">Add a holder</summary>
     <form method="post" class="mt-6 grid gap-4 sm:grid-cols-3">
       <div><label class="label" for="name">Name</label><input class="field" id="name" name="name" required /></div>
@@ -151,7 +165,7 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
       <div><label class="label" for="registry_ref">Registry reference</label><input class="field" id="registry_ref" name="registry_ref" /></div>
       <div><button name="intent" value="create-holder" class="btn-ghost">Create holder</button></div>
     </form>
-  </details>
+  </details>}
 
   <div class="card overflow-x-auto !p-0">
     <table class="w-full text-left text-sm">
@@ -162,7 +176,7 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
             <td class="px-5 py-3"><span class="font-medium text-white">{h.name}</span><span class="block text-xs text-white/40">{h.registry_ref ?? 'No registry ref'}</span></td>
             <td class="px-5 py-3 text-white/60">{holderKinds[h.kind]}</td>
             <td class="px-5 py-3 text-white/70">
-              {latestOf(h.holdings as unknown as H[]).map((r) => <span class="block">{shares.format(r.shares)} {r.share_classes?.code} <span class="text-xs text-white/40">as at {shortDate.format(new Date(r.as_at))}</span></span>)}
+              {latestOf(h.holdings as unknown as H[]).filter((r) => classCompany.has(r.share_class_id)).map((r) => <span class="block">{shares.format(r.shares)} {classCode(r.share_class_id, r.share_classes?.code)} <span class="text-xs text-white/40">as at {shortDate.format(new Date(r.as_at))}</span></span>)}
               {!h.holdings.length && <span class="text-white/40">—</span>}
             </td>
           </tr>

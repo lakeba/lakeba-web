@@ -3,7 +3,10 @@ import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
 import Alert from '../../../components/Alert.astro';
 import { serviceClient } from '../../../lib/admin';
-import { sendInvite } from '../../../lib/admin-auth';
+import { sendInvite, sendWelcome } from '../../../lib/admin-auth';
+import { adminScope } from '../../../lib/admin-company';
+import { memberIds } from '../../../lib/notify';
+import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
 import { field } from '../../../lib/forms';
 import { displayName, roles } from '../../../lib/admin-forms';
 import { aud, percent, shares, shortDate } from '../../../lib/format';
@@ -11,25 +14,71 @@ import { latestPrices, loadHolderPositions, type Position } from '../../../lib/h
 
 const supabase = Astro.locals.supabase;
 const svc = serviceClient();
+const scope = await adminScope(Astro.locals, Astro.url);
+// Batch welcomes are sent for one company at a time.
+const welcomeCompany = scope.selected ?? (scope.companies.length === 1 ? scope.companies[0] : null);
+const BATCH = 50;
 let error = '';
 let notice = '';
 let shareLink = '';
+const brandOf = (c: typeof welcomeCompany) => (c && c.relationship !== 'group' ? { name: c.display_name, color: c.brand_color } : undefined);
+
+/** People with a holding in this company who have never signed in, and whether they were already welcomed. */
+async function welcomeCandidates(entityId: string) {
+  const ids = await memberIds(entityId);
+  if (!ids.length) return [];
+  const [{ data: people }, { data: authUsers }, { data: welcomed }] = await Promise.all([
+    svc.from('profiles').select('id, email, first_name, last_name, role').in('id', ids).neq('role', 'admin'),
+    svc.auth.admin.listUsers({ perPage: 1000 }),
+    svc.from('audit_log').select('detail, created_at').eq('action', 'investor_welcomed'),
+  ]);
+  const signedIn = new Set((authUsers?.users ?? []).filter((u) => u.last_sign_in_at).map((u) => u.id));
+  const lastWelcome = new Map<string, string>();
+  for (const w of welcomed ?? []) {
+    const d = w.detail as { user_id?: string; entity_id?: string };
+    if (d.user_id && d.entity_id === entityId) lastWelcome.set(d.user_id, w.created_at);
+  }
+  return (people ?? []).filter((p) => !signedIn.has(p.id) && !p.email.endsWith('@lakeba.test'))
+    .map((p) => ({ ...p, welcomedAt: lastWelcome.get(p.id) ?? null }))
+    .sort((a, b) => Number(Boolean(a.welcomedAt)) - Number(Boolean(b.welcomedAt)) || a.email.localeCompare(b.email));
+}
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
+  const intent = field(form, 'intent') || 'invite';
   const email = field(form, 'email').toLowerCase();
-  const role = field(form, 'role');
+  // Company admins invite investors only, linked to a holder in their company.
+  const role = scope.isGroupAdmin ? field(form, 'role') : 'investor';
   const holderId = field(form, 'holder_id');
-  if (!email || !roles.includes(role as never)) {
+  if (intent === 'welcome') {
+    if (!welcomeCompany) error = 'Choose a company first.';
+    else {
+      const allowed = new Map((await welcomeCandidates(welcomeCompany.id)).map((p) => [p.id, p]));
+      const chosen = form.getAll('user_id').map(String).filter((id) => allowed.has(id)).slice(0, BATCH);
+      let sent = 0;
+      for (const id of chosen) {
+        const p = allowed.get(id)!;
+        const { error: e } = await sendWelcome(p.email, Astro.url.origin, brandOf(welcomeCompany));
+        if (!e) {
+          sent++;
+          await svc.from('audit_log').insert({ user_id: Astro.locals.user!.id, action: 'investor_welcomed', detail: { user_id: id, email: p.email, entity_id: welcomeCompany.id } });
+        }
+      }
+      notice = chosen.length ? `Sent ${sent} welcome email${sent === 1 ? '' : 's'} for ${welcomeCompany.display_name}.${sent < chosen.length ? ` ${chosen.length - sent} could not be sent.` : ''}` : 'Tick at least one person.';
+    }
+  } else if (!scope.isGroupAdmin && !(holderId && welcomeCompany && (await svc.rpc('holder_in_entity', { target_holder: holderId, target_entity: welcomeCompany.id })).data)) {
+    error = 'Choose your company and a holder in it.';
+  } else if (!email || !roles.includes(role as never)) {
     error = 'Enter an email and choose a role.';
   } else {
-    const { error: inviteError, userId, url: inviteUrl } = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') });
+    const { error: inviteError, userId, url: inviteUrl } = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') }, brandOf(welcomeCompany));
     if (inviteError || !userId) {
       error = inviteError ?? 'Could not send the invitation.';
     } else {
       await svc.from('profiles').update({ role }).eq('id', userId).throwOnError();
       if (holderId) {
-        await supabase.from('holder_members').upsert({ holder_id: holderId, user_id: userId, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner' }).throwOnError();
+        // Checked above for company admins, so the service key may write the link.
+        await svc.from('holder_members').upsert({ holder_id: holderId, user_id: userId, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner' }).throwOnError();
       }
       await supabase.rpc('log_event', { event_action: 'admin_invited_user', event_detail: { email, role, holder_id: holderId || null } });
       notice = `Invitation sent to ${email}.`;
@@ -44,6 +93,11 @@ const [{ data: profiles }, { data: links }, { data: holders }, { data: authUsers
   supabase.from('holders').select('id, name').order('name'),
   svc.auth.admin.listUsers({ perPage: 1000 }),
 ]);
+const candidates = welcomeCompany ? await welcomeCandidates(welcomeCompany.id) : [];
+// With a company picked, list only its people (company admins only ever see theirs, via RLS).
+const inCompany = scope.selected ? new Set(await memberIds(scope.selected.id)) : null;
+const people = (profiles ?? []).filter((p) => !inCompany || inCompany.has(p.id));
+const notYet = candidates.filter((c) => !c.welcomedAt);
 const authById = new Map((authUsers?.users ?? []).map((u) => [u.id, u]));
 const [positions, prices] = await Promise.all([
   loadHolderPositions(supabase, [...new Set((links ?? []).map((l) => l.holder_id))]),
@@ -72,16 +126,42 @@ import ShareLink from '../../../components/ShareLink.astro';
 
 <Admin title="Investors">
   <PageHeader title="Investors" subtitle="Accounts, roles and which holding entities each person can see." />
+  <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {shareLink && <ShareLink url={shareLink} label="Invitation link" />}
+
+  {welcomeCompany ? (
+    <details class="card mb-6" open={notYet.length > 0}>
+      <summary class="cursor-pointer font-display text-lg font-bold text-white">Welcome {welcomeCompany.display_name} shareholders <span class="ml-2 text-sm font-normal text-white/50">{notYet.length} not yet invited · {candidates.length - notYet.length} invited, not signed in</span></summary>
+      <p class="mt-3 text-sm text-white/55">People with a {welcomeCompany.display_name} holding who have never signed in. Each gets an email{welcomeCompany.relationship !== 'group' && ` in ${welcomeCompany.display_name}’s name`} with a link to choose a password (valid for 1 hour; after that, “Forgot password” on the sign-in page). Up to {BATCH} per send; start with a few friendly shareholders.</p>
+      {candidates.length ? (
+        <form method="post" class="mt-4" onsubmit="return confirm('Send welcome emails to the people ticked?')">
+          <div class="max-h-80 overflow-auto rounded-xl border border-white/5">
+            <table class="w-full text-left text-sm">
+              <tbody class="divide-y divide-white/5">
+                {candidates.map((c, i) => (
+                  <tr>
+                    <td class="w-10 px-4 py-2"><input type="checkbox" name="user_id" value={c.id} checked={!c.welcomedAt && i < BATCH} aria-label={`Welcome ${c.email}`} class="size-4 accent-lk-blue" /></td>
+                    <td class="px-2 py-2"><span class="text-white/85">{displayName(c)}</span> <span class="text-xs text-white/40">{c.email}</span></td>
+                    <td class="px-4 py-2 text-right text-xs text-white/45">{c.welcomedAt ? `Invited ${shortDate.format(new Date(c.welcomedAt))}` : 'Not invited'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <button name="intent" value="welcome" class="btn-primary mt-4">Send welcome emails</button>
+        </form>
+      ) : <p class="mt-4 text-sm text-white/50">Everyone with a {welcomeCompany.display_name} holding has signed in.</p>}
+    </details>
+  ) : scope.companies.length > 1 && <p class="mb-6 text-sm text-white/50">Pick a company above to send welcome emails to its shareholders.</p>}
 
   <details class="card mb-6" open={Boolean(error)}>
     <summary class="cursor-pointer font-display text-lg font-bold text-white">Invite someone</summary>
     <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
       <div><label class="label" for="email">Email</label><input class="field" id="email" name="email" type="email" required /></div>
-      <div><label class="label" for="role">Role</label>
-        <select class="field" id="role" name="role">{roles.map((r) => <option value={r}>{r}</option>)}</select></div>
+      {scope.isGroupAdmin && <div><label class="label" for="role">Role</label>
+        <select class="field" id="role" name="role">{roles.map((r) => <option value={r}>{r}</option>)}</select></div>}
       <div><label class="label" for="first_name">First name</label><input class="field" id="first_name" name="first_name" /></div>
       <div><label class="label" for="last_name">Last name</label><input class="field" id="last_name" name="last_name" /></div>
       <div><label class="label" for="holder_id">Link to holder (optional)</label>
@@ -98,14 +178,14 @@ import ShareLink from '../../../components/ShareLink.astro';
         <tr><th class="px-5 py-3 font-medium">Name</th><th class="px-5 py-3 font-medium">Role</th><th class="px-5 py-3 font-medium">Holdings</th><th class="px-5 py-3 text-right font-medium">Shares</th><th class="px-5 py-3 text-right font-medium">Indicative value</th><th class="px-5 py-3 font-medium">Two-step</th><th class="px-5 py-3 font-medium">Last sign-in</th></tr>
       </thead>
       <tbody class="divide-y divide-white/5">
-        {(profiles ?? []).map((p) => {
+        {people.map((p) => {
           const auth = authById.get(p.id);
           const hs = holdersOf(p.id);
           const t = totalsOf(hs);
           return (
             <tr class="hover:bg-white/[0.02]">
               <td class="px-5 py-3">
-                <a href={`/admin/investors/${p.id}`} class="font-medium text-white hover:underline">{displayName(p)}</a>
+                {scope.isGroupAdmin ? <a href={`/admin/investors/${p.id}`} class="font-medium text-white hover:underline">{displayName(p)}</a> : <span class="font-medium text-white">{displayName(p)}</span>}
                 <span class="block text-xs text-white/40">{p.email}</span>
                 {isBanned(p.id) && <span class="mt-1 inline-block rounded-full bg-lk-red/15 px-2 py-0.5 text-[11px] text-lk-red">Disabled</span>}
               </td>

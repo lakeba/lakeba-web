@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import Anthropic from '@anthropic-ai/sdk';
 import { buildKnowledgeBase } from '../../lib/knowledge';
 import { serviceClient } from '../../lib/admin';
-import { buildMessages, client, costUsd, DECLINE, FULL_CONTEXT_LIMIT, loadHouseRules, MODEL, searchPassages, sourcesFor, systemPrompt, validateTurns, type ChatTurn, type SourceRef } from '../../lib/ask';
+import { askName, buildMessages, client, costUsd, declineFor, FULL_CONTEXT_LIMIT, isDecline, loadHouseRules, MODEL, searchPassages, sourcesFor, systemPrompt, validateTurns, type ChatTurn, type SourceRef } from '../../lib/ask';
 import { checkAskAllowed, loadLimits, precheckOnTopic, PRECHECK_MODEL } from '../../lib/ask-limits';
 
 /**
@@ -18,12 +18,12 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   if (request.headers.get('origin') !== url.origin) return new Response('Forbidden', { status: 403 });
   const supabase = locals.supabase;
 
-  // Ask Lakeba answers from Lakeba Group's documents, so it is for people who can see the group.
-  const { data: groupId } = await supabase.rpc('group_entity_id');
-  const { data: member } = groupId ? await supabase.rpc('can_see_entity', { target: groupId }) : { data: false };
-  if (!member) return Response.json({ error: 'Ask Lakeba is available to Lakeba Group shareholders.' }, { status: 403 });
-
   const body = await request.json().catch(() => null);
+  // Each company has its own assistant, answering from that company's material only.
+  // The company must be one this person belongs to (membership comes from the database).
+  const company = locals.companies.find((c) => c.code === body?.company) ?? null;
+  if (!company) return Response.json({ error: 'Ask is available to shareholders of the company you are viewing.' }, { status: 403 });
+  const DECLINE = declineFor(company);
   const turns = body?.turns as ChatTurn[];
   const conversationId = /^[0-9a-f-]{36}$/.test(body?.conversationId ?? '') ? body.conversationId : crypto.randomUUID();
   const invalid = validateTurns(turns);
@@ -46,8 +46,8 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
       try {
         if (!client || gate.budgetReached) {
           // AI answers off or today's budget used: point to the most relevant passages instead.
-          const passages = await searchPassages(supabase, turns.at(-1)!.content);
-          const why = !client ? 'AI answers are not switched on yet.' : 'Ask Lakeba has reached its daily limit for AI answers; they resume at midnight (Sydney time).';
+          const passages = await searchPassages(supabase, turns.at(-1)!.content, company);
+          const why = !client ? 'AI answers are not switched on yet.' : `${askName(company)} has reached its daily limit for AI answers; they resume at midnight (Sydney time).`;
           record.answer = passages.length ? `${why} These passages look most relevant:` : `${why} No published document matches that question.`;
           record.sources = passages.map((p) => ({ title: p.title, detail: p.page ? `page ${p.page}` : null, href: `/documents/${p.document_id}` }));
           record.error = !client ? 'ai_off' : 'budget';
@@ -57,7 +57,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
         }
         // Cheap pre-check: clearly off-topic questions are declined without sending the knowledge base.
         if (limits.precheck) {
-          const check = await precheckOnTopic(turns);
+          const check = await precheckOnTopic(turns, company);
           if (!check.onTopic) {
             record.answer = DECLINE;
             record.usage = { model: PRECHECK_MODEL, cost_usd: check.costUsd };
@@ -67,7 +67,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           }
           record.usage = { cost_usd: check.costUsd };
         }
-        const [kb, houseRules] = await Promise.all([buildKnowledgeBase(), loadHouseRules(svc)]);
+        const [kb, houseRules] = await Promise.all([buildKnowledgeBase(company), loadHouseRules(svc, company)]);
         if (kb.approxTokens > FULL_CONTEXT_LIMIT) throw new Error('Knowledge base too large to send in full');
         const response = client.beta.messages.stream({
           model: MODEL,
@@ -76,7 +76,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           // Re-runs on a fallback model if a safety classifier declines.
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
-          system: systemPrompt(houseRules),
+          system: systemPrompt(houseRules, company),
           messages: buildMessages(kb, turns),
         }, { signal: request.signal });
         for await (const event of response) {
@@ -122,17 +122,18 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
         else {
           console.error('Ask Lakeba failed', error instanceof Anthropic.APIError ? `${error.status} ${error.message}` : error);
           record.error = error instanceof Anthropic.APIError ? `api_${error.status}` : 'failed';
-          send({ error: 'Ask Lakeba is unavailable right now. Please try again shortly.' });
+          send({ error: `${askName(company)} is unavailable right now. Please try again shortly.` });
         }
       } finally {
         const { data: stored } = await svc.from('ask_exchanges').insert({
           user_id: locals.user!.id,
+          entity_id: company.id,
           conversation_id: conversationId,
           turn: Math.ceil(turns.length / 2),
           question: turns.at(-1)!.content,
           answer: record.answer,
           sources: record.sources,
-          declined: record.answer.trim() === DECLINE,
+          declined: isDecline(record.answer),
           error: record.error,
           ...record.usage,
         }).select('id').single();

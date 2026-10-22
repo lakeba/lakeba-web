@@ -8,6 +8,7 @@
 // Uses the ventures EZF (Ezifin) and the group (LKB).
 //
 //   node --env-file=.env scripts/check-entities.mjs
+import { createHmac } from 'node:crypto';
 import { createClient } from '@supabase/supabase-js';
 
 const url = process.env.SUPABASE_URL;
@@ -53,6 +54,22 @@ async function doc(entityId, audience, extra = {}) {
 }
 
 const ids = (rows) => new Set((rows ?? []).map((r) => r.id));
+const totp = (secret) => {
+  const al = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ234567'; let bits = '';
+  for (const ch of secret.replace(/=+$/, '')) bits += al.indexOf(ch).toString(2).padStart(5, '0');
+  const key = Buffer.from(bits.match(/.{8}/g).map((x) => parseInt(x, 2)));
+  const c = Buffer.alloc(8); c.writeBigUInt64BE(BigInt(Math.floor(Date.now() / 30000)));
+  const h = createHmac('sha1', key).update(c).digest(); const o = h[h.length - 1] & 15;
+  return String((h.readUInt32BE(o) & 0x7fffffff) % 1e6).padStart(6, '0');
+};
+/** Enrols a TOTP factor and verifies it, so the session is aal2 (as company admins must be). */
+async function withTwoStep(client) {
+  const { data: f, error } = await client.auth.mfa.enroll({ factorType: 'totp', friendlyName: 'entity test' });
+  if (error) throw error;
+  const { data: ch } = await client.auth.mfa.challenge({ factorId: f.id });
+  const { error: vErr } = await client.auth.mfa.verify({ factorId: f.id, challengeId: ch.id, code: totp(f.totp.secret) });
+  if (vErr) throw vErr;
+}
 
 try {
   const { data: entities } = await svc.from('entities').select('id, code');
@@ -93,12 +110,12 @@ try {
   const view = async (who) => {
     const c = who.client;
     const [d, p, a, m, cls, pr, ent, v, s, soi] = await Promise.all([
-      c.from('documents').select('id'), c.from('posts').select('id'), c.from('announcements').select('id'),
-      c.from('meetings').select('id'), c.from('share_classes').select('id, entity_id'), c.from('reference_prices').select('id, note'),
+      c.from('documents').select('id, entity_id, audience'), c.from('posts').select('id'), c.from('announcements').select('id, entity_id'),
+      c.from('meetings').select('id'), c.from('share_classes').select('id, entity_id'), c.from('reference_prices').select('id, note, share_class_id'),
       c.from('entities').select('id, code'), c.from('ventures').select('id'), c.from('portal_settings').select('key'),
       c.rpc('shares_on_issue'),
     ]);
-    return { docs: ids(d.data), posts: ids(p.data), notices: ids(a.data), meetings: ids(m.data), classes: cls.data ?? [],
+    return { docRows: d.data ?? [], noticeRows: a.data ?? [], docs: ids(d.data), posts: ids(p.data), notices: ids(a.data), meetings: ids(m.data), classes: cls.data ?? [],
       prices: pr.data ?? [], entities: (ent.data ?? []).map((e) => e.code), ventures: v.data ?? [], settings: s.data ?? [], onIssue: soi.data ?? [] };
   };
 
@@ -107,13 +124,13 @@ try {
   ok('venture-only: sees the venture’s document', V.docs.has(ezfDoc));
   ok('venture-only: sees no group documents', ![lkbDoc, lkbBoardDoc].some((d) => V.docs.has(d)));
   ok('venture-only: does not see venture board papers', !V.docs.has(ezfBoardDoc));
-  ok('venture-only: sees only venture documents', V.docs.size === 2, `${V.docs.size}`);
+  ok('venture-only: every document it sees is the venture’s', V.docRows.every((d) => d.entity_id === E.EZF && d.audience !== 'board'), JSON.stringify(V.docRows.filter((d) => d.entity_id !== E.EZF)));
   ok('venture-only: venture posts only', V.posts.has(ezfPost.id) && !V.posts.has(lkbPost.id));
-  ok('venture-only: no group announcements', V.notices.has(ezfNotice.id) && V.notices.size === 1, `${V.notices.size}`);
+  ok('venture-only: no group announcements', V.notices.has(ezfNotice.id) && V.noticeRows.every((n) => n.entity_id === E.EZF));
   ok('venture-only: venture meetings only', V.meetings.has(ezfMeeting.id) && !V.meetings.has(lkbMeeting.id));
   ok('venture-only: only venture share classes', V.classes.length > 0 && V.classes.every((c) => c.entity_id === E.EZF));
   ok('venture-only: shares on issue only for venture classes', V.onIssue.length > 0 && V.onIssue.every((c) => V.classes.some((k) => k.id === c.share_class_id)));
-  ok('venture-only: only venture prices', V.prices.length === 1 && V.prices[0].note === TAG);
+  ok('venture-only: only venture prices', V.prices.some((p) => p.note === TAG) && V.prices.every((p) => V.classes.some((k) => k.id === p.share_class_id)));
   ok('venture-only: sees only its company', V.entities.join() === 'EZF', V.entities.join());
   ok('venture-only: no group portfolio or settings', V.ventures.length === 0 && V.settings.length === 0);
   const { data: vGroup } = await venture.client.rpc('can_see_entity', { target: E.LKB });
@@ -145,6 +162,27 @@ try {
   ok('venture director: sees venture board papers', D.docs.has(ezfBoardDoc));
   ok('venture director: no group board papers or documents', !D.docs.has(lkbBoardDoc) && !D.docs.has(lkbDoc));
   ok('venture director: sees only the venture', D.entities.join() === 'EZF', D.entities.join());
+
+  // Company admin of the venture
+  const coadmin = await person('coadmin');
+  await svc.from('entity_admins').insert({ entity_id: E.EZF, user_id: coadmin.id }).throwOnError();
+  const docRow = (entityId, title) => ({ entity_id: entityId, title: `${TAG} ${title} ${run}`, category: 'update', file_path: `entity/${entityId}/${run}/${crypto.randomUUID()}.pdf`, mime_type: 'application/pdf', audience: 'all_investors' });
+  const { error: noMfa } = await coadmin.client.from('documents').insert(docRow(E.EZF, 'no two-step'));
+  ok('company admin without two-step cannot write', !!noMfa);
+  await withTwoStep(coadmin.client);
+  const { data: own, error: ownErr } = await coadmin.client.from('documents').insert(docRow(E.EZF, 'by company admin')).select('id').single();
+  if (own) created.documents.push(own.id);
+  ok('company admin adds a venture document', !ownErr, ownErr?.message);
+  const { error: grpErr } = await coadmin.client.from('documents').insert(docRow(E.LKB, 'group by company admin'));
+  ok('company admin cannot add a group document', !!grpErr);
+  const { data: grpDocs } = await coadmin.client.from('documents').select('id').eq('id', lkbBoardDoc);
+  ok('company admin cannot read group board papers', !grpDocs?.length);
+  const { data: regH } = await coadmin.client.from('holdings').select('share_class_id');
+  ok('company admin reads the venture register only', regH.length > 0 && regH.every((h) => h.share_class_id === ezfClass.id || V.classes.some((k) => k.id === h.share_class_id)));
+  const { error: holdErr } = await coadmin.client.from('holdings').insert({ holder_id: created.holders[0], share_class_id: ezfClass.id, shares: 1, as_at: '2026-07-01' });
+  ok('company admin cannot change the register', !!holdErr);
+  const { error: annErr } = await coadmin.client.from('announcements').insert({ title: TAG, entity_id: E.LKB });
+  ok('company admin cannot post group announcements', !!annErr);
 } finally {
   await svc.from('proxy_votes').delete().in('holder_id', created.holders);
   if (created.meetings.length) await svc.from('meetings').delete().in('id', created.meetings);
@@ -156,6 +194,7 @@ try {
     await svc.from('reference_prices').delete().in('share_class_id', created.classes);
     await svc.from('share_classes').delete().in('id', created.classes);
   }
+  await svc.from('announcements').delete().eq('title', TAG);
   for (const id of users) {
     await svc.from('queries').delete().eq('user_id', id);
     await svc.from('audit_log').delete().eq('user_id', id);

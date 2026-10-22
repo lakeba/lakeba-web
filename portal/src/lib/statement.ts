@@ -8,10 +8,11 @@ const INK = rgb(0.043, 0.114, 0.216);
 const MUTED = rgb(0.42, 0.48, 0.56);
 
 /** A personal holding statement for one holder and share class. */
-export async function holdingStatementPdf(position: Position, price: Price | undefined, recipient: string) {
+/** issuer: the company whose shares these are (legal name for the heading, short name in the notes). */
+export async function holdingStatementPdf(position: Position, price: Price | undefined, recipient: string, issuer = { legal: 'Lakeba Group Limited', short: 'Lakeba' }) {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Holding statement – ${position.holder.name}`);
-  pdf.setAuthor('Lakeba Group Limited');
+  pdf.setAuthor(issuer.legal);
   const page = pdf.addPage([595.28, 841.89]); // A4
   const regular = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
@@ -39,7 +40,7 @@ export async function holdingStatementPdf(position: Position, price: Price | und
   const text = (s: string, x: number, yy: number, opts: { size?: number; font?: typeof regular; color?: ReturnType<typeof rgb> } = {}) =>
     page.drawText(s, { x, y: yy, size: opts.size ?? 10, font: opts.font ?? regular, color: opts.color ?? INK });
 
-  text('Lakeba Group Limited', left, y, { font: bold, size: 11 });
+  text(issuer.legal, left, y, { font: bold, size: 11 });
   text(`Statement date: ${longDate.format(new Date())}`, width - left - 170, y, { color: MUTED });
   y -= 34;
 
@@ -58,7 +59,7 @@ export async function holdingStatementPdf(position: Position, price: Price | und
   page.drawRectangle({ x: left, y: y - 54, width: width - left * 2, height: 74, color: rgb(0.94, 0.96, 1) });
   const pct = position.total ? percent.format(position.row.shares / position.total) : '—';
   const headline = [
-    ['Shares held', shares.format(position.row.shares)],
+    [position.row.share_classes?.counts_toward_pct === false ? 'Held' : 'Shares held', shares.format(position.row.shares)],
     ['Of total on issue', pct],
     ['Total on issue', shares.format(position.total)],
   ];
@@ -89,9 +90,9 @@ export async function holdingStatementPdf(position: Position, price: Price | und
     y -= 20;
     text(`${aud.format(position.row.shares * price.price)}  (${shares.format(position.row.shares)} × ${audPrecise.format(price.price)} reference price of ${longDate.format(new Date(price.priced_on))})`, left, y);
     y -= 16;
-    text('Indicative only. Lakeba shares are unlisted; this is not a valuation, an offer or financial advice.', left, y, { size: 8, color: MUTED });
+    text(`Indicative only. ${issuer.short} shares are unlisted; this is not a valuation, an offer or financial advice.`, left, y, { size: 8, color: MUTED });
   }
 
-  text(`Prepared for ${recipient} from the Lakeba Investor Portal. Questions: info@lakeba.com`, left, 48, { size: 8, color: MUTED });
+  text(`Prepared for ${recipient} from the ${issuer.short} Investor Portal${issuer.short === 'Lakeba' ? '' : ', powered by Lakeba'}. Questions: info@lakeba.com`, left, 48, { size: 8, color: MUTED });
   return pdf.save();
 }

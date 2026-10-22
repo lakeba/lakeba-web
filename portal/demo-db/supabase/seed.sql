@@ -1,0 +1,1 @@
+-- Demo stack: data comes from scripts/seed-demo.mjs (all fictional).

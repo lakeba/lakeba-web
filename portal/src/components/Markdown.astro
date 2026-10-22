@@ -15,4 +15,8 @@ const html = await marked.parse(Astro.props.source);
   .prose-portal :global(li) { margin: 0.25rem 0; }
   .prose-portal :global(a) { color: #5b8ff0; text-decoration: underline; }
   .prose-portal :global(strong) { color: var(--color-white); }
+  .prose-portal :global(table) { width: 100%; margin: 0 0 1.25rem; border-collapse: collapse; font-size: 0.875rem; }
+  .prose-portal :global(th), .prose-portal :global(td) { border-bottom: 1px solid color-mix(in oklab, var(--color-white) 8%, transparent); padding: 0.4rem 0.6rem; text-align: left; color: color-mix(in oklab, var(--color-white) 75%, transparent); }
+  .prose-portal :global(th) { color: var(--color-white); font-weight: 600; }
+  .prose-portal :global(td[align="right"]), .prose-portal :global(th[align="right"]) { text-align: right; font-variant-numeric: tabular-nums; }
 </style>

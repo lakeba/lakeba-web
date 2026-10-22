@@ -4,12 +4,13 @@ import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
 import { longDate } from '../../lib/format';
 
-const { data: meetings } = await Astro.locals.supabase.from('meetings').select('id, title, kind, starts_at, location, status').order('starts_at', { ascending: false });
+const { company } = Astro.locals;
+const { data: meetings } = await Astro.locals.supabase.from('meetings').select('id, title, kind, starts_at, location, status').eq('entity_id', company?.id ?? '00000000-0000-0000-0000-000000000000').order('starts_at', { ascending: false });
 const statusLabel: Record<string, string> = { upcoming: 'Upcoming', open: 'Proxy voting open', closed: 'Voting closed', results: 'Results available' };
 ---
 
 <Portal title="Meetings">
-  <PageHeader eyebrow="Meetings" title="AGM & shareholder meetings" subtitle="Notices, proxy voting, questions for the board, results and minutes." />
+  <PageHeader eyebrow={company?.display_name ?? 'Meetings'} title="AGM & shareholder meetings" subtitle="Notices, proxy voting, questions for the board, results and minutes." />
   {meetings?.length ? (
     <ul class="grid max-w-3xl gap-3">
       {meetings.map((m) => (

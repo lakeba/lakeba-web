@@ -2,39 +2,56 @@
 import Portal from '../layouts/Portal.astro';
 import Sparkline from '../components/Sparkline.astro';
 import LinkedInCard from '../components/LinkedInCard.astro';
-import { loadPositions, loadPrices, sourceLabels } from '../lib/holdings';
-import { myHolderIds, onlyMyDocuments } from '../lib/scope';
+import { inCompany, isShareClass, latestPrices, loadPositions, loadPrices, sourceLabels } from '../lib/holdings';
+import { myHolderIds, onBoardOf, onlyMyDocuments } from '../lib/scope';
 import { loadNews } from '../lib/news';
+import { legalName } from '../lib/companies';
 import { aud, audPrecise, categoryLabels, holderKinds, longDate, percent, shares, shortDate } from '../lib/format';
 
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
 const role = Astro.locals.profile?.role;
-const [positions, holderIds] = await Promise.all([loadPositions(supabase, userId), myHolderIds(supabase, userId)]);
-const classIds = [...new Set(positions.map((p) => p.row.share_class_id))];
+const { company, companies } = Astro.locals;
+const isGroup = company?.relationship === 'group';
+const entityId = company?.id ?? '00000000-0000-0000-0000-000000000000';
+const [allPositions, holderIds, onBoard, allPrices] = await Promise.all([
+  loadPositions(supabase, userId), myHolderIds(supabase, userId), onBoardOf(supabase, userId, company, role), latestPrices(supabase),
+]);
+// The dashboard shows the company being viewed; "My ownership" sums up all of them.
+const positions = inCompany(allPositions, company?.id);
+const classIds = [...new Set(positions.filter(isShareClass).map((p) => p.row.share_class_id))];
 
 const [priceSeries, { data: announcements }, { data: settings }, { data: docs }, posts, { data: meetings }, { data: video }, { count: openQueries }] = await Promise.all([
   Promise.all(classIds.map(async (id) => [id, await loadPrices(supabase, id)] as const)),
-  supabase.from('announcements').select('id, title, body, link_url, link_label, tone').order('starts_at', { ascending: false }).limit(2),
-  supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle(),
-  onlyMyDocuments(supabase.from('documents').select('id, title, category, published_at, document_reads(user_id)').neq('category', 'video'), holderIds, role).order('published_at', { ascending: false }).limit(5),
-  loadNews(supabase, 3),
-  supabase.from('meetings').select('id, title, starts_at, proxy_deadline, status').in('status', ['upcoming', 'open']).order('starts_at').limit(1),
-  onlyMyDocuments(supabase.from('documents').select('id, title, summary, published_at').eq('category', 'video'), holderIds, role).order('published_at', { ascending: false }).limit(1).maybeSingle(),
-  supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').eq('user_id', userId),
+  supabase.from('announcements').select('id, title, body, link_url, link_label, tone').eq('entity_id', entityId).order('starts_at', { ascending: false }).limit(2),
+  isGroup ? supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle() : Promise.resolve({ data: null }),
+  onlyMyDocuments(supabase.from('documents').select('id, title, category, published_at, entity_id, document_reads(user_id)').neq('category', 'video'), { holderIds, onBoard, company }).order('published_at', { ascending: false }).limit(5),
+  loadNews(supabase, 3, company),
+  supabase.from('meetings').select('id, title, starts_at, proxy_deadline, status').eq('entity_id', entityId).in('status', ['upcoming', 'open']).order('starts_at').limit(1),
+  onlyMyDocuments(supabase.from('documents').select('id, title, summary, published_at').eq('category', 'video'), { holderIds, onBoard, company }).order('published_at', { ascending: false }).limit(1).maybeSingle(),
+  supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').eq('user_id', userId).eq('entity_id', entityId),
 ]);
 
 // Each share class is valued at its own latest reference price, if it has one.
-const pricesByClass = new Map(priceSeries);
-const latestPrice = (classId: string) => pricesByClass.get(classId)?.at(-1);
-const value = (p: (typeof positions)[number]) => {
-  const pr = latestPrice(p.row.share_class_id);
+// Options and similar have no price here (their value depends on exercise terms).
+const valueAt = (p: (typeof positions)[number]) => {
+  const pr = isShareClass(p) ? allPrices.get(p.row.share_class_id) : undefined;
   return pr ? p.row.shares * pr.price : null;
 };
-const totalShares = positions.reduce((sum, p) => sum + p.row.shares, 0);
-const pricedValues = positions.map(value).filter((v): v is number => v !== null);
+const value = valueAt;
+const sharePositions = positions.filter(isShareClass);
+const totalShares = sharePositions.reduce((sum, p) => sum + p.row.shares, 0);
+const pricedValues = sharePositions.map(value).filter((v): v is number => v !== null);
 const totalValue = pricedValues.reduce((a, b) => a + b, 0);
-const unpricedClasses = [...new Set(positions.filter((p) => value(p) === null).map((p) => p.row.share_classes?.name))];
+const unpricedClasses = [...new Set(sharePositions.filter((p) => value(p) === null).map((p) => p.row.share_classes?.name))];
+
+// My ownership: one line per company with holdings.
+const ownership = companies.map((c) => {
+  const ps = inCompany(allPositions, c.id).filter((p) => p.row.shares > 0);
+  const values = ps.filter(isShareClass).map(valueAt);
+  return { company: c, positions: ps, shares: ps.filter(isShareClass).reduce((a, p) => a + p.row.shares, 0), options: ps.filter((p) => !isShareClass(p)).reduce((a, p) => a + p.row.shares, 0), value: values.reduce<number>((a, v) => a + (v ?? 0), 0), priced: values.some((v) => v !== null) };
+}).filter((o) => o.positions.length);
+const pricesByClass = new Map(priceSeries);
 // The chart shows the class with the longest price history (normally Ordinary).
 const chartClass = [...pricesByClass].sort((a, b) => b[1].length - a[1].length)[0];
 const prices = chartClass?.[1] ?? [];
@@ -63,18 +80,33 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
     <div>
       <p class="eyebrow">Investor portal</p>
       <h1 class="mt-4 text-4xl font-extrabold sm:text-5xl">Welcome, {firstName}</h1>
-      <p class="mt-3 text-white/55">Your investment in Lakeba Group Limited.</p>
+      <p class="mt-3 text-white/55">{company ? `Your investment in ${legalName(company)}.` : 'Your investor account.'}</p>
     </div>
-    {positions.length > 1 && (
+    {sharePositions.length > 1 && (
       <div>
         <div class="flex flex-wrap gap-x-8 gap-y-4">
           <div><p class="text-xs uppercase tracking-widest text-white/40">Total shares</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{shares.format(totalShares)}</p></div>
           {pricedValues.length > 0 && <div><p class="text-xs uppercase tracking-widest text-white/40">Indicative value</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{aud.format(totalValue)}</p></div>}
         </div>
-        <p class="mt-1 text-xs text-white/40">Across your {positions.length} holdings{unpricedClasses.length > 0 && pricedValues.length > 0 && ` · value excludes ${unpricedClasses.join(', ')} (no reference price)`}</p>
+        <p class="mt-1 text-xs text-white/40">Across your {sharePositions.length} holdings{unpricedClasses.length > 0 && pricedValues.length > 0 && ` · value excludes ${unpricedClasses.join(', ')} (no reference price)`}</p>
       </div>
     )}
   </div>
+
+  {ownership.length > 1 && (
+    <section class="mt-10" aria-label="My ownership">
+      <h2 class="text-xs uppercase tracking-widest text-white/40">My ownership</h2>
+      <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {ownership.map((o) => (
+          <a href={`/company/${o.company.code}?next=/`} class:list={['card block p-5 transition hover:bg-white/[0.07]', o.company.id === company?.id && 'ring-1 ring-white/20']}>
+            <p class="flex items-center gap-2 text-sm font-semibold text-white"><span class="size-2.5 rounded-full" style={`background:${o.company.brand_color ?? '#2563EB'}`}></span>{o.company.display_name}{o.company.id === company?.id && <span class="ml-auto text-[11px] font-normal text-white/40">Viewing</span>}</p>
+            <p class="mt-3 font-display text-2xl font-bold text-white">{shares.format(o.shares)} <span class="text-sm font-normal text-white/45">shares</span></p>
+            <p class="text-sm text-white/55">{o.priced ? `${aud.format(o.value)} indicative` : 'No reference price yet'}{o.options > 0 && ` · ${shares.format(o.options)} options`}</p>
+          </a>
+        ))}
+      </div>
+    </section>
+  )}
 
   <!-- Holdings, reference price and secondary trading share one two-column grid,
        so a single holding sits next to the price chart. -->
@@ -89,11 +121,11 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
           <a href={`/statement/${p.holder.id}?class=${p.row.share_class_id}`} class="btn-ghost px-3 py-2 text-xs">Holding statement ↓</a>
         </div>
         <dl class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <div><dt class="text-xs uppercase tracking-widest text-white/40">Shares</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{shares.format(p.row.shares)}</dd></div>
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">{isShareClass(p) ? 'Shares' : 'Options'}</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{shares.format(p.row.shares)}</dd></div>
           <div><dt class="text-xs uppercase tracking-widest text-white/40">Of total</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{p.total ? percent.format(p.row.shares / p.total) : '—'}</dd></div>
           <div><dt class="text-xs uppercase tracking-widest text-white/40">Indicative</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{value(p) !== null ? aud.format(value(p)!) : '—'}</dd></div>
         </dl>
-        <p class="mt-6 border-t border-white/5 pt-4 text-xs text-white/40">As at {longDate.format(new Date(p.row.as_at))} · {shares.format(p.total)} {p.row.share_classes?.name.toLowerCase()} on issue</p>
+        <p class="mt-6 border-t border-white/5 pt-4 text-xs text-white/40">As at {longDate.format(new Date(p.row.as_at))} · {shares.format(p.total)} {p.row.share_classes?.name.toLowerCase()} on issue{p.row.exercise_price != null && ` · exercise price ${audPrecise.format(Number(p.row.exercise_price))}`}{p.row.expires_on && ` · expires ${longDate.format(new Date(p.row.expires_on))}`}{!isShareClass(p) && ' · not included in ownership %'}</p>
       </article>
     )) : (
       <div class="card lg:col-span-2">
@@ -171,7 +203,7 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
         <p class="mt-2 font-display text-3xl font-bold text-white">{openQueries ?? 0}</p>
         <p class="text-sm text-white/55">{openQueries === 1 ? 'question' : 'questions'} awaiting a reply · the board replies within 7 working days</p>
       </a>
-      <LinkedInCard src="card" />
+      {isGroup && <LinkedInCard src="card" />}
     </div>
   </div>
 
