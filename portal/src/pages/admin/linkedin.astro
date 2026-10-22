@@ -1,0 +1,140 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import LinkedInIcon from '../../components/LinkedInIcon.astro';
+import { field } from '../../lib/forms';
+import { dateTime } from '../../lib/format';
+import { memberIds, notifyMembers } from '../../lib/notify';
+import { serviceClient } from '../../lib/admin';
+import { sourceNames, TRACKED_LINKS, trackedHref } from '../../lib/links';
+
+/*
+ * LinkedIn follow campaign: one button posts the dashboard banner, sends an
+ * inbox notification to every member and emails those who opted in. Clicks
+ * come from /go/linkedin, so this page can show who has clicked and remind
+ * the rest. A click is not a follow: LinkedIn does not tell us who followed.
+ */
+const supabase = Astro.locals.supabase;
+const svc = serviceClient();
+const DEFAULT_TITLE = 'Follow Lakeba on LinkedIn';
+const DEFAULT_BODY = 'Lakeba Group is now sharing news from the group, our ventures and LakebaOS on LinkedIn. Follow the page to see announcements as they happen, and help them reach more people.';
+const ASK_QUESTION = 'Is Lakeba on LinkedIn?';
+const ASK_ANSWER = `Yes. Lakeba Group shares news from the group, its ventures and LakebaOS on LinkedIn: ${TRACKED_LINKS.linkedin}. Following the page is the easiest way to see announcements as they happen.`;
+let error = '';
+let notice = '';
+const log = (action: string, detail: Record<string, unknown>) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
+
+// Members who have clicked the link while signed in, from any source.
+const clickedIds = async () => {
+  const { data } = await svc.from('link_clicks').select('user_id').eq('link', 'linkedin').not('user_id', 'is', null);
+  return new Set((data ?? []).map((c) => c.user_id as string));
+};
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const title = field(form, 'title') || DEFAULT_TITLE;
+  const body = field(form, 'body') || DEFAULT_BODY;
+  const email = field(form, 'email') === 'yes';
+
+  if (intent === 'send') {
+    if (field(form, 'banner') === 'yes') {
+      const days = Math.min(Math.max(Number(field(form, 'days')) || 14, 1), 90);
+      await supabase.from('announcements').insert({
+        title, body: 'News from the group and our ventures, as it happens.', link_url: trackedHref('linkedin', 'banner'), link_label: 'Follow on LinkedIn',
+        tone: 'info', ends_at: new Date(Date.now() + days * 86400_000).toISOString(),
+      }).throwOnError();
+    }
+    const sent = await notifyMembers({ kind: 'linkedin', title, body, link: trackedHref('linkedin', 'notification'), emailLink: trackedHref('linkedin', 'email'), email, origin: Astro.url.origin });
+    await log('linkedin_campaign_sent', { kind: 'all', recipients: sent, email, banner: field(form, 'banner') === 'yes' });
+    notice = `Sent to ${sent} members${email ? ' (email to those who opted in)' : ''}.`;
+  } else if (intent === 'remind') {
+    const clicked = await clickedIds();
+    const pending = (await memberIds()).filter((id) => !clicked.has(id));
+    const sent = pending.length
+      ? await notifyMembers({ kind: 'linkedin', userIds: pending, title: `Reminder: ${title}`, body, link: trackedHref('linkedin', 'notification'), emailLink: trackedHref('linkedin', 'email'), email, origin: Astro.url.origin })
+      : 0;
+    await log('linkedin_campaign_sent', { kind: 'reminder', recipients: sent, email });
+    notice = sent ? `Reminder sent to ${sent} members who haven’t clicked yet.` : 'Everyone has already clicked the link.';
+  } else if (intent === 'add-ask-answer') {
+    const { error: e } = await supabase.from('ask_approved_answers').insert({ question: ASK_QUESTION, answer: ASK_ANSWER, created_by: Astro.locals.user!.id, updated_by: Astro.locals.user!.id });
+    if (e) error = e.message; else { await log('admin_saved_approved_answer', { question: ASK_QUESTION }); notice = 'Ask Lakeba will now answer questions about LinkedIn.'; }
+  }
+}
+
+const [members, clicked, { data: clicks }, { data: sends }, { data: askAnswer }, { data: emailOn }] = await Promise.all([
+  memberIds(),
+  clickedIds(),
+  supabase.from('link_clicks').select('source, user_id, created_at').eq('link', 'linkedin').order('created_at', { ascending: false }),
+  supabase.from('audit_log').select('detail, created_at').eq('action', 'linkedin_campaign_sent').order('created_at', { ascending: false }).limit(10),
+  supabase.from('ask_approved_answers').select('id').ilike('question', '%linkedin%').eq('active', true).limit(1).maybeSingle(),
+  svc.from('profiles').select('id').eq('notify_email', true),
+]);
+const memberSet = new Set(members);
+const optedIn = (emailOn ?? []).filter((p) => memberSet.has(p.id)).length;
+const membersClicked = [...clicked].filter((id) => memberSet.has(id)).length;
+const pending = members.length - membersClicked;
+const bySource = Object.entries((clicks ?? []).reduce<Record<string, number>>((acc, c) => ({ ...acc, [c.source]: (acc[c.source] ?? 0) + 1 }), {})).sort((a, b) => b[1] - a[1]);
+const signedOut = (clicks ?? []).filter((c) => !c.user_id).length;
+const pct = members.length ? Math.round((membersClicked / members.length) * 100) : 0;
+---
+
+<Admin title="LinkedIn campaign">
+  <PageHeader title="LinkedIn campaign" subtitle="Invite shareholders to follow linkedin.com/company/lakeba-group and see who has clicked." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+
+  <div class="mb-6 grid gap-4 sm:grid-cols-3">
+    <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">Members clicked</p><p class="mt-2 font-display text-3xl font-bold">{membersClicked}<span class="text-lg text-white/40"> / {members.length}</span></p><p class="text-sm text-white/55">{pct}% of members</p></div>
+    <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">All clicks</p><p class="mt-2 font-display text-3xl font-bold">{clicks?.length ?? 0}</p><p class="text-sm text-white/55">{signedOut} while signed out (e.g. from email)</p></div>
+    <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">Last sent</p><p class="mt-2 text-lg font-bold">{sends?.[0] ? dateTime.format(new Date(sends[0].created_at)) : 'Not yet'}</p><p class="text-sm text-white/55">{sends?.length ? `${sends.length} send${sends.length === 1 ? '' : 's'} so far` : 'Nothing sent'}</p></div>
+  </div>
+
+  <section class="card mb-6">
+    <h2 class="flex items-center gap-2 text-lg font-bold"><LinkedInIcon class="size-5 text-[#0A66C2]" /> Invite shareholders</h2>
+    <p class="mt-1 text-sm text-white/55">Sends an inbox notification to all {members.length} members (shareholders and board), and an email to the {optedIn} of them who have email notifications on. Every link goes through the portal’s tracked link, so clicks show up here.</p>
+    <form method="post" class="mt-5 grid gap-4" onsubmit="return confirm(event.submitter?.value === 'remind' ? 'Send a reminder to members who haven’t clicked yet?' : 'Send the LinkedIn invitation to all members now?')">
+      <div><label class="label" for="c-title">Title</label><input class="field" id="c-title" name="title" value={DEFAULT_TITLE} maxlength="120" /></div>
+      <div><label class="label" for="c-body">Message</label><textarea class="field" id="c-body" name="body" rows="3" maxlength="600">{DEFAULT_BODY}</textarea></div>
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-white/75">
+        <label class="flex items-center gap-2"><input type="checkbox" name="email" value="yes" checked /> Email those who opted in</label>
+        <label class="flex items-center gap-2"><input type="checkbox" name="banner" value="yes" checked /> Show a dashboard banner for <input class="field w-16 py-1" name="days" type="number" min="1" max="90" value="14" /> days</label>
+      </div>
+      <div class="flex flex-wrap gap-3">
+        <button name="intent" value="send" class="btn-primary">Send to all members</button>
+        <button name="intent" value="remind" class="btn-ghost" disabled={!sends?.length || pending === 0}>Remind the {pending} who haven’t clicked</button>
+      </div>
+      <p class="text-xs text-white/40">The reminder skips the banner. A click is not a follow: LinkedIn doesn’t share who follows a page, so clicks are the closest measure we have.</p>
+    </form>
+  </section>
+
+  <div class="grid gap-6 lg:grid-cols-2">
+    <section class="card">
+      <h2 class="text-lg font-bold">Clicks by source</h2>
+      {bySource.length ? (
+        <ul class="mt-4 divide-y divide-white/5 text-sm">
+          {bySource.map(([s, n]) => <li class="flex justify-between py-2.5"><span class="text-white/75">{sourceNames[s] ?? s}</span><span class="font-semibold">{n}</span></li>)}
+        </ul>
+      ) : <p class="mt-3 text-sm text-white/50">No clicks yet.</p>}
+    </section>
+    <section class="card">
+      <h2 class="text-lg font-bold">Ask Lakeba</h2>
+      {askAnswer ? (
+        <p class="mt-3 text-sm text-white/60">Ask Lakeba has an approved answer about LinkedIn. Edit it on <a href="/admin/ask-knowledge" class="text-lk-blue hover:underline">Ask knowledge</a>.</p>
+      ) : (
+        <form method="post" class="mt-3">
+          <p class="text-sm text-white/60">Add an approved answer so Ask Lakeba points people to the page:</p>
+          <blockquote class="mt-3 border-l-2 border-white/15 pl-3 text-sm text-white/55">{ASK_ANSWER}</blockquote>
+          <button name="intent" value="add-ask-answer" class="btn-ghost mt-4">Add approved answer</button>
+        </form>
+      )}
+      <h3 class="mt-6 text-sm font-semibold">Sent</h3>
+      {sends?.length ? (
+        <ul class="mt-2 space-y-1 text-sm text-white/60">
+          {sends.map((s) => { const d = s.detail as { kind?: string; recipients?: number; email?: boolean }; return <li>{dateTime.format(new Date(s.created_at))} · {d.kind === 'reminder' ? 'Reminder' : 'Invitation'} to {d.recipients ?? 0}{d.email ? ' + email' : ''}</li>; })}
+        </ul>
+      ) : <p class="mt-2 text-sm text-white/50">Nothing sent yet.</p>}
+    </section>
+  </div>
+</Admin>

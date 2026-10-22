@@ -2,6 +2,7 @@
 import Portal from '../../layouts/Portal.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
+import LinkedInCard from '../../components/LinkedInCard.astro';
 import { longDate } from '../../lib/format';
 import { loadNews } from '../../lib/news';
 
@@ -12,6 +13,7 @@ const target = (external: boolean) => (external ? { target: '_blank', rel: 'noop
 
 <Portal title="News">
   <PageHeader eyebrow="News" title="News for shareholders" subtitle="Shareholder updates and Lakeba’s public News & Media, in one place." />
+  <LinkedInCard src="news" compact />
   {lead ? (
     <>
       <a href={lead.href} {...target(lead.external)} class="card group block bg-gradient-to-br from-lk-blue/15 to-transparent sm:p-10">

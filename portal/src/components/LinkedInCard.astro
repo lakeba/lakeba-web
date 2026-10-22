@@ -1,0 +1,22 @@
+---
+import LinkedInIcon from './LinkedInIcon.astro';
+import { LINK_SOURCES, trackedHref } from '../lib/links';
+
+interface Props { src: (typeof LINK_SOURCES)[number]; compact?: boolean }
+const { src, compact = false } = Astro.props;
+const link = trackedHref('linkedin', src);
+---
+
+{compact ? (
+  <a href={link} target="_blank" rel="noopener" class="card group mb-4 flex flex-wrap items-center justify-between gap-3 py-4">
+    <span class="flex items-center gap-3 text-sm"><LinkedInIcon class="size-5 shrink-0 text-[#0A66C2]" /><span><span class="font-semibold text-white">Follow Lakeba on LinkedIn</span><span class="text-white/55"> for news from the group and its ventures as it happens.</span></span></span>
+    <span class="text-sm font-semibold text-lk-blue group-hover:underline">Follow ↗</span>
+  </a>
+) : (
+  <section class="card bg-gradient-to-br from-[#0A66C2]/20 to-transparent">
+    <p class="flex items-center gap-2 text-xs uppercase tracking-widest text-white/40"><LinkedInIcon class="size-4 text-[#0A66C2]" /> LinkedIn</p>
+    <h2 class="mt-2 text-lg font-bold">Follow Lakeba</h2>
+    <p class="mt-1 text-sm text-white/55">News from the group, our ventures and LakebaOS as it happens. Your follow helps our announcements reach more people.</p>
+    <a href={link} target="_blank" rel="noopener" class="btn-primary mt-5 w-full justify-center sm:w-auto">Follow on LinkedIn ↗</a>
+  </section>
+)}

@@ -3,6 +3,7 @@ import '../styles/portal.css';
 import Mark from '../../../src/components/Mark.astro';
 import ThemeInit from '../../../src/components/ThemeInit.astro';
 import ThemeToggle from '../../../src/components/ThemeToggle.astro';
+import LinkedInIcon from '../components/LinkedInIcon.astro';
 interface Props { title: string }
 const { title } = Astro.props;
 const { profile, supabase, user } = Astro.locals;
@@ -81,7 +82,7 @@ const { count: unread } = user
     </main>
     <footer class="container-x flex flex-col justify-between gap-2 border-t border-white/5 py-8 text-xs text-white/35 sm:flex-row">
       <p>© {new Date().getFullYear()} Lakeba Group Limited</p>
-      <p>Questions: <a href="/board" class="hover:text-white">Board Q&amp;A</a> · <a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a></p>
+      <p>Questions: <a href="/board" class="hover:text-white">Board Q&amp;A</a> · <a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
     </footer>
   </body>
 </html>

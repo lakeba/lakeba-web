@@ -2,9 +2,9 @@ import { defineMiddleware } from 'astro:middleware';
 import { createSupabase } from './lib/supabase';
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm'];
+const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go'];
 /** Pages a signed-in user can reach before finishing MFA. */
-const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout'];
+const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go'];
 
 const matches = (path: string, list: string[]) => list.some((p) => path === p || path.startsWith(`${p}/`));
 
