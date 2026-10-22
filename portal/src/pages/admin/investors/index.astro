@@ -6,7 +6,8 @@ import { serviceClient } from '../../../lib/admin';
 import { sendInvite } from '../../../lib/admin-auth';
 import { field } from '../../../lib/forms';
 import { displayName, roles } from '../../../lib/admin-forms';
-import { shortDate } from '../../../lib/format';
+import { aud, percent, shares, shortDate } from '../../../lib/format';
+import { latestPrices, loadHolderPositions, type Position } from '../../../lib/holdings';
 
 const supabase = Astro.locals.supabase;
 const svc = serviceClient();
@@ -39,12 +40,28 @@ if (Astro.request.method === 'POST') {
 
 const [{ data: profiles }, { data: links }, { data: holders }, { data: authUsers }] = await Promise.all([
   supabase.from('profiles').select('id, email, first_name, last_name, role').order('last_name'),
-  supabase.from('holder_members').select('user_id, access, holders(name)'),
+  supabase.from('holder_members').select('user_id, holder_id, access'),
   supabase.from('holders').select('id, name').order('name'),
   svc.auth.admin.listUsers({ perPage: 1000 }),
 ]);
 const authById = new Map((authUsers?.users ?? []).map((u) => [u.id, u]));
-const holdersOf = (id: string) => (links ?? []).filter((l) => l.user_id === id).map((l) => (l.holders as { name: string } | null)?.name).filter(Boolean);
+const [positions, prices] = await Promise.all([
+  loadHolderPositions(supabase, [...new Set((links ?? []).map((l) => l.holder_id))]),
+  latestPrices(supabase),
+]);
+const positionsByHolder = Map.groupBy(positions, (p) => p.holder.id);
+type HolderSummary = { id: string; name: string; access: string; positions: Position[] };
+const holdersOf = (id: string): HolderSummary[] => (links ?? []).filter((l) => l.user_id === id).map((l) => {
+  const ps = positionsByHolder.get(l.holder_id) ?? [];
+  return { id: l.holder_id, name: ps[0]?.holder.name ?? (holders ?? []).find((h) => h.id === l.holder_id)?.name ?? '—', access: l.access, positions: ps };
+});
+const valueOf = (p: Position) => { const pr = prices.get(p.row.share_class_id); return pr ? p.row.shares * pr.price : null; };
+// Per person: total shares and indicative value across every holder they can see.
+const totalsOf = (hs: HolderSummary[]) => {
+  const ps = hs.flatMap((h) => h.positions);
+  const values = ps.map(valueOf);
+  return { shares: ps.reduce((a, p) => a + p.row.shares, 0), value: values.reduce<number>((a, v) => a + (v ?? 0), 0), unpriced: values.some((v) => v === null) };
+};
 const factorsOf = (id: string) => (authById.get(id)?.factors ?? []).filter((f) => f.status === 'verified').length;
 const isBanned = (id: string) => {
   const until = authById.get(id)?.banned_until;
@@ -78,11 +95,13 @@ import ShareLink from '../../../components/ShareLink.astro';
   <div class="card overflow-x-auto !p-0">
     <table class="w-full text-left text-sm">
       <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40">
-        <tr><th class="px-5 py-3 font-medium">Name</th><th class="px-5 py-3 font-medium">Role</th><th class="px-5 py-3 font-medium">Holders</th><th class="px-5 py-3 font-medium">Two-step</th><th class="px-5 py-3 font-medium">Last sign-in</th></tr>
+        <tr><th class="px-5 py-3 font-medium">Name</th><th class="px-5 py-3 font-medium">Role</th><th class="px-5 py-3 font-medium">Holdings</th><th class="px-5 py-3 text-right font-medium">Shares</th><th class="px-5 py-3 text-right font-medium">Indicative value</th><th class="px-5 py-3 font-medium">Two-step</th><th class="px-5 py-3 font-medium">Last sign-in</th></tr>
       </thead>
       <tbody class="divide-y divide-white/5">
         {(profiles ?? []).map((p) => {
           const auth = authById.get(p.id);
+          const hs = holdersOf(p.id);
+          const t = totalsOf(hs);
           return (
             <tr class="hover:bg-white/[0.02]">
               <td class="px-5 py-3">
@@ -91,7 +110,18 @@ import ShareLink from '../../../components/ShareLink.astro';
                 {isBanned(p.id) && <span class="mt-1 inline-block rounded-full bg-lk-red/15 px-2 py-0.5 text-[11px] text-lk-red">Disabled</span>}
               </td>
               <td class="px-5 py-3 capitalize text-white/70">{p.role}</td>
-              <td class="px-5 py-3 text-white/60">{holdersOf(p.id).join(', ') || '—'}</td>
+              <td class="px-5 py-3 text-white/60">
+                {hs.length ? hs.map((h) => (
+                  <div class="py-0.5">
+                    <span class="text-white/80">{h.name}</span>{h.access === 'viewer' && <span class="ml-1 text-[11px] text-white/40">viewer</span>}
+                    {h.positions.length ? h.positions.map((pos) => (
+                      <span class="block text-xs text-white/45">{shares.format(pos.row.shares)} {pos.row.share_classes?.code}{pos.total > 0 && ` · ${percent.format(pos.row.shares / pos.total)}`} · as at {shortDate.format(new Date(pos.row.as_at))}</span>
+                    )) : <span class="block text-xs text-white/35">No holdings recorded</span>}
+                  </div>
+                )) : '—'}
+              </td>
+              <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums text-white/80">{t.shares ? shares.format(t.shares) : '—'}</td>
+              <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums text-white/80">{t.shares ? <>{aud.format(t.value)}{t.unpriced && <span class="block text-[11px] text-white/40">some classes unpriced</span>}</> : '—'}</td>
               <td class="px-5 py-3">{factorsOf(p.id) ? <span class="text-lk-green">On</span> : <span class="text-white/40">Off</span>}</td>
               <td class="px-5 py-3 text-white/50">{auth?.last_sign_in_at ? shortDate.format(new Date(auth.last_sign_in_at)) : auth?.invited_at ? 'Invited' : 'Never'}</td>
             </tr>

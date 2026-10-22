@@ -6,7 +6,8 @@ import { serviceClient } from '../../../lib/admin';
 import { sendPasswordReset } from '../../../lib/admin-auth';
 import { field } from '../../../lib/forms';
 import { displayName, roles } from '../../../lib/admin-forms';
-import { dateTime } from '../../../lib/format';
+import { aud, audPrecise, dateTime, holderKinds, percent, shares, shortDate } from '../../../lib/format';
+import { latestPrices, loadHolderPositions, sourceLabels } from '../../../lib/holdings';
 
 const { id } = Astro.params;
 const supabase = Astro.locals.supabase;
@@ -70,6 +71,10 @@ const auth = authData?.user;
 const banned = Boolean(auth?.banned_until && new Date(auth.banned_until) > new Date());
 const mfaOn = (factorData?.factors ?? []).some((f) => f.status === 'verified');
 const linked = new Set((links ?? []).map((l) => l.holder_id));
+const [positions, prices] = await Promise.all([loadHolderPositions(supabase, [...linked]), latestPrices(supabase)]);
+const positionsByHolder = Map.groupBy(positions, (p) => p.holder.id);
+const valueOf = (classId: string, n: number) => { const pr = prices.get(classId); return pr ? n * pr.price : null; };
+const pricedTotal = positions.reduce((a, p) => a + (valueOf(p.row.share_class_id, p.row.shares) ?? 0), 0);
 import ShareLink from '../../../components/ShareLink.astro';
 ---
 
@@ -108,7 +113,8 @@ import ShareLink from '../../../components/ShareLink.astro';
       <ul class="mt-4 divide-y divide-white/5 text-sm">
         {(links ?? []).map((l) => (
           <li class="flex items-center justify-between gap-4 py-3">
-            <span><span class="text-white/85">{(l.holders as { name: string } | null)?.name}</span> <span class="text-xs capitalize text-white/40">{l.access}</span></span>
+            <span><span class="text-white/85">{(l.holders as { name: string } | null)?.name}</span> <span class="text-xs capitalize text-white/40">{l.access}</span>
+              <span class="block text-xs text-white/45">{shares.format((positionsByHolder.get(l.holder_id) ?? []).reduce((a, p) => a + p.row.shares, 0))} shares</span></span>
             <form method="post"><input type="hidden" name="holder_id" value={l.holder_id} /><button name="intent" value="unlink" class="text-xs text-white/50 hover:text-white">Unlink</button></form>
           </li>
         ))}
@@ -123,6 +129,37 @@ import ShareLink from '../../../components/ShareLink.astro';
       </form>
     </section>
   </div>
+
+  <section class="card mt-4 overflow-x-auto">
+    <div class="flex flex-wrap items-baseline justify-between gap-2">
+      <h2 class="text-lg font-bold">Holdings</h2>
+      {positions.length > 0 && <p class="text-sm text-white/55">Indicative value <span class="font-semibold text-white">{aud.format(pricedTotal)}</span></p>}
+    </div>
+    {positions.length ? (
+      <table class="mt-4 w-full min-w-[640px] text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40">
+          <tr><th class="py-2 pr-4 font-medium">Holder</th><th class="py-2 pr-4 font-medium">Class</th><th class="py-2 pr-4 text-right font-medium">Shares</th><th class="py-2 pr-4 text-right font-medium">% of class</th><th class="py-2 pr-4 text-right font-medium">Indicative value</th><th class="py-2 font-medium">History</th></tr>
+        </thead>
+        <tbody class="divide-y divide-white/5">
+          {positions.map((p) => {
+            const value = valueOf(p.row.share_class_id, p.row.shares);
+            const price = prices.get(p.row.share_class_id);
+            return (
+              <tr class="align-top">
+                <td class="py-3 pr-4"><span class="text-white/85">{p.holder.name}</span><span class="block text-xs text-white/40">{holderKinds[p.holder.kind] ?? p.holder.kind}{p.holder.registry_ref && ` · ${p.holder.registry_ref}`}</span></td>
+                <td class="py-3 pr-4 text-white/70">{p.row.share_classes?.name ?? '—'}</td>
+                <td class="py-3 pr-4 text-right tabular-nums text-white/85">{shares.format(p.row.shares)}<span class="block text-xs text-white/40">as at {shortDate.format(new Date(p.row.as_at))}</span></td>
+                <td class="py-3 pr-4 text-right tabular-nums text-white/70">{p.total > 0 ? percent.format(p.row.shares / p.total) : '—'}</td>
+                <td class="py-3 pr-4 text-right tabular-nums text-white/85">{value !== null ? aud.format(value) : '—'}{price && <span class="block text-xs text-white/40">{audPrecise.format(price.price)} · {sourceLabels[price.source] ?? price.source}</span>}</td>
+                <td class="py-3 text-xs text-white/50">{p.history.length > 1 ? p.history.slice().reverse().map((h) => <span class="block">{shortDate.format(new Date(h.as_at))}: {shares.format(h.shares)}</span>) : 'No changes recorded'}</td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    ) : <p class="mt-3 text-sm text-white/45">{links?.length ? 'No holdings recorded for the linked holders.' : 'Link a holder to see holdings.'}</p>}
+    <p class="mt-4 text-xs text-white/35">Percentages use shares on issue (the official figure where recorded). Values use each class’s latest reference price and are indicative only.</p>
+  </section>
 
   <section class="card mt-4">
     <h2 class="text-lg font-bold">Recent activity</h2>

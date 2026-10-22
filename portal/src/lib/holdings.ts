@@ -7,7 +7,11 @@ export type Position = { holder: HolderWithHoldings; row: HoldingRow; total: num
 
 /** The signed-in user's latest position per holder and class, with history. */
 export async function loadPositions(supabase: SupabaseClient, userId: string): Promise<Position[]> {
-  const ids = await myHolderIds(supabase, userId);
+  return loadHolderPositions(supabase, await myHolderIds(supabase, userId));
+}
+
+/** The latest position per holder and class for the given holders, with history. */
+export async function loadHolderPositions(supabase: SupabaseClient, ids: string[]): Promise<Position[]> {
   if (!ids.length) return [];
   const [{ data: holders }, { data: onIssue }] = await Promise.all([
     supabase.from('holders').select('id, name, kind, registry_ref, holdings(shares, as_at, share_class_id, share_classes(code, name))').in('id', ids).order('name'),
@@ -23,6 +27,14 @@ export async function loadPositions(supabase: SupabaseClient, userId: string): P
       return { holder, row, total: totals.get(row.share_class_id) ?? 0, history };
     });
   });
+}
+
+/** The latest reference price per share class. */
+export async function latestPrices(supabase: SupabaseClient): Promise<Map<string, Price>> {
+  const { data } = await supabase.from('reference_prices').select('share_class_id, price, priced_on, source, note').order('priced_on', { ascending: false });
+  const latest = new Map<string, Price>();
+  for (const { share_class_id, ...p } of data ?? []) if (!latest.has(share_class_id)) latest.set(share_class_id, { ...p, price: Number(p.price) });
+  return latest;
 }
 
 export type Price = { price: number; priced_on: string; source: string; note: string | null };
