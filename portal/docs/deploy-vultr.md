@@ -16,7 +16,7 @@ Files for all of this are in `portal/deploy/vultr/`.
 
 ## Everyday
 
-- **Deploy a new version**: merge to main, then GitHub → Actions → **Deploy portal** → Run.
+- **Deploy a new version** (only when it's time; pushes never deploy): GitHub → Actions → **Deploy portal** → Run.
   It builds, uploads, installs, checks the portal starts, and rolls back if not.
 - **Database changes**: copy the new files from `portal/supabase/migrations/` to
   `/opt/lakeba-migrations/` on the server and run
@@ -50,9 +50,10 @@ tar -xzf D/storage.tgz -C /opt/supabase/volumes
 
 ## Still to do before inviting shareholders
 
-1. **Email**: an SMTP service sending from a lakeba.com address, with SPF and
-   DKIM in lakeba.com's DNS (Azure DNS). Then set `SMTP_URL` in `portal.env` and
-   the `SMTP_*` values in `/opt/supabase/.env`, and restart both.
+1. ~~**Email**~~ Done 22 October 2026: Microsoft 365 (`smtp.office365.com:587`) as
+   `no-reply@lakeba.com`, for both the portal and Supabase sign-in emails. To change
+   the account or password, run `ssh -t root@<server> lakeba-set-smtp <mailbox> [test-address]`
+   (it checks the sign-in first, then updates both and restarts them).
 2. **First admin**: create the account (`supabase-lakeba exec` or the admin API),
    set `role = 'admin'` in `public.profiles`, sign in and set up two-step.
 3. **Data**: Admin → Import data with the checked workbook; then documents and
