@@ -1,0 +1,27 @@
+[Unit]
+Description=Lakeba Investor Portal
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=portal
+Group=portal
+WorkingDirectory=/srv/lakeba-portal/current
+EnvironmentFile=/etc/lakeba-portal/portal.env
+Environment=NODE_ENV=production HOST=127.0.0.1 PORT=4321
+ExecStart=/usr/bin/node dist/server/entry.mjs
+Restart=always
+RestartSec=3
+# Hardening: the service can only read its files and talk to the network.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,64 @@
+name: Deploy portal
+
+# Builds the investor portal and installs it on the Vultr server
+# (portal/deploy/vultr). Run by hand from the Actions tab.
+#
+# Repository secrets (Settings → Secrets and variables → Actions), in the
+# "production" environment:
+#   VULTR_HOST         the server's IP address or host name
+#   VULTR_SSH_KEY      private half of the deploy key (its public half is in setup.sh's DEPLOY_PUBKEY)
+#   VULTR_KNOWN_HOSTS  output of: ssh-keyscan -t ed25519 <server IP>
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: portal-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            portal/package-lock.json
+
+      # The portal shares components and News & Media with the website, so both install.
+      - run: npm ci
+      - run: npm ci
+        working-directory: portal
+      - name: Build
+        run: npm run build
+        working-directory: portal
+
+      - name: Bundle the release
+        id: bundle
+        run: |
+          id="$(date -u +%Y%m%d%H%M%S)-${GITHUB_SHA::7}"
+          tar -czf "$RUNNER_TEMP/$id.tgz" -C portal dist templates package.json package-lock.json
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+
+      - name: Upload and activate
+        env:
+          SSH_KEY: ${{ secrets.VULTR_SSH_KEY }}
+          KNOWN_HOSTS: ${{ secrets.VULTR_KNOWN_HOSTS }}
+          HOST: ${{ secrets.VULTR_HOST }}
+          ID: ${{ steps.bundle.outputs.id }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/deploy && chmod 600 ~/.ssh/deploy
+          printf '%s\n' "$KNOWN_HOSTS" > ~/.ssh/known_hosts
+          ssh -i ~/.ssh/deploy "deploy@$HOST" 'mkdir -p ~/releases'
+          scp -i ~/.ssh/deploy "$RUNNER_TEMP/$ID.tgz" "deploy@$HOST:releases/$ID.tgz"
+          ssh -i ~/.ssh/deploy "deploy@$HOST" "sudo /usr/local/bin/lakeba-portal-activate $ID"
+          rm -f ~/.ssh/deploy

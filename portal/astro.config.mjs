@@ -3,8 +3,8 @@ import { defineConfig, envField } from 'astro/config';
 import node from '@astrojs/node';
 import tailwindcss from '@tailwindcss/vite';
 
-// Server-rendered: every page checks the session. The Node adapter keeps the
-// app host-agnostic until the hosting decision (Vercel or Cloudflare) is made.
+// Server-rendered: every page checks the session. Runs as a plain Node server
+// (production: a Vultr server in Sydney behind Caddy; see deploy/vultr/).
 // https://astro.build/config
 export default defineConfig({
   output: 'server',
@@ -17,6 +17,7 @@ export default defineConfig({
       { hostname: '192.168.1.141' }, // this Mac on the local network (plain HTTP)
       { hostname: '100.117.227.8' }, // this Mac on the Tailscale network
       { hostname: 'giuseppe-macbook-pro.tail21d16f.ts.net', protocol: 'https' }, // same, via Tailscale HTTPS
+      { hostname: 'investors.lakeba.com', protocol: 'https' }, // production (Caddy in front, HTTPS only)
     ],
   },
   adapter: node({ mode: 'standalone' }),

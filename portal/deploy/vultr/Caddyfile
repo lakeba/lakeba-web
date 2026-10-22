@@ -1,0 +1,15 @@
+# Caddy gets and renews the HTTPS certificate for this name automatically
+# (the DNS record must point at this server first).
+investors.lakeba.com {
+	encode zstd gzip
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		-Server
+	}
+	reverse_proxy 127.0.0.1:4321
+}
+
+# Anything else (the bare IP, other names): nothing to see.
+:80 {
+	respond 404
+}
