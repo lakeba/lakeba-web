@@ -226,11 +226,13 @@ export const AUTO_PER_DAY = 3;
 /**
  * Whether this email may be answered automatically. Only for a company in
  * automatic mode and a request type it chose, from a verified, registered
- * shareholder outside our own organisation, when Claude is sure, under the
- * daily limit, and not a repeat of a request answered automatically today.
+ * shareholder (colleagues at @lakeba.com included: their mail is the best
+ * authenticated), not forwarded and not from one of our shareholder
+ * mailboxes, when Claude is sure, under the daily limit, and not a repeat of
+ * a request answered automatically today.
  * `reason` says why not (shown to admins).
  */
-async function autoDecision(svc: Svc, e: { id: string; entity_id: string; user_id: string | null; sender_verified: boolean; from_address: string; conversation_id: string | null; auth_dmarc: string | null }, reading: Reading) {
+async function autoDecision(svc: Svc, e: { id: string; entity_id: string; user_id: string | null; sender_verified: boolean; from_address: string; conversation_id: string | null; subject: string; body_text: string }, reading: Reading) {
   const { data: company } = await svc.from('entities').select('email_mode, email_auto_categories').eq('id', e.entity_id).single();
   if (company?.email_mode !== 'auto') return { auto: false, reason: '' };
   const no = (reason: string) => ({ auto: false, reason });
@@ -238,14 +240,20 @@ async function autoDecision(svc: Svc, e: { id: string; entity_id: string; user_i
   if (!e.sender_verified || !e.user_id) return no('Not a verified, registered shareholder.');
   if (reading.confidence < AUTO_CONFIDENCE) return no(`Claude wasn’t sure enough (${Math.round(reading.confidence * 100)}%).`);
   const { data: mailboxes } = await svc.from('entities').select('shareholder_mailbox').not('shareholder_mailbox', 'is', null);
-  const ourDomains = new Set(['lakeba.com', ...(mailboxes ?? []).map((m) => m.shareholder_mailbox!.split('@')[1].toLowerCase())]);
-  if (e.auth_dmarc === 'internal' || ourDomains.has(e.from_address.split('@')[1] ?? '')) return no('From inside our own organisation.');
+  if ((mailboxes ?? []).some((m) => m.shareholder_mailbox!.toLowerCase() === e.from_address)) return no('From one of our shareholder mailboxes.');
+  if (isForwarded(e.subject, e.body_text)) return no('Forwarded: usually on behalf of someone else.');
   const since = new Date(Date.now() - 24 * 3600_000).toISOString();
   const { data: recent } = await svc.from('shareholder_emails').select('id, conversation_id, category').eq('user_id', e.user_id).neq('id', e.id)
     .not('auto_send_at', 'is', null).in('status', ['auto_scheduled', 'replied', 'new']).gte('received_at', since);
   if ((recent ?? []).length >= AUTO_PER_DAY) return no(`Already ${AUTO_PER_DAY} automatic replies to this shareholder today.`);
   if ((recent ?? []).some((r) => r.category === reading.category || (e.conversation_id && r.conversation_id === e.conversation_id))) return no('Same request was answered automatically today.');
   return { auto: true, reason: 'Answered automatically.' };
+}
+
+/** "FW:" / "Fwd:" subjects, or a forwarded message quoted at the top of the body. */
+export function isForwarded(subject: string, body: string) {
+  return /^\s*(fw|fwd)\s*:/i.test(subject) || /^-{2,}\s*(forwarded message|original message)\s*-{2,}/im.test(body.slice(0, 2000))
+    || /^from:.+\r?\n(sent|date):.+\r?\nto:/im.test(body.slice(0, 600));
 }
 
 let sendingDue = false;
