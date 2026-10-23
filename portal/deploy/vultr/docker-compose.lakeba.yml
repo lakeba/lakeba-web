@@ -31,3 +31,9 @@ services:
       GOTRUE_MFA_TOTP_VERIFY_ENABLED: "true"
       GOTRUE_MFA_MAX_ENROLLED_FACTORS: 10
       GOTRUE_MAILER_OTP_EXP: 3600
+      # Passkey sign-in (Supabase beta). Passkeys belong to this address:
+      # changing the RP ID makes every saved passkey stop working.
+      GOTRUE_PASSKEY_ENABLED: "true"
+      GOTRUE_WEBAUTHN_RP_ID: investors.lakeba.com
+      GOTRUE_WEBAUTHN_RP_DISPLAY_NAME: Lakeba Investor Portal
+      GOTRUE_WEBAUTHN_RP_ORIGINS: https://investors.lakeba.com

@@ -2,31 +2,100 @@
 import Portal from '../../layouts/Portal.astro';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
+import { shortDate } from '../../lib/format';
+import { passkeyError, stepUpProblem, type Passkey } from '../../lib/passkeys';
 
 const supabase = Astro.locals.supabase;
 const isAdmin = Astro.locals.profile?.role === 'admin';
-let notice = '';
+// After a passkey sign-in, Supabase still wants the authenticator code to change two-step or passkeys.
+const needsCode = Astro.locals.mfaEnrolled && !Astro.locals.user?.codeVerified;
+let notice = Astro.url.searchParams.get('passkey') === 'added' ? 'Passkey added. Next time, choose “Sign in with a passkey”.' : '';
+let error = '';
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
-  if (field(form, 'intent') === 'remove-mfa' && !isAdmin) {
+  const intent = field(form, 'intent');
+  if (intent === 'remove-mfa' && !isAdmin) {
     // Unenrolling needs an aal2 session, which the middleware already enforces.
     const { error } = await supabase.auth.mfa.unenroll({ factorId: field(form, 'factorId') });
     if (!error) await supabase.rpc('log_event', { event_action: 'mfa_removed' });
     notice = error ? 'Could not remove two-step verification.' : 'Two-step verification has been turned off.';
+  } else if (intent === 'rename-passkey') {
+    const name = field(form, 'name').slice(0, 120);
+    const { error: e } = name ? await supabase.auth.passkey.update({ passkeyId: field(form, 'passkeyId'), friendlyName: name }) : { error: null };
+    if (e) error = passkeyError(e); else if (name) notice = 'Passkey renamed.';
+  } else if (intent === 'remove-passkey') {
+    const { error: e } = await supabase.auth.passkey.delete({ passkeyId: field(form, 'passkeyId') });
+    if (e) error = passkeyError(e);
+    else { await supabase.rpc('log_event', { event_action: 'passkey_removed', event_detail: { passkey_id: field(form, 'passkeyId') } }); notice = 'Passkey removed.'; }
   }
 }
 
-const { data: factors } = await supabase.auth.mfa.listFactors();
+const [{ data: factors }, { data: passkeyList }] = await Promise.all([supabase.auth.mfa.listFactors(), supabase.auth.passkey.list()]);
 const totp = factors?.totp.find((f) => f.status === 'verified');
+const passkeys = (passkeyList ?? []) as Passkey[];
+// Adding a passkey asks for the password unless the person just signed in or completed two-step.
+const askPassword = !needsCode && (await stepUpProblem(supabase, Astro.locals.user!.email, '')) !== null;
 ---
 
 <Portal title="Security">
   <h1 class="text-3xl font-bold">Security</h1>
   <p class="mt-2 text-white/55">Protect access to your shareholding information.</p>
   {notice && <div class="mt-6 max-w-2xl"><Alert>{notice}</Alert></div>}
+  {error && <div class="mt-6 max-w-2xl"><Alert tone="error">{error}</Alert></div>}
+
+  {needsCode && (
+    <div class="mt-6 max-w-2xl"><Alert>You signed in with a passkey. To add or remove passkeys or turn off two-step verification, first <a href="/mfa/verify?next=/account/security" class="font-semibold underline">enter the code from your authenticator app</a>.</Alert></div>
+  )}
 
   <div class="mt-8 grid max-w-2xl gap-4">
+    <section class="card" id="passkeys">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-bold">Passkeys</h2>
+          <p class="mt-1 text-sm text-white/55">Sign in with Face ID, Touch ID, Windows Hello, your phone or a security key instead of your password. Passkeys can’t be phished or guessed.</p>
+        </div>
+        <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', passkeys.length ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{passkeys.length ? `${passkeys.length} saved` : 'None'}</span>
+      </div>
+      {passkeys.length > 0 && (
+        <ul class="mt-5 divide-y divide-white/5 text-sm">
+          {passkeys.map((p) => (
+            <li class="flex flex-wrap items-center justify-between gap-3 py-3">
+              <div>
+                <p class="font-medium text-white/85">{p.friendly_name || 'Passkey'}</p>
+                <p class="text-xs text-white/40">Added {shortDate.format(new Date(p.created_at))}{p.last_used_at ? ` · last used ${shortDate.format(new Date(p.last_used_at))}` : ' · not used yet'}</p>
+              </div>
+              <div class="flex items-center gap-3 text-xs">
+                <details class="relative">
+                  <summary class="cursor-pointer list-none text-white/50 hover:text-white">Rename</summary>
+                  <form method="post" class="mt-2 flex gap-2">
+                    <input type="hidden" name="passkeyId" value={p.id} />
+                    <input class="field !py-1.5 text-xs" name="name" maxlength="120" value={p.friendly_name} aria-label="Passkey name" required />
+                    <button name="intent" value="rename-passkey" class="btn-ghost !px-3 !py-1.5 text-xs">Save</button>
+                  </form>
+                </details>
+                {!needsCode && <form method="post">
+                  <input type="hidden" name="passkeyId" value={p.id} />
+                  <button name="intent" value="remove-passkey" class="text-white/50 hover:text-lk-red" onclick="return confirm('Remove this passkey? You can still sign in with your password.')">Remove</button>
+                </form>}
+              </div>
+            </li>
+          ))}
+        </ul>
+      )}
+      {!needsCode && <div id="passkey-add" class="mt-5" data-ask-password={askPassword ? '1' : ''}>
+        {askPassword && (
+          <div class="mb-3 max-w-sm">
+            <label class="label" for="passkey-password">Confirm your password</label>
+            <input class="field" id="passkey-password" type="password" autocomplete="current-password" />
+            <p class="mt-1 text-xs text-white/40">Or sign out and in again: within 5 minutes of signing in, no password is needed.</p>
+          </div>
+        )}
+        <button type="button" id="passkey-add-button" class="btn-primary" disabled>Add a passkey</button>
+        <p id="passkey-unsupported" class="mt-2 hidden text-sm text-white/45">This browser can’t create passkeys. Try Safari, Chrome, Edge or Firefox on an up-to-date device.</p>
+        <p id="passkey-add-error" class="mt-3 hidden text-sm text-lk-red" role="alert"></p>
+      </div>}
+    </section>
     <section class="card">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -40,10 +109,11 @@ const totp = factors?.totp.find((f) => f.status === 'verified');
           isAdmin ? (
             <p class="text-sm text-white/45">Required for administrators.</p>
           ) : (
+            needsCode ? <a href="/mfa/verify?next=/account/security" class="btn-ghost">Enter code to change</a> : (
             <form method="post">
               <input type="hidden" name="factorId" value={totp.id} />
               <button name="intent" value="remove-mfa" class="btn-ghost">Turn off</button>
-            </form>
+            </form>)
           )
         ) : (
           <a href="/mfa/setup?next=/account/security" class="btn-primary">Set up</a>
@@ -57,3 +127,25 @@ const totp = factors?.totp.find((f) => f.status === 'verified');
     </section>
   </div>
 </Portal>
+
+<script>
+  import { addPasskey, passkeysSupported } from '../../lib/passkey-browser';
+
+  const button = document.getElementById('passkey-add-button') as HTMLButtonElement | null;
+  const message = document.getElementById('passkey-add-error');
+  const password = document.getElementById('passkey-password') as HTMLInputElement | null;
+  if (button && message) {
+    if (!passkeysSupported()) document.getElementById('passkey-unsupported')?.classList.remove('hidden');
+    else {
+      button.disabled = false;
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        message.classList.add('hidden');
+        const result = await addPasskey(password?.value ?? '').catch(() => ({ error: 'Something went wrong. Please try again.' }) as { error?: string; name?: string });
+        if (result.name) return location.assign('/account/security?passkey=added');
+        button.disabled = false;
+        if (result.error) { message.textContent = result.error; message.classList.remove('hidden'); password?.focus(); }
+      });
+    }
+  }
+</script>

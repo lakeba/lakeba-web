@@ -4,7 +4,7 @@ import { loadCompanyContext } from './lib/companies';
 import { companyAdminMayOpen } from './lib/admin-company';
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go'];
+const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login'];
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go'];
 
@@ -27,7 +27,14 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const { data } = await locals.supabase.auth.getClaims();
   const claims = data?.claims;
   if (claims) {
-    locals.user = { id: claims.sub, email: String(claims.email ?? ''), aal: claims.aal === 'aal2' ? 'aal2' : 'aal1' };
+    const codeVerified = claims.aal === 'aal2';
+    // A passkey sign-in where the device checked the person counts as two-step (see passkey_sessions).
+    const usedPasskey = !codeVerified && (claims.amr as { method: string }[] | undefined)?.some((a) => a.method === 'passkey');
+    const passkeyVerified = usedPasskey ? (await locals.supabase.rpc('session_is_strong')).data === true : false;
+    locals.user = {
+      id: claims.sub, email: String(claims.email ?? ''), aal: codeVerified || passkeyVerified ? 'aal2' : 'aal1',
+      strongBy: codeVerified ? 'code' : passkeyVerified ? 'passkey' : null, codeVerified,
+    };
   }
 
   if (!locals.user) {

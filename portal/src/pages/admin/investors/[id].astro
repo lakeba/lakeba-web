@@ -8,6 +8,7 @@ import { field } from '../../../lib/forms';
 import { displayName, roles } from '../../../lib/admin-forms';
 import { aud, audPrecise, dateTime, holderKinds, percent, shares, shortDate } from '../../../lib/format';
 import { latestPrices, loadHolderPositions, sourceLabels } from '../../../lib/holdings';
+import type { Passkey } from '../../../lib/passkeys';
 
 const { id } = Astro.params;
 const supabase = Astro.locals.supabase;
@@ -47,6 +48,10 @@ if (Astro.request.method === 'POST') {
     const { error: banError } = await svc.auth.admin.updateUserById(id!, { ban_duration: intent === 'disable' ? '876000h' : 'none' });
     if (banError) error = banError.message;
     else { await log(intent === 'disable' ? 'admin_disabled_user' : 'admin_enabled_user'); notice = intent === 'disable' ? 'Access disabled.' : 'Access restored.'; }
+  } else if (intent === 'remove-passkey') {
+    // For a lost or replaced device; the person can still sign in with their password.
+    const { error: e } = await svc.auth.admin.passkey.deletePasskey({ userId: id!, passkeyId: field(form, 'passkeyId') });
+    if (e) error = e.message; else { await log('admin_removed_passkey', { passkey_id: field(form, 'passkeyId') }); notice = 'Passkey removed.'; }
   } else if (intent === 'reset-mfa') {
     const { data } = await svc.auth.admin.mfa.listFactors({ userId: id! });
     for (const f of data?.factors ?? []) await svc.auth.admin.mfa.deleteFactor({ userId: id!, id: f.id });
@@ -95,7 +100,7 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const [{ data: profile }, { data: authData }, { data: factorData }, { data: links }, { data: holders }, { data: events }, { data: askPause }] = await Promise.all([
+const [{ data: profile }, { data: authData }, { data: factorData }, { data: links }, { data: holders }, { data: events }, { data: askPause }, { data: passkeyData }] = await Promise.all([
   supabase.from('profiles').select('id, email, first_name, last_name, role, phone, board_qa_enabled').eq('id', id!).single(),
   svc.auth.admin.getUserById(id!),
   svc.auth.admin.mfa.listFactors({ userId: id! }),
@@ -103,7 +108,9 @@ const [{ data: profile }, { data: authData }, { data: factorData }, { data: link
   supabase.from('holders').select('id, name').order('name'),
   supabase.from('audit_log').select('action, created_at').eq('user_id', id!).order('created_at', { ascending: false }).limit(15),
   supabase.from('ask_user_pauses').select('reason, paused_by, paused_at').eq('user_id', id!).maybeSingle(),
+  svc.auth.admin.passkey.listPasskeys({ userId: id! }),
 ]);
+const passkeys = (passkeyData ?? []) as Passkey[];
 const askOn = !askPause;
 // Deleting: only without holdings and proxy votes; their own Board Q&A and AGM questions go with them.
 const [{ count: ownQueries }, { count: ownMeetingQuestions }, { count: lodgedVotes }] = await Promise.all([
@@ -137,6 +144,7 @@ import HoldingNote from '../../../components/HoldingNote.astro';
       <dl class="mt-4 grid grid-cols-2 gap-4 text-sm">
         <div><dt class="text-white/40">Status</dt><dd class:list={[banned ? 'text-lk-red' : 'text-white/80']}>{banned ? 'Disabled' : auth?.last_sign_in_at ? 'Active' : 'Invited'}</dd></div>
         <div><dt class="text-white/40">Two-step</dt><dd class:list={[mfaOn ? 'text-lk-green' : 'text-white/50']}>{mfaOn ? 'On' : 'Off'}</dd></div>
+        <div><dt class="text-white/40">Passkeys</dt><dd class:list={[passkeys.length ? 'text-lk-green' : 'text-white/50']}>{passkeys.length || 'None'}</dd></div>
         <div><dt class="text-white/40">Last sign-in</dt><dd class="text-white/80">{auth?.last_sign_in_at ? dateTime.format(new Date(auth.last_sign_in_at)) : '—'}</dd></div>
         <div><dt class="text-white/40">Created</dt><dd class="text-white/80">{auth?.created_at ? dateTime.format(new Date(auth.created_at)) : '—'}</dd></div>
       </dl>
@@ -152,6 +160,20 @@ import HoldingNote from '../../../components/HoldingNote.astro';
           ? <button name="intent" value="enable" class="btn-ghost">Restore access</button>
           : <button name="intent" value="disable" class="btn-ghost !border-lk-red/40 !text-lk-red">Disable access</button>)}
       </form>
+      {passkeys.length > 0 && (
+        <div class="mt-6 border-t border-white/5 pt-6">
+          <h3 class="text-sm font-semibold text-white">Passkeys</h3>
+          <ul class="mt-3 divide-y divide-white/5 text-sm">
+            {passkeys.map((pk) => (
+              <li class="flex flex-wrap items-center justify-between gap-3 py-2.5">
+                <span><span class="text-white/85">{pk.friendly_name || 'Passkey'}</span>
+                  <span class="block text-xs text-white/40">Added {shortDate.format(new Date(pk.created_at))}{pk.last_used_at ? ` · last used ${shortDate.format(new Date(pk.last_used_at))}` : ' · not used yet'}</span></span>
+                <form method="post"><input type="hidden" name="passkeyId" value={pk.id} /><button name="intent" value="remove-passkey" class="btn-ghost !px-3 !py-1.5 text-xs" onclick="return confirm('Remove this passkey? They can still sign in with their password.')">Remove</button></form>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
       <div class="mt-6 border-t border-white/5 pt-6">
         <h3 class="text-sm font-semibold text-white">Access to features</h3>
         <ul class="mt-3 divide-y divide-white/5 text-sm">

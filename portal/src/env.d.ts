@@ -3,7 +3,13 @@
 declare namespace App {
   interface Locals {
     supabase: import('@supabase/supabase-js').SupabaseClient;
-    user: { id: string; email: string; aal: 'aal1' | 'aal2' } | null;
+    /**
+     * aal: 'aal2' once this session passed two-step verification or a verified
+     * passkey sign-in (strongBy says which); codeVerified: the authenticator
+     * code was entered, which Supabase still requires to change two-step or
+     * passkey settings.
+     */
+    user: { id: string; email: string; aal: 'aal1' | 'aal2'; strongBy: 'code' | 'passkey' | null; codeVerified: boolean } | null;
     profile: {
       email: string;
       first_name: string;

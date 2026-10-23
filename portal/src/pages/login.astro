@@ -46,6 +46,15 @@ if (Astro.request.method === 'POST') {
   {sent ? (
     <Alert tone="success">If an account exists for {email}, we've emailed a sign-in link. It expires in 1 hour.</Alert>
   ) : (
+    <>
+    <div id="passkey-box" class="mb-5 hidden">
+      <button type="button" id="passkey-signin" class="btn-primary flex w-full items-center justify-center gap-2" data-next={next}>
+        <svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 9.5-4.9"/><circle cx="18" cy="13" r="2.5"/><path d="M18 15.5V21l1.5-1.2M18 18.5h1.5"/></svg>
+        Sign in with a passkey
+      </button>
+      <p id="passkey-error" class="mt-3 hidden text-sm text-lk-red" role="alert"></p>
+      <div class="mt-5 flex items-center gap-3 text-xs text-white/35"><span class="h-px flex-1 bg-white/10"></span>or use your email<span class="h-px flex-1 bg-white/10"></span></div>
+    </div>
     <form method="post" class="space-y-4">
       <div>
         <label for="email" class="label">Email</label>
@@ -63,5 +72,26 @@ if (Astro.request.method === 'POST') {
       <div class="flex items-center gap-3 text-xs text-white/35"><span class="h-px flex-1 bg-white/10"></span>or<span class="h-px flex-1 bg-white/10"></span></div>
       <button name="intent" value="magic-link" formnovalidate class="btn-ghost w-full">Email me a sign-in link</button>
     </form>
+    </>
   )}
 </Auth>
+
+<script>
+  import { passkeysSupported, signInWithPasskey } from '../lib/passkey-browser';
+
+  const box = document.getElementById('passkey-box');
+  const button = document.getElementById('passkey-signin') as HTMLButtonElement | null;
+  const message = document.getElementById('passkey-error');
+  if (box && button && message && passkeysSupported()) {
+    box.classList.remove('hidden');
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      message.classList.add('hidden');
+      const captcha = (document.querySelector('[name="cf-turnstile-response"]') as HTMLInputElement | null)?.value || undefined;
+      const result = await signInWithPasskey(button.dataset.next ?? '/', captcha).catch(() => ({ error: 'Something went wrong. Please try again.' }) as { error?: string; redirect?: string });
+      if (result.redirect) return location.assign(result.redirect);
+      button.disabled = false;
+      if (result.error) { message.textContent = result.error; message.classList.remove('hidden'); }
+    });
+  }
+</script>

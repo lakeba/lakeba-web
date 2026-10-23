@@ -6,7 +6,8 @@ import { field } from '../../lib/forms';
 
 const supabase = Astro.locals.supabase;
 const next = safeNext(Astro.url.searchParams.get('next'));
-if (!Astro.locals.mfaEnrolled || Astro.locals.user?.aal === 'aal2') return Astro.redirect(next);
+// Also reachable after a passkey sign-in, to enter the code for changes that Supabase still guards with it.
+if (!Astro.locals.mfaEnrolled || Astro.locals.user?.codeVerified) return Astro.redirect(next);
 
 let error = '';
 if (Astro.request.method === 'POST') {
