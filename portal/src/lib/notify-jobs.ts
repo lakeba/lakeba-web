@@ -1,7 +1,7 @@
 import { serviceClient } from './admin';
 import { memberIds, notifyAdmins, notifyMembers } from './notify';
 import { processOutbox, pushEnabled } from './push';
-import { pollMailboxes } from './shareholder-email';
+import { pollMailboxes, sendDueAutoReplies } from './shareholder-email';
 
 // The notification worker inside the portal process: sends queued pushes and
 // runs the scheduled notifications. Each scheduled job claims a key in
@@ -94,6 +94,7 @@ export function startNotificationWorker() {
     try {
       if (pushEnabled()) await processOutbox();
       if (ticks % 4 === 0) await pollMailboxes(lastOrigin); // shareholder mailboxes, every minute
+      await sendDueAutoReplies(lastOrigin); // automatic replies whose 5-minute undo window has passed
       if (ticks++ % 40 === 0) { await proxyReminders(); await votesSummary(); await cleanup(); }
     } catch (e) {
       console.error('notification worker', (e as Error).message);

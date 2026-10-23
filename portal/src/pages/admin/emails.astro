@@ -6,7 +6,7 @@ import { field } from '../../lib/forms';
 import { dateTime } from '../../lib/format';
 import { serviceClient } from '../../lib/admin';
 import { graphConfigured } from '../../lib/graph';
-import { CATEGORIES, STATUS_LABELS, pollMailboxes, prepare, sendReplyFor, shareholderContext, toBoardQa, type Category } from '../../lib/shareholder-email';
+import { AUTO_CONFIDENCE, AUTO_DELAY_MS, AUTO_PER_DAY, CATEGORIES, SELF_SERVICE, STATUS_LABELS, cancelAutoReply, pollMailboxes, prepare, sendReplyFor, shareholderContext, toBoardQa, type Category } from '../../lib/shareholder-email';
 
 // Group admins only (company admins can't open this page yet).
 const svc = serviceClient();
@@ -25,14 +25,18 @@ if (Astro.request.method === 'POST') {
   try {
     if (intent === 'settings') {
       const mailbox = field(form, 'mailbox').toLowerCase() || null;
-      const mode = ['off', 'review'].includes(field(form, 'mode')) ? field(form, 'mode') : 'off';
-      const { error: e } = await svc.from('entities').update({ shareholder_mailbox: mailbox, email_mode: mode, email_signature: String(form.get('signature') ?? '').trim().slice(0, 500) }).eq('id', field(form, 'entity_id'));
+      const mode = ['off', 'review', 'auto'].includes(field(form, 'mode')) ? field(form, 'mode') : 'off';
+      const autoCategories = form.getAll('auto_category').map(String).filter((c) => SELF_SERVICE.includes(c as Category));
+      const { error: e } = await svc.from('entities').update({ shareholder_mailbox: mailbox, email_mode: mode, email_auto_categories: autoCategories, email_signature: String(form.get('signature') ?? '').trim().slice(0, 500) }).eq('id', field(form, 'entity_id'));
       if (e) error = e.message.includes('check') ? 'That doesn’t look like an email address.' : e.message;
-      else { await log('admin_saved_mailbox_settings', { entity_id: field(form, 'entity_id'), mailbox, mode }); notice = 'Mailbox settings saved.'; }
+      else { await log('admin_saved_mailbox_settings', { entity_id: field(form, 'entity_id'), mailbox, mode, auto_categories: autoCategories }); notice = mode === 'auto' ? `Mailbox settings saved. Automatic replies are on for: ${autoCategories.map((c) => CATEGORIES[c as Category]).join('; ') || 'nothing yet (choose request types)'}.` : 'Mailbox settings saved.'; }
     } else if (intent === 'poll') {
       const r = await pollMailboxes(Astro.url.origin);
       notice = `Checked ${r.checked} mailbox${r.checked === 1 ? '' : 'es'}: ${r.emails} new email${r.emails === 1 ? '' : 's'}.`;
+    } else if (intent === 'cancel-auto') {
+      notice = (await cancelAutoReply(svc, emailId, me)) ? 'Automatic reply cancelled. The draft is kept for you to send.' : 'Too late: it was already sent or changed.';
     } else if (intent === 'send') {
+      await cancelAutoReply(svc, emailId, me); // a person sending takes over from a scheduled automatic reply
       const links = form.getAll('link').map((l) => JSON.parse(String(l)) as { label: string; path: string });
       const to = await sendReplyFor(svc, { emailId, body: String(form.get('body') ?? '').trim(), links, sentBy: me, origin: Astro.url.origin });
       notice = `Reply sent to ${to}.`;
@@ -52,13 +56,13 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const { data: companies } = await svc.from('entities').select('id, code, display_name, shareholder_mailbox, email_mode, email_signature').neq('portal', 'portfolio').order('sort');
+const { data: companies } = await svc.from('entities').select('id, code, display_name, shareholder_mailbox, email_mode, email_signature, email_auto_categories').neq('portal', 'portfolio').order('sort');
 const { data: sync } = await svc.from('email_sync_state').select('mailbox, last_checked_at, last_error');
 const syncOf = new Map((sync ?? []).map((s) => [s.mailbox, s]));
 const nameOf = new Map((companies ?? []).map((c) => [c.id, c.display_name]));
 
 let list = svc.from('shareholder_emails').select('id, entity_id, from_address, from_name, subject, received_at, category, status, sender_verified, user_id, summary').order('received_at', { ascending: false }).limit(100);
-if (filterStatus === 'open') list = list.in('status', ['new', 'needs_person', 'draft_ready', 'error']);
+if (filterStatus === 'open') list = list.in('status', ['new', 'needs_person', 'draft_ready', 'auto_scheduled', 'error']);
 else if (filterStatus !== 'all') list = list.eq('status', filterStatus);
 if (filterCompany) list = list.eq('entity_id', filterCompany);
 const { data: emails } = await list;
@@ -73,7 +77,27 @@ const trusted = Boolean(current?.sender_verified && current?.user_id);
 const ctx = current && trusted ? await shareholderContext(svc, current.entity_id, current.user_id) : null;
 const options = ctx ? [...ctx.statements.map((s) => ({ label: `Holding statement: ${s.name}`, path: `/statement/${s.holderId}` })), ...ctx.docs.map((d) => ({ label: d.title, path: `/documents/${d.id}` }))] : [];
 const draftLinks = (draft?.links ?? []) as { label: string; path: string }[];
-const badge = (s: string) => s === 'needs_person' ? 'bg-lk-orange/15 text-lk-orange' : s === 'draft_ready' ? 'bg-lk-blue/15 text-lk-blue' : s === 'replied' || s === 'handled' || s === 'board_qa' ? 'bg-lk-green/15 text-lk-green' : s === 'error' ? 'bg-lk-red/15 text-lk-red' : 'bg-white/10 text-white/50';
+// Draft accuracy, last 30 days: how often the draft went out unchanged (the measure for switching on automatic replies).
+const since30 = new Date(Date.now() - 30 * 86400_000).toISOString();
+const { data: recent30 } = await svc.from('shareholder_emails').select('id, category, status, auto_send_at, shareholder_email_replies(kind, body, links, automatic)').gte('received_at', since30).neq('status', 'ignored');
+const norm = (t: string) => t.replace(/\r/g, '').replace(/\s+/g, ' ').trim();
+const accuracy = new Map<string, { emails: number; sent: number; unchanged: number; auto: number }>();
+for (const r of recent30 ?? []) {
+  const cat = r.category ?? 'other';
+  const a = accuracy.get(cat) ?? { emails: 0, sent: 0, unchanged: 0, auto: 0 };
+  a.emails++;
+  const reps = (r.shareholder_email_replies ?? []) as { kind: string; body: string; links: { path: string }[]; automatic: boolean }[];
+  const d = reps.find((x) => x.kind === 'draft'), sent = reps.find((x) => x.kind === 'sent');
+  if (sent) {
+    if (sent.automatic) a.auto++;
+    else {
+      a.sent++;
+      if (d && norm(d.body) === norm(sent.body) && JSON.stringify(d.links.map((l) => l.path).sort()) === JSON.stringify(sent.links.map((l) => l.path).sort())) a.unchanged++;
+    }
+  }
+  accuracy.set(cat, a);
+}
+const badge = (s: string) => s === 'auto_scheduled' ? 'bg-lk-green/15 text-lk-green' : s === 'needs_person' ? 'bg-lk-orange/15 text-lk-orange' : s === 'draft_ready' ? 'bg-lk-blue/15 text-lk-blue' : s === 'replied' || s === 'handled' || s === 'board_qa' ? 'bg-lk-green/15 text-lk-green' : s === 'error' ? 'bg-lk-red/15 text-lk-red' : 'bg-white/10 text-white/50';
 const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filterStatus, ...(filterCompany ? { company: filterCompany } : {}), ...o })}`;
 ---
 
@@ -96,12 +120,20 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
           {current.category && <span class="rounded-full bg-white/10 px-2.5 py-1 text-white/70">{CATEGORIES[current.category as Category] ?? current.category}{current.confidence != null ? ` · ${Math.round(Number(current.confidence) * 100)}%` : ''}</span>}
         </div>
         {current.summary && <p class="mt-4 rounded-xl bg-white/[0.04] px-4 py-3 text-sm text-white/75">{current.summary}</p>}
+        {current.status !== 'auto_scheduled' && (current.requested as { auto?: string | null })?.auto && <p class="mt-2 text-xs text-white/45">Not automatic: {(current.requested as { auto: string }).auto}</p>}
         {current.error && <p class="mt-4 text-sm text-lk-red">{current.error}</p>}
         <pre class="mt-4 max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-xl border border-white/5 bg-black/20 p-4 font-sans text-sm text-white/80">{current.body_text}</pre>
       </section>
 
       <section class="card">
         {['replied', 'handled', 'board_qa', 'ignored'].includes(current.status) && <p class="mb-4 text-sm text-white/55">{STATUS_LABELS[current.status]}{current.handled_at ? ` · ${dateTime.format(new Date(current.handled_at))}` : ''}{current.query_id ? <> · <a href={`/admin/queries/${current.query_id}`} class="text-lk-blue hover:underline">open in Board Q&amp;A</a></> : ''}</p>}
+        {current.status === 'auto_scheduled' && current.auto_send_at && (
+          <form method="post" class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-lk-green/30 bg-lk-green/10 px-4 py-3 text-sm">
+            <span class="text-white/85">This reply goes automatically at <strong>{new Date(current.auto_send_at).toLocaleTimeString('en-AU', { timeZone: 'Australia/Sydney', hour: '2-digit', minute: '2-digit' })}</strong> (Sydney) unless you cancel it.</span>
+            <input type="hidden" name="email_id" value={current.id} />
+            <button name="intent" value="cancel-auto" class="btn-ghost !py-1.5 text-sm">Cancel automatic reply</button>
+          </form>
+        )}
         {(replies ?? []).filter((r) => r.kind === 'sent').map((r) => (
           <div class="mb-4 rounded-xl border border-white/5 p-4 text-sm">
             <p class="text-xs text-white/40">Sent to {r.sent_to} · {dateTime.format(new Date(r.sent_at))}{r.automatic ? ' · automatic' : ''}</p>
@@ -140,7 +172,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
   ) : (
     <>
       <div class="mb-4 flex flex-wrap items-center gap-2 text-sm">
-        {[['open', 'Open'], ['draft_ready', 'Draft ready'], ['needs_person', 'Needs a person'], ['replied', 'Replied'], ['ignored', 'Ignored'], ['all', 'All']].map(([k, label]) => (
+        {[['open', 'Open'], ['auto_scheduled', 'Automatic'], ['draft_ready', 'Draft ready'], ['needs_person', 'Needs a person'], ['replied', 'Replied'], ['ignored', 'Ignored'], ['all', 'All']].map(([k, label]) => (
           <a href={`?${new URLSearchParams({ status: k, ...(filterCompany ? { company: filterCompany } : {}) })}`} class:list={['rounded-full px-3 py-1.5', filterStatus === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{label}</a>
         ))}
         <form class="ml-auto flex items-center gap-2">
@@ -166,9 +198,24 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
         </table>
       </section>
 
+      <section class="card mt-6 overflow-x-auto">
+        <h2 class="text-lg font-bold">Draft accuracy, last 30 days</h2>
+        <p class="mt-1 text-sm text-white/55">How often a person sent the draft unchanged. Switch on automatic replies for a request type when this is consistently high (for example 9 in 10).</p>
+        <table class="mt-4 w-full text-left text-sm">
+          <thead class="text-xs uppercase tracking-widest text-white/40"><tr><th class="py-2 pr-4 font-medium">Request</th><th class="py-2 pr-4 text-right font-medium">Emails</th><th class="py-2 pr-4 text-right font-medium">Sent by a person</th><th class="py-2 pr-4 text-right font-medium">Draft unchanged</th><th class="py-2 text-right font-medium">Automatic</th></tr></thead>
+          <tbody class="divide-y divide-white/5">
+            {[...accuracy].sort((a, b) => b[1].emails - a[1].emails).map(([cat, a]) => (
+              <tr><td class="py-2 pr-4 text-white/80">{CATEGORIES[cat as Category] ?? cat}</td><td class="py-2 pr-4 text-right">{a.emails}</td><td class="py-2 pr-4 text-right">{a.sent}</td>
+                <td class:list={['py-2 pr-4 text-right font-semibold', a.sent && a.unchanged / a.sent >= 0.9 ? 'text-lk-green' : 'text-white/80']}>{a.sent ? `${Math.round((a.unchanged / a.sent) * 100)}% (${a.unchanged})` : '—'}</td><td class="py-2 text-right">{a.auto}</td></tr>
+            ))}
+            {!accuracy.size && <tr><td colspan="5" class="py-4 text-center text-white/45">No emails yet.</td></tr>}
+          </tbody>
+        </table>
+      </section>
+
       <details class="card mt-6">
         <summary class="cursor-pointer text-lg font-bold">Mailbox settings</summary>
-        <p class="mt-2 text-sm text-white/55">Each company’s shareholder mailbox. “Review” reads it and prepares drafts; automatic replies come in the next phase.</p>
+        <p class="mt-2 text-sm text-white/55">Each company’s shareholder mailbox. <strong>Review</strong>: read and prepare drafts; a person sends. <strong>Automatic</strong>: the chosen request types are answered by themselves, {AUTO_DELAY_MS / 60000} minutes after arrival (cancel in that time), only for verified, registered shareholders outside our organisation, when Claude is at least {Math.round(AUTO_CONFIDENCE * 100)}% sure, at most {AUTO_PER_DAY} a day per shareholder and not twice for the same request. Everything else stays for a person.</p>
         <div class="mt-4 space-y-4">
           {(companies ?? []).map((c) => {
             const s = c.shareholder_mailbox ? syncOf.get(c.shareholder_mailbox) : undefined;
@@ -177,8 +224,11 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
                 <input type="hidden" name="entity_id" value={c.id} />
                 <p class="font-semibold text-white">{c.display_name}<span class="block text-xs font-normal text-white/40">{s?.last_error ? <span class="text-lk-red">Error: {s.last_error}</span> : s?.last_checked_at ? `Checked ${dateTime.format(new Date(s.last_checked_at))}` : 'Not checked yet'}</span></p>
                 <div><label class="label" for={`mb-${c.id}`}>Mailbox</label><input class="field" id={`mb-${c.id}`} name="mailbox" type="email" value={c.shareholder_mailbox ?? ''} placeholder="shareholders@…" /></div>
-                <div><label class="label" for={`mode-${c.id}`}>Mode</label><select class="field" id={`mode-${c.id}`} name="mode"><option value="off" selected={c.email_mode === 'off'}>Off</option><option value="review" selected={c.email_mode !== 'off'}>Review</option></select></div>
+                <div><label class="label" for={`mode-${c.id}`}>Mode</label><select class="field" id={`mode-${c.id}`} name="mode"><option value="off" selected={c.email_mode === 'off'}>Off</option><option value="review" selected={c.email_mode === 'review'}>Review</option><option value="auto" selected={c.email_mode === 'auto'}>Automatic</option></select></div>
                 <button name="intent" value="settings" class="btn-ghost">Save</button>
+                <fieldset class="sm:col-span-4"><legend class="label">Answered automatically (in Automatic mode)</legend>
+                  <div class="flex flex-wrap gap-x-5 gap-y-2 text-sm text-white/75">{SELF_SERVICE.map((cat) => <label class="flex items-center gap-2"><input type="checkbox" name="auto_category" value={cat} checked={(c.email_auto_categories ?? []).includes(cat)} class="size-4 accent-lk-blue" />{CATEGORIES[cat]}</label>)}</div>
+                </fieldset>
                 <div class="sm:col-span-4"><label class="label" for={`sig-${c.id}`}>Signature (blank: “{c.display_name === 'Lakeba Group' ? 'Lakeba' : c.display_name} Investor Relations”)</label><textarea class="field text-sm" id={`sig-${c.id}`} name="signature" rows="2">{c.email_signature}</textarea></div>
               </form>
             );

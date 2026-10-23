@@ -29,7 +29,7 @@ export type Category = keyof typeof CATEGORIES;
 export const SELF_SERVICE: Category[] = ['documents', 'holding_statement', 'sign_in_help'];
 
 export const STATUS_LABELS: Record<string, string> = {
-  new: 'New', needs_person: 'Needs a person', draft_ready: 'Draft ready', replied: 'Replied', handled: 'Handled', ignored: 'Ignored', board_qa: 'Moved to Board Q&A', error: 'Error',
+  new: 'New', needs_person: 'Needs a person', draft_ready: 'Draft ready', auto_scheduled: 'Automatic reply scheduled', replied: 'Replied', handled: 'Handled', ignored: 'Ignored', board_qa: 'Moved to Board Q&A', error: 'Error',
 };
 
 // --- Checks on the email itself ---------------------------------------------------
@@ -44,7 +44,7 @@ export function senderChecks(m: GraphMessage) {
   // Mail from inside our own Microsoft 365 organisation has no DMARC result; Exchange marks it
   // as authenticated internal mail (outside senders can't set this: Exchange strips it on arrival).
   const internal = header(m, 'X-MS-Exchange-Organization-AuthAs')[0]?.toLowerCase() === 'internal';
-  return { spf, dkim, dmarc: dmarc ?? (internal ? 'internal' : null), verified: dmarc === 'pass' || compauth === 'pass' || internal };
+  return { spf, dkim, dmarc: internal ? 'internal' : dmarc, verified: dmarc === 'pass' || compauth === 'pass' || internal };
 }
 
 /** Out-of-office, newsletters, bounces and the like: never answered. */
@@ -194,19 +194,22 @@ export async function prepare(svc: Svc, emailId: string, origin: string) {
       if (reading.category === 'sign_in_help' && !links.length) links.push({ label: 'The investor portal', path: '/' });
     }
     const selfService = trusted && SELF_SERVICE.includes(reading.category) && reading.confidence >= 0.8 && (links.length > 0 || reading.category === 'sign_in_help');
-    const status = reading.category === 'automated' ? 'ignored' : selfService ? 'draft_ready' : 'needs_person';
+    const decision = selfService ? await autoDecision(svc, e, reading) : { auto: false, reason: '' };
+    const status = reading.category === 'automated' ? 'ignored' : decision.auto ? 'auto_scheduled' : selfService ? 'draft_ready' : 'needs_person';
     await svc.from('shareholder_emails').update({
       category: reading.category, confidence: Math.max(0, Math.min(1, reading.confidence)), summary: reading.summary.slice(0, 500),
-      requested: { document_ids: reading.document_ids, wants_statement: reading.wants_statement }, classify_cost_usd: reading.costUsd, status, error: null,
+      requested: { document_ids: reading.document_ids, wants_statement: reading.wants_statement, auto: decision.reason || null },
+      classify_cost_usd: reading.costUsd, status, error: null,
+      auto_send_at: decision.auto ? new Date(Date.now() + AUTO_DELAY_MS).toISOString() : null,
     }).eq('id', emailId);
     await svc.from('shareholder_email_replies').delete().eq('email_id', emailId).eq('kind', 'draft');
     if (status !== 'ignored') await svc.from('shareholder_email_replies').insert({ email_id: emailId, kind: 'draft', body: reading.reply.slice(0, 8000), links });
-    await setCategory(e.mailbox, e.graph_id, status === 'ignored' ? 'Portal: ignored' : status === 'draft_ready' ? 'Portal: draft ready' : 'Portal: needs a person').catch(() => {});
+    await setCategory(e.mailbox, e.graph_id, ({ ignored: 'Portal: ignored', draft_ready: 'Portal: draft ready', auto_scheduled: 'Portal: automatic reply', needs_person: 'Portal: needs a person' } as Record<string, string>)[status]).catch(() => {});
     if (status !== 'ignored') {
       await notifyAdmins({
         kind: 'admin_email', entityId: e.entity_id, origin, link: `/admin/emails?id=${emailId}`,
         title: `Shareholder email: ${e.subject || '(no subject)'}`,
-        body: `${e.from_name || e.from_address} wrote to ${e.mailbox}. ${reading.summary} ${status === 'draft_ready' ? 'A reply is ready to send.' : 'It needs a person.'}`,
+        body: `${e.from_name || e.from_address} wrote to ${e.mailbox}. ${reading.summary} ${status === 'auto_scheduled' ? `A reply goes automatically in ${AUTO_DELAY_MS / 60000} minutes unless you cancel it.` : status === 'draft_ready' ? 'A reply is ready to send.' : 'It needs a person.'}`,
       });
     }
   } catch (err) {
@@ -214,7 +217,75 @@ export async function prepare(svc: Svc, emailId: string, origin: string) {
   }
 }
 
-// --- Sending (a person presses Send in phase 1) -----------------------------------------
+// --- Automatic replies (phase 2) -------------------------------------------------------
+
+export const AUTO_DELAY_MS = 5 * 60_000;
+export const AUTO_CONFIDENCE = 0.85;
+export const AUTO_PER_DAY = 3;
+
+/**
+ * Whether this email may be answered automatically. Only for a company in
+ * automatic mode and a request type it chose, from a verified, registered
+ * shareholder outside our own organisation, when Claude is sure, under the
+ * daily limit, and not a repeat of a request answered automatically today.
+ * `reason` says why not (shown to admins).
+ */
+async function autoDecision(svc: Svc, e: { id: string; entity_id: string; user_id: string | null; sender_verified: boolean; from_address: string; conversation_id: string | null; auth_dmarc: string | null }, reading: Reading) {
+  const { data: company } = await svc.from('entities').select('email_mode, email_auto_categories').eq('id', e.entity_id).single();
+  if (company?.email_mode !== 'auto') return { auto: false, reason: '' };
+  const no = (reason: string) => ({ auto: false, reason });
+  if (!(company.email_auto_categories ?? []).includes(reading.category)) return no('This request type isn’t answered automatically.');
+  if (!e.sender_verified || !e.user_id) return no('Not a verified, registered shareholder.');
+  if (reading.confidence < AUTO_CONFIDENCE) return no(`Claude wasn’t sure enough (${Math.round(reading.confidence * 100)}%).`);
+  const { data: mailboxes } = await svc.from('entities').select('shareholder_mailbox').not('shareholder_mailbox', 'is', null);
+  const ourDomains = new Set(['lakeba.com', ...(mailboxes ?? []).map((m) => m.shareholder_mailbox!.split('@')[1].toLowerCase())]);
+  if (e.auth_dmarc === 'internal' || ourDomains.has(e.from_address.split('@')[1] ?? '')) return no('From inside our own organisation.');
+  const since = new Date(Date.now() - 24 * 3600_000).toISOString();
+  const { data: recent } = await svc.from('shareholder_emails').select('id, conversation_id, category').eq('user_id', e.user_id).neq('id', e.id)
+    .not('auto_send_at', 'is', null).in('status', ['auto_scheduled', 'replied', 'new']).gte('received_at', since);
+  if ((recent ?? []).length >= AUTO_PER_DAY) return no(`Already ${AUTO_PER_DAY} automatic replies to this shareholder today.`);
+  if ((recent ?? []).some((r) => r.category === reading.category || (e.conversation_id && r.conversation_id === e.conversation_id))) return no('Same request was answered automatically today.');
+  return { auto: true, reason: 'Answered automatically.' };
+}
+
+let sendingDue = false;
+/** Sends automatic replies whose undo window has passed (from the portal's worker). */
+export async function sendDueAutoReplies(origin: string) {
+  if (sendingDue) return 0;
+  sendingDue = true;
+  const svc = serviceClient();
+  let sent = 0;
+  try {
+    const { data: due } = await svc.from('shareholder_emails').select('id').eq('status', 'auto_scheduled').lte('auto_send_at', new Date().toISOString()).limit(20);
+    for (const row of due ?? []) {
+      // Claim it, so a last-second cancel or a second worker can't double-send.
+      const { data: claimed } = await svc.from('shareholder_emails').update({ status: 'new' }).eq('id', row.id).eq('status', 'auto_scheduled').select('id');
+      if (!claimed?.length) continue;
+      const { data: draft } = await svc.from('shareholder_email_replies').select('body, links').eq('email_id', row.id).eq('kind', 'draft').maybeSingle();
+      try {
+        if (!draft) throw new Error('No draft to send.');
+        await sendReplyFor(svc, { emailId: row.id, body: draft.body, links: draft.links as { label: string; path: string }[], sentBy: null, origin, automatic: true });
+        sent++;
+      } catch (err) {
+        await svc.from('shareholder_emails').update({ status: 'error', error: `Automatic reply failed: ${String((err as Error).message ?? err).slice(0, 400)}` }).eq('id', row.id);
+      }
+    }
+  } finally {
+    sendingDue = false;
+  }
+  return sent;
+}
+
+/** Stops a scheduled automatic reply; the draft stays for a person to send. */
+export async function cancelAutoReply(svc: Svc, emailId: string, by: string) {
+  const { data } = await svc.from('shareholder_emails').update({ status: 'draft_ready', auto_send_at: null, auto_cancelled_by: by }).eq('id', emailId).eq('status', 'auto_scheduled').select('mailbox, graph_id');
+  if (!data?.length) return false;
+  await setCategory(data[0].mailbox, data[0].graph_id, 'Portal: draft ready').catch(() => {});
+  await svc.from('audit_log').insert({ user_id: by, action: 'shareholder_email_auto_cancelled', detail: { email_id: emailId } });
+  return true;
+}
+
+// --- Sending (a person presses Send, or the automatic reply after the undo window) ----------
 
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
@@ -261,7 +332,7 @@ export async function sendReplyFor(svc: Svc, { emailId, body, links, sentBy, ori
   const now = new Date().toISOString();
   await svc.from('shareholder_email_replies').insert({ email_id: emailId, kind: 'sent', body, links, sent_to: to.address, sent_at: now, sent_by: sentBy, automatic });
   await svc.from('shareholder_emails').update({ status: 'replied', handled_by: sentBy, handled_at: now }).eq('id', emailId);
-  await setCategory(e.mailbox, e.graph_id, 'Portal: replied').catch(() => {});
+  await setCategory(e.mailbox, e.graph_id, automatic ? 'Portal: replied automatically' : 'Portal: replied').catch(() => {});
   await svc.from('audit_log').insert({ user_id: sentBy, action: automatic ? 'shareholder_email_auto_replied' : 'shareholder_email_replied', detail: { email_id: emailId, to: to.address, links: links.length } });
   return to.address;
 }
