@@ -284,10 +284,6 @@ const vest = await ask('EZF', priya, 'Option vesting (fake)', 'When do my employ
 await svc.from('query_messages').insert({ query_id: vest, author_id: adminId, body: 'Internal: check with the Ezifin CFO before replying. (fake)', internal: true }).throwOnError();
 await ask('DOX', kenji, 'DoxAI dividend policy (fake)', 'Does DoxAI plan to pay dividends?', 'Not in the next few years; profits are reinvested.', 'closed');
 
-await svc.from('ventures').insert([
-  { entity_id: E.EZF.id, slug: 'fake-ezifin', name: 'Ezifin (fake)', tagline: 'Smarter lending for small business', stage: 'Controlled venture', lakeba_stake: 72, status: 'active', sort: 1 },
-  { entity_id: E.DOX.id, slug: 'fake-doxai', name: 'DoxAI (fake)', tagline: 'AI document intelligence', stage: 'Controlled venture', lakeba_stake: 65, status: 'building', sort: 2 },
-]).throwOnError();
 
 await svc.from('ask_approved_answers').insert({ entity_id: E.EZF.id, question: 'What does Ezifin do? (fake)', answer: 'Ezifin provides small-business lending and invoice finance. (fake)', created_by: adminId, active: true, review_by: '2027-06-30' }).throwOnError();
 

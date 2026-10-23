@@ -28,8 +28,11 @@ const lakebaPct = (entityId: string | null) => {
 
 const { data: ventures } = await supabase
   .from('ventures')
-  .select('slug, name, tagline, stage, lakeba_stake, website, status, entity_id, venture_updates(title, body, happened_on)')
+  .select('slug, name, tagline, stage, lakeba_stake, website, status, entity_id, entities(website), venture_updates(title, body, happened_on)')
   .order('sort');
+// The card's website, else the company's (from the investor data workbook).
+const siteOf = (v: { website: string | null; entities: unknown }) => v.website || (v.entities as { website: string | null } | null)?.website || null;
+const domain = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
 const groups = [
   { status: 'active', title: 'Active ventures' },
   { status: 'building', title: 'Building with LakebaOS', note: 'Ventures co-founded through LakebaOS, where Lakeba holds up to 49%.' },
@@ -62,6 +65,7 @@ const accents = ['from-lk-blue/25', 'from-lk-orange/25', 'from-lk-green/25', 'fr
                     <div>
                       <h3 class="text-2xl font-bold">{v.name}</h3>
                       <p class="mt-1 text-sm text-white/60">{v.tagline}</p>
+                      {siteOf(v) && <a href={siteOf(v)} target="_blank" rel="noopener" class="mt-2 inline-block text-sm font-medium text-lk-blue hover:underline">{domain(siteOf(v)!)} ↗</a>}
                     </div>
                     {v.lakeba_stake != null && (
                       <div class="text-right"><p class="font-display text-3xl font-bold text-white">{Number(v.lakeba_stake)}%</p><p class="text-[11px] uppercase tracking-widest text-white/40">Lakeba stake</p></div>
@@ -77,9 +81,7 @@ const accents = ['from-lk-blue/25', 'from-lk-orange/25', 'from-lk-green/25', 'fr
                         <li><p class="text-xs text-white/40">{shortDate.format(new Date(u.happened_on))}</p><p class="text-sm font-semibold text-white">{u.title}</p>{u.body && <p class="text-sm text-white/55">{u.body}</p>}</li>
                       ))}
                     </ol>
-                  )}
-                  {v.website && <a href={v.website} target="_blank" rel="noopener" class="mt-6 inline-block text-sm text-lk-blue hover:underline">Website ↗</a>}
-                </div>
+                  )}                </div>
               </article>
             );
           })}
