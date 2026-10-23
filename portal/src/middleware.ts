@@ -2,6 +2,10 @@ import { defineMiddleware } from 'astro:middleware';
 import { createSupabase } from './lib/supabase';
 import { loadCompanyContext } from './lib/companies';
 import { companyAdminMayOpen } from './lib/admin-company';
+import { rememberOrigin, startNotificationWorker } from './lib/notify-jobs';
+
+// Sends queued browser notifications and runs scheduled ones (reminders, daily summaries).
+startNotificationWorker();
 
 /** Pages reachable without signing in. */
 const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login'];
@@ -13,6 +17,7 @@ const matches = (path: string, list: string[]) => list.some((p) => path === p ||
 export const onRequest = defineMiddleware(async (context, next) => {
   const { url, locals, redirect } = context;
   const path = url.pathname;
+  rememberOrigin(url.origin);
   locals.supabase = createSupabase(context);
   locals.user = null;
   locals.profile = null;

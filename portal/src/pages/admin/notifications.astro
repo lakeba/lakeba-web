@@ -1,0 +1,102 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import { field } from '../../lib/forms';
+import { dateTime } from '../../lib/format';
+import { serviceClient } from '../../lib/admin';
+import { categoryOf } from '../../lib/notification-events';
+import { processOutbox, pushEnabled } from '../../lib/push';
+import { proxyReminders, votesSummary } from '../../lib/notify-jobs';
+
+// Group admins only (the middleware lets company admins open only their own pages).
+const svc = serviceClient();
+let notice = '';
+
+const intent = Astro.request.method === 'POST' ? field(await Astro.request.formData(), 'intent') : '';
+if (intent === 'run-jobs') {
+  const reminders = await proxyReminders();
+  const summaries = await votesSummary(new Date(), { force: true });
+  await processOutbox();
+  await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_ran_notification_jobs', event_detail: { reminders, summaries } });
+  notice = `Done: ${reminders} proxy reminder${reminders === 1 ? '' : 's'} and ${summaries} vote summar${summaries === 1 ? 'y' : 'ies'} sent. (They also run automatically: reminders about a day before each proxy deadline, the summary each morning.)`;
+}
+if (intent === 'retry') {
+  await svc.from('notification_outbox').update({ failed_at: null, attempts: 0, next_attempt_at: new Date().toISOString() }).not('failed_at', 'is', null).gte('created_at', new Date(Date.now() - 7 * 86400_000).toISOString());
+  const sent = await processOutbox();
+  await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_retried_notifications' });
+  notice = `Retried failed notifications: ${sent} sent now.`;
+}
+
+const since = new Date(Date.now() - 7 * 86400_000).toISOString();
+const [{ data: recent }, { data: subs }, { count: sent }, { count: failed }, { count: pending }] = await Promise.all([
+  svc.from('notification_outbox').select('id, user_id, kind, payload, created_at, sent_at, failed_at, error, attempts').order('id', { ascending: false }).limit(60),
+  svc.from('push_subscriptions').select('user_id, device, created_at, last_success_at, failures').order('created_at', { ascending: false }),
+  svc.from('notification_outbox').select('id', { count: 'exact', head: true }).gte('created_at', since).not('sent_at', 'is', null),
+  svc.from('notification_outbox').select('id', { count: 'exact', head: true }).gte('created_at', since).not('failed_at', 'is', null),
+  svc.from('notification_outbox').select('id', { count: 'exact', head: true }).is('sent_at', null).is('failed_at', null),
+]);
+type Person = { email: string; first_name?: string; last_name?: string; role?: string };
+const ids = [...new Set([...(recent ?? []).map((r) => r.user_id), ...(subs ?? []).map((s) => s.user_id)])];
+const { data: profileRows } = ids.length ? await svc.from('profiles').select('id, email, first_name, last_name, role').in('id', ids) : { data: [] };
+const personOf = new Map((profileRows ?? []).map((p) => [p.id, p as Person]));
+const people = Map.groupBy(subs ?? [], (s) => s.user_id);
+const status = (r: { sent_at: string | null; failed_at: string | null }) => (r.sent_at ? 'Sent' : r.failed_at ? 'Failed' : 'Waiting');
+---
+
+<Admin title="Notifications">
+  <PageHeader title="Notifications" subtitle="Browser notifications sent by the portal. Each person chooses what they get in Profile → Notifications; Inbox entries and emails are sent as before." />
+  {!pushEnabled() && <div class="mb-6"><Alert tone="error">Browser notifications are off: the push keys aren’t set on this server.</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+
+  <div class="mb-6 grid gap-4 sm:grid-cols-4">
+    <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">People with notifications on</p><p class="mt-2 font-display text-3xl font-bold">{people.size}</p></div>
+    <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">Sent, last 7 days</p><p class="mt-2 font-display text-3xl font-bold">{sent ?? 0}</p></div>
+    <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">Failed, last 7 days</p><p class:list={['mt-2 font-display text-3xl font-bold', failed ? 'text-lk-red' : '']}>{failed ?? 0}</p></div>
+    <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">Waiting</p><p class="mt-2 font-display text-3xl font-bold">{pending ?? 0}</p></div>
+  </div>
+
+  <div class="mb-6 flex flex-wrap gap-3">
+    <a href="/account/notifications" class="btn-ghost">My notifications and a test</a>
+    <form method="post"><button name="intent" value="run-jobs" class="btn-ghost">Run reminders and summary now</button></form>
+    {(failed ?? 0) > 0 && <form method="post"><button name="intent" value="retry" class="btn-ghost">Retry failed</button></form>}
+  </div>
+
+  <div class="grid gap-4 xl:grid-cols-2">
+    <section class="card overflow-x-auto !p-0">
+      <h2 class="px-5 pt-5 text-lg font-bold">Recent deliveries</h2>
+      <table class="mt-3 w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-2 font-medium">When</th><th class="px-5 py-2 font-medium">To</th><th class="px-5 py-2 font-medium">What</th><th class="px-5 py-2 font-medium">Status</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {(recent ?? []).map((r) => (
+            <tr class="align-top">
+              <td class="whitespace-nowrap px-5 py-2.5 text-white/60">{dateTime.format(new Date(r.created_at))}</td>
+              <td class="px-5 py-2.5 text-white/80">{personOf.get(r.user_id)?.email}</td>
+              <td class="px-5 py-2.5"><span class="text-white/85">{(r.payload as { title?: string }).title}</span><span class="block text-xs text-white/40">{categoryOf(r.kind)?.label ?? r.kind}</span></td>
+              <td class="px-5 py-2.5"><span class:list={['text-xs font-semibold', r.sent_at ? 'text-lk-green' : r.failed_at ? 'text-lk-red' : 'text-white/50']}>{status(r)}</span>{r.error && <span class="block max-w-[14rem] truncate text-xs text-white/40" title={r.error}>{r.error}</span>}</td>
+            </tr>
+          ))}
+          {!recent?.length && <tr><td colspan="4" class="px-5 py-6 text-center text-white/45">Nothing sent yet.</td></tr>}
+        </tbody>
+      </table>
+    </section>
+    <section class="card overflow-x-auto !p-0">
+      <h2 class="px-5 pt-5 text-lg font-bold">Who has notifications on</h2>
+      <table class="mt-3 w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-2 font-medium">Person</th><th class="px-5 py-2 font-medium">Devices</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {[...people].map(([userId, list]) => {
+            const p = personOf.get(userId);
+            return (
+              <tr class="align-top">
+                <td class="px-5 py-2.5"><a href={`/admin/investors/${userId}`} class="text-white/85 hover:underline">{[p?.first_name, p?.last_name].filter(Boolean).join(' ') || p?.email}</a><span class="block text-xs text-white/40">{p?.email}{p?.role === 'admin' ? ' · admin' : ''}</span></td>
+                <td class="px-5 py-2.5 text-white/70">{list.map((d) => <span class="block">{d.device || 'Browser'}{d.failures > 0 ? <span class="text-xs text-lk-orange"> · {d.failures} failed</span> : ''}</span>)}</td>
+              </tr>
+            );
+          })}
+          {!people.size && <tr><td colspan="2" class="px-5 py-6 text-center text-white/45">No one yet.</td></tr>}
+        </tbody>
+      </table>
+    </section>
+  </div>
+</Admin>

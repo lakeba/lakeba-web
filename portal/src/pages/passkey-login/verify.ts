@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { safeNext } from '../../lib/supabase';
 import { badRequest, json, passkeyError, userVerified } from '../../lib/passkeys';
 import { serviceClient } from '../../lib/admin';
+import { recordSignIn } from '../../lib/sign-in';
 
 /** Step 2 of passkey sign-in: Supabase checks the signed challenge and the session goes into the cookies. */
 export const POST: APIRoute = async ({ request, url, locals }) => {
@@ -19,6 +20,6 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
     const { error: e } = await serviceClient().from('passkey_sessions').insert({ session_id: sessionId, user_id: data.session.user.id });
     if (e) console.error('passkey_sessions insert failed', e.message);
   }
-  await locals.supabase.rpc('log_event', { event_action: 'sign_in', event_detail: { method: 'passkey', user_verified: verified } });
+  await recordSignIn({ supabase: locals.supabase, userId: data.session.user.id, method: 'passkey', request, origin: url.origin, detail: { user_verified: verified } });
   return json({ redirect: safeNext(next) });
 };

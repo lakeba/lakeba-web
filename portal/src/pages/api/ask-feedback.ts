@@ -1,4 +1,5 @@
 import type { APIRoute } from 'astro';
+import { notifyAdmins } from '../../lib/notify';
 
 /** A shareholder rates one of their own Ask Lakeba answers (👍 1 / 👎 -1). */
 export const POST: APIRoute = async ({ request, locals, url }) => {
@@ -11,5 +12,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
     rating,
     note: typeof body.note === 'string' ? body.note.slice(0, 1000) : null,
   });
-  return error ? Response.json({ error: 'Could not save your rating.' }, { status: 404 }) : Response.json({ ok: true });
+  if (error) return Response.json({ error: 'Could not save your rating.' }, { status: 404 });
+  if (rating === -1) await notifyAdmins({ kind: 'admin_ask_feedback', origin: url.origin, link: '/admin/ask-review', title: 'An Ask Lakeba answer was rated 👎', body: `${locals.profile?.email ?? 'An investor'} rated an Ask Lakeba answer as unhelpful${typeof body.note === 'string' && body.note ? `: “${body.note.slice(0, 200)}”` : ''}. Review it in Admin → Ask review.` });
+  return Response.json({ ok: true });
 };

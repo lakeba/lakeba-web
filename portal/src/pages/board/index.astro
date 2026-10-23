@@ -1,5 +1,6 @@
 ---
 import Portal from '../../layouts/Portal.astro';
+import { notifyAdmins } from '../../lib/notify';
 import PageHeader from '../../components/PageHeader.astro';
 import Alert from '../../components/Alert.astro';
 import Empty from '../../components/Empty.astro';
@@ -27,6 +28,7 @@ if (Astro.request.method === 'POST' && !Astro.locals.features.boardQa) {
     else {
       await supabase.from('query_messages').insert({ query_id: created.id, author_id: userId, body }).throwOnError();
       await supabase.rpc('log_event', { event_action: 'query_created', event_detail: { query_id: created.id } });
+      await notifyAdmins({ kind: 'admin_query', entityId, origin: Astro.url.origin, link: `/admin/queries/${created.id}`, title: `New board question: ${subject}`, body: `${Astro.locals.profile?.email ?? 'An investor'} asked the board: “${subject}”.` });
       return Astro.redirect(`/board/${created.id}?sent=1`);
     }
   }

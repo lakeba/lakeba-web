@@ -55,7 +55,7 @@ if (Astro.request.method === 'POST') {
       await log('admin_saved_post', { slug, published: Boolean(publishedAt) });
       const newlyPublished = publishedAt && !existing?.published_at;
       if (newlyPublished && field(form, 'notify') === 'yes') {
-        await notifyMembers({ kind: 'news', entityId: company!.id, title, body: row.excerpt || 'A new update is available in the investor portal.', link: `/news/${slug}`, origin: Astro.url.origin });
+        await notifyMembers({ kind: 'news', entityId: company!.id, title, body: row.excerpt || 'A new update is available in the investor portal.', link: `/news/${slug}`, origin: Astro.url.origin, pushDetail: title });
       }
       notice = newlyPublished ? 'Post published.' : 'Post saved.';
     }

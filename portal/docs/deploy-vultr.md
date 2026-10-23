@@ -25,6 +25,11 @@ Files for all of this are in `portal/deploy/vultr/`.
 - **Ask Lakeba key**: `ssh -t root@<server> lakeba-set-anthropic-key` checks a Claude API key
   with Anthropic, stores it and restarts the portal (an empty key turns AI answers off).
   Set a spend limit in the Anthropic Console first.
+- **Browser notifications**: `ssh root@<server> lakeba-set-push-keys` creates the Web Push
+  (VAPID) keys on the server, stores them in `portal.env` and restarts the portal. Run it once;
+  it keeps existing keys (`--rotate` replaces them, and every device must turn notifications on again).
+  The portal sends queued pushes itself, and runs proxy reminders (a day before each deadline) and
+  the admins' morning vote summary. Admin → Notifications shows deliveries.
 - **Ask retrieval** (built 23 October 2026, **switched off**): instead of the full documents,
   Ask can answer from the best-matching passages (Admin → Ask knowledge → *How Ask answers*).
   Tested on the Mac: about US$0.10 a question at any time (full documents: about US$1.58 for

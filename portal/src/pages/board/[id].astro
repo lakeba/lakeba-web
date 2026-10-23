@@ -1,5 +1,6 @@
 ---
 import Portal from '../../layouts/Portal.astro';
+import { notifyAdmins } from '../../lib/notify';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
 import { dateTime, shortDate } from '../../lib/format';
@@ -15,7 +16,11 @@ if (Astro.request.method === 'POST') {
   const { error: insertError } = body
     ? await supabase.from('query_messages').insert({ query_id: id, author_id: userId, body })
     : { error: new Error('empty') };
-  if (!insertError) return Astro.redirect(`/board/${id}`);
+  if (!insertError) {
+    const { data: q } = await supabase.from('queries').select('subject, entity_id').eq('id', id).maybeSingle();
+    if (q) await notifyAdmins({ kind: 'admin_query', entityId: q.entity_id, origin: Astro.url.origin, link: `/admin/queries/${id}`, title: `New reply on a board question: ${q.subject}`, body: `${Astro.locals.profile?.email ?? 'An investor'} replied on “${q.subject}”.` });
+    return Astro.redirect(`/board/${id}`);
+  }
   error = 'Your reply could not be sent.';
 }
 

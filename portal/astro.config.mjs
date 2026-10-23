@@ -33,6 +33,12 @@ export default defineConfig({
       // Sender for portal emails; read at runtime. With Microsoft 365 it must be the signed-in mailbox (or one it may send as).
       MAIL_FROM: envField.string({ context: 'server', access: 'secret', default: 'Lakeba Investor Relations <no-reply@lakeba.com>' }),
       ANTHROPIC_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // Browser notifications (Web Push). Without the keys, push is simply off.
+      VAPID_PUBLIC_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      VAPID_PRIVATE_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      VAPID_SUBJECT: envField.string({ context: 'server', access: 'secret', default: 'mailto:info@lakeba.com' }),
+      // Staging tests only: extra push service address prefixes allowed (e.g. a local stand-in).
+      PUSH_TEST_ENDPOINTS: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Where public News & Media articles live (the marketing site).
       PUBLIC_SITE_URL: envField.string({ context: 'server', access: 'public', default: 'https://lakeba.github.io/lakeba-web' }),
     },

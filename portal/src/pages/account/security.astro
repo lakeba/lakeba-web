@@ -4,6 +4,7 @@ import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
 import { shortDate } from '../../lib/format';
 import { passkeyError, stepUpProblem, type Passkey } from '../../lib/passkeys';
+import { notifySecurity } from '../../lib/notify';
 
 const supabase = Astro.locals.supabase;
 const isAdmin = Astro.locals.profile?.role === 'admin';
@@ -18,7 +19,10 @@ if (Astro.request.method === 'POST') {
   if (intent === 'remove-mfa' && !isAdmin) {
     // Unenrolling needs an aal2 session, which the middleware already enforces.
     const { error } = await supabase.auth.mfa.unenroll({ factorId: field(form, 'factorId') });
-    if (!error) await supabase.rpc('log_event', { event_action: 'mfa_removed' });
+    if (!error) {
+      await supabase.rpc('log_event', { event_action: 'mfa_removed' });
+      await notifySecurity({ userId: Astro.locals.user!.id, origin: Astro.url.origin, title: 'Two-step verification was turned off', body: 'Two-step verification was just turned off for your Lakeba investor account. If this wasn’t you, turn it back on under Profile → Security and contact info@lakeba.com.' });
+    }
     notice = error ? 'Could not remove two-step verification.' : 'Two-step verification has been turned off.';
   } else if (intent === 'rename-passkey') {
     const name = field(form, 'name').slice(0, 120);
@@ -27,7 +31,11 @@ if (Astro.request.method === 'POST') {
   } else if (intent === 'remove-passkey') {
     const { error: e } = await supabase.auth.passkey.delete({ passkeyId: field(form, 'passkeyId') });
     if (e) error = passkeyError(e);
-    else { await supabase.rpc('log_event', { event_action: 'passkey_removed', event_detail: { passkey_id: field(form, 'passkeyId') } }); notice = 'Passkey removed.'; }
+    else {
+      await supabase.rpc('log_event', { event_action: 'passkey_removed', event_detail: { passkey_id: field(form, 'passkeyId') } });
+      await notifySecurity({ userId: Astro.locals.user!.id, origin: Astro.url.origin, title: 'A passkey was removed from your account', body: 'A passkey was just removed from your Lakeba investor account. If this wasn’t you, contact info@lakeba.com.' });
+      notice = 'Passkey removed.';
+    }
   }
 }
 

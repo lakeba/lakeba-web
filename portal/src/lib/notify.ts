@@ -1,5 +1,7 @@
 import { serviceClient } from './admin';
 import { sendMail } from './mail';
+import { categoryOf, pushText } from './notification-events';
+import { preferences, queuePush } from './push';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -48,12 +50,15 @@ async function companyOf(svc: Svc, entityId?: string) {
 
 /**
  * Tells a company's members (or the given users) about something new: an
- * in-app notification for each, plus an email for those who opted in.
+ * Inbox entry for each, plus an email and a browser notification for those
+ * who chose them for this kind (Profile → Notifications).
  * With entityId, links open the portal on that company and emails carry its
  * name. `emailLink` lets the email carry a different link (e.g. a tracked one).
+ * `pushDetail` is a public line for the browser notification (e.g. a document
+ * title); push texts are otherwise generic, as they can show on a locked screen.
  */
-export async function notifyMembers({ title, body, link, kind, userIds, origin, emailLink, email = true, entityId }: {
-  title: string; body: string; link: string; kind: string; userIds?: string[]; origin: string; emailLink?: string; email?: boolean; entityId?: string;
+export async function notifyMembers({ title, body, link, kind, userIds, origin, emailLink, email = true, entityId, pushDetail }: {
+  title: string; body: string; link: string; kind: string; userIds?: string[]; origin: string; emailLink?: string; email?: boolean; entityId?: string; pushDetail?: string;
 }) {
   const svc = serviceClient();
   const recipients = userIds ?? (await memberIds(entityId));
@@ -61,13 +66,51 @@ export async function notifyMembers({ title, body, link, kind, userIds, origin, 
   const company = await companyOf(svc, entityId);
   // Open the portal on the right company first (tracked /go/ links work signed out, so they stay as they are).
   const via = (href: string) => (company && href.startsWith('/') && !href.startsWith('/go/') ? `/company/${company.code}?next=${encodeURIComponent(href)}` : href);
+  const brand = company && company.relationship !== 'group' ? company.display_name : 'Lakeba';
 
   await svc.from('notifications').insert(recipients.map((user_id) => ({ user_id, kind, title, body, link: via(link), entity_id: entityId ?? null }))).throwOnError();
+  await queuePush(svc, recipients, kind, { ...pushText(kind, brand, pushDetail), url: via(link), tag: kind });
   if (!email) return recipients.length;
-  const { data: profiles } = await svc.from('profiles').select('email, notify_email').in('id', recipients);
-  const brand = company && company.relationship !== 'group' ? company.display_name : 'Lakeba';
+  const category = categoryOf(kind);
+  const prefs = category ? await preferences(svc, recipients, category.key) : null;
+  const emailTo = recipients.filter((id) => !prefs || prefs.get(id)?.email);
+  if (!emailTo.length) return recipients.length;
+  const { data: profiles } = await svc.from('profiles').select('email').in('id', emailTo);
   await Promise.allSettled(
-    (profiles ?? []).filter((p) => p.notify_email).map((p) => sendMail({ to: p.email, subject: title, text: body, link: new URL(via(emailLink ?? link), origin).href, brand, color: brand === 'Lakeba' ? undefined : company?.brand_color ?? undefined })),
+    (profiles ?? []).map((p) => sendMail({ to: p.email, subject: title, text: body, link: new URL(via(emailLink ?? link), origin).href, brand, color: brand === 'Lakeba' ? undefined : company?.brand_color ?? undefined })),
   );
   return recipients.length;
+}
+
+/** Group admins, plus the company admins of entityId when given. */
+export async function adminIds(entityId?: string | null) {
+  const svc = serviceClient();
+  const [{ data: admins }, { data: companyAdmins }] = await Promise.all([
+    svc.from('profiles').select('id').eq('role', 'admin'),
+    entityId ? svc.from('entity_admins').select('user_id').eq('entity_id', entityId) : Promise.resolve({ data: [] as { user_id: string }[] }),
+  ]);
+  return [...new Set([...(admins ?? []).map((a) => a.id), ...(companyAdmins ?? []).map((a) => a.user_id)])];
+}
+
+/** Tells admins (and that company's admins) about something investors did. Never throws: it must not break the investor's action. */
+export async function notifyAdmins({ kind, title, body, link, origin, entityId, pushDetail }: {
+  kind: string; title: string; body: string; link: string; origin: string; entityId?: string | null; pushDetail?: string;
+}) {
+  try {
+    const userIds = await adminIds(entityId);
+    return await notifyMembers({ kind, title, body, link, origin, userIds, pushDetail });
+  } catch (e) {
+    console.error('notifyAdmins failed', kind, (e as Error).message);
+    return 0;
+  }
+}
+
+/** A security notice to one person: Inbox, email and push, whatever their choices. */
+export async function notifySecurity({ userId, title, body, origin, pushDetail }: { userId: string; title: string; body: string; origin: string; pushDetail?: string }) {
+  try {
+    return await notifyMembers({ kind: 'security', userIds: [userId], title, body, link: '/account/security', origin, pushDetail });
+  } catch (e) {
+    console.error('notifySecurity failed', (e as Error).message);
+    return 0;
+  }
 }

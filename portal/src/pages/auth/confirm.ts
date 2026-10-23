@@ -1,9 +1,10 @@
 import type { APIRoute } from 'astro';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { safeNext } from '../../lib/supabase';
+import { recordSignIn } from '../../lib/sign-in';
 
 /** Landing point for emailed links: magic link, password reset, invitations. */
-export const GET: APIRoute = async ({ url, locals, redirect }) => {
+export const GET: APIRoute = async ({ url, locals, redirect, request }) => {
   const next = safeNext(url.searchParams.get('next'));
   const code = url.searchParams.get('code');
   const tokenHash = url.searchParams.get('token_hash');
@@ -17,6 +18,7 @@ export const GET: APIRoute = async ({ url, locals, redirect }) => {
       : { error: new Error('missing token') };
 
   if (error) return redirect('/login?error=link');
-  await supabase.rpc('log_event', { event_action: 'sign_in', event_detail: { method: 'email_link' } });
+  const { data: claims } = await supabase.auth.getClaims();
+  if (claims?.claims.sub) await recordSignIn({ supabase, userId: claims.claims.sub, method: 'email_link', request, origin: url.origin });
   return redirect(type === 'recovery' || type === 'invite' ? '/account/password' : next);
 };

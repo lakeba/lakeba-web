@@ -15,7 +15,6 @@ if (Astro.request.method === 'POST') {
     first_name: field(form, 'first_name'),
     last_name: field(form, 'last_name'),
     phone: field(form, 'phone') || null,
-    notify_email: form.get('notify_email') === 'on',
   }).eq('id', userId);
   if (!error) await supabase.rpc('log_event', { event_action: 'profile_updated' });
   notice = error ? 'Your changes could not be saved.' : 'Saved.';
@@ -39,10 +38,7 @@ const [{ data: profile }, { data: links }] = await Promise.all([
       </div>
       <div><label for="phone" class="label">Phone</label><input id="phone" name="phone" type="tel" value={profile?.phone ?? ''} autocomplete="tel" class="field" /></div>
       <div><p class="label">Email</p><p class="text-white/70">{profile?.email}</p><p class="mt-1 text-xs text-white/40">To change your sign-in email, ask in Board Q&amp;A.</p></div>
-      <label class="flex items-center gap-3 text-sm text-white/70">
-        <input type="checkbox" name="notify_email" checked={profile?.notify_email} class="size-4 accent-lk-blue" />
-        Email me when new documents, meetings or replies are published
-      </label>
+      <p class="text-sm text-white/55">Emails and browser notifications: <a href="/account/notifications" class="text-lk-blue hover:underline">choose in Notifications</a>.</p>
       <button class="btn-primary">Save</button>
     </form>
     <section class="card h-fit">

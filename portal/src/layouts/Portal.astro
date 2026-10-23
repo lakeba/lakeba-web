@@ -40,6 +40,11 @@ const { count: unread } = user
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="Lakeba Investors" />
+    <meta name="theme-color" content="#050b16" />
     <ThemeInit />
     <title>{title} · {brand} Investor Portal</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -92,6 +97,7 @@ const { count: unread } = user
               <p class="truncate px-3 py-2 text-xs text-white/45">{profile?.email}</p>
               <a href="/profile" class="block rounded-lg px-3 py-2 hover:bg-white/5">Profile</a>
               <a href="/account/security" class="block rounded-lg px-3 py-2 hover:bg-white/5">Security</a>
+              <a href="/account/notifications" class="block rounded-lg px-3 py-2 hover:bg-white/5">Notifications</a>
               <a href="/inbox" class="block rounded-lg px-3 py-2 hover:bg-white/5">Inbox</a>
               <form method="post" action="/logout"><button class="w-full rounded-lg px-3 py-2 text-left text-white/70 hover:bg-white/5 hover:text-white">Sign out</button></form>
             </div>

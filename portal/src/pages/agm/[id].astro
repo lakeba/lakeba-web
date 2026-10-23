@@ -1,5 +1,6 @@
 ---
 import Portal from '../../layouts/Portal.astro';
+import { notifyAdmins } from '../../lib/notify';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
 import { dateTime, longDate } from '../../lib/format';
@@ -41,6 +42,10 @@ if (Astro.request.method === 'POST') {
   if (field(form, 'intent') === 'question') {
     const body = field(form, 'body');
     const { error } = await supabase.from('meeting_questions').insert({ meeting_id: id, user_id: userId, body });
+    if (!error) {
+      const { data: mt } = await supabase.from('meetings').select('title, entity_id').eq('id', id).maybeSingle();
+      await notifyAdmins({ kind: 'admin_agm_question', entityId: mt?.entity_id, origin: Astro.url.origin, link: `/admin/agm/${id}`, title: `New question for ${mt?.title ?? 'a meeting'}`, body: `${Astro.locals.profile?.email ?? 'An investor'} sent a question for ${mt?.title ?? 'the meeting'}.` });
+    }
     notice = error ? { tone: 'error', text: 'Your question could not be sent.' } : { tone: 'success', text: 'Thanks — your question has been sent to the board for the meeting.' };
   }
 }

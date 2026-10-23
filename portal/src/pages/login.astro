@@ -4,6 +4,7 @@ import Alert from '../components/Alert.astro';
 import Turnstile from '../components/Turnstile.astro';
 import { safeNext } from '../lib/supabase';
 import { captchaToken, field } from '../lib/forms';
+import { recordSignIn } from '../lib/sign-in';
 
 const next = safeNext(Astro.url.searchParams.get('next'));
 let error = Astro.url.searchParams.get('error') === 'link' ? 'That link has expired or was already used. Please sign in again.' : '';
@@ -27,13 +28,13 @@ if (Astro.request.method === 'POST') {
     });
     sent = true;
   } else {
-    const { error: signInError } = await supabase.auth.signInWithPassword({
+    const { data: signedIn, error: signInError } = await supabase.auth.signInWithPassword({
       email,
       password: String(form.get('password') ?? ''),
       options: { captchaToken: captchaToken(form) },
     });
     if (!signInError) {
-      await supabase.rpc('log_event', { event_action: 'sign_in', event_detail: { method: 'password' } });
+      await recordSignIn({ supabase, userId: signedIn.user!.id, method: 'password', request: Astro.request, origin: Astro.url.origin });
       return Astro.redirect(next);
     }
     error = signInError.status === 429 ? 'Too many attempts. Please wait a minute and try again.' : 'Email or password is incorrect.';
