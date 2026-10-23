@@ -6,14 +6,19 @@ import { field } from '../../lib/forms';
 import { dateTime } from '../../lib/format';
 import { serviceClient } from '../../lib/admin';
 import { graph, graphConfigured } from '../../lib/graph';
+import { adminScope } from '../../lib/admin-company';
 import { AUTO_CONFIDENCE, AUTO_DELAY_MS, AUTO_PER_DAY, CATEGORIES, SELF_SERVICE, STATUS_LABELS, cancelAutoReply, pollMailboxes, prepare, sendReplyFor, shareholderContext, toBoardQa, type Category } from '../../lib/shareholder-email';
 
-// Group admins only (company admins can't open this page yet).
+// Group admins see every company; company admins only their own company's emails (no mailbox settings).
 const svc = serviceClient();
 const me = Astro.locals.user!.id;
+const scope = await adminScope(Astro.locals, Astro.url);
+const isGroupAdmin = scope.isGroupAdmin;
+const allowed = new Set(scope.companies.map((c) => c.id));
+const allowedIds = [...allowed].length ? [...allowed] : ['00000000-0000-0000-0000-000000000000'];
 const id = Astro.url.searchParams.get('id');
 const filterStatus = Astro.url.searchParams.get('status') ?? 'open';
-const filterCompany = Astro.url.searchParams.get('company') ?? '';
+const filterCompany = allowed.has(Astro.url.searchParams.get('company') ?? '') ? Astro.url.searchParams.get('company')! : '';
 let notice = '';
 let error = '';
 
@@ -22,6 +27,11 @@ if (Astro.request.method === 'POST') {
   const intent = field(form, 'intent');
   const emailId = field(form, 'email_id');
   const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
+  if (['settings', 'test-connection', 'poll'].includes(intent) && !isGroupAdmin) return new Response('Forbidden', { status: 403 });
+  if (emailId) {
+    const { data: owner } = await svc.from('shareholder_emails').select('entity_id').eq('id', emailId).maybeSingle();
+    if (!owner || !allowed.has(owner.entity_id)) return new Response('Forbidden', { status: 403 });
+  }
   try {
     if (intent === 'settings') {
       const mailbox = field(form, 'mailbox').toLowerCase() || null;
@@ -68,7 +78,7 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const { data: companies } = await svc.from('entities').select('id, code, display_name, shareholder_mailbox, email_mode, email_signature, email_auto_categories').neq('portal', 'portfolio').order('sort');
+const { data: companies } = await svc.from('entities').select('id, code, display_name, shareholder_mailbox, email_mode, email_signature, email_auto_categories').neq('portal', 'portfolio').in('id', allowedIds).order('sort');
 const { data: sync } = await svc.from('email_sync_state').select('mailbox, last_checked_at, last_error');
 const syncOf = new Map((sync ?? []).map((s) => [s.mailbox, s]));
 const nameOf = new Map((companies ?? []).map((c) => [c.id, c.display_name]));
@@ -76,10 +86,11 @@ const nameOf = new Map((companies ?? []).map((c) => [c.id, c.display_name]));
 let list = svc.from('shareholder_emails').select('id, entity_id, from_address, from_name, subject, received_at, category, status, sender_verified, user_id, summary').order('received_at', { ascending: false }).limit(100);
 if (filterStatus === 'open') list = list.in('status', ['new', 'needs_person', 'draft_ready', 'auto_scheduled', 'error']);
 else if (filterStatus !== 'all') list = list.eq('status', filterStatus);
-if (filterCompany) list = list.eq('entity_id', filterCompany);
+list = filterCompany ? list.eq('entity_id', filterCompany) : list.in('entity_id', allowedIds);
 const { data: emails } = await list;
 
-const { data: current } = id ? await svc.from('shareholder_emails').select('*').eq('id', id).maybeSingle() : { data: null };
+const { data: found } = id ? await svc.from('shareholder_emails').select('*').eq('id', id).maybeSingle() : { data: null };
+const current = found && allowed.has(found.entity_id) ? found : null;
 const [{ data: replies }, { data: person }] = current ? await Promise.all([
   svc.from('shareholder_email_replies').select('*').eq('email_id', current.id).order('created_at'),
   current.user_id ? svc.from('profiles').select('id, email, first_name, last_name').eq('id', current.user_id).single() : Promise.resolve({ data: null }),
@@ -91,7 +102,7 @@ const options = ctx ? [...ctx.statements.map((s) => ({ label: `Holding statement
 const draftLinks = (draft?.links ?? []) as { label: string; path: string }[];
 // Draft accuracy, last 30 days: how often the draft went out unchanged (the measure for switching on automatic replies).
 const since30 = new Date(Date.now() - 30 * 86400_000).toISOString();
-const { data: recent30 } = await svc.from('shareholder_emails').select('id, entity_id, received_at, category, status, auto_send_at, shareholder_email_replies(kind, body, links, automatic, sent_at)').gte('received_at', since30).neq('status', 'ignored');
+const { data: recent30 } = await svc.from('shareholder_emails').select('id, entity_id, received_at, category, status, auto_send_at, shareholder_email_replies(kind, body, links, automatic, sent_at)').gte('received_at', since30).neq('status', 'ignored').in('entity_id', allowedIds);
 const norm = (t: string) => t.replace(/\r/g, '').replace(/\s+/g, ' ').trim();
 const accuracy = new Map<string, { emails: number; sent: number; unchanged: number; auto: number }>();
 for (const r of recent30 ?? []) {
@@ -203,9 +214,9 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
         ))}
         <form class="ml-auto flex items-center gap-2">
           <input type="hidden" name="status" value={filterStatus} />
-          <select name="company" class="field !w-auto !py-1.5 text-sm" onchange="this.form.submit()"><option value="">All companies</option>{(companies ?? []).map((c) => <option value={c.id} selected={c.id === filterCompany}>{c.display_name}</option>)}</select>
+          {(companies ?? []).length > 1 && <select name="company" class="field !w-auto !py-1.5 text-sm" onchange="this.form.submit()"><option value="">All companies</option>{(companies ?? []).map((c) => <option value={c.id} selected={c.id === filterCompany}>{c.display_name}</option>)}</select>}
         </form>
-        <form method="post"><button name="intent" value="poll" class="btn-ghost !py-1.5 text-sm">Check mailboxes now</button></form>
+        {isGroupAdmin && <form method="post"><button name="intent" value="poll" class="btn-ghost !py-1.5 text-sm">Check mailboxes now</button></form>}
       </div>
       <section class="card overflow-x-auto !p-0">
         <table class="w-full text-left text-sm">
@@ -256,7 +267,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
         </table>
       </section>
 
-      <details class="card mt-6">
+      {isGroupAdmin && <details class="card mt-6">
         <summary class="cursor-pointer text-lg font-bold">Mailbox settings</summary>
         <p class="mt-2 text-sm text-white/55">Each company’s shareholder mailbox. <strong>Review</strong>: read and prepare drafts; a person sends. <strong>Automatic</strong>: the chosen request types are answered by themselves, {AUTO_DELAY_MS / 60000} minutes after arrival (cancel in that time), only for verified, registered shareholders (colleagues too), never for forwarded emails, when Claude is at least {Math.round(AUTO_CONFIDENCE * 100)}% sure, at most {AUTO_PER_DAY} a day per shareholder and not twice for the same request. Everything else stays for a person.</p>
         <div class="mt-4 space-y-4">
@@ -277,7 +288,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
             );
           })}
         </div>
-      </details>
+      </details>}
     </>
   )}
 </Admin>
