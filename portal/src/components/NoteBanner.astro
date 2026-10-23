@@ -1,0 +1,29 @@
+---
+import { holdingAnchor, pendingNotes } from '../lib/note-banner';
+// Shown at the top of every portal page while the person has notes on their holdings they haven't closed.
+const { supabase, user } = Astro.locals;
+const notes = user ? await pendingNotes(supabase, user.id) : [];
+const one = notes.length === 1 ? notes[0] : null;
+const here = Astro.url.pathname + Astro.url.search;
+// One note: open that holding on its company's dashboard. Several: the dashboard.
+const href = one
+  ? `${one.companyCode ? `/company/${one.companyCode}?next=${encodeURIComponent(`/#${holdingAnchor(one.holderId, one.classId)}`)}` : `/#${holdingAnchor(one.holderId, one.classId)}`}`
+  : '/';
+---
+
+{notes.length > 0 && (
+  <div class="mb-6 flex items-center gap-3 rounded-2xl border border-lk-orange/40 bg-lk-orange/10 px-5 py-3.5 text-sm" role="status">
+    <svg viewBox="0 0 24 24" class="size-5 shrink-0 text-lk-orange" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10.3 3.9 1.8 18.4A2 2 0 0 0 3.5 21.4h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 17h.01" /></svg>
+    <p class="min-w-0 flex-1">
+      <span class="font-semibold text-white">{one ? 'There’s a note on one of your holdings' : `There are notes on ${notes.length} of your holdings`}</span>
+      <span class="text-white/65">{one ? ` · ${one.holder}, ${one.className.toLowerCase()}` : ' · look for the warning icon next to the shares'}</span>
+    </p>
+    <a href={href} class="shrink-0 font-semibold text-white underline-offset-4 hover:underline">{one ? 'Read the note' : 'View holdings'} →</a>
+    <form method="post" action="/api/note-banner" class="shrink-0">
+      <input type="hidden" name="next" value={here} />
+      <button class="grid size-8 place-items-center rounded-full text-white/55 transition hover:bg-white/10 hover:text-white" aria-label="Close and don’t show again" title="Close and don’t show again">
+        <svg viewBox="0 0 24 24" class="size-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6 6 18" /></svg>
+      </button>
+    </form>
+  </div>
+)}

@@ -5,6 +5,7 @@ import ThemeInit from '../../../src/components/ThemeInit.astro';
 import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 import LinkedInIcon from '../components/LinkedInIcon.astro';
 import { brandName } from '../lib/companies';
+import NoteBanner from '../components/NoteBanner.astro';
 interface Props { title: string }
 const { title } = Astro.props;
 const { profile, supabase, user, company, companies, adminOf, features } = Astro.locals;
@@ -105,6 +106,7 @@ const { count: unread } = user
       </nav>
     </header>
     <main class="container-x py-10">
+      <NoteBanner />
       <slot />
     </main>
     <footer class="container-x flex flex-col justify-between gap-2 border-t border-white/5 py-8 text-xs text-white/35 sm:flex-row">

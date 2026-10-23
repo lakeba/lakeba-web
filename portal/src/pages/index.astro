@@ -3,6 +3,7 @@ import Portal from '../layouts/Portal.astro';
 import Sparkline from '../components/Sparkline.astro';
 import LinkedInCard from '../components/LinkedInCard.astro';
 import HoldingNote from '../components/HoldingNote.astro';
+import { holdingAnchor } from '../lib/note-banner';
 import { inCompany, isShareClass, latestPrices, loadPositions, loadPrices, sourceLabels } from '../lib/holdings';
 import { myHolderIds, onBoardOf, onlyMyDocuments } from '../lib/scope';
 import { loadNews } from '../lib/news';
@@ -113,7 +114,7 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
        so a single holding sits next to the price chart. -->
   <div class="mt-10 grid gap-4 lg:grid-cols-2">
     {positions.length ? positions.map((p) => (
-      <article class="card" aria-label={`Holding: ${p.holder.name}`}>
+      <article class="card scroll-mt-36" id={holdingAnchor(p.holder.id, p.row.share_class_id)} aria-label={`Holding: ${p.holder.name}`}>
         <div class="flex items-start justify-between gap-4">
           <div>
             <h2 class="text-lg font-bold">{p.holder.name}</h2>
@@ -237,3 +238,14 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
     </section>
   </div>
 </Portal>
+
+<script>
+  // Arriving from the notes banner ("Read the note"): show that holding's note.
+  if (location.hash.startsWith('#holding-')) {
+    const card = document.getElementById(location.hash.slice(1));
+    const note = card?.querySelector<HTMLElement>('.holding-note');
+    if (card) card.scrollIntoView({ block: 'center' });
+    note?.focus({ preventScroll: true });
+  }
+</script>
+

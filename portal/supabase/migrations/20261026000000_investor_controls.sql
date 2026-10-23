@@ -63,3 +63,20 @@ create policy "holding_notes: company admins" on public.holding_notes
   using (exists (select 1 from public.share_classes c where c.id = share_class_id and public.is_entity_admin(c.entity_id)))
   with check (exists (select 1 from public.share_classes c where c.id = share_class_id and public.is_entity_admin(c.entity_id)));
 revoke all on public.holding_notes from anon;
+
+-- "There's a note on one of your holdings" banner: closing it is remembered per
+-- person and note version, so it returns only when a note is added or changed.
+create table public.holding_note_dismissals (
+  user_id uuid not null references public.profiles (id) on delete cascade,
+  holder_id uuid not null,
+  share_class_id uuid not null,
+  note_updated_at timestamptz not null,
+  dismissed_at timestamptz not null default now(),
+  primary key (user_id, holder_id, share_class_id)
+);
+alter table public.holding_note_dismissals enable row level security;
+create policy "holding_note_dismissals: own" on public.holding_note_dismissals
+  for all to authenticated
+  using (user_id = (select auth.uid()))
+  with check (user_id = (select auth.uid()) and (select public.is_holder_member(holder_id)));
+revoke all on public.holding_note_dismissals from anon;
