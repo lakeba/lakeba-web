@@ -8,9 +8,9 @@ import { rememberOrigin, startNotificationWorker } from './lib/notify-jobs';
 startNotificationWorker();
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login'];
+const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login', '/e'];
 /** Pages a signed-in user can reach before finishing MFA. */
-const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go'];
+const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 
 const matches = (path: string, list: string[]) => list.some((p) => path === p || path.startsWith(`${p}/`));
 

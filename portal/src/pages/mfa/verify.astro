@@ -3,11 +3,17 @@ import Auth from '../../layouts/Auth.astro';
 import Alert from '../../components/Alert.astro';
 import { safeNext } from '../../lib/supabase';
 import { field } from '../../lib/forms';
+import { serviceClient } from '../../lib/admin';
 
 const supabase = Astro.locals.supabase;
 const next = safeNext(Astro.url.searchParams.get('next'));
 // Also reachable after a passkey sign-in, to enter the code for changes that Supabase still guards with it.
 if (!Astro.locals.mfaEnrolled || Astro.locals.user?.codeVerified) return Astro.redirect(next);
+
+// A passkey (checked with Face ID, Touch ID or a PIN) counts as two-step too: offer it instead of the code.
+// Not when they already used one: Supabase itself still wants the code for changing two-step or passkeys.
+const { data: passkeys } = Astro.locals.user?.strongBy === 'passkey' ? { data: [] } : await serviceClient().auth.admin.passkey.listPasskeys({ userId: Astro.locals.user!.id });
+const offerPasskey = (passkeys ?? []).length > 0;
 
 let error = '';
 if (Astro.request.method === 'POST') {
@@ -25,8 +31,18 @@ if (Astro.request.method === 'POST') {
 }
 ---
 
-<Auth title="Enter your code" subtitle="Open your authenticator app and enter the 6-digit code for Lakeba.">
+<Auth title="Enter your code" subtitle={offerPasskey ? 'Use your passkey, or enter the 6-digit code from your authenticator app.' : 'Open your authenticator app and enter the 6-digit code for Lakeba.'}>
   {error && <div class="mb-5"><Alert tone="error">{error}</Alert></div>}
+  {offerPasskey && (
+    <div id="passkey-box" class="mb-5 hidden">
+      <button type="button" id="passkey-signin" class="btn-primary flex w-full items-center justify-center gap-2" data-next={next}>
+        <svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 9.5-4.9"/><circle cx="18" cy="13" r="2.5"/><path d="M18 15.5V21l1.5-1.2M18 18.5h1.5"/></svg>
+        Use your passkey instead
+      </button>
+      <p id="passkey-error" class="mt-3 hidden text-sm text-lk-red" role="alert"></p>
+      <div class="mt-5 flex items-center gap-3 text-xs text-white/35"><span class="h-px flex-1 bg-white/10"></span>or enter your code<span class="h-px flex-1 bg-white/10"></span></div>
+    </div>
+  )}
   <form method="post" class="space-y-4">
     <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus aria-label="6-digit code" class="field text-center font-mono text-2xl tracking-[0.5em]" />
     <button class="btn-primary w-full">Verify</button>
@@ -35,3 +51,23 @@ if (Astro.request.method === 'POST') {
     <button class="text-sm text-white/60 hover:text-white">Use a different account</button>
   </form>
 </Auth>
+
+<script>
+  import { passkeysSupported, signInWithPasskey } from '../../lib/passkey-browser';
+
+  // Same as the sign-in page's passkey button: a passkey sign-in with Face ID / Touch ID / a PIN counts as two-step.
+  const box = document.getElementById('passkey-box');
+  const button = document.getElementById('passkey-signin') as HTMLButtonElement | null;
+  const message = document.getElementById('passkey-error');
+  if (box && button && message && passkeysSupported()) {
+    box.classList.remove('hidden');
+    button.addEventListener('click', async () => {
+      button.disabled = true;
+      message.classList.add('hidden');
+      const result = await signInWithPasskey(button.dataset.next ?? '/').catch(() => ({ error: 'Something went wrong. Please try again.' }) as { error?: string; redirect?: string });
+      if (result.redirect) return location.assign(result.redirect);
+      button.disabled = false;
+      if (result.error) { message.textContent = result.error; message.classList.remove('hidden'); }
+    });
+  }
+</script>

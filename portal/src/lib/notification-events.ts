@@ -24,6 +24,7 @@ export const CATEGORIES: Category[] = [
   { key: 'admin_agm', audience: 'admin', label: 'AGM questions', description: 'An investor sent a question for a meeting.', email: false, push: true, kinds: ['admin_agm_question'] },
   { key: 'admin_votes', audience: 'admin', label: 'Proxy votes (daily summary)', description: 'Each morning, how many proxy votes were lodged the day before.', email: false, push: true, kinds: ['admin_votes_summary'] },
   { key: 'admin_signins', audience: 'admin', label: 'First sign-ins', description: 'An investor signed in for the first time.', email: false, push: true, kinds: ['admin_first_signin'] },
+  { key: 'admin_emails', audience: 'admin', label: 'Shareholder emails', description: 'An email to a shareholder mailbox has a reply ready or needs a person.', email: false, push: true, kinds: ['admin_email'] },
   { key: 'admin_ask', audience: 'admin', label: 'Ask Lakeba', description: 'An answer was rated 👎, or a cost or usage limit was reached.', email: true, push: true, kinds: ['ask_alert', 'admin_ask_feedback'] },
   { key: 'admin_security', audience: 'admin', label: 'Admin security', description: 'An admin account signed in from a new device, or someone’s two-step was reset.', email: true, push: true, locked: true, kinds: ['admin_security'] },
 ];
@@ -48,6 +49,7 @@ export function pushText(kind: string, brand: string, detail?: string): { title:
     case 'admin_agm_question': return { title: 'New AGM question', body: open };
     case 'admin_votes_summary': return { title: 'Proxy votes yesterday', body: detail ?? open };
     case 'admin_first_signin': return { title: 'An investor signed in for the first time', body: open };
+    case 'admin_email': return { title: 'New shareholder email', body: open };
     case 'ask_alert': case 'admin_ask_feedback': return { title: 'Ask Lakeba needs a look', body: open };
     case 'admin_security': return { title: 'Admin security alert', body: detail ?? open };
   }

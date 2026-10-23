@@ -37,6 +37,15 @@ export default defineConfig({
       VAPID_PUBLIC_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       VAPID_PRIVATE_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       VAPID_SUBJECT: envField.string({ context: 'server', access: 'secret', default: 'mailto:info@lakeba.com' }),
+      // Shareholder mailboxes (Microsoft 365, via Microsoft Graph). Without them, email reading is off.
+      // Certificate (MS_CLIENT_CERT_FILE: a PEM with the private key and certificate) or a client secret.
+      MS_TENANT_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      MS_CLIENT_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      MS_CLIENT_CERT_FILE: envField.string({ context: 'server', access: 'secret', optional: true }),
+      MS_CLIENT_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // Tests only: stand-in Microsoft services.
+      MS_GRAPH_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://graph.microsoft.com/v1.0' }),
+      MS_LOGIN_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://login.microsoftonline.com' }),
       // Staging tests only: extra push service address prefixes allowed (e.g. a local stand-in).
       PUSH_TEST_ENDPOINTS: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Where public News & Media articles live (the marketing site).
