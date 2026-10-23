@@ -30,7 +30,7 @@ const { data: ventures } = await supabase
   .from('ventures')
   .select('slug, name, tagline, stage, lakeba_stake, website, status, entity_id, entities(website), venture_updates(title, body, happened_on)')
   .order('sort');
-// The card's website, else the company's (from the investor data workbook).
+// The venture's website, else the company's (from the investor data workbook).
 const siteOf = (v: { website: string | null; entities: unknown }) => v.website || (v.entities as { website: string | null } | null)?.website || null;
 const domain = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
 const groups = [
@@ -38,53 +38,54 @@ const groups = [
   { status: 'building', title: 'Building with LakebaOS', note: 'Ventures co-founded through LakebaOS, where Lakeba holds up to 49%.' },
   { status: 'exited', title: 'Exits' },
 ];
-const accents = ['from-lk-blue/25', 'from-lk-orange/25', 'from-lk-green/25', 'from-lk-red/25'];
+const updatesOf = (v: { venture_updates: unknown }) => [...(v.venture_updates as { title: string; body: string; happened_on: string }[])].sort((a, b) => b.happened_on.localeCompare(a.happened_on));
 ---
 
 <Portal title="Portfolio">
   <PageHeader eyebrow="Portfolio" title="What your shares own" subtitle="Lakeba’s ventures, its stake in each, and their latest milestones." />
   {myGroupPct > 0 && (
     <p class="mb-8 max-w-3xl rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-sm text-white/65">
-      You hold <span class="font-semibold text-white">{percent.format(myGroupPct)}</span> of Lakeba Group. Each card shows your indicative <span class="font-semibold text-white">look-through</span> interest: your share of Lakeba × Lakeba’s share of that company. It is indirect ownership through Lakeba, not shares you hold yourself.
+      You hold <span class="font-semibold text-white">{percent.format(myGroupPct)}</span> of Lakeba Group. Each row shows your indicative <span class="font-semibold text-white">look-through</span> interest: your share of Lakeba × Lakeba’s share of that company. It is indirect ownership through Lakeba, not shares you hold yourself.
     </p>
   )}
   {ventures?.length ? groups.map((g) => {
     const items = ventures.filter((v) => v.status === g.status);
+    const anyUpdates = items.some((v) => updatesOf(v).length > 0);
+    // Lakeba stake: the stated figure, else Lakeba's share of the register.
+    const stakeText = (v: (typeof items)[number]) => v.lakeba_stake != null ? `${Number(v.lakeba_stake)}%` : Number.isFinite(lakebaPct(v.entity_id)) ? `${Math.round(lakebaPct(v.entity_id) * 1000) / 10}%` : null;
     return items.length > 0 && (
       <section class="mb-12">
         <h2 class="text-xl font-bold">{g.title}</h2>
         {g.note && <p class="mt-1 text-sm text-white/50">{g.note}</p>}
-        <div class="mt-5 grid gap-4 md:grid-cols-2">
-          {items.map((v, i) => {
-            const updates = [...(v.venture_updates as { title: string; body: string; happened_on: string }[])].sort((a, b) => b.happened_on.localeCompare(a.happened_on));
-            return (
-              <article class="card relative overflow-hidden">
-                <div class:list={['pointer-events-none absolute inset-0 bg-gradient-to-br to-transparent opacity-50', accents[i % accents.length]]}></div>
-                <div class="relative">
-                  <div class="flex items-start justify-between gap-4">
-                    <div>
-                      <h3 class="text-2xl font-bold">{v.name}</h3>
-                      <p class="mt-1 text-sm text-white/60">{v.tagline}</p>
-                      {siteOf(v) && <a href={siteOf(v)} target="_blank" rel="noopener" class="mt-2 inline-block text-sm font-medium text-lk-blue hover:underline">{domain(siteOf(v)!)} ↗</a>}
-                    </div>
-                    {v.lakeba_stake != null && (
-                      <div class="text-right"><p class="font-display text-3xl font-bold text-white">{Number(v.lakeba_stake)}%</p><p class="text-[11px] uppercase tracking-widest text-white/40">Lakeba stake</p></div>
-                    )}
-                  </div>
-                  <p class="mt-4 inline-block rounded-full border border-white/10 px-3 py-1 text-xs text-white/60">{v.stage}</p>
-                  {myGroupPct > 0 && Number.isFinite(lakebaPct(v.entity_id)) && (
-                    <p class="mt-3 text-sm text-white/60">Your look-through interest: <span class="font-semibold text-white">{smallPercent.format(myGroupPct * lakebaPct(v.entity_id))}</span></p>
-                  )}
-                  {updates.length > 0 && (
-                    <ol class="mt-6 space-y-3 border-l border-white/10 pl-4">
-                      {updates.slice(0, 3).map((u) => (
-                        <li><p class="text-xs text-white/40">{shortDate.format(new Date(u.happened_on))}</p><p class="text-sm font-semibold text-white">{u.title}</p>{u.body && <p class="text-sm text-white/55">{u.body}</p>}</li>
-                      ))}
-                    </ol>
-                  )}                </div>
-              </article>
-            );
-          })}
+        <div class="card mt-5 overflow-x-auto !p-0">
+          <table class="w-full text-left text-sm">
+            <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40">
+              <tr>
+                <th class="px-5 py-3 font-medium">Company</th>
+                <th class="px-5 py-3 font-medium">Type</th>
+                <th class="px-5 py-3 text-right font-medium">Lakeba stake</th>
+                {myGroupPct > 0 && <th class="px-5 py-3 text-right font-medium">Your look-through</th>}
+                {anyUpdates && <th class="px-5 py-3 font-medium">Latest update</th>}
+                <th class="px-5 py-3 font-medium">Website</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-white/5">
+              {items.map((v) => {
+                const latest = updatesOf(v)[0];
+                const site = siteOf(v);
+                return (
+                  <tr class="align-top">
+                    <td class="px-5 py-4"><p class="font-semibold text-white">{v.name}</p>{v.tagline && <p class="mt-0.5 text-xs text-white/50">{v.tagline}</p>}</td>
+                    <td class="whitespace-nowrap px-5 py-4 text-white/60">{v.stage}</td>
+                    <td class="px-5 py-4 text-right font-semibold text-white">{stakeText(v) ?? <span class="font-normal text-white/30">—</span>}</td>
+                    {myGroupPct > 0 && <td class="px-5 py-4 text-right">{Number.isFinite(lakebaPct(v.entity_id)) ? smallPercent.format(myGroupPct * lakebaPct(v.entity_id)) : <span class="text-white/30">—</span>}</td>}
+                    {anyUpdates && <td class="px-5 py-4">{latest ? <><p class="text-white/85">{latest.title}</p><p class="text-xs text-white/40">{shortDate.format(new Date(latest.happened_on))}</p></> : <span class="text-white/30">—</span>}</td>}
+                    <td class="whitespace-nowrap px-5 py-4">{site ? <a href={site} target="_blank" rel="noopener" class="text-lk-blue hover:underline">{domain(site)} ↗</a> : <span class="text-white/30">—</span>}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
         </div>
       </section>
     );
