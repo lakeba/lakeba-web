@@ -1,8 +1,8 @@
-import { createHash, randomBytes } from 'node:crypto';
 import { serviceClient } from './admin';
 import { client as claude } from './ask';
 import { getMessage, graphConfigured, newMessages, sendReply, setCategory, type GraphMessage } from './graph';
 import { notifyAdmins } from './notify';
+import { createSignInLink } from './sign-in-links';
 
 // Shareholder emails (Admin → Shareholder emails). Each company's shareholders@
 // mailbox is read; every email is checked and matched, sorted by Claude Haiku,
@@ -298,19 +298,6 @@ export async function cancelAutoReply(svc: Svc, emailId: string, by: string) {
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 export const LINK_HOURS = 1;
-/**
- * A one-time sign-in link (valid LINK_HOURS) that opens the given portal page
- * for this person: /e/<code>. Each link has its own code (only its hash is
- * stored); the Supabase sign-in is created when it's used (see pages/e/[token]).
- */
-async function signInLink(svc: Svc, userId: string, origin: string, next: string, emailId: string) {
-  const token = randomBytes(24).toString('base64url');
-  await svc.from('email_sign_in_links').insert({
-    token_hash: createHash('sha256').update(token).digest('hex'), user_id: userId, next_path: next, email_id: emailId,
-    expires_at: new Date(Date.now() + LINK_HOURS * 3600_000).toISOString(),
-  }).throwOnError();
-  return `${origin}/e/${token}`;
-}
 
 export async function sendReplyFor(svc: Svc, { emailId, body, links, sentBy, origin, automatic = false }: {
   emailId: string; body: string; links: { label: string; path: string }[]; sentBy: string | null; origin: string; automatic?: boolean;
@@ -328,7 +315,7 @@ export async function sendReplyFor(svc: Svc, { emailId, body, links, sentBy, ori
   let linksHtml = '';
   if (links.length && profile && e.user_id) {
     // Each item is its own one-time sign-in link, so they don't cancel each other.
-    const urls = await Promise.all(links.map((l) => signInLink(svc, e.user_id!, origin, via(l.path), emailId)));
+    const urls = await Promise.all(links.map((l) => createSignInLink(svc, { userId: e.user_id!, origin, next: via(l.path), hours: LINK_HOURS, emailId })));
     linksHtml = links.map((l, i) => `<p style="margin:16px 0"><a href="${escape(urls[i])}" style="background:#276ae7;color:#fff;padding:11px 18px;border-radius:10px;text-decoration:none;font-weight:600;display:inline-block">Open: ${escape(l.label)}</a></p>`).join('')
       + `<p style="color:#6b7a90;font-size:13px">Each button signs you in to the investor portal once, within ${LINK_HOURS === 1 ? 'an hour' : `${LINK_HOURS} hours`}, and only for you. Everything is always available at <a href="${escape(origin)}">${escape(origin.replace(/^https?:\/\//, ''))}</a>.</p>`;
   }

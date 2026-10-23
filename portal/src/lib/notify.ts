@@ -2,6 +2,10 @@ import { serviceClient } from './admin';
 import { sendMail } from './mail';
 import { categoryOf, pushText } from './notification-events';
 import { preferences, queuePush } from './push';
+import { createSignInLink } from './sign-in-links';
+
+/** How long the one-time buttons in notification emails work. */
+const NOTIFY_LINK_HOURS = 72;
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -75,9 +79,16 @@ export async function notifyMembers({ title, body, link, kind, userIds, origin, 
   const prefs = category ? await preferences(svc, recipients, category.key) : null;
   const emailTo = recipients.filter((id) => !prefs || prefs.get(id)?.email);
   if (!emailTo.length) return recipients.length;
-  const { data: profiles } = await svc.from('profiles').select('email').in('id', emailTo);
+  const { data: profiles } = await svc.from('profiles').select('id, email').in('id', emailTo);
+  // A personal one-time button that signs them in and opens it (not for tracked links, security or admin emails).
+  const personal = !emailLink && link.startsWith('/') && category?.audience === 'investor' && !category.locked;
   await Promise.allSettled(
-    (profiles ?? []).map((p) => sendMail({ to: p.email, subject: title, text: body, link: new URL(via(emailLink ?? link), origin).href, brand, color: brand === 'Lakeba' ? undefined : company?.brand_color ?? undefined })),
+    (profiles ?? []).map(async (p) => sendMail({
+      to: p.email, subject: title, brand, color: brand === 'Lakeba' ? undefined : company?.brand_color ?? undefined,
+      text: personal ? `${body}\n\nThe button below signs you in once, within ${NOTIFY_LINK_HOURS / 24} days, and only for you.` : body,
+      link: personal ? await createSignInLink(svc, { userId: p.id, origin, next: via(link), hours: NOTIFY_LINK_HOURS }) : new URL(via(emailLink ?? link), origin).href,
+      linkLabel: personal ? 'Open in the portal' : undefined,
+    })),
   );
   return recipients.length;
 }

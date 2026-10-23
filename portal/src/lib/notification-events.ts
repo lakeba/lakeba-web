@@ -18,7 +18,7 @@ export const CATEGORIES: Category[] = [
   { key: 'meetings', audience: 'investor', label: 'Meetings and voting', description: 'Proxy voting opens, a reminder the day before it closes, and results.', email: true, push: true, kinds: ['meeting', 'proxy_reminder', 'meeting_results'] },
   { key: 'news', audience: 'investor', label: 'News and announcements', description: 'Company news, announcements and campaigns.', email: true, push: true, kinds: ['news', 'linkedin', 'reminder'] },
   { key: 'replies', audience: 'investor', label: 'Answers to your questions', description: 'The board answered your question, or your AGM question was answered.', email: true, push: true, kinds: ['query_reply', 'agm_answer'] },
-  { key: 'holdings', audience: 'investor', label: 'Notes on your holdings', description: 'A note was added to one of your holdings.', email: true, push: true, kinds: ['holding_note'] },
+  { key: 'holdings', audience: 'investor', label: 'Your holdings', description: 'A new holding statement is ready, or a note was added to one of your holdings.', email: true, push: true, kinds: ['holding_note', 'statement_ready'] },
   { key: 'security', audience: 'investor', label: 'Account security', description: 'A passkey was added or removed, your password changed, or two-step verification changed.', email: true, push: true, locked: true, kinds: ['security'] },
   { key: 'admin_questions', audience: 'admin', label: 'Board Q&A', description: 'A new question or an investor’s reply.', email: false, push: true, kinds: ['admin_query'] },
   { key: 'admin_agm', audience: 'admin', label: 'AGM questions', description: 'An investor sent a question for a meeting.', email: false, push: true, kinds: ['admin_agm_question'] },
@@ -44,6 +44,7 @@ export function pushText(kind: string, brand: string, detail?: string): { title:
     case 'query_reply': return { title: 'The board answered your question', body: open };
     case 'agm_answer': return { title: 'Your meeting question was answered', body: open };
     case 'holding_note': return { title: 'A note was added to your holding', body: open };
+    case 'statement_ready': return { title: 'Your holding statement is ready', body: open };
     case 'security': return { title: 'Security alert for your account', body: detail ?? open };
     case 'admin_query': return { title: 'Board Q&A: new message from an investor', body: open };
     case 'admin_agm_question': return { title: 'New AGM question', body: open };

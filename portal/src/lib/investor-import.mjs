@@ -352,5 +352,8 @@ export async function runImport({ data, name, svc, apply, target }) {
   } else if (apply) {
     lines.splice(3, 0, '**Not imported** because of the problems below.', '');
   }
-  return { lines, problems, warnings: warn, applied: apply && !problems.length };
+  // Holders whose holdings are new or changed in this file (for "your holding statement is ready").
+  const changedHolders = [...new Set(report.holdings.filter((x) => x.status === 'new' || (Array.isArray(x.status) && x.status.length)).map((x) => x.h.ref))];
+  const latestAsAt = report.holdings.filter((x) => x.status === 'new' || (Array.isArray(x.status) && x.status.length)).map((x) => x.h.as_at).sort().at(-1) ?? null;
+  return { lines, problems, warnings: warn, applied: apply && !problems.length, changedHolders, latestAsAt };
 }

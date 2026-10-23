@@ -6,6 +6,7 @@ import Markdown from '../../../components/Markdown.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { runImport } from '../../../lib/investor-import.mjs';
+import { notifyMembers } from '../../../lib/notify';
 
 /*
  * Import the investor data workbook. Upload → dry run with a reconciliation
@@ -21,6 +22,9 @@ let uploadId = '';
 let fileName = '';
 let canApply = false;
 let applied = false;
+let changedHolders: string[] = [];
+let latestAsAt: string | null = null;
+let notice = '';
 const log = (action: string, detail: Record<string, unknown>) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
 
 if (Astro.request.method === 'POST') {
@@ -58,12 +62,32 @@ if (Astro.request.method === 'POST') {
         const result = await runImport({ data: new Uint8Array(await blob.arrayBuffer()), name: fileName, svc, apply: true, target: 'this portal' });
         report = result.lines.join('\n');
         applied = result.applied;
+        if (applied) { changedHolders = result.changedHolders; latestAsAt = result.latestAsAt; }
         if (!applied) error = 'Nothing was imported: the file has problems (see below).';
         await svc.storage.from('documents').remove([`imports/${uploadId}.xlsx`]);
         await log('admin_applied_import', { file: fileName, applied });
         uploadId = '';
       }
     }
+  } else if (intent === 'notify-statements') {
+    // "Your holding statement is ready" for the people linked to holders whose holdings changed.
+    const refs = (JSON.parse(field(form, 'refs') || '[]') as string[]).slice(0, 5000);
+    const asAt = field(form, 'as_at');
+    const { data: hs } = refs.length ? await svc.from('holders').select('id, registry_ref').in('registry_ref', refs) : { data: [] };
+    const { data: members } = hs?.length ? await svc.from('holder_members').select('user_id, holder_id').in('holder_id', hs.map((h) => h.id)) : { data: [] };
+    const byUser = Map.groupBy(members ?? [], (m) => m.user_id);
+    const when = asAt ? new Date(`${asAt}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '';
+    for (const [userId, rows] of byUser) {
+      const one = rows.length === 1;
+      await notifyMembers({
+        kind: 'statement_ready', userIds: [userId], origin: Astro.url.origin,
+        link: one ? `/statement/${rows[0].holder_id}` : '/',
+        title: 'Your holding statement is ready',
+        body: `Your holdings${when ? ` as at ${when}` : ''} have been updated in the Lakeba investor portal. ${one ? 'Your holding statement is ready to open.' : `Statements for your ${rows.length} holdings are on your dashboard.`}`,
+      });
+    }
+    await log('admin_notified_statements', { holders: hs?.length ?? 0, people: byUser.size, as_at: asAt || null });
+    notice = `Told ${byUser.size} ${byUser.size === 1 ? 'person' : 'people'} their holding statement is ready (${hs?.length ?? 0} holders).`;
   }
 }
 ---
@@ -72,6 +96,15 @@ if (Astro.request.method === 'POST') {
   <PageHeader title="Import data" subtitle="Load companies, share classes, holders, people, access, holdings, boards and prices from the investor data workbook." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {applied && <div class="mb-6"><Alert tone="success">Imported {fileName}. Check Admin → Holders &amp; holdings and Investors. No invitations were sent.</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+  {applied && changedHolders.length > 0 && (
+    <form method="post" class="card mb-6 flex flex-wrap items-center justify-between gap-4">
+      <input type="hidden" name="refs" value={JSON.stringify(changedHolders)} />
+      <input type="hidden" name="as_at" value={latestAsAt ?? ''} />
+      <p class="text-sm text-white/75"><span class="font-semibold text-white">{changedHolders.length} holder{changedHolders.length === 1 ? '' : 's'}</span> have new or changed holdings. Tell their people that their holding statement is ready? (Inbox, plus email and browser notification by their choices; the email has a one-time button that opens the statement.)</p>
+      <button name="intent" value="notify-statements" class="btn-primary" onclick="return confirm('Send “your holding statement is ready” now?')">Tell them</button>
+    </form>
+  )}
 
   <section class="card mb-6">
     <h2 class="text-lg font-bold">1. Check a workbook</h2>

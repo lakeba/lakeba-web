@@ -5,7 +5,7 @@ import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
 import { dateTime } from '../../lib/format';
 import { serviceClient } from '../../lib/admin';
-import { graphConfigured } from '../../lib/graph';
+import { graph, graphConfigured } from '../../lib/graph';
 import { AUTO_CONFIDENCE, AUTO_DELAY_MS, AUTO_PER_DAY, CATEGORIES, SELF_SERVICE, STATUS_LABELS, cancelAutoReply, pollMailboxes, prepare, sendReplyFor, shareholderContext, toBoardQa, type Category } from '../../lib/shareholder-email';
 
 // Group admins only (company admins can't open this page yet).
@@ -30,6 +30,18 @@ if (Astro.request.method === 'POST') {
       const { error: e } = await svc.from('entities').update({ shareholder_mailbox: mailbox, email_mode: mode, email_auto_categories: autoCategories, email_signature: String(form.get('signature') ?? '').trim().slice(0, 500) }).eq('id', field(form, 'entity_id'));
       if (e) error = e.message.includes('check') ? 'That doesn’t look like an email address.' : e.message;
       else { await log('admin_saved_mailbox_settings', { entity_id: field(form, 'entity_id'), mailbox, mode, auto_categories: autoCategories }); notice = mode === 'auto' ? `Mailbox settings saved. Automatic replies are on for: ${autoCategories.map((c) => CATEGORIES[c as Category]).join('; ') || 'nothing yet (choose request types)'}.` : 'Mailbox settings saved.'; }
+    } else if (intent === 'test-connection') {
+      // Checks the saved mailbox: can the portal open its Inbox? (Name and count only; no emails are read.)
+      const { data: c } = await svc.from('entities').select('display_name, shareholder_mailbox').eq('id', field(form, 'entity_id')).single();
+      if (!c?.shareholder_mailbox) error = 'Save a mailbox address first.';
+      else {
+        try {
+          const inbox = await graph<{ totalItemCount: number }>(`/users/${encodeURIComponent(c.shareholder_mailbox)}/mailFolders/inbox?$select=totalItemCount`);
+          notice = `${c.display_name}: connected to ${c.shareholder_mailbox} (Inbox has ${inbox.totalItemCount} emails). You can set it to Review.`;
+        } catch (e) {
+          error = `${c.display_name}: can’t open ${c.shareholder_mailbox}. ${/403|denied/i.test(String((e as Error).message)) ? 'In Exchange, mark this mailbox for the portal app (CustomAttribute15 LakebaPortal) and allow up to an hour.' : (e as Error).message}`;
+        }
+      }
     } else if (intent === 'poll') {
       const r = await pollMailboxes(Astro.url.origin);
       notice = `Checked ${r.checked} mailbox${r.checked === 1 ? '' : 'es'}: ${r.emails} new email${r.emails === 1 ? '' : 's'}.`;
@@ -79,7 +91,7 @@ const options = ctx ? [...ctx.statements.map((s) => ({ label: `Holding statement
 const draftLinks = (draft?.links ?? []) as { label: string; path: string }[];
 // Draft accuracy, last 30 days: how often the draft went out unchanged (the measure for switching on automatic replies).
 const since30 = new Date(Date.now() - 30 * 86400_000).toISOString();
-const { data: recent30 } = await svc.from('shareholder_emails').select('id, category, status, auto_send_at, shareholder_email_replies(kind, body, links, automatic)').gte('received_at', since30).neq('status', 'ignored');
+const { data: recent30 } = await svc.from('shareholder_emails').select('id, entity_id, received_at, category, status, auto_send_at, shareholder_email_replies(kind, body, links, automatic, sent_at)').gte('received_at', since30).neq('status', 'ignored');
 const norm = (t: string) => t.replace(/\r/g, '').replace(/\s+/g, ' ').trim();
 const accuracy = new Map<string, { emails: number; sent: number; unchanged: number; auto: number }>();
 for (const r of recent30 ?? []) {
@@ -97,6 +109,20 @@ for (const r of recent30 ?? []) {
   }
   accuracy.set(cat, a);
 }
+// Response times per company, last 30 days: from arrival to the first reply.
+const median = (xs: number[]) => { if (!xs.length) return null; const v = [...xs].sort((a, b) => a - b); const m = Math.floor(v.length / 2); return v.length % 2 ? v[m] : (v[m - 1] + v[m]) / 2; };
+const duration = (min: number | null) => min == null ? '—' : min < 60 ? `${Math.round(min)} min` : min < 48 * 60 ? `${(min / 60).toFixed(1)} h` : `${Math.round(min / 1440)} days`;
+const responseTimes = [...Map.groupBy(recent30 ?? [], (r) => r.entity_id)].map(([entityId, rows]) => {
+  const person: number[] = [], auto: number[] = [];
+  let open = 0, oldestOpen = 0;
+  for (const r of rows) {
+    const sent = ((r.shareholder_email_replies ?? []) as { kind: string; automatic: boolean; sent_at: string | null }[]).filter((x) => x.kind === 'sent' && x.sent_at).sort((a, b) => a.sent_at!.localeCompare(b.sent_at!))[0];
+    const wait = (t: string) => (new Date(t).getTime() - new Date(r.received_at).getTime()) / 60000;
+    if (sent) (sent.automatic ? auto : person).push(wait(sent.sent_at!));
+    else if (['new', 'needs_person', 'draft_ready', 'auto_scheduled', 'error'].includes(r.status)) { open++; oldestOpen = Math.max(oldestOpen, wait(new Date().toISOString())); }
+  }
+  return { company: nameOf.get(entityId) ?? '—', received: rows.length, person: person.length, personMedian: median(person), auto: auto.length, autoMedian: median(auto), open, oldestOpen: open ? oldestOpen : null };
+});
 const badge = (s: string) => s === 'auto_scheduled' ? 'bg-lk-green/15 text-lk-green' : s === 'needs_person' ? 'bg-lk-orange/15 text-lk-orange' : s === 'draft_ready' ? 'bg-lk-blue/15 text-lk-blue' : s === 'replied' || s === 'handled' || s === 'board_qa' ? 'bg-lk-green/15 text-lk-green' : s === 'error' ? 'bg-lk-red/15 text-lk-red' : 'bg-white/10 text-white/50';
 const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filterStatus, ...(filterCompany ? { company: filterCompany } : {}), ...o })}`;
 ---
@@ -199,6 +225,23 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
       </section>
 
       <section class="card mt-6 overflow-x-auto">
+        <h2 class="text-lg font-bold">Response times, last 30 days</h2>
+        <p class="mt-1 text-sm text-white/55">From arrival to the first reply (middle value). “Waiting” counts emails not yet answered, with the longest wait.</p>
+        <table class="mt-4 w-full text-left text-sm">
+          <thead class="text-xs uppercase tracking-widest text-white/40"><tr><th class="py-2 pr-4 font-medium">Company</th><th class="py-2 pr-4 text-right font-medium">Emails</th><th class="py-2 pr-4 text-right font-medium">By a person</th><th class="py-2 pr-4 text-right font-medium">Automatic</th><th class="py-2 text-right font-medium">Waiting</th></tr></thead>
+          <tbody class="divide-y divide-white/5">
+            {responseTimes.map((t) => (
+              <tr><td class="py-2 pr-4 text-white/80">{t.company}</td><td class="py-2 pr-4 text-right">{t.received}</td>
+                <td class="py-2 pr-4 text-right">{t.person ? `${t.person} · ${duration(t.personMedian)}` : '—'}</td>
+                <td class="py-2 pr-4 text-right">{t.auto ? `${t.auto} · ${duration(t.autoMedian)}` : '—'}</td>
+                <td class:list={['py-2 text-right', t.oldestOpen != null && t.oldestOpen > 24 * 60 ? 'font-semibold text-lk-orange' : '']}>{t.open ? `${t.open} · longest ${duration(t.oldestOpen)}` : '—'}</td></tr>
+            ))}
+            {!responseTimes.length && <tr><td colspan="5" class="py-4 text-center text-white/45">No emails yet.</td></tr>}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="card mt-6 overflow-x-auto">
         <h2 class="text-lg font-bold">Draft accuracy, last 30 days</h2>
         <p class="mt-1 text-sm text-white/55">How often a person sent the draft unchanged. Switch on automatic replies for a request type when this is consistently high (for example 9 in 10).</p>
         <table class="mt-4 w-full text-left text-sm">
@@ -225,7 +268,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
                 <p class="font-semibold text-white">{c.display_name}<span class="block text-xs font-normal text-white/40">{s?.last_error ? <span class="text-lk-red">Error: {s.last_error}</span> : s?.last_checked_at ? `Checked ${dateTime.format(new Date(s.last_checked_at))}` : 'Not checked yet'}</span></p>
                 <div><label class="label" for={`mb-${c.id}`}>Mailbox</label><input class="field" id={`mb-${c.id}`} name="mailbox" type="email" value={c.shareholder_mailbox ?? ''} placeholder="shareholders@…" /></div>
                 <div><label class="label" for={`mode-${c.id}`}>Mode</label><select class="field" id={`mode-${c.id}`} name="mode"><option value="off" selected={c.email_mode === 'off'}>Off</option><option value="review" selected={c.email_mode === 'review'}>Review</option><option value="auto" selected={c.email_mode === 'auto'}>Automatic</option></select></div>
-                <button name="intent" value="settings" class="btn-ghost">Save</button>
+                <div class="flex gap-2"><button name="intent" value="settings" class="btn-ghost">Save</button><button name="intent" value="test-connection" formnovalidate class="btn-ghost">Test connection</button></div>
                 <fieldset class="sm:col-span-4"><legend class="label">Answered automatically (in Automatic mode)</legend>
                   <div class="flex flex-wrap gap-x-5 gap-y-2 text-sm text-white/75">{SELF_SERVICE.map((cat) => <label class="flex items-center gap-2"><input type="checkbox" name="auto_category" value={cat} checked={(c.email_auto_categories ?? []).includes(cat)} class="size-4 accent-lk-blue" />{CATEGORIES[cat]}</label>)}</div>
                 </fieldset>
