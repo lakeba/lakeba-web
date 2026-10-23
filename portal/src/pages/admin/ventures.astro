@@ -13,6 +13,7 @@ const supabase = Astro.locals.supabase;
 const scope = await adminScope(Astro.locals, Astro.url);
 const editId = Astro.url.searchParams.get('venture');
 const ventureStatuses = ['active', 'building', 'exited'];
+const LOGO_TYPES: Record<string, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/svg+xml': 'svg' };
 let error = '';
 let notice = '';
 const log = (action: string, detail: Record<string, unknown>) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
@@ -22,8 +23,44 @@ if (Astro.request.method === 'POST') {
   const intent = field(form, 'intent');
   const id = field(form, 'id');
 
-  if (intent.includes('venture') || intent.includes('update')) {
+  if (intent.includes('venture') || intent.includes('update') || intent.includes('logo')) {
     if (!scope.isGroupAdmin) return new Response('Forbidden', { status: 403 });
+  }
+  // Logos belong to the venture's company (entities.logo_url), stored in the private "logos" bucket.
+  if (intent === 'upload-logo' || intent === 'remove-logo') {
+    const { data: venture } = await supabase.from('ventures').select('name, entities(id, code, logo_url)').eq('id', id).maybeSingle();
+    const company = venture?.entities as { id: string; code: string; logo_url: string | null } | null;
+    const oldFile = company?.logo_url?.startsWith('/company-logo/') ? company.logo_url.slice('/company-logo/'.length) : null;
+    if (!company) error = 'Link this venture to a company first, then add its logo.';
+    else if (intent === 'upload-logo') {
+      const file = form.get('logo');
+      const ext = file instanceof File ? LOGO_TYPES[file.type] : undefined;
+      if (!(file instanceof File) || !file.size) error = 'Choose a logo file.';
+      else if (!ext) error = 'Use a PNG, JPG, WebP or SVG file.';
+      else if (file.size > 2 * 1024 * 1024) error = 'The logo must be 2 MB or smaller.';
+      else {
+        const path = `${company.code}-${Date.now()}.${ext}`;
+        const { error: upError } = await supabase.storage.from('logos').upload(path, new Uint8Array(await file.arrayBuffer()), { contentType: file.type });
+        if (upError) error = upError.message;
+        else {
+          const { error: e } = await supabase.from('entities').update({ logo_url: `/company-logo/${path}` }).eq('id', company.id);
+          if (e) { error = e.message; await supabase.storage.from('logos').remove([path]); }
+          else {
+            if (oldFile) await supabase.storage.from('logos').remove([oldFile]);
+            await log('admin_uploaded_logo', { company: company.code });
+            notice = `Logo saved for ${venture!.name}.`;
+          }
+        }
+      }
+    } else {
+      const { error: e } = await supabase.from('entities').update({ logo_url: null }).eq('id', company.id);
+      if (e) error = e.message;
+      else {
+        if (oldFile) await supabase.storage.from('logos').remove([oldFile]);
+        await log('admin_removed_logo', { company: company.code });
+        notice = `Logo removed for ${venture!.name}.`;
+      }
+    }
   }
   if (intent === 'save-venture') {
     const stake = field(form, 'lakeba_stake');
@@ -60,7 +97,7 @@ if (Astro.request.method === 'POST') {
 }
 
 const [{ data: ventures }, { data: updates }, { data: prices }, { data: classes }, { data: portfolioEntities }] = await Promise.all([
-  scope.isGroupAdmin ? supabase.from('ventures').select('*').order('sort') : Promise.resolve({ data: [] }),
+  scope.isGroupAdmin ? supabase.from('ventures').select('*, entities(display_name, logo_url)').order('sort') : Promise.resolve({ data: [] }),
   scope.isGroupAdmin ? supabase.from('venture_updates').select('id, venture_id, title, happened_on').order('happened_on', { ascending: false }) : Promise.resolve({ data: [] }),
   supabase.from('reference_prices').select('id, price, priced_on, source, note, share_classes!inner(code, entity_id, entities(code))').in('share_classes.entity_id', scope.ids).order('priced_on', { ascending: false }),
   supabase.from('share_classes').select('id, code, name, entity_id, entities(code, display_name)').in('entity_id', scope.ids).order('code'),
@@ -71,6 +108,7 @@ const classLabel = (c: { code: string; name?: string; entities?: unknown }) => {
   return scope.companies.length > 1 && e ? `${e.code}-${c.code}${c.name ? ` ${c.name}` : ''}` : c.name ?? c.code;
 };
 const v = editId ? ventures?.find((x) => x.id === editId) : null;
+const companyOf = (x: { entities?: unknown } | null | undefined) => (x?.entities as { display_name: string; logo_url: string | null } | null) ?? null;
 const today = new Date().toISOString().slice(0, 10);
 ---
 
@@ -86,7 +124,10 @@ const today = new Date().toISOString().slice(0, 10);
       {(ventures ?? []).map((x) => (
         <li class="py-3">
           <div class="flex flex-wrap items-center justify-between gap-3">
-            <span><a href={`?venture=${x.id}`} class="font-medium text-white/85 hover:underline">{x.name}</a> <span class="text-xs capitalize text-white/40">{x.status} · {x.stage}{x.lakeba_stake != null ? ` · ${Number(x.lakeba_stake)}%` : ''}</span></span>
+            <span class="flex items-center gap-3">
+              <span class="flex h-8 w-16 shrink-0 items-center justify-center rounded-md bg-[#fff] px-1.5 py-1 ring-1 ring-[#0f172a]/10">{companyOf(x)?.logo_url ? <img src={companyOf(x)!.logo_url!} alt="" class="max-h-full max-w-full object-contain" /> : <span class="text-xs font-bold text-[#94a3b8]">{x.name.slice(0, 1)}</span>}</span>
+              <span><a href={`?venture=${x.id}`} class="font-medium text-white/85 hover:underline">{x.name}</a> <span class="text-xs capitalize text-white/40">{x.status} · {x.stage}{x.lakeba_stake != null ? ` · ${Number(x.lakeba_stake)}%` : ''}</span></span>
+            </span>
             <form method="post" class="text-xs"><input type="hidden" name="id" value={x.id} /><button name="intent" value="delete-venture" class="text-white/50 hover:text-lk-red" onclick="return confirm('Delete this venture and its milestones?')">Delete</button></form>
           </div>
           <ul class="mt-2 space-y-1 pl-4 text-xs text-white/50">
@@ -112,6 +153,32 @@ const today = new Date().toISOString().slice(0, 10);
       <div><label class="label" for="v-entity">Company (for look-through)</label><select class="field" id="v-entity" name="entity_id"><option value="">—</option>{(portfolioEntities ?? []).map((e) => <option value={e.id} selected={e.id === v?.entity_id}>{e.display_name}</option>)}</select></div>
       <div class="flex items-end"><button name="intent" value="save-venture" class="btn-primary">{v ? 'Save venture' : 'Add venture'}</button></div>
     </form>
+    {v && (
+      <div class="mt-4 border-t border-white/5 pt-5">
+        <h3 class="font-display font-bold text-white">Logo</h3>
+        {companyOf(v) ? (
+          <>
+            <p class="mt-1 text-sm text-white/55">Shown in the portfolio table and linked to the website. Saved on {companyOf(v)!.display_name}. PNG, JPG, WebP or SVG, up to 2 MB; a wide logo with little empty space around it looks best.</p>
+            <div class="mt-4 flex flex-wrap items-end gap-4">
+              <div class="flex h-12 w-28 items-center justify-center rounded-lg bg-[#fff] px-2 py-1.5 ring-1 ring-[#0f172a]/10">
+                {companyOf(v)!.logo_url ? <img src={companyOf(v)!.logo_url!} alt={`${v.name} logo`} class="max-h-full max-w-full object-contain" /> : <span class="text-xs text-[#94a3b8]">No logo</span>}
+              </div>
+              <form method="post" enctype="multipart/form-data" class="flex flex-wrap items-end gap-3">
+                <input type="hidden" name="id" value={v.id} />
+                <div><label class="label" for="logo">{companyOf(v)!.logo_url ? 'Replace logo' : 'Upload a logo'}</label><input class="field !py-2" id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" required /></div>
+                <button name="intent" value="upload-logo" class="btn-ghost">Save logo</button>
+              </form>
+              {companyOf(v)!.logo_url && (
+                <form method="post">
+                  <input type="hidden" name="id" value={v.id} />
+                  <button name="intent" value="remove-logo" class="text-sm text-white/50 hover:text-lk-red" onclick="return confirm('Remove this logo?')">Remove logo</button>
+                </form>
+              )}
+            </div>
+          </>
+        ) : <p class="mt-1 text-sm text-white/55">Choose the company this venture belongs to and save, then you can add its logo.</p>}
+      </div>
+    )}
     <form method="post" class="mt-4 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-3">
       <h3 class="font-display font-bold text-white sm:col-span-3">Add a milestone</h3>
       <div><label class="label" for="venture_id">Venture</label><select class="field" id="venture_id" name="venture_id" required>{(ventures ?? []).map((x) => <option value={x.id} selected={x.id === v?.id}>{x.name}</option>)}</select></div>

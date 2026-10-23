@@ -82,7 +82,8 @@ function withSecurityHeaders(response: Response) {
   h.set('X-Content-Type-Options', 'nosniff');
   h.set('Referrer-Policy', 'same-origin');
   h.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-  // Portal pages carry personal data: never cache them.
-  h.set('Cache-Control', 'no-store');
+  // Portal pages carry personal data: never cache them. Routes may opt into
+  // private (browser-only) caching, e.g. company logos.
+  if (!h.get('Cache-Control')?.startsWith('private')) h.set('Cache-Control', 'no-store');
   return response;
 }

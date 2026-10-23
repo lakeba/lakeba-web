@@ -28,10 +28,11 @@ const lakebaPct = (entityId: string | null) => {
 
 const { data: ventures } = await supabase
   .from('ventures')
-  .select('slug, name, tagline, stage, lakeba_stake, website, status, entity_id, entities(website), venture_updates(title, body, happened_on)')
+  .select('slug, name, tagline, stage, lakeba_stake, website, status, entity_id, entities(website, logo_url), venture_updates(title, body, happened_on)')
   .order('sort');
 // The venture's website, else the company's (from the investor data workbook).
 const siteOf = (v: { website: string | null; entities: unknown }) => v.website || (v.entities as { website: string | null } | null)?.website || null;
+const logoOf = (v: { entities: unknown }) => (v.entities as { logo_url: string | null } | null)?.logo_url || null;
 const domain = (u: string) => { try { return new URL(u).hostname.replace(/^www\./, ''); } catch { return u; } };
 const groups = [
   { status: 'active', title: 'Active ventures' },
@@ -61,27 +62,37 @@ const updatesOf = (v: { venture_updates: unknown }) => [...(v.venture_updates as
           <table class="w-full text-left text-sm">
             <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40">
               <tr>
+                <th class="py-3 pl-5 font-medium"><span class="sr-only">Logo</span></th>
                 <th class="px-5 py-3 font-medium">Company</th>
                 <th class="px-5 py-3 font-medium">Type</th>
                 <th class="px-5 py-3 text-right font-medium">Lakeba stake</th>
                 {myGroupPct > 0 && <th class="px-5 py-3 text-right font-medium">Your look-through</th>}
-                {anyUpdates && <th class="px-5 py-3 font-medium">Latest update</th>}
-                <th class="px-5 py-3 font-medium">Website</th>
-              </tr>
+                {anyUpdates && <th class="px-5 py-3 font-medium">Latest update</th>}              </tr>
             </thead>
             <tbody class="divide-y divide-white/5">
               {items.map((v) => {
                 const latest = updatesOf(v)[0];
                 const site = siteOf(v);
+                const logo = logoOf(v);
                 return (
                   <tr class="align-top">
+                    <td class="py-3 pl-5">
+                      {/* Always-white tile (the theme swaps the white token) so dark logos stay visible; links to the website. */}
+                      {site ? (
+                        <a href={site} target="_blank" rel="noopener" title={`${domain(site)} (opens in a new tab)`} aria-label={`${v.name} website, ${domain(site)}`} class="flex h-12 w-28 items-center justify-center rounded-lg bg-[#fff] px-2 py-1.5 ring-1 ring-[#0f172a]/10 transition hover:ring-2 hover:ring-lk-blue focus-visible:ring-2 focus-visible:ring-lk-blue">
+                          {logo ? <img src={logo} alt="" class="max-h-full max-w-full object-contain" loading="lazy" /> : <span class="font-display text-lg font-bold text-[#94a3b8]">{v.name.slice(0, 1)}</span>}
+                        </a>
+                      ) : (
+                        <div class="flex h-12 w-28 items-center justify-center rounded-lg bg-[#fff] px-2 py-1.5 ring-1 ring-[#0f172a]/10">
+                          {logo ? <img src={logo} alt={`${v.name} logo`} class="max-h-full max-w-full object-contain" loading="lazy" /> : <span class="font-display text-lg font-bold text-[#94a3b8]" aria-hidden="true">{v.name.slice(0, 1)}</span>}
+                        </div>
+                      )}
+                    </td>
                     <td class="px-5 py-4"><p class="font-semibold text-white">{v.name}</p>{v.tagline && <p class="mt-0.5 text-xs text-white/50">{v.tagline}</p>}</td>
                     <td class="whitespace-nowrap px-5 py-4 text-white/60">{v.stage}</td>
                     <td class="px-5 py-4 text-right font-semibold text-white">{stakeText(v) ?? <span class="font-normal text-white/30">—</span>}</td>
                     {myGroupPct > 0 && <td class="px-5 py-4 text-right">{Number.isFinite(lakebaPct(v.entity_id)) ? smallPercent.format(myGroupPct * lakebaPct(v.entity_id)) : <span class="text-white/30">—</span>}</td>}
-                    {anyUpdates && <td class="px-5 py-4">{latest ? <><p class="text-white/85">{latest.title}</p><p class="text-xs text-white/40">{shortDate.format(new Date(latest.happened_on))}</p></> : <span class="text-white/30">—</span>}</td>}
-                    <td class="whitespace-nowrap px-5 py-4">{site ? <a href={site} target="_blank" rel="noopener" class="text-lk-blue hover:underline">{domain(site)} ↗</a> : <span class="text-white/30">—</span>}</td>
-                  </tr>
+                    {anyUpdates && <td class="px-5 py-4">{latest ? <><p class="text-white/85">{latest.title}</p><p class="text-xs text-white/40">{shortDate.format(new Date(latest.happened_on))}</p></> : <span class="text-white/30">—</span>}</td>}                  </tr>
                 );
               })}
             </tbody>
