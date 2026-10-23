@@ -7,7 +7,7 @@ import LinkedInIcon from '../components/LinkedInIcon.astro';
 import { brandName } from '../lib/companies';
 interface Props { title: string }
 const { title } = Astro.props;
-const { profile, supabase, user, company, companies, adminOf } = Astro.locals;
+const { profile, supabase, user, company, companies, adminOf, features } = Astro.locals;
 const path = Astro.url.pathname;
 const canAdmin = profile?.role === 'admin' || adminOf.length > 0;
 const isGroup = company?.relationship === 'group';
@@ -19,8 +19,8 @@ const nav = [
   ...(isGroup ? [{ href: '/portfolio', label: 'Portfolio' }] : []),
   { href: '/agm', label: 'Meetings' },
   { href: '/news', label: 'News' },
-  ...(company ? [{ href: '/ask', label: `Ask ${brand}` }] : []),
-  { href: '/board', label: 'Board Q&A' },
+  ...(company && features.ask ? [{ href: '/ask', label: `Ask ${brand}` }] : []),
+  ...(features.boardQa ? [{ href: '/board', label: 'Board Q&A' }] : []),
   ...(canAdmin ? [{ href: '/admin', label: 'Admin' }] : []),
 ];
 const switchHref = (code: string) => `/company/${code}?next=${encodeURIComponent(path)}`;
@@ -109,7 +109,7 @@ const { count: unread } = user
     </main>
     <footer class="container-x flex flex-col justify-between gap-2 border-t border-white/5 py-8 text-xs text-white/35 sm:flex-row">
       <p>{isGroup || !company ? `© ${new Date().getFullYear()} Lakeba Group Limited` : `${company.display_name} Investor Portal, powered by Lakeba`}</p>
-      <p>Questions: <a href="/board" class="hover:text-white">Board Q&amp;A</a> · <a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
+      <p>Questions: {features.boardQa && <><a href="/board" class="hover:text-white">Board Q&amp;A</a> · </>}<a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
     </footer>
   </body>
 </html>

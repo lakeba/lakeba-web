@@ -18,5 +18,7 @@ declare namespace App {
     group: import('./lib/companies').Company | null;
     /** Companies this person administers as a company admin. */
     adminOf: string[];
+    /** Per-person switches set by admins (Admin → Investors). */
+    features: { ask: boolean; boardQa: boolean };
   }
 }

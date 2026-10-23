@@ -7,6 +7,7 @@ import { sendInvite, sendWelcome } from '../../../lib/admin-auth';
 import { adminScope } from '../../../lib/admin-company';
 import { memberIds } from '../../../lib/notify';
 import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
+import HoldingNote from '../../../components/HoldingNote.astro';
 import { field } from '../../../lib/forms';
 import { displayName, roles } from '../../../lib/admin-forms';
 import { aud, percent, shares, shortDate } from '../../../lib/format';
@@ -88,12 +89,14 @@ if (Astro.request.method === 'POST') {
 }
 
 const [{ data: profiles }, { data: links }, { data: holders }, { data: authUsers }] = await Promise.all([
-  supabase.from('profiles').select('id, email, first_name, last_name, role').order('last_name'),
+  supabase.from('profiles').select('id, email, first_name, last_name, role, board_qa_enabled').order('last_name'),
   supabase.from('holder_members').select('user_id, holder_id, access'),
   supabase.from('holders').select('id, name').order('name'),
   svc.auth.admin.listUsers({ perPage: 1000 }),
 ]);
 const candidates = welcomeCompany ? await welcomeCandidates(welcomeCompany.id) : [];
+const { data: pauses } = await supabase.from('ask_user_pauses').select('user_id');
+const askOff = new Set((pauses ?? []).map((x) => x.user_id));
 // With a company picked, list only its people (company admins only ever see theirs, via RLS).
 const inCompany = scope.selected ? new Set(await memberIds(scope.selected.id)) : null;
 const people = (profiles ?? []).filter((p) => !inCompany || inCompany.has(p.id));
@@ -188,6 +191,8 @@ import ShareLink from '../../../components/ShareLink.astro';
                 {scope.isGroupAdmin ? <a href={`/admin/investors/${p.id}`} class="font-medium text-white hover:underline">{displayName(p)}</a> : <span class="font-medium text-white">{displayName(p)}</span>}
                 <span class="block text-xs text-white/40">{p.email}</span>
                 {isBanned(p.id) && <span class="mt-1 inline-block rounded-full bg-lk-red/15 px-2 py-0.5 text-[11px] text-lk-red">Disabled</span>}
+                {askOff.has(p.id) && <span class="mt-1 mr-1 inline-block rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/60">Ask off</span>}
+                {p.board_qa_enabled === false && <span class="mt-1 inline-block rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/60">Board Q&amp;A off</span>}
               </td>
               <td class="px-5 py-3 capitalize text-white/70">{p.role}</td>
               <td class="px-5 py-3 text-white/60">
@@ -195,7 +200,7 @@ import ShareLink from '../../../components/ShareLink.astro';
                   <div class="py-0.5">
                     <span class="text-white/80">{h.name}</span>{h.access === 'viewer' && <span class="ml-1 text-[11px] text-white/40">viewer</span>}
                     {h.positions.length ? h.positions.map((pos) => (
-                      <span class="block text-xs text-white/45">{shares.format(pos.row.shares)} {pos.row.share_classes?.code}{pos.total > 0 && ` · ${percent.format(pos.row.shares / pos.total)}`} · as at {shortDate.format(new Date(pos.row.as_at))}</span>
+                      <span class="block text-xs text-white/45"><HoldingNote note={pos.note} class="mr-1" />{shares.format(pos.row.shares)} {pos.row.share_classes?.code}{pos.total > 0 && ` · ${percent.format(pos.row.shares / pos.total)}`} · as at {shortDate.format(new Date(pos.row.as_at))}</span>
                     )) : <span class="block text-xs text-white/35">No holdings recorded</span>}
                   </div>
                 )) : '—'}

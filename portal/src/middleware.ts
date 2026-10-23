@@ -21,6 +21,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.company = null;
   locals.group = null;
   locals.adminOf = [];
+  locals.features = { ask: false, boardQa: false };
 
   // getClaims() validates the JWT signature rather than trusting the cookie.
   const { data } = await locals.supabase.auth.getClaims();
@@ -54,6 +55,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.company = companyContext.current;
   locals.group = companyContext.group;
   locals.adminOf = companyContext.adminOf;
+  const { data: flags } = await locals.supabase.rpc('my_portal_flags').maybeSingle();
+  locals.features = { ask: (flags as { ask_enabled?: boolean } | null)?.ask_enabled ?? true, boardQa: (flags as { board_qa_enabled?: boolean } | null)?.board_qa_enabled ?? true };
 
   // Admins (and company admins) cannot use the portal until they have enrolled MFA.
   const companyAdmin = locals.adminOf.length > 0;

@@ -6,7 +6,8 @@ export type HoldingRow = {
   share_classes: { code: string; name: string; entity_id: string; kind: string; counts_toward_pct: boolean; voting: boolean; currency: string } | null;
 };
 export type HolderWithHoldings = { id: string; name: string; kind: string; registry_ref: string | null; holdings: HoldingRow[] };
-export type Position = { holder: HolderWithHoldings; row: HoldingRow; total: number; history: HoldingRow[] };
+/** note: shown to the holder's people next to their shares (holding_notes; one per holder and class). */
+export type Position = { holder: HolderWithHoldings; row: HoldingRow; total: number; history: HoldingRow[]; note: string | null };
 
 /** The signed-in user's latest position per holder and class, with history. */
 export async function loadPositions(supabase: SupabaseClient, userId: string): Promise<Position[]> {
@@ -16,10 +17,12 @@ export async function loadPositions(supabase: SupabaseClient, userId: string): P
 /** The latest position per holder and class for the given holders, with history. */
 export async function loadHolderPositions(supabase: SupabaseClient, ids: string[]): Promise<Position[]> {
   if (!ids.length) return [];
-  const [{ data: holders }, { data: onIssue }] = await Promise.all([
+  const [{ data: holders }, { data: onIssue }, { data: notes }] = await Promise.all([
     supabase.from('holders').select('id, name, kind, registry_ref, holdings(shares, as_at, share_class_id, exercise_price, expires_on, share_classes(code, name, entity_id, kind, counts_toward_pct, voting, currency))').in('id', ids).order('name'),
     supabase.rpc('shares_on_issue'),
+    supabase.from('holding_notes').select('holder_id, share_class_id, note').in('holder_id', ids),
   ]);
+  const noteOf = new Map((notes ?? []).map((n) => [`${n.holder_id}|${n.share_class_id}`, n.note as string]));
   const totals = new Map<string, number>((onIssue ?? []).map((r: { share_class_id: string; total: number }) => [r.share_class_id, Number(r.total)]));
   return ((holders ?? []) as unknown as HolderWithHoldings[]).flatMap((holder) => {
     const byClass = new Map<string, HoldingRow[]>();
@@ -28,7 +31,7 @@ export async function loadHolderPositions(supabase: SupabaseClient, ids: string[
     return [...byClass.values()].filter((rows) => rows[0].share_classes).map((rows) => {
       const history = rows.sort((a, b) => a.as_at.localeCompare(b.as_at));
       const row = history[history.length - 1];
-      return { holder, row, total: totals.get(row.share_class_id) ?? 0, history };
+      return { holder, row, total: totals.get(row.share_class_id) ?? 0, history, note: noteOf.get(`${holder.id}|${row.share_class_id}`) ?? null };
     });
   });
 }

@@ -13,7 +13,9 @@ const entityId = company?.id ?? '00000000-0000-0000-0000-000000000000';
 const boardName = company && company.relationship !== 'group' ? `the ${company.display_name} board` : 'the board';
 let error = '';
 
-if (Astro.request.method === 'POST') {
+if (Astro.request.method === 'POST' && !Astro.locals.features.boardQa) {
+  error = 'Sending questions to the board isn’t available for your account.';
+} else if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const subject = field(form, 'subject');
   const body = field(form, 'body');
@@ -56,6 +58,7 @@ const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 
       ) : <Empty title="No questions yet">Use the form to send your first question to the board.</Empty>}
     </section>
 
+    {Astro.locals.features.boardQa ? (
     <section class="card h-fit">
       <h2 class="text-lg font-bold">New question</h2>
       {error && <div class="mt-4"><Alert tone="error">{error}</Alert></div>}
@@ -71,5 +74,11 @@ const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 
         <button class="btn-primary w-full">Send to {boardName}</button>
       </form>
     </section>
+    ) : (
+      <section class="card h-fit">
+        <h2 class="text-lg font-bold">New questions</h2>
+        <p class="mt-2 text-sm text-white/60">Sending questions to the board isn’t available for your account. For help, email <a href="mailto:info@lakeba.com" class="text-lk-blue hover:underline">info@lakeba.com</a>.</p>
+      </section>
+    )}
   </div>
 </Portal>

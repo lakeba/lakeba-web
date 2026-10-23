@@ -53,7 +53,7 @@ const sent = Astro.url.searchParams.get('sent') === '1';
       })}
     </ol>
 
-    {query.status !== 'closed' && (
+    {query.status !== 'closed' && Astro.locals.features.boardQa && (
       <form method="post" class="card mt-8 space-y-4">
         {error && <Alert tone="error">{error}</Alert>}
         <label for="body" class="label">Add a reply</label>

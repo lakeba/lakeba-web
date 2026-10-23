@@ -52,6 +52,27 @@ if (Astro.request.method === 'POST') {
     for (const f of data?.factors ?? []) await svc.auth.admin.mfa.deleteFactor({ userId: id!, id: f.id });
     await log('admin_reset_mfa');
     notice = 'Two-step verification removed. They can set it up again after signing in.';
+  } else if (intent === 'ask-off' || intent === 'ask-on') {
+    // Same switch as the automatic pause in Ask's cost protection.
+    const { error: e } = intent === 'ask-off'
+      ? await supabase.from('ask_user_pauses').upsert({ user_id: id, reason: 'Turned off by an admin', paused_by: Astro.locals.user!.id })
+      : await supabase.from('ask_user_pauses').delete().eq('user_id', id!);
+    if (e) error = e.message; else { await log(intent === 'ask-off' ? 'admin_disabled_ask' : 'admin_enabled_ask'); notice = intent === 'ask-off' ? 'Ask turned off for this person.' : 'Ask turned on for this person.'; }
+  } else if (intent === 'board-off' || intent === 'board-on') {
+    // Profiles' columns are locked for signed-in users (people may only edit their name and phone),
+    // so, like role changes, this goes through the service key; this page is for group admins only.
+    const { error: e } = await svc.from('profiles').update({ board_qa_enabled: intent === 'board-on' }).eq('id', id!);
+    if (e) error = e.message; else { await log(intent === 'board-off' ? 'admin_disabled_board_qa' : 'admin_enabled_board_qa'); notice = intent === 'board-off' ? '“Ask the board” turned off for this person.' : '“Ask the board” turned on for this person.'; }
+  } else if (intent === 'note') {
+    const note = String(form.get('note') ?? '').trim();
+    const key = { holder_id: field(form, 'holder_id'), share_class_id: field(form, 'class_id') };
+    if (note.length > 1000) error = 'Notes can be at most 1,000 characters.';
+    else {
+      const { error: e } = note
+        ? await supabase.from('holding_notes').upsert({ ...key, note, updated_by: Astro.locals.user!.id, updated_at: new Date().toISOString() })
+        : await supabase.from('holding_notes').delete().match(key);
+      if (e) error = e.message; else { await log(note ? 'admin_saved_holding_note' : 'admin_removed_holding_note', key); notice = note ? 'Note saved. It shows next to the shares, for the shareholder too.' : 'Note removed.'; }
+    }
   } else if (intent === 'reset-password') {
     const { error: resetError, url: resetUrl } = await sendPasswordReset(target.email, Astro.url.origin);
     if (resetError) error = resetError;
@@ -59,14 +80,17 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const [{ data: profile }, { data: authData }, { data: factorData }, { data: links }, { data: holders }, { data: events }] = await Promise.all([
-  supabase.from('profiles').select('id, email, first_name, last_name, role, phone').eq('id', id!).single(),
+const [{ data: profile }, { data: authData }, { data: factorData }, { data: links }, { data: holders }, { data: events }, { data: askPause }] = await Promise.all([
+  supabase.from('profiles').select('id, email, first_name, last_name, role, phone, board_qa_enabled').eq('id', id!).single(),
   svc.auth.admin.getUserById(id!),
   svc.auth.admin.mfa.listFactors({ userId: id! }),
   supabase.from('holder_members').select('holder_id, access, holders(name)').eq('user_id', id!),
   supabase.from('holders').select('id, name').order('name'),
   supabase.from('audit_log').select('action, created_at').eq('user_id', id!).order('created_at', { ascending: false }).limit(15),
+  supabase.from('ask_user_pauses').select('reason, paused_by, paused_at').eq('user_id', id!).maybeSingle(),
 ]);
+const askOn = !askPause;
+const boardOn = profile?.board_qa_enabled !== false;
 const auth = authData?.user;
 const banned = Boolean(auth?.banned_until && new Date(auth.banned_until) > new Date());
 const mfaOn = (factorData?.factors ?? []).some((f) => f.status === 'verified');
@@ -76,6 +100,7 @@ const positionsByHolder = Map.groupBy(positions, (p) => p.holder.id);
 const valueOf = (classId: string, n: number) => { const pr = prices.get(classId); return pr ? n * pr.price : null; };
 const pricedTotal = positions.reduce((a, p) => a + (valueOf(p.row.share_class_id, p.row.shares) ?? 0), 0);
 import ShareLink from '../../../components/ShareLink.astro';
+import HoldingNote from '../../../components/HoldingNote.astro';
 ---
 
 <Admin title={displayName(profile)}>
@@ -106,6 +131,23 @@ import ShareLink from '../../../components/ShareLink.astro';
           ? <button name="intent" value="enable" class="btn-ghost">Restore access</button>
           : <button name="intent" value="disable" class="btn-ghost !border-lk-red/40 !text-lk-red">Disable access</button>)}
       </form>
+      <div class="mt-6 border-t border-white/5 pt-6">
+        <h3 class="text-sm font-semibold text-white">Access to features</h3>
+        <ul class="mt-3 divide-y divide-white/5 text-sm">
+          <li class="flex flex-wrap items-center justify-between gap-3 py-2.5">
+            <span><span class="text-white/85">Ask (AI questions)</span>
+              <span class:list={['ml-2 rounded-full px-2 py-0.5 text-[11px]', askOn ? 'bg-lk-green/15 text-lk-green' : 'bg-lk-red/15 text-lk-red']}>{askOn ? 'On' : 'Off'}</span>
+              {askPause && <span class="block text-xs text-white/40">{askPause.paused_by ? 'Turned off by an admin' : askPause.reason} · {shortDate.format(new Date(askPause.paused_at))}</span>}</span>
+            <form method="post"><button name="intent" value={askOn ? 'ask-off' : 'ask-on'} class="btn-ghost !px-3 !py-1.5 text-xs">{askOn ? 'Turn off' : 'Turn on'}</button></form>
+          </li>
+          <li class="flex flex-wrap items-center justify-between gap-3 py-2.5">
+            <span><span class="text-white/85">Ask the board (Board Q&amp;A)</span>
+              <span class:list={['ml-2 rounded-full px-2 py-0.5 text-[11px]', boardOn ? 'bg-lk-green/15 text-lk-green' : 'bg-lk-red/15 text-lk-red']}>{boardOn ? 'On' : 'Off'}</span>
+              {!boardOn && <span class="block text-xs text-white/40">Can read past answers; cannot send new questions or replies</span>}</span>
+            <form method="post"><button name="intent" value={boardOn ? 'board-off' : 'board-on'} class="btn-ghost !px-3 !py-1.5 text-xs">{boardOn ? 'Turn off' : 'Turn on'}</button></form>
+          </li>
+        </ul>
+      </div>
     </section>
 
     <section class="card">
@@ -114,7 +156,7 @@ import ShareLink from '../../../components/ShareLink.astro';
         {(links ?? []).map((l) => (
           <li class="flex items-center justify-between gap-4 py-3">
             <span><span class="text-white/85">{(l.holders as { name: string } | null)?.name}</span> <span class="text-xs capitalize text-white/40">{l.access}</span>
-              <span class="block text-xs text-white/45">{shares.format((positionsByHolder.get(l.holder_id) ?? []).reduce((a, p) => a + p.row.shares, 0))} shares</span></span>
+              <span class="block text-xs text-white/45">{shares.format((positionsByHolder.get(l.holder_id) ?? []).reduce((a, p) => a + p.row.shares, 0))} shares {(positionsByHolder.get(l.holder_id) ?? []).some((p) => p.note) && <HoldingNote note={(positionsByHolder.get(l.holder_id) ?? []).filter((p) => p.note).map((p) => `${p.row.share_classes?.name}: ${p.note}`).join('\n')} />}</span></span>
             <form method="post"><input type="hidden" name="holder_id" value={l.holder_id} /><button name="intent" value="unlink" class="text-xs text-white/50 hover:text-white">Unlink</button></form>
           </li>
         ))}
@@ -136,9 +178,9 @@ import ShareLink from '../../../components/ShareLink.astro';
       {positions.length > 0 && <p class="text-sm text-white/55">Indicative value <span class="font-semibold text-white">{aud.format(pricedTotal)}</span></p>}
     </div>
     {positions.length ? (
-      <table class="mt-4 w-full min-w-[640px] text-left text-sm">
+      <table class="mt-4 w-full min-w-[880px] text-left text-sm">
         <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40">
-          <tr><th class="py-2 pr-4 font-medium">Holder</th><th class="py-2 pr-4 font-medium">Class</th><th class="py-2 pr-4 text-right font-medium">Shares</th><th class="py-2 pr-4 text-right font-medium">% of class</th><th class="py-2 pr-4 text-right font-medium">Indicative value</th><th class="py-2 font-medium">History</th></tr>
+          <tr><th class="py-2 pr-4 font-medium">Holder</th><th class="py-2 pr-4 font-medium">Class</th><th class="py-2 pr-4 text-right font-medium">Shares</th><th class="py-2 pr-4 text-right font-medium">% of class</th><th class="py-2 pr-4 text-right font-medium">Indicative value</th><th class="py-2 pr-4 font-medium">History</th><th class="py-2 font-medium">Note</th></tr>
         </thead>
         <tbody class="divide-y divide-white/5">
           {positions.map((p) => {
@@ -148,10 +190,18 @@ import ShareLink from '../../../components/ShareLink.astro';
               <tr class="align-top">
                 <td class="py-3 pr-4"><span class="text-white/85">{p.holder.name}</span><span class="block text-xs text-white/40">{holderKinds[p.holder.kind] ?? p.holder.kind}{p.holder.registry_ref && ` · ${p.holder.registry_ref}`}</span></td>
                 <td class="py-3 pr-4 text-white/70">{p.row.share_classes?.name ?? '—'}</td>
-                <td class="py-3 pr-4 text-right tabular-nums text-white/85">{shares.format(p.row.shares)}<span class="block text-xs text-white/40">as at {shortDate.format(new Date(p.row.as_at))}</span></td>
+                <td class="py-3 pr-4 text-right tabular-nums text-white/85"><HoldingNote note={p.note} class="mr-1.5" />{shares.format(p.row.shares)}<span class="block text-xs text-white/40">as at {shortDate.format(new Date(p.row.as_at))}</span></td>
                 <td class="py-3 pr-4 text-right tabular-nums text-white/70">{p.total > 0 ? percent.format(p.row.shares / p.total) : '—'}</td>
                 <td class="py-3 pr-4 text-right tabular-nums text-white/85">{value !== null ? aud.format(value) : '—'}{price && <span class="block text-xs text-white/40">{audPrecise.format(price.price)} · {sourceLabels[price.source] ?? price.source}</span>}</td>
-                <td class="py-3 text-xs text-white/50">{p.history.length > 1 ? p.history.slice().reverse().map((h) => <span class="block">{shortDate.format(new Date(h.as_at))}: {shares.format(h.shares)}</span>) : 'No changes recorded'}</td>
+                <td class="py-3 pr-4 text-xs text-white/50">{p.history.length > 1 ? p.history.slice().reverse().map((h) => <span class="block">{shortDate.format(new Date(h.as_at))}: {shares.format(h.shares)}</span>) : 'No changes recorded'}</td>
+                <td class="py-3 align-top">
+                  <form method="post" class="flex min-w-56 flex-col gap-1.5">
+                    <input type="hidden" name="holder_id" value={p.holder.id} /><input type="hidden" name="class_id" value={p.row.share_class_id} />
+                    <label class="sr-only" for={`note-${p.holder.id}-${p.row.share_class_id}`}>Note for {p.holder.name}, {p.row.share_classes?.name}</label>
+                    <textarea id={`note-${p.holder.id}-${p.row.share_class_id}`} name="note" rows="2" maxlength="1000" placeholder="Add a note (shown to the shareholder)" class="field !py-1.5 text-xs">{p.note ?? ''}</textarea>
+                    <button name="intent" value="note" class="btn-ghost self-start !px-3 !py-1 text-xs">{p.note ? 'Save note' : 'Add note'}</button>
+                  </form>
+                </td>
               </tr>
             );
           })}

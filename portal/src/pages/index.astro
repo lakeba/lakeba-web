@@ -2,6 +2,7 @@
 import Portal from '../layouts/Portal.astro';
 import Sparkline from '../components/Sparkline.astro';
 import LinkedInCard from '../components/LinkedInCard.astro';
+import HoldingNote from '../components/HoldingNote.astro';
 import { inCompany, isShareClass, latestPrices, loadPositions, loadPrices, sourceLabels } from '../lib/holdings';
 import { myHolderIds, onBoardOf, onlyMyDocuments } from '../lib/scope';
 import { loadNews } from '../lib/news';
@@ -121,9 +122,9 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
           <a href={`/statement/${p.holder.id}?class=${p.row.share_class_id}`} class="btn-ghost px-3 py-2 text-xs">Holding statement ↓</a>
         </div>
         <dl class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <div><dt class="text-xs uppercase tracking-widest text-white/40">{isShareClass(p) ? 'Shares' : 'Options'}</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{shares.format(p.row.shares)}</dd></div>
-          <div><dt class="text-xs uppercase tracking-widest text-white/40">Of total</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{p.total ? percent.format(p.row.shares / p.total) : '—'}</dd></div>
-          <div><dt class="text-xs uppercase tracking-widest text-white/40">Indicative</dt><dd class="mt-1 font-display text-xl font-bold text-white sm:text-2xl xl:text-3xl">{value(p) !== null ? aud.format(value(p)!) : '—'}</dd></div>
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">{isShareClass(p) ? 'Shares' : 'Options'}</dt><dd class="mt-1 flex items-center gap-1.5 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{shares.format(p.row.shares)}<HoldingNote note={p.note} class="text-base" /></dd></div>
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">Of total</dt><dd class="mt-1 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{p.total ? percent.format(p.row.shares / p.total) : '—'}</dd></div>
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">Indicative</dt><dd class="mt-1 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{value(p) !== null ? aud.format(value(p)!) : '—'}</dd></div>
         </dl>
         <p class="mt-6 border-t border-white/5 pt-4 text-xs text-white/40">As at {longDate.format(new Date(p.row.as_at))} · {shares.format(p.total)} {p.row.share_classes?.name.toLowerCase()} on issue{p.row.exercise_price != null && ` · exercise price ${audPrecise.format(Number(p.row.exercise_price))}`}{p.row.expires_on && ` · expires ${longDate.format(new Date(p.row.expires_on))}`}{!isShareClass(p) && ' · not included in ownership %'}</p>
       </article>
@@ -198,11 +199,13 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
           <p class="mt-4 text-sm text-white/70">Lodge your proxy by {shortDate.format(new Date(meeting.proxy_deadline))} →</p>
         </a>
       )}
-      <a href="/board" class="card block transition hover:bg-white/[0.07]">
-        <p class="text-xs uppercase tracking-widest text-white/40">Board Q&amp;A</p>
-        <p class="mt-2 font-display text-3xl font-bold text-white">{openQueries ?? 0}</p>
-        <p class="text-sm text-white/55">{openQueries === 1 ? 'question' : 'questions'} awaiting a reply · the board replies within 7 working days</p>
-      </a>
+      {Astro.locals.features.boardQa && (
+        <a href="/board" class="card block transition hover:bg-white/[0.07]">
+          <p class="text-xs uppercase tracking-widest text-white/40">Board Q&amp;A</p>
+          <p class="mt-2 font-display text-3xl font-bold text-white">{openQueries ?? 0}</p>
+          <p class="text-sm text-white/55">{openQueries === 1 ? 'question' : 'questions'} awaiting a reply · the board replies within 7 working days</p>
+        </a>
+      )}
       {isGroup && <LinkedInCard src="card" />}
     </div>
   </div>

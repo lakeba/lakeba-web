@@ -1,0 +1,15 @@
+---
+// A small warning icon next to a share number when the holding has a note;
+// the note shows on hover or keyboard focus (and as a native tooltip).
+interface Props { note: string | null | undefined; class?: string }
+const { note, class: className = '' } = Astro.props;
+---
+
+{note && (
+  <span class:list={['holding-note group relative inline-flex align-middle', className]} tabindex="0" title={note} aria-label={`Note: ${note}`} role="note">
+    <svg viewBox="0 0 24 24" class="size-[0.9em] min-h-3.5 min-w-3.5 text-lk-orange" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <path d="M10.3 3.9 1.8 18.4A2 2 0 0 0 3.5 21.4h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" /><path d="M12 9v4M12 17h.01" />
+    </svg>
+    <span class="pointer-events-none absolute bottom-full left-1/2 z-30 mb-2 hidden w-64 -translate-x-1/2 whitespace-pre-line rounded-xl border border-white/10 bg-ink px-3 py-2 text-left font-sans text-xs font-normal leading-relaxed text-white/85 shadow-xl shadow-black/40 group-hover:block group-focus:block" aria-hidden="true">{note}</span>
+  </span>
+)}
