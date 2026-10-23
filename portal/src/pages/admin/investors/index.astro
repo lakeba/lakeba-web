@@ -124,6 +124,59 @@ const isBanned = (id: string) => {
   const until = authById.get(id)?.banned_until;
   return Boolean(until && new Date(until) > new Date());
 };
+
+// Search, filters and sorting for the people table (all in the address, so a view can be shared).
+const params = Astro.url.searchParams;
+const f = {
+  q: (params.get('q') ?? '').trim().toLowerCase(),
+  role: params.get('role') ?? '', status: params.get('status') ?? '', mfa: params.get('mfa') ?? '',
+  ask: params.get('ask') ?? '', board: params.get('board') ?? '', note: params.get('note') ?? '',
+};
+const SORTS = ['name', 'role', 'shares', 'value', 'mfa', 'signin'] as const;
+type SortKey = (typeof SORTS)[number];
+const sort: SortKey = (SORTS as readonly string[]).includes(params.get('sort') ?? '') ? (params.get('sort') as SortKey) : 'name';
+const dir = params.get('dir') === 'desc' ? -1 : 1;
+const statusOf = (id: string) => {
+  const a = authById.get(id);
+  if (isBanned(id)) return 'disabled';
+  if (a?.last_sign_in_at) return 'active';
+  return a?.invited_at ? 'invited' : 'never';
+};
+const statusLabels: Record<string, string> = { active: 'Active', invited: 'Invited, not signed in', never: 'Never invited', disabled: 'Disabled' };
+const allRows = people.map((p) => {
+  const hs = holdersOf(p.id);
+  return {
+    p, hs, t: totalsOf(hs), status: statusOf(p.id), mfa: factorsOf(p.id) > 0, askOff: askOff.has(p.id), boardOff: p.board_qa_enabled === false,
+    hasNote: hs.some((h) => h.positions.some((x) => x.note)), signIn: authById.get(p.id)?.last_sign_in_at ?? null,
+    text: [displayName(p), p.email, ...hs.map((h) => h.name)].join(' ').toLowerCase(),
+  };
+});
+const rows = allRows.filter((r) =>
+  (!f.q || r.text.includes(f.q)) && (!f.role || r.p.role === f.role) && (!f.status || r.status === f.status)
+  && (!f.mfa || (f.mfa === 'on') === r.mfa) && (!f.ask || (f.ask === 'off') === r.askOff)
+  && (!f.board || (f.board === 'off') === r.boardOff) && (!f.note || (f.note === 'yes') === r.hasNote),
+).sort((a, b) => {
+  const by: Record<SortKey, number> = {
+    name: displayName(a.p).localeCompare(displayName(b.p), 'en', { sensitivity: 'base' }),
+    role: a.p.role.localeCompare(b.p.role),
+    shares: a.t.shares - b.t.shares,
+    value: a.t.value - b.t.value,
+    mfa: Number(a.mfa) - Number(b.mfa),
+    signin: (a.signIn ? Date.parse(a.signIn) : 0) - (b.signIn ? Date.parse(b.signIn) : 0),
+  };
+  return (by[sort] || displayName(a.p).localeCompare(displayName(b.p))) * dir;
+});
+const filtered = Object.values(f).some(Boolean);
+/** The current address with some parameters changed (empty removes them). */
+const withParams = (changes: Record<string, string>) => {
+  const next = new URLSearchParams(params);
+  for (const [k, v] of Object.entries(changes)) if (v) next.set(k, v); else next.delete(k);
+  return `/admin/investors${next.size ? `?${next}` : ''}`;
+};
+// Clicking a column sorts by it; clicking it again reverses. Numbers and dates start with the largest.
+const sortHref = (key: SortKey) => withParams({ sort: key, dir: sort === key ? (dir === 1 ? 'desc' : 'asc') : ['shares', 'value', 'signin'].includes(key) ? 'desc' : 'asc' });
+const sortMark = (key: SortKey) => (sort === key ? (dir === 1 ? '▲' : '▼') : '');
+const ariaSort = (key: SortKey) => (sort === key ? (dir === 1 ? 'ascending' : 'descending') : undefined);
 import ShareLink from '../../../components/ShareLink.astro';
 ---
 
@@ -132,6 +185,7 @@ import ShareLink from '../../../components/ShareLink.astro';
   <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
+  {Astro.url.searchParams.get('deleted') && <div class="mb-6"><Alert tone="success">Deleted {Astro.url.searchParams.get('deleted')}.</Alert></div>}
   {shareLink && <ShareLink url={shareLink} label="Invitation link" />}
 
   {welcomeCompany ? (
@@ -175,16 +229,32 @@ import ShareLink from '../../../components/ShareLink.astro';
     </form>
   </details>
 
+  <form method="get" action="/admin/investors" class="card mb-4 grid gap-3 !p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8" role="search" aria-label="Filter people">
+    {scope.selected && scope.companies.length > 1 && <input type="hidden" name="company" value={scope.selected.code} />}
+    {sort !== 'name' && <input type="hidden" name="sort" value={sort} />}
+    {dir === -1 && <input type="hidden" name="dir" value="desc" />}
+    <div class="sm:col-span-2"><label class="label" for="f-q">Search</label><input class="field !py-2 text-sm" id="f-q" name="q" type="search" value={params.get('q') ?? ''} placeholder="Name, email or holder" /></div>
+        <div><label class="label" for="f-role">Role</label><select class="field !py-2 text-sm" id="f-role" name="role"><option value="" selected={f.role === ''}>Any</option><option value="investor" selected={f.role === 'investor'}>Investor</option><option value="board" selected={f.role === 'board'}>Board</option><option value="admin" selected={f.role === 'admin'}>Admin</option></select></div>
+        <div><label class="label" for="f-status">Status</label><select class="field !py-2 text-sm" id="f-status" name="status"><option value="" selected={f.status === ''}>Any</option><option value="active" selected={f.status === 'active'}>Active</option><option value="invited" selected={f.status === 'invited'}>Invited, not signed in</option><option value="never" selected={f.status === 'never'}>Never invited</option><option value="disabled" selected={f.status === 'disabled'}>Disabled</option></select></div>
+        <div><label class="label" for="f-mfa">Two-step</label><select class="field !py-2 text-sm" id="f-mfa" name="mfa"><option value="" selected={f.mfa === ''}>Any</option><option value="on" selected={f.mfa === 'on'}>On</option><option value="off" selected={f.mfa === 'off'}>Off</option></select></div>
+        <div><label class="label" for="f-ask">Ask</label><select class="field !py-2 text-sm" id="f-ask" name="ask"><option value="" selected={f.ask === ''}>Any</option><option value="on" selected={f.ask === 'on'}>On</option><option value="off" selected={f.ask === 'off'}>Off</option></select></div>
+        <div><label class="label" for="f-board">Board Q&amp;A</label><select class="field !py-2 text-sm" id="f-board" name="board"><option value="" selected={f.board === ''}>Any</option><option value="on" selected={f.board === 'on'}>On</option><option value="off" selected={f.board === 'off'}>Off</option></select></div>
+        <div><label class="label" for="f-note">Holding notes</label><select class="field !py-2 text-sm" id="f-note" name="note"><option value="" selected={f.note === ''}>Any</option><option value="yes" selected={f.note === 'yes'}>Has a note</option><option value="no" selected={f.note === 'no'}>No note</option></select></div>
+    <div class="flex items-end gap-3 sm:col-span-2 lg:col-span-4 xl:col-span-8">
+      <button class="btn-ghost !py-2 text-sm">Apply</button>
+      {filtered && <a href={withParams({ q: '', role: '', status: '', mfa: '', ask: '', board: '', note: '' })} class="text-sm text-white/55 hover:text-white">Clear filters</a>}
+      <p class="ml-auto text-sm text-white/45" aria-live="polite">{rows.length === allRows.length ? `${allRows.length} people` : `${rows.length} of ${allRows.length} people`}</p>
+    </div>
+  </form>
+
   <div class="card overflow-x-auto !p-0">
     <table class="w-full text-left text-sm">
       <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40">
-        <tr><th class="px-5 py-3 font-medium">Name</th><th class="px-5 py-3 font-medium">Role</th><th class="px-5 py-3 font-medium">Holdings</th><th class="px-5 py-3 text-right font-medium">Shares</th><th class="px-5 py-3 text-right font-medium">Indicative value</th><th class="px-5 py-3 font-medium">Two-step</th><th class="px-5 py-3 font-medium">Last sign-in</th></tr>
+        <tr><th class="px-5 py-3 font-medium" aria-sort={ariaSort('name')}><a href={sortHref('name')} class="inline-flex items-center gap-1 hover:text-white">Name<span class="text-[10px]">{sortMark('name')}</span></a></th><th class="px-5 py-3 font-medium" aria-sort={ariaSort('role')}><a href={sortHref('role')} class="inline-flex items-center gap-1 hover:text-white">Role<span class="text-[10px]">{sortMark('role')}</span></a></th><th class="px-5 py-3 font-medium">Holdings</th><th class="px-5 py-3 font-medium text-right" aria-sort={ariaSort('shares')}><a href={sortHref('shares')} class="inline-flex items-center gap-1 hover:text-white">Shares<span class="text-[10px]">{sortMark('shares')}</span></a></th><th class="px-5 py-3 font-medium text-right" aria-sort={ariaSort('value')}><a href={sortHref('value')} class="inline-flex items-center gap-1 hover:text-white">Indicative value<span class="text-[10px]">{sortMark('value')}</span></a></th><th class="px-5 py-3 font-medium" aria-sort={ariaSort('mfa')}><a href={sortHref('mfa')} class="inline-flex items-center gap-1 hover:text-white">Two-step<span class="text-[10px]">{sortMark('mfa')}</span></a></th><th class="px-5 py-3 font-medium" aria-sort={ariaSort('signin')}><a href={sortHref('signin')} class="inline-flex items-center gap-1 hover:text-white">Last sign-in<span class="text-[10px]">{sortMark('signin')}</span></a></th></tr>
       </thead>
       <tbody class="divide-y divide-white/5">
-        {people.map((p) => {
+        {rows.map(({ p, hs, t }) => {
           const auth = authById.get(p.id);
-          const hs = holdersOf(p.id);
-          const t = totalsOf(hs);
           return (
             <tr class="hover:bg-white/[0.02]">
               <td class="px-5 py-3">
@@ -212,6 +282,7 @@ import ShareLink from '../../../components/ShareLink.astro';
             </tr>
           );
         })}
+        {!rows.length && <tr><td colspan="7" class="px-5 py-8 text-center text-sm text-white/50">No one matches these filters.</td></tr>}
       </tbody>
     </table>
   </div>

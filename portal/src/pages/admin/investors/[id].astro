@@ -26,7 +26,7 @@ if (Astro.request.method === 'POST') {
   const log = (action: string, detail: Record<string, unknown> = {}) =>
     supabase.rpc('log_event', { event_action: action, event_detail: { user_id: id, email: target.email, ...detail } });
 
-  if (self && ['role', 'disable', 'reset-mfa'].includes(intent)) {
+  if (self && ['role', 'disable', 'reset-mfa', 'delete-user'].includes(intent)) {
     error = 'You cannot change your own role, access or two-step verification here.';
   } else if (intent === 'role') {
     const role = field(form, 'role');
@@ -73,6 +73,21 @@ if (Astro.request.method === 'POST') {
         : await supabase.from('holding_notes').delete().match(key);
       if (e) error = e.message; else { await log(note ? 'admin_saved_holding_note' : 'admin_removed_holding_note', key); notice = note ? 'Note saved. It shows next to the shares, for the shareholder too.' : 'Note removed.'; }
     }
+  } else if (intent === 'delete-user') {
+    // Only people with no holdings: anyone tied to the share register stays.
+    const { data: memberLinks } = await svc.from('holder_members').select('holder_id').eq('user_id', id!);
+    const holderIds = (memberLinks ?? []).map((m) => m.holder_id);
+    const { count: holdingRows } = holderIds.length ? await svc.from('holdings').select('id', { count: 'exact', head: true }).in('holder_id', holderIds) : { count: 0 };
+    const { count: votes } = await svc.from('proxy_votes').select('resolution_id', { count: 'exact', head: true }).eq('lodged_by', id!);
+    if (holdingRows) error = 'This person is linked to holdings, so they can’t be deleted. Unlink the holders first if that’s really intended.';
+    else if (votes) error = 'This person has lodged proxy votes, which are kept as meeting records, so they can’t be deleted. Disable their access instead.';
+    else if (field(form, 'confirm_email').toLowerCase() !== target.email.toLowerCase()) error = 'Type the person’s email address to confirm.';
+    else {
+      await log('admin_deleted_user', { role: target.role, name: displayName(target) });
+      const { error: delError } = await svc.auth.admin.deleteUser(id!);
+      if (delError) error = delError.message;
+      else return Astro.redirect(`/admin/investors?deleted=${encodeURIComponent(target.email)}`, 303);
+    }
   } else if (intent === 'reset-password') {
     const { error: resetError, url: resetUrl } = await sendPasswordReset(target.email, Astro.url.origin);
     if (resetError) error = resetError;
@@ -90,6 +105,12 @@ const [{ data: profile }, { data: authData }, { data: factorData }, { data: link
   supabase.from('ask_user_pauses').select('reason, paused_by, paused_at').eq('user_id', id!).maybeSingle(),
 ]);
 const askOn = !askPause;
+// Deleting: only without holdings and proxy votes; their own Board Q&A and AGM questions go with them.
+const [{ count: ownQueries }, { count: ownMeetingQuestions }, { count: lodgedVotes }] = await Promise.all([
+  svc.from('queries').select('id', { count: 'exact', head: true }).eq('user_id', id!),
+  svc.from('meeting_questions').select('id', { count: 'exact', head: true }).eq('user_id', id!),
+  svc.from('proxy_votes').select('resolution_id', { count: 'exact', head: true }).eq('lodged_by', id!),
+]);
 const boardOn = profile?.board_qa_enabled !== false;
 const auth = authData?.user;
 const banned = Boolean(auth?.banned_until && new Date(auth.banned_until) > new Date());
@@ -148,6 +169,26 @@ import HoldingNote from '../../../components/HoldingNote.astro';
           </li>
         </ul>
       </div>
+      {!self && (
+        <div class="mt-6 border-t border-white/5 pt-6">
+          <h3 class="text-sm font-semibold text-white">Delete user</h3>
+          {positions.length ? (
+            <p class="mt-2 text-sm text-white/50">Linked to holdings, so this person can’t be deleted. Use “Disable access” instead.</p>
+          ) : lodgedVotes ? (
+            <p class="mt-2 text-sm text-white/50">Has lodged proxy votes, which are kept as meeting records, so this person can’t be deleted. Use “Disable access” instead.</p>
+          ) : (
+            <form method="post" class="mt-2 space-y-3" onsubmit="return confirm('Permanently delete this user? This can’t be undone.')">
+              <p class="text-sm text-white/55">
+                No holdings. Deleting removes the account, its sign-in and two-step, links to holders, notifications and settings{(ownQueries || ownMeetingQuestions) ? <>, <span class="text-lk-orange">and {[ownQueries ? `${ownQueries} Board Q&A question${ownQueries === 1 ? '' : 's'}` : '', ownMeetingQuestions ? `${ownMeetingQuestions} AGM question${ownMeetingQuestions === 1 ? '' : 's'}` : ''].filter(Boolean).join(' and ')}</span></> : ''}. The audit log and anything they uploaded stay, without their name. This can’t be undone.
+              </p>
+              <div class="flex flex-wrap items-end gap-3">
+                <div class="grow"><label class="label" for="confirm_email">Type {target.email} to confirm</label><input class="field" id="confirm_email" name="confirm_email" autocomplete="off" required /></div>
+                <button name="intent" value="delete-user" class="btn-ghost !border-lk-red/40 !text-lk-red">Delete user</button>
+              </div>
+            </form>
+          )}
+        </div>
+      )}
     </section>
 
     <section class="card">
