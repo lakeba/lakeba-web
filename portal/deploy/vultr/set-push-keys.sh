@@ -14,7 +14,7 @@ if grep -q '^VAPID_PRIVATE_KEY=.\+' "$ENV" && [[ "${1:-}" != "--rotate" ]]; then
   echo "Push keys are already set. (Run with --rotate to replace them; devices would need to turn notifications on again.)"
   exit 0
 fi
-NODE_PATH=/opt/lakeba-portal/current/node_modules node - "$ENV" <<'JS'
+NODE_PATH=/srv/lakeba-portal/current/node_modules node - "$ENV" <<'JS'
 const fs = require('fs');
 const { generateVAPIDKeys } = require('web-push');
 const path = process.argv[2];
