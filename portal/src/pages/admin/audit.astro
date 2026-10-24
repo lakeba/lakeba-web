@@ -2,13 +2,39 @@
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
-import { auditQuery, emailsFor, readFilters } from '../../lib/admin-audit';
+import Alert from '../../components/Alert.astro';
+import { PROTECTED_ACTION, auditQuery, deletableCount, deleteEvents, emailsFor, readFilters } from '../../lib/admin-audit';
+import { serviceClient } from '../../lib/admin';
+import { notifyAdmins } from '../../lib/notify';
+import { field } from '../../lib/forms';
 import { dateTime } from '../../lib/format';
 
 const PAGE = 50;
 const supabase = Astro.locals.supabase;
 const filters = readFilters(Astro.url.searchParams);
 const page = Math.max(1, Number(Astro.url.searchParams.get('page') ?? 1) || 1);
+const svc = serviceClient();
+// Deleting is for group admins with two-step only (the page itself is group-admin only too).
+const canDelete = Astro.locals.profile?.role === 'admin' && Astro.locals.user?.aal === 'aal2';
+let notice = '';
+let error = '';
+
+if (Astro.request.method === 'POST' && canDelete) {
+  const form = await Astro.request.formData();
+  const posted = readFilters(new URLSearchParams([...form].map(([k, v]) => [k, String(v)])));
+  const expected = await deletableCount(svc, posted);
+  if (field(form, 'confirm') !== `DELETE ${expected}`) error = `Type DELETE ${expected} exactly to confirm. Nothing was deleted.`;
+  else if (!expected) error = 'Nothing to delete.';
+  else {
+    const deleted = await deleteEvents(svc, posted);
+    const by = Astro.locals.profile?.email ?? 'an admin';
+    const scope = Object.entries(posted).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(', ') || 'all events';
+    await svc.from('audit_log').insert({ user_id: Astro.locals.user!.id, action: PROTECTED_ACTION, detail: { deleted, filters: posted } }).throwOnError();
+    await notifyAdmins({ kind: 'admin_security', origin: Astro.url.origin, link: '/admin/audit?action=' + PROTECTED_ACTION, title: 'Audit log events deleted', body: `${by} deleted ${deleted} audit log event(s) (${scope}). A record of this stays in the audit log.`, pushDetail: `${deleted} audit log events deleted` });
+    notice = `Deleted ${deleted} event(s). A record of the deletion was added to the log and all admins were alerted.`;
+  }
+}
+const toDelete = canDelete ? await deletableCount(svc, filters) : 0;
 const audit = await auditQuery(supabase, filters);
 const { data: rows, count } = audit ? await audit.query.range((page - 1) * PAGE, page * PAGE - 1) : { data: [], count: 0 };
 const emails = await emailsFor(supabase, (rows ?? []).map((r) => r.user_id));
@@ -26,6 +52,8 @@ const csvHref = `/admin/audit.csv?${new URLSearchParams(Object.entries(filters).
     <a href={csvHref} class="btn-ghost">Export CSV</a>
   </PageHeader>
 
+  {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
+  {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
   <form method="get" class="card mb-6 grid gap-4 sm:grid-cols-5">
     <div><label class="label" for="action">Action</label><input class="field" id="action" name="action" value={filters.action} placeholder="sign_in" /></div>
     <div class="sm:col-span-2"><label class="label" for="email">User email</label><input class="field" id="email" name="email" value={filters.email} /></div>
@@ -33,6 +61,25 @@ const csvHref = `/admin/audit.csv?${new URLSearchParams(Object.entries(filters).
     <div><label class="label" for="to">To</label><input class="field" id="to" name="to" type="date" value={filters.to} /></div>
     <div class="flex gap-3 sm:col-span-5"><button class="btn-ghost">Filter</button><a href="/admin/audit" class="btn text-white/50 hover:text-white">Clear</a></div>
   </form>
+
+  {canDelete && toDelete > 0 && (
+    <details class="card mb-6 border border-lk-red/30" open={Boolean(error)}>
+      <summary class="cursor-pointer font-semibold text-lk-red">Delete these events</summary>
+      <form method="post" class="mt-4 space-y-3 text-sm">
+        {Object.entries(filters).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+        <p class="text-white/70">
+          This permanently deletes <strong class="text-white">{toDelete} event(s)</strong> matching
+          {Object.values(filters).some(Boolean) ? ' the filters above' : <strong class="text-lk-red"> no filter, so the whole log</strong>}.
+          Records of earlier deletions are kept. A record of this deletion is added and every admin gets a security alert.
+          Consider <a href={csvHref} class="text-lk-blue hover:underline">exporting a CSV</a> first.
+        </p>
+        <div class="flex flex-wrap items-end gap-3">
+          <div><label class="label" for="confirm">Type <span class="font-mono text-white">DELETE {toDelete}</span> to confirm</label><input id="confirm" name="confirm" autocomplete="off" class="field font-mono" /></div>
+          <button class="btn-primary !bg-lk-red">Delete {toDelete} event(s)</button>
+        </div>
+      </form>
+    </details>
+  )}
 
   {rows?.length ? (
     <>
