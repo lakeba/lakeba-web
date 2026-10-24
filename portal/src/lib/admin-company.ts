@@ -45,6 +45,6 @@ export const withCompany = (scope: AdminScope, href: string) =>
  * detail page, which changes roles and resets two-step, stays with group admins).
  */
 const COMPANY_ADMIN_EXACT = ['/admin', '/admin/investors', '/admin/holdings', '/admin/engagement', '/admin/ventures', '/admin/ask-review', '/admin/ask-knowledge', '/admin/emails', '/admin/data-rooms', '/admin/trading'];
-const COMPANY_ADMIN_TREES = ['/admin/documents', '/admin/content', '/admin/agm', '/admin/queries'];
+const COMPANY_ADMIN_TREES = ['/admin/documents', '/admin/content', '/admin/news', '/admin/agm', '/admin/queries'];
 export const companyAdminMayOpen = (path: string) =>
   COMPANY_ADMIN_EXACT.includes(path) || COMPANY_ADMIN_TREES.some((p) => path === p || path.startsWith(`${p}/`));

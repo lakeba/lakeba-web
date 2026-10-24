@@ -1,0 +1,73 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
+import { adminScope, withCompany } from '../../../lib/admin-company';
+import { serviceClient } from '../../../lib/admin';
+import { websiteSyncConfigured } from '../../../lib/news-cms';
+import { dateTime, shortDate } from '../../../lib/format';
+
+// All news: public posts (portal and website) and shareholder-only posts.
+const supabase = Astro.locals.supabase;
+const scope = await adminScope(Astro.locals, Astro.url);
+const q = Astro.url.searchParams.get('q')?.trim() ?? '';
+const show = Astro.url.searchParams.get('show') ?? 'all';
+let query = supabase.from('posts').select('id, slug, title, entity_id, visibility, venture, published_at, updated_at, external, autosave_at')
+  .order('published_at', { ascending: false, nullsFirst: true }).limit(400);
+// Public posts of any company are listed for group admins; company admins see their companies' posts.
+query = scope.isGroupAdmin && !scope.selected ? query : query.in('entity_id', scope.ids);
+if (q) query = query.ilike('title', `%${q}%`);
+if (show === 'public' || show === 'shareholders') query = query.eq('visibility', show);
+if (show === 'drafts') query = query.is('published_at', null);
+const { data: posts } = await query;
+const now = new Date().toISOString();
+const status = (p: { published_at: string | null }) => (!p.published_at ? 'Draft' : p.published_at > now ? 'Scheduled' : 'Published');
+const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
+const { data: sync } = await serviceClient().from('portal_settings').select('value').eq('key', 'website_sync').maybeSingle();
+const s = (sync?.value ?? {}) as { changed_at?: string | null; requested_at?: string | null; error?: string | null };
+const pending = s.changed_at && (!s.requested_at || s.changed_at > s.requested_at);
+const link = (params: Record<string, string>) => `?${new URLSearchParams({ ...(scope.selected ? { company: scope.selected.code } : {}), ...(q ? { q } : {}), show, ...params })}`;
+---
+
+<Admin title="News">
+  <PageHeader title="News" subtitle="Public news goes on the website and to every investor; shareholder posts only to that company's shareholders.">
+    <a href={withCompany(scope, '/admin/news/new')} class="btn-primary">New post</a>
+  </PageHeader>
+  <AdminCompanyFilter scope={scope} />
+
+  {scope.isGroupAdmin && (
+    <p class="mb-4 text-sm text-white/55">
+      Website: {websiteSyncConfigured()
+        ? pending ? 'public news changed; the website rebuilds in a couple of minutes.' : s.requested_at ? `last rebuild requested ${dateTime.format(new Date(s.requested_at))}.` : 'up to date.'
+        : <>automatic rebuilds aren't set up yet, so after changing public news run <strong class="text-white/80">Deploy to GitHub Pages</strong> in GitHub Actions.</>}
+      {s.error && <span class="text-lk-red"> Last rebuild request failed ({s.error}).</span>}
+    </p>
+  )}
+
+  <form method="get" class="mb-4 flex flex-wrap items-center gap-2 text-sm">
+    {scope.selected && <input type="hidden" name="company" value={scope.selected.code} />}
+    <input type="hidden" name="show" value={show} />
+    <input name="q" value={q} placeholder="Search titles" class="field w-64" />
+    {[['all', 'All'], ['public', 'Public'], ['shareholders', 'Shareholders only'], ['drafts', 'Drafts']].map(([v, l]) => (
+      <a href={link({ show: v })} aria-current={show === v ? 'page' : undefined} class:list={['rounded-full border px-3 py-1', show === v ? 'border-lk-blue text-white' : 'border-white/10 text-white/55 hover:text-white']}>{l}</a>
+    ))}
+  </form>
+
+  <section class="card overflow-hidden p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-3 font-medium">Title</th><th class="px-5 py-3 font-medium">For</th><th class="px-5 py-3 font-medium">Status</th><th class="px-5 py-3 font-medium">Date</th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {(posts ?? []).map((p) => (
+          <tr class="hover:bg-white/[0.02]">
+            <td class="px-5 py-3"><a href={withCompany(scope, `/admin/news/${p.id}`)} class="font-medium text-white hover:underline">{p.title}</a>
+              <span class="block text-xs text-white/40">/news/{p.slug}{p.external && ' · link only'}{p.autosave_at && p.autosave_at > p.updated_at && ' · unsaved changes'}</span></td>
+            <td class="px-5 py-3 text-white/60">{p.visibility === 'public' ? <span class="rounded-full bg-lk-blue/15 px-2 py-0.5 text-xs text-lk-blue">Public · {p.venture || companyName(p.entity_id)}</span> : <span class="text-xs">{companyName(p.entity_id)} shareholders</span>}</td>
+            <td class="px-5 py-3"><span class:list={['rounded-full px-2 py-0.5 text-xs', { Draft: 'bg-white/10 text-white/60', Scheduled: 'bg-lk-orange/15 text-lk-orange', Published: 'bg-lk-green/15 text-lk-green' }[status(p)]]}>{status(p)}</span></td>
+            <td class="whitespace-nowrap px-5 py-3 text-white/50">{p.published_at ? shortDate.format(new Date(p.published_at)) : '—'}</td>
+          </tr>
+        ))}
+        {!posts?.length && <tr><td colspan="4" class="px-5 py-6 text-center text-white/45">No posts match.</td></tr>}
+      </tbody>
+    </table>
+  </section>
+</Admin>

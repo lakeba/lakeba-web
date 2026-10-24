@@ -1,8 +1,8 @@
 import type Anthropic from '@anthropic-ai/sdk';
 import { createHash } from 'node:crypto';
 import { join } from 'node:path';
-import { getCollection } from 'astro:content';
 import { PUBLIC_SITE_URL } from 'astro:env/server';
+import { loadPublicArticles } from './news-cms';
 import { serviceClient } from './admin';
 import { client, type AskCompany, type ChatTurn } from './ask';
 import { articleText, factsSheet, fmtDate, NEWS_FROM, resolveCompany, sydneyToday, type KnowledgeBase, type Source } from './knowledge';
@@ -92,7 +92,7 @@ export async function ensureIndex(svc: Svc, force = false) {
     documents += missing.length;
   }
 
-  const articles = (await getCollection('publicNews'))
+  const articles = (await loadPublicArticles(svc))
     .filter((n) => n.data.date.toISOString() >= NEWS_FROM && n.body?.trim() && !n.data.external);
   const { data: stored } = await svc.from('news_chunks').select('slug, content_hash').eq('chunk_index', 0);
   const storedHash = new Map((stored ?? []).map((s) => [s.slug, s.content_hash]));

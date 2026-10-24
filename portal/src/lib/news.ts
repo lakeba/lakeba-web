@@ -1,23 +1,29 @@
-import { getCollection } from 'astro:content';
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { PUBLIC_SITE_URL } from 'astro:env/server';
 import type { Company } from './companies';
 
-export type NewsItem = { title: string; excerpt: string; date: Date; href: string; external: boolean; label: string };
+/** external: a link-only item that opens elsewhere (press coverage); public: also on the website. */
+export type NewsItem = { title: string; excerpt: string; date: Date; href: string; external: boolean; public: boolean; label: string; cover: string | null };
 
 /**
- * The company's shareholder-only posts and Lakeba's public News & Media
- * (public anyway, so every investor sees it), newest first.
+ * The company's shareholder-only posts and every public post (public anyway,
+ * so every investor sees them), newest first. All are managed in Admin → News.
  */
 export async function loadNews(supabase: SupabaseClient, limit?: number, company?: Company | null): Promise<NewsItem[]> {
-  const [{ data: posts }, publicNews] = await Promise.all([
-    supabase.from('posts').select('slug, title, excerpt, published_at').eq('entity_id', company?.id ?? '00000000-0000-0000-0000-000000000000').order('published_at', { ascending: false }),
-    getCollection('publicNews'),
-  ]);
-  const site = PUBLIC_SITE_URL.replace(/\/$/, '');
-  const items: NewsItem[] = [
-    ...(posts ?? []).map((p) => ({ title: p.title, excerpt: p.excerpt, date: new Date(p.published_at!), href: `/news/${p.slug}`, external: false, label: company && company.relationship !== 'group' ? `${company.display_name} shareholders` : 'Shareholders' })),
-    ...publicNews.map((n) => ({ title: n.data.title, excerpt: n.data.excerpt, date: n.data.date, href: `${site}/news/${n.id}/`, external: true, label: n.data.venture })),
-  ].sort((a, b) => b.date.getTime() - a.date.getTime());
-  return limit ? items.slice(0, limit) : items;
+  let query = supabase.from('posts')
+    .select('slug, title, excerpt, published_at, visibility, venture, external, source_url, cover_url, entity_id, entities(display_name)')
+    .or(`entity_id.eq.${company?.id ?? '00000000-0000-0000-0000-000000000000'},visibility.eq.public`)
+    .not('published_at', 'is', null).lte('published_at', new Date().toISOString())
+    .order('published_at', { ascending: false });
+  if (limit) query = query.limit(limit);
+  const { data } = await query;
+  return (data ?? []).map((p) => {
+    const isPublic = p.visibility === 'public';
+    const linkOnly = isPublic && p.external && Boolean(p.source_url);
+    return {
+      title: p.title, excerpt: p.excerpt, date: new Date(p.published_at!), cover: p.cover_url,
+      href: linkOnly ? p.source_url! : `/news/${p.slug}`, external: linkOnly, public: isPublic,
+      label: isPublic ? p.venture || (p.entities as unknown as { display_name: string } | null)?.display_name || 'Lakeba Group'
+        : company && company.relationship !== 'group' ? `${company.display_name} shareholders` : 'Shareholders',
+    };
+  });
 }

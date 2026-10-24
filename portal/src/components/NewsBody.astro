@@ -1,0 +1,29 @@
+---
+// A news article's body: HTML from the editor (cleaned when saved), or older Markdown posts.
+import { cleanHtml, markdownToHtml } from '../lib/news-cms';
+interface Props { html: string; markdown?: string | null }
+const { html, markdown } = Astro.props;
+const body = html ? cleanHtml(html) : await markdownToHtml(markdown ?? '');
+---
+
+<div class="news-body" set:html={body} />
+
+<style>
+  .news-body { color: color-mix(in oklab, var(--color-white) 78%, transparent); line-height: 1.8; }
+  .news-body :global(p) { margin: 0 0 1.1rem; }
+  .news-body :global(h2), .news-body :global(h3), .news-body :global(h4) { margin: 2.2rem 0 0.8rem; font-family: var(--font-display); font-weight: 700; color: var(--color-white); line-height: 1.3; }
+  .news-body :global(h2) { font-size: 1.6rem; } .news-body :global(h3) { font-size: 1.3rem; } .news-body :global(h4) { font-size: 1.1rem; }
+  .news-body :global(ul) { margin: 0 0 1.1rem 1.4rem; list-style: disc; } .news-body :global(ol) { margin: 0 0 1.1rem 1.4rem; list-style: decimal; }
+  .news-body :global(li) { margin: 0.3rem 0; }
+  .news-body :global(a) { color: #5b8ff0; text-decoration: underline; text-underline-offset: 3px; }
+  .news-body :global(strong) { color: var(--color-white); }
+  .news-body :global(blockquote) { margin: 1.5rem 0; border-left: 3px solid var(--color-lk-blue); padding-left: 1.25rem; font-style: italic; }
+  .news-body :global(hr) { margin: 2rem 0; border-color: color-mix(in oklab, var(--color-white) 10%, transparent); }
+  .news-body :global(img) { margin: 1.5rem auto; border-radius: 1rem; max-width: 100%; height: auto; }
+  .news-body :global(img[data-size="small"]) { max-width: 40%; } .news-body :global(img[data-size="medium"]) { max-width: 70%; }
+  .news-body :global(iframe) { margin: 1.5rem 0; width: 100%; aspect-ratio: 16 / 9; height: auto; border-radius: 1rem; }
+  .news-body :global(table) { width: 100%; margin: 0 0 1.25rem; border-collapse: collapse; font-size: 0.9rem; }
+  .news-body :global(th), .news-body :global(td) { border-bottom: 1px solid color-mix(in oklab, var(--color-white) 10%, transparent); padding: 0.45rem 0.6rem; text-align: left; vertical-align: top; }
+  .news-body :global(th) { color: var(--color-white); font-weight: 600; }
+  .news-body :global(pre) { overflow-x: auto; border-radius: 0.75rem; background: color-mix(in oklab, var(--color-white) 5%, transparent); padding: 1rem; font-size: 0.85rem; }
+</style>

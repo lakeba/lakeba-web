@@ -3,10 +3,11 @@ import '../styles/global.css';
 import { ClientRouter } from 'astro:transitions';
 import ThemeInit from '../components/ThemeInit.astro';
 
-interface Props { title?: string; description?: string }
+interface Props { title?: string; description?: string; /** Absolute URL for og:image / large Twitter card. */ image?: string }
 const {
   title = 'Lakeba — LakebaOS: from idea to funded company',
   description = 'LakebaOS gives founders an AI team that turns an idea into a working MVP — and a venture studio ready to co-found and fund it.',
+  image,
 } = Astro.props;
 ---
 
@@ -20,6 +21,9 @@ const {
     <meta name="description" content={description} />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
+    {image && <meta property="og:image" content={image} />}
+    {image && <meta name="twitter:card" content="summary_large_image" />}
+    {image && <meta name="twitter:image" content={image} />}
     <ThemeInit />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

@@ -1,6 +1,6 @@
 import type Anthropic from '@anthropic-ai/sdk';
-import { getCollection } from 'astro:content';
 import { PUBLIC_SITE_URL } from 'astro:env/server';
+import { loadPublicArticles } from './news-cms';
 import { serviceClient } from './admin';
 import type { AskCompany } from './ask';
 
@@ -124,7 +124,7 @@ export async function buildKnowledgeBase(forCompany?: AskCompany | null): Promis
       // The company's documents; for the group, plus venture documents shared with group shareholders.
       .or(isGroup ? `entity_id.eq.${company.id},shared_with_group.eq.true` : `entity_id.eq.${company.id}`).not('published_at', 'is', null).lte('published_at', now)
       .order('published_at').order('id'),
-    getCollection('publicNews'),
+    loadPublicArticles(svc),
     // Approved answers count until their review-by date.
     svc.from('ask_approved_answers').select('id, question, answer').eq('entity_id', company.id).eq('active', true).gte('review_by', sydneyToday()).order('created_at').order('id'),
   ]);

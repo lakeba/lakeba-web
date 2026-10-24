@@ -3,6 +3,11 @@ import type { Catalogue } from '../lib/i18n';
 // Documents, news, meetings (proxy voting, meeting questions) and Board Q&A.
 export default {
   es: {
+    'Read the story': 'Leer la noticia',
+    'This story was published on': 'Esta noticia se publicó en',
+    'Originally published on': 'Publicado originalmente en',
+    'Also on the Lakeba website:': 'También en el sitio web de Lakeba:',
+    'open the public page': 'abrir la página pública',
     "Reports & documents": "Informes y documentos",
     "Annual reports, meeting papers, shareholder updates and governance documents.": "Informes anuales, documentación de juntas, comunicaciones a accionistas y documentos de gobierno corporativo.",
     "Search titles": "Buscar por título",
@@ -102,6 +107,11 @@ export default {
     "Your reply could not be sent.": "No se pudo enviar su respuesta.",
   },
   it: {
+    'Read the story': 'Leggi la notizia',
+    'This story was published on': 'Questa notizia è stata pubblicata su',
+    'Originally published on': 'Pubblicato originariamente su',
+    'Also on the Lakeba website:': 'Anche sul sito di Lakeba:',
+    'open the public page': 'apri la pagina pubblica',
     "Reports & documents": "Report e documenti",
     "Annual reports, meeting papers, shareholder updates and governance documents.": "Relazioni annuali, documenti delle assemblee, comunicazioni agli azionisti e documenti di governance.",
     "Search titles": "Cerca nei titoli",
@@ -201,6 +211,11 @@ export default {
     "Your reply could not be sent.": "Non è stato possibile inviare la risposta.",
   },
   zh: {
+    'Read the story': '阅读全文',
+    'This story was published on': '本文发表于',
+    'Originally published on': '原文发表于',
+    'Also on the Lakeba website:': '亦见于 Lakeba 官网：',
+    'open the public page': '打开公开页面',
     "Reports & documents": "报告与文件",
     "Annual reports, meeting papers, shareholder updates and governance documents.": "年度报告、会议文件、股东通讯及公司治理文件。",
     "Search titles": "按标题搜索",

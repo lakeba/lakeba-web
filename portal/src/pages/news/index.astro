@@ -8,9 +8,9 @@ import { loadNews } from '../../lib/news';
 const { company, t, fmt } = Astro.locals;
 const news = await loadNews(Astro.locals.supabase, undefined, company);
 const [lead, ...rest] = news;
-// Our own posts get a translated label; Lakeba's public news keeps its venture name.
-const label = (p: { external: boolean; label: string }) =>
-  p.external ? p.label : company && company.relationship !== 'group' ? t('{company} shareholders', { company: company.display_name }) : t('Shareholders');
+// Shareholder posts get a translated label; public news keeps its venture name.
+const label = (p: { public: boolean; label: string }) =>
+  p.public ? p.label : company && company.relationship !== 'group' ? t('{company} shareholders', { company: company.display_name }) : t('Shareholders');
 const target = (external: boolean) => (external ? { target: '_blank', rel: 'noopener' } : {});
 ---
 
@@ -23,7 +23,7 @@ const target = (external: boolean) => (external ? { target: '_blank', rel: 'noop
         <p class="text-xs text-white/45"><span class="font-semibold text-lk-blue">{label(lead)}</span> · {fmt.longDate.format(lead.date)}</p>
         <h2 class="mt-2 max-w-3xl text-3xl font-extrabold group-hover:underline">{lead.title}</h2>
         <p class="mt-3 max-w-2xl text-white/60">{lead.excerpt}</p>
-        <p class="mt-6 text-sm font-semibold text-lk-blue">{lead.external ? `${t('Read on lakeba.com')} ↗` : `${t('Read')} →`}</p>
+        <p class="mt-6 text-sm font-semibold text-lk-blue">{lead.external ? `${t('Read the story')} ↗` : `${t('Read')} →`}</p>
       </a>
       <div class="mt-4 grid gap-4 md:grid-cols-2 lg:grid-cols-3">
         {rest.map((p) => (

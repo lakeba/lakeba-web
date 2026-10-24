@@ -1,0 +1,292 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import Alert from '../../../components/Alert.astro';
+import CompanySelect from '../../../components/CompanySelect.astro';
+import { serviceClient } from '../../../lib/admin';
+import { adminScope, formCompany, withCompany } from '../../../lib/admin-company';
+import { parseLocal, slugify } from '../../../lib/admin-forms';
+import { field } from '../../../lib/forms';
+import { dateTime } from '../../../lib/format';
+import { notifyMembers } from '../../../lib/notify';
+import { cleanHtml, markdownToHtml, markWebsiteChanged, saveRevision } from '../../../lib/news-cms';
+import { newsEditor } from '../../../lib/news-editors';
+
+// The news editor: one post, public (website and every investor) or for one
+// company's shareholders. Saving keeps a revision; public changes rebuild the website.
+const supabase = Astro.locals.supabase;
+const svc = serviceClient();
+const scope = await adminScope(Astro.locals, Astro.url);
+const editor = newsEditor(Astro.locals)!;
+const userId = Astro.locals.user!.id;
+const isNew = Astro.params.id === 'new';
+let error = '';
+let notice = Astro.url.searchParams.get('saved') ? 'Saved.' : '';
+const COLUMNS = 'id, slug, title, excerpt, body_html, body_md, cover_url, share_image_url, published_at, entity_id, visibility, venture, categories, external, source_url, source_name, seo_description, notify_on_publish, notified_at, updated_at, autosave, autosave_at';
+type Post = { id: string; slug: string; title: string; excerpt: string; body_html: string; body_md: string; cover_url: string | null; share_image_url: string | null; published_at: string | null; entity_id: string; visibility: string; venture: string; categories: string[]; external: boolean; source_url: string | null; source_name: string | null; seo_description: string; notify_on_publish: boolean; notified_at: string | null; updated_at: string; autosave: Record<string, string> | null; autosave_at: string | null };
+const load = async (id: string) => (await supabase.from('posts').select(COLUMNS).eq('id', id).maybeSingle()).data as Post | null;
+let post = isNew ? null : await load(Astro.params.id!);
+if (!isNew && (!post || !editor.mayEdit(post.entity_id))) return Astro.redirect(withCompany(scope, '/admin/news'));
+// Public posts are the group's voice on the website: only group admins change them.
+const locked = Boolean(post && post.visibility === 'public' && !editor.group);
+const log = (action: string, detail: Record<string, unknown>) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
+const contentOf = (p: Pick<Post, 'title' | 'excerpt' | 'body_html' | 'seo_description' | 'cover_url'>) => ({ title: p.title, excerpt: p.excerpt, body_html: p.body_html, seo_description: p.seo_description, cover_url: p.cover_url });
+
+if (Astro.request.method === 'POST' && !locked) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'save') {
+    const company = formCompany(scope, field(form, 'entity_id')) ?? (post ? scope.companies.find((c) => c.id === post!.entity_id) ?? null : null);
+    const visibility = field(form, 'visibility') === 'public' ? 'public' : 'shareholders';
+    const title = field(form, 'title');
+    const slug = slugify(field(form, 'slug') || title);
+    const when = field(form, 'when'); // draft | now | schedule | keep
+    const external = form.get('external') === 'on';
+    const sourceUrl = field(form, 'source_url');
+    if (!company || !editor.mayEdit(company.id)) error = 'Choose the company.';
+    else if (visibility === 'public' && !editor.group) error = 'Only group admins can publish public news.';
+    else if (title.length < 3) error = 'Give the post a title.';
+    else if (!slug) error = 'Give the post a web address.';
+    else if (external && !/^https?:\/\//.test(sourceUrl)) error = 'A link-only item needs the address of the story.';
+    else if (sourceUrl && !/^(https?:\/\/|\.\.\/)/.test(sourceUrl)) error = 'The source link must start with https://';
+    else {
+      const scheduled = parseLocal(field(form, 'publish_at'));
+      const publishedAt = when === 'now' ? (post?.published_at && post.published_at <= new Date().toISOString() ? post.published_at : new Date().toISOString())
+        : when === 'schedule' ? scheduled : when === 'keep' ? post?.published_at ?? null : null;
+      if (when === 'schedule' && !scheduled) error = 'Choose the date and time to publish.';
+      else {
+        const notify = form.get('notify') === 'on';
+        const row = {
+          entity_id: company.id, visibility, title, slug,
+          excerpt: field(form, 'excerpt').slice(0, 600), seo_description: field(form, 'seo_description').slice(0, 300),
+          body_html: cleanHtml(String(form.get('body_html') ?? '')), body_md: '',
+          cover_url: field(form, 'cover_url') || null, share_image_url: field(form, 'share_image_url') || null,
+          venture: visibility === 'public' ? field(form, 'venture') || company.display_name : '',
+          categories: field(form, 'categories').split(',').map((c) => c.trim()).filter(Boolean).slice(0, 10),
+          external: visibility === 'public' && external, source_url: sourceUrl || null, source_name: field(form, 'source_name') || (sourceUrl.startsWith('http') ? new URL(sourceUrl).hostname : null),
+          published_at: publishedAt, notify_on_publish: notify && Boolean(publishedAt), updated_at: new Date().toISOString(), updated_by: userId,
+          autosave: null, autosave_at: null,
+        };
+        const res = post
+          ? await supabase.from('posts').update(row).eq('id', post.id).select('id').single()
+          : await supabase.from('posts').insert({ ...row, created_by: userId }).select('id').single();
+        if (res.error) error = res.error.code === '23505' ? 'Another post already uses that web address.' : res.error.message;
+        else {
+          const id = res.data.id as string;
+          const wasLive = Boolean(post?.published_at && post.published_at <= new Date().toISOString());
+          const isLive = Boolean(publishedAt && publishedAt <= new Date().toISOString());
+          await saveRevision(svc, id, contentOf(row), userId, isLive && !wasLive ? 'publish' : 'save');
+          // Shareholders hear about it once: now if it is live, otherwise when its time comes (the news worker).
+          if (notify && isLive && !post?.notified_at) {
+            await svc.from('posts').update({ notified_at: new Date().toISOString() }).eq('id', id);
+            await notifyMembers({ kind: 'news', entityId: company.id, title, body: row.excerpt || 'A new update is available in the investor portal.', link: `/news/${slug}`, origin: Astro.url.origin, pushDetail: title });
+          }
+          if (visibility === 'public' || post?.visibility === 'public') await markWebsiteChanged(svc);
+          await log('admin_saved_post', { id, slug, visibility, published_at: publishedAt });
+          return Astro.redirect(withCompany(scope, `/admin/news/${id}?saved=1`), 303);
+        }
+      }
+    }
+  } else if (post && intent === 'delete') {
+    await supabase.from('posts').delete().eq('id', post.id).throwOnError();
+    if (post.visibility === 'public') await markWebsiteChanged(svc);
+    await log('admin_deleted_post', { slug: post.slug, visibility: post.visibility });
+    return Astro.redirect(withCompany(scope, '/admin/news'), 303);
+  } else if (post && intent === 'restore') {
+    const { data: rev } = await svc.from('post_revisions').select('title, excerpt, body_html, seo_description, cover_url, saved_at').eq('id', Number(field(form, 'revision_id'))).eq('post_id', post.id).maybeSingle();
+    if (!rev) error = 'That version was not found.';
+    else {
+      // Imported articles kept their text as Markdown: an empty HTML version means "the original".
+      const body = rev.body_html || (await markdownToHtml(post.body_md || ''));
+      const content = { title: rev.title, excerpt: rev.excerpt, body_html: body, seo_description: rev.seo_description, cover_url: rev.cover_url };
+      await supabase.from('posts').update({ ...content, body_md: '', updated_at: new Date().toISOString(), updated_by: userId, autosave: null, autosave_at: null }).eq('id', post.id).throwOnError();
+      await saveRevision(svc, post.id, content, userId, 'restore');
+      if (post.visibility === 'public') await markWebsiteChanged(svc);
+      await log('admin_restored_post_version', { slug: post.slug, from: rev.saved_at });
+      return Astro.redirect(withCompany(scope, `/admin/news/${post.id}?saved=1`), 303);
+    }
+  } else if (post && intent === 'discard-autosave') {
+    await supabase.from('posts').update({ autosave: null, autosave_at: null }).eq('id', post.id);
+    post = await load(post.id);
+  }
+}
+
+const bodyHtml = post ? post.body_html || (await markdownToHtml(post.body_md || '')) : '';
+const { data: revisions } = post ? await svc.from('post_revisions').select('id, title, reason, saved_at, saved_by').eq('post_id', post.id).order('saved_at', { ascending: false }).limit(30) : { data: [] };
+const authorIds = [...new Set((revisions ?? []).map((r) => r.saved_by).filter(Boolean))] as string[];
+const { data: authors } = authorIds.length ? await svc.from('profiles').select('id, email').in('id', authorIds) : { data: [] };
+const authorOf = new Map((authors ?? []).map((a) => [a.id, a.email]));
+const now = new Date().toISOString();
+const state = !post?.published_at ? 'draft' : post.published_at > now ? 'scheduled' : 'live';
+const hasAutosave = Boolean(post?.autosave && post.autosave_at && post.autosave_at > post.updated_at);
+const localDate = (iso: string | null | undefined) => (iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '');
+const defaultCompany = post?.entity_id ?? scope.defaultCompany?.id;
+const companyNames = Object.fromEntries(scope.companies.map((c) => [c.id, c.display_name]));
+---
+
+<Admin title={post ? `Edit: ${post.title}` : 'New post'}>
+  <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <a href={withCompany(scope, '/admin/news')} class="text-sm text-white/50 hover:text-white">← All news</a>
+      <h1 class="mt-2 font-display text-3xl font-bold">{post ? post.title : 'New post'}</h1>
+      {post && <p class="mt-1 text-sm text-white/45">{state === 'live' ? `Published ${dateTime.format(new Date(post.published_at!))}` : state === 'scheduled' ? `Scheduled for ${dateTime.format(new Date(post.published_at!))}` : 'Draft'} · last saved {dateTime.format(new Date(post.updated_at))}{post.visibility === 'public' && state === 'live' && <> · <a href={`/news/${post.slug}`} target="_blank" class="text-lk-blue hover:underline">view in the portal ↗</a></>}</p>}
+    </div>
+  </div>
+  {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
+  {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+  {locked && <div class="mb-4"><Alert>This is public news, which only group admins can change.</Alert></div>}
+  {hasAutosave && (
+    <div class="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-lk-orange/40 bg-lk-orange/10 px-5 py-3 text-sm" data-autosave-banner>
+      <span>There are unsaved changes from {dateTime.format(new Date(post!.autosave_at!))}.</span>
+      <span class="flex gap-2"><button type="button" class="btn-primary px-3 py-1.5 text-xs" data-restore-autosave>Bring them back</button>
+        <form method="post"><button name="intent" value="discard-autosave" class="btn-ghost px-3 py-1.5 text-xs">Discard</button></form></span>
+    </div>
+  )}
+
+  <form method="post" class="grid gap-6 xl:grid-cols-[1fr_20rem]" id="news-form" data-post-id={post?.id ?? ''} data-autosave={hasAutosave ? JSON.stringify(post!.autosave) : ''} data-company-names={JSON.stringify(companyNames)}>
+    <input type="hidden" name="intent" value="save" />
+    <fieldset class="min-w-0 space-y-4" disabled={locked}>
+      <div><label class="label" for="title">Title</label><input id="title" name="title" required value={post?.title} class="field text-lg font-semibold" /></div>
+      <div>
+        <label class="label">Text</label>
+        <div class="rounded-2xl border border-white/10 bg-white/[0.02]">
+          <div class="sticky top-16 z-10 flex flex-wrap gap-1 border-b border-white/10 bg-ink/95 p-2 backdrop-blur" data-toolbar>
+            {[
+              ['undo', '↶', 'Undo'], ['redo', '↷', 'Redo'], ['|'],
+              ['h2', 'H2', 'Heading'], ['h3', 'H3', 'Subheading'], ['p', '¶', 'Normal text'], ['|'],
+              ['bold', 'B', 'Bold'], ['italic', 'I', 'Italic'], ['underline', 'U', 'Underline'], ['strike', 'S', 'Strikethrough'], ['link', '🔗', 'Link'], ['|'],
+              ['bullet', '•', 'Bulleted list'], ['ordered', '1.', 'Numbered list'], ['quote', '❝', 'Quote'], ['hr', '—', 'Divider'], ['|'],
+              ['image', '🖼', 'Image'], ['alt', 'Alt', 'Image description (alt text)'], ['size-small', 'S▢', 'Small image'], ['size-medium', 'M▢', 'Medium image'], ['size-full', 'L▢', 'Full-width image'], ['video', '▶', 'YouTube or Vimeo video'], ['|'],
+              ['table', '▦', 'Table'], ['row', '+row', 'Add row'], ['col', '+col', 'Add column'], ['deltable', '✕▦', 'Delete table'], ['|'],
+              ['clear', '⌫', 'Clear formatting'],
+            ].map(([cmd, label, title]) => cmd === '|' ? <span class="mx-1 w-px self-stretch bg-white/10"></span> : (
+              <button type="button" data-cmd={cmd} title={title} aria-label={title} class="rounded-lg px-2.5 py-1.5 text-sm text-white/70 hover:bg-white/10 hover:text-white aria-pressed:bg-lk-blue/25 aria-pressed:text-white">{label}</button>
+            ))}
+          </div>
+          <div id="editor" class="news-editor min-h-96 px-5 py-4" data-initial={bodyHtml}></div>
+        </div>
+        <input type="hidden" name="body_html" value={bodyHtml} />
+        <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-image-file />
+        <p class="mt-2 flex justify-between text-xs text-white/40"><span>Paste from Word or Google Docs, or drag images in. </span><span data-status></span></p>
+      </div>
+      <div>
+        <div class="flex items-end justify-between gap-3"><label class="label" for="excerpt">Excerpt (on the news card)</label>
+          <button type="button" class="mb-1.5 rounded-lg border border-lk-blue/40 px-2.5 py-1 text-xs text-lk-blue hover:bg-lk-blue/10" data-suggest>✨ Suggest excerpt and description</button></div>
+        <textarea id="excerpt" name="excerpt" rows="2" maxlength="600" class="field">{post?.excerpt}</textarea>
+        <p class="mt-1 text-xs text-white/40" data-suggest-status>About 40 words. Claude can suggest it from the text; check it before saving.</p>
+      </div>
+    </fieldset>
+
+    <aside class="space-y-4">
+      <section class="card space-y-4">
+        <h2 class="font-display text-lg font-bold">Publishing</h2>
+        <fieldset class="space-y-4" disabled={locked}>
+          <div><label class="label" for="visibility">Who sees it</label>
+            <select id="visibility" name="visibility" class="field">
+              <option value="shareholders" selected={post?.visibility !== 'public'}>Shareholders of the company</option>
+              <option value="public" selected={post?.visibility === 'public'} disabled={!editor.group}>Public: website and all investors{!editor.group && ' (group admins)'}</option>
+            </select></div>
+          <CompanySelect scope={scope} id="entity_id" value={defaultCompany} />
+          <div data-public-only><label class="label" for="venture">Label on the website</label><input id="venture" name="venture" value={post?.venture} placeholder="e.g. Lakeba Group, Bricklet" class="field" /></div>
+          <div><label class="label" for="when">Status</label>
+            <select id="when" name="when" class="field">
+              <option value="draft" selected={state === 'draft'}>Draft (not visible)</option>
+              <option value="now" selected={state === 'live'}>{state === 'live' ? 'Published' : 'Publish now'}</option>
+              <option value="schedule" selected={state === 'scheduled'}>Schedule</option>
+            </select></div>
+          <div data-schedule><label class="label" for="publish_at">Publish on (your time)</label><input id="publish_at" name="publish_at" type="datetime-local" value={state === 'scheduled' ? localDate(post?.published_at) : ''} class="field" /></div>
+          <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="notify" class="mt-1 accent-lk-blue" checked={post?.notify_on_publish} disabled={Boolean(post?.notified_at)} /> {post?.notified_at ? 'Shareholders were notified' : 'Notify shareholders when it goes live'}</label>
+          <div class="flex flex-wrap gap-2">
+            <button class="btn-primary">Save</button>
+            <button type="submit" formaction="/admin/news/preview" formtarget="_blank" class="btn-ghost" data-preview>Preview</button>
+          </div>
+        </fieldset>
+      </section>
+
+      <section class="card space-y-3">
+        <h2 class="font-display text-lg font-bold">Cover image</h2>
+        <img src={post?.cover_url ?? ''} alt="" class:list={['w-full rounded-xl', !post?.cover_url && 'hidden']} data-cover-preview />
+        <input type="hidden" name="cover_url" value={post?.cover_url ?? ''} />
+        <fieldset class="flex flex-wrap gap-2" disabled={locked}>
+          <button type="button" class="btn-ghost px-3 py-1.5 text-xs" data-cover-choose>Choose and crop…</button>
+          <button type="button" class:list={['btn-ghost px-3 py-1.5 text-xs', !post?.cover_url && 'hidden']} data-cover-remove>Remove</button>
+        </fieldset>
+        <input type="file" accept="image/png,image/jpeg,image/webp" hidden data-cover-file />
+        <p class="text-xs text-white/40">Cropped to 16:9 for cards and social media.</p>
+      </section>
+
+      <section class="card space-y-4">
+        <h2 class="font-display text-lg font-bold">Web address and search</h2>
+        <fieldset class="space-y-4" disabled={locked}>
+          <div><label class="label" for="slug">Web address</label><div class="flex items-center gap-1 text-sm text-white/45">/news/<input id="slug" name="slug" value={post?.slug} class="field py-1.5" data-slug /></div></div>
+          <div><label class="label" for="seo_description">Search description</label><textarea id="seo_description" name="seo_description" rows="3" maxlength="300" class="field text-sm">{post?.seo_description}</textarea><p class="mt-1 text-xs text-white/40" data-seo-count></p></div>
+          <div data-public-only><label class="label" for="categories">Categories (comma separated)</label><input id="categories" name="categories" value={post?.categories?.join(', ')} class="field text-sm" /></div>
+          <div data-public-only><label class="label" for="share_image_url">Social share image (optional)</label><input id="share_image_url" name="share_image_url" value={post?.share_image_url ?? ''} placeholder="Uses the cover when empty" class="field text-sm" /></div>
+        </fieldset>
+      </section>
+
+      <section class="card space-y-3" data-public-only>
+        <h2 class="font-display text-lg font-bold">Source</h2>
+        <fieldset class="space-y-3" disabled={locked}>
+          <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="external" checked={post?.external} class="mt-1 accent-lk-blue" /> Link only: the card opens the story elsewhere (press coverage)</label>
+          <div><label class="label" for="source_url">Story address</label><input id="source_url" name="source_url" value={post?.source_url ?? ''} placeholder="https://…" class="field text-sm" /></div>
+          <div><label class="label" for="source_name">Publication</label><input id="source_name" name="source_name" value={post?.source_name ?? ''} placeholder="e.g. Australian Financial Review" class="field text-sm" /></div>
+        </fieldset>
+      </section>
+    </aside>
+  </form>
+
+  {post && (
+    <div class="mt-6 grid gap-6 xl:grid-cols-[1fr_20rem]">
+      <section class="card">
+        <h2 class="font-display text-lg font-bold">Earlier versions</h2>
+        <ul class="mt-3 divide-y divide-white/5 text-sm">
+          {(revisions ?? []).map((r, i) => (
+            <li class="flex flex-wrap items-center justify-between gap-3 py-2.5">
+              <span><span class="text-white/80">{dateTime.format(new Date(r.saved_at))}</span> <span class="text-xs text-white/40">· {{ save: 'saved', publish: 'published', restore: 'restored', import: 'imported from the website' }[r.reason]}{r.saved_by && ` by ${authorOf.get(r.saved_by) ?? 'someone'}`}{i === 0 && ' · current'}</span></span>
+              {i > 0 && !locked && <form method="post" onsubmit="return confirm('Replace the current text with this version? The current one stays in the list.')"><input type="hidden" name="intent" value="restore" /><input type="hidden" name="revision_id" value={r.id} /><button class="btn-ghost px-3 py-1 text-xs">Restore</button></form>}
+            </li>
+          ))}
+        </ul>
+      </section>
+      {!locked && (
+        <section class="card h-fit">
+          <h2 class="font-display text-lg font-bold">Delete</h2>
+          <p class="mt-1 text-sm text-white/55">{post.visibility === 'public' ? 'Removes it from the portal and, at the next rebuild, from the website.' : 'Removes it from the portal.'}</p>
+          <form method="post" class="mt-3" onsubmit="return confirm('Delete this post and all its versions? This can’t be undone.')"><button name="intent" value="delete" class="btn-ghost text-lk-red">Delete post</button></form>
+        </section>
+      )}
+    </div>
+  )}
+
+  <dialog class="w-full max-w-3xl rounded-2xl bg-ink p-0 text-white backdrop:bg-black/70" data-crop-dialog>
+    <div class="p-5">
+      <h2 class="font-display text-lg font-bold">Crop the cover (16:9)</h2>
+      <p class="mt-1 text-sm text-white/55">Drag to position, use the slider to zoom.</p>
+      <canvas width="1600" height="900" class="mt-4 w-full cursor-move rounded-xl bg-black" data-crop-canvas></canvas>
+      <input type="range" min="1" max="3" step="0.01" value="1" class="mt-4 w-full accent-lk-blue" aria-label="Zoom" data-crop-zoom />
+      <div class="mt-4 flex justify-end gap-2"><button type="button" class="btn-ghost" data-crop-cancel>Cancel</button><button type="button" class="btn-primary" data-crop-use>Use this crop</button></div>
+    </div>
+  </dialog>
+</Admin>
+
+<style is:global>
+  .news-editor .ProseMirror { outline: none; min-height: 22rem; color: color-mix(in oklab, var(--color-white) 85%, transparent); line-height: 1.75; }
+  .news-editor .ProseMirror p { margin: 0 0 0.9rem; }
+  .news-editor .ProseMirror h2 { margin: 1.6rem 0 0.6rem; font-size: 1.5rem; font-weight: 700; color: var(--color-white); }
+  .news-editor .ProseMirror h3 { margin: 1.4rem 0 0.5rem; font-size: 1.2rem; font-weight: 700; color: var(--color-white); }
+  .news-editor .ProseMirror ul { list-style: disc; margin-left: 1.4rem; } .news-editor .ProseMirror ol { list-style: decimal; margin-left: 1.4rem; }
+  .news-editor .ProseMirror blockquote { border-left: 3px solid var(--color-lk-blue); padding-left: 1rem; font-style: italic; }
+  .news-editor .ProseMirror a { color: #5b8ff0; text-decoration: underline; }
+  .news-editor .ProseMirror img { max-width: 100%; border-radius: 0.75rem; margin: 1rem auto; }
+  .news-editor .ProseMirror img[data-size="small"] { max-width: 40%; } .news-editor .ProseMirror img[data-size="medium"] { max-width: 70%; }
+  .news-editor .ProseMirror img.ProseMirror-selectednode { outline: 3px solid var(--color-lk-blue); }
+  .news-editor .ProseMirror iframe { width: 100%; aspect-ratio: 16 / 9; height: auto; border-radius: 0.75rem; }
+  .news-editor .ProseMirror table { width: 100%; border-collapse: collapse; margin: 1rem 0; }
+  .news-editor .ProseMirror th, .news-editor .ProseMirror td { border: 1px solid color-mix(in oklab, var(--color-white) 15%, transparent); padding: 0.4rem 0.6rem; vertical-align: top; }
+  .news-editor .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; pointer-events: none; color: color-mix(in oklab, var(--color-white) 35%, transparent); }
+</style>
+
+<script>
+  import { initNewsEditor } from '../../../scripts/news-editor';
+  initNewsEditor();
+</script>

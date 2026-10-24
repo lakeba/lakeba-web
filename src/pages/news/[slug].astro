@@ -1,5 +1,4 @@
 ---
-import { Image } from 'astro:assets';
 import { render } from 'astro:content';
 import Layout from '../../layouts/Layout.astro';
 import Nav from '../../components/Nav.astro';
@@ -15,13 +14,13 @@ export async function getStaticPaths() {
 
 interface Props { entry: NewsEntry; news: NewsEntry[] }
 const { entry, news } = Astro.props;
-const { title, date, excerpt, venture, cover, source, external } = entry.data;
+const { title, date, excerpt, description, venture, cover, shareImage, source, external } = entry.data;
 const { Content } = await render(entry);
 const related = news.filter((n) => n.id !== entry.id && n.data.venture === venture).slice(0, 3);
 const sourceHref = source?.url.startsWith('../') ? href(`/news/${source.url.slice(3)}`) : source?.url;
 ---
 
-<Layout title={`${title} — Lakeba News`} description={excerpt}>
+<Layout title={`${title} — Lakeba News`} description={description || excerpt} image={shareImage ?? cover ?? undefined}>
   <Nav />
   <main class="pt-32 pb-24">
     <article class="container-x max-w-3xl">
@@ -32,7 +31,7 @@ const sourceHref = source?.url.startsWith('../') ? href(`/news/${source.url.slic
       </div>
       <h1 class="mt-4 text-3xl font-extrabold leading-tight sm:text-5xl">{title}</h1>
       {external && <p class="mt-5 text-lg text-white/65">{excerpt}</p>}
-      {cover && <Image src={cover} alt="" widths={[640, 960, 1400]} sizes="(min-width: 768px) 768px, 100vw" class="mt-8 w-full rounded-3xl" loading="eager" />}
+      {cover && <img src={cover} alt="" class="mt-8 w-full rounded-3xl" loading="eager" decoding="async" fetchpriority="high" />}
 
       {!external && <div class="news-prose mt-10"><Content /></div>}
 

@@ -48,8 +48,15 @@ export default defineConfig({
       MS_LOGIN_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://login.microsoftonline.com' }),
       // Staging tests only: extra push service address prefixes allowed (e.g. a local stand-in).
       PUSH_TEST_ENDPOINTS: envField.string({ context: 'server', access: 'secret', optional: true }),
-      // Where public News & Media articles live (the marketing site).
+      // The public website (news articles link there; it reads /api/public/news.json when built).
       PUBLIC_SITE_URL: envField.string({ context: 'server', access: 'public', default: 'https://lakeba.github.io/lakeba-web' }),
+      // Rebuilds the website when public news changes: a GitHub token that may run the website's deploy workflow.
+      // Without it, an admin runs "Deploy to GitHub Pages" by hand.
+      GITHUB_DEPLOY_TOKEN: envField.string({ context: 'server', access: 'secret', optional: true }),
+      WEBSITE_REPO: envField.string({ context: 'server', access: 'secret', default: 'lakeba/lakeba-web' }),
+      WEBSITE_WORKFLOW: envField.string({ context: 'server', access: 'secret', default: 'deploy.yml' }),
+      // Tests only: stand-in GitHub API.
+      GITHUB_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.github.com' }),
     },
   },
   vite: {

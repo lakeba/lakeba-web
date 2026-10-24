@@ -1,19 +1,33 @@
 ---
 import Portal from '../../layouts/Portal.astro';
-import Markdown from '../../components/Markdown.astro';
+import NewsBody from '../../components/NewsBody.astro';
+import { PUBLIC_SITE_URL } from 'astro:env/server';
 
 const { t, fmt } = Astro.locals;
-const { data: post } = await Astro.locals.supabase.from('posts').select('title, excerpt, body_md, cover_url, published_at').eq('slug', Astro.params.slug!).maybeSingle();
+// Row-level security decides: the company's shareholder posts, and public posts for everyone signed in.
+const { data: post } = await Astro.locals.supabase.from('posts')
+  .select('slug, title, excerpt, body_html, body_md, cover_url, published_at, visibility, venture, external, source_url, source_name, entities(display_name)')
+  .eq('slug', Astro.params.slug!).not('published_at', 'is', null).lte('published_at', new Date().toISOString()).maybeSingle();
 if (!post) return new Response('Not found', { status: 404 });
+const isPublic = post.visibility === 'public';
+const venture = post.venture || (post.entities as unknown as { display_name: string } | null)?.display_name;
+const siteHref = `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${post.slug}/`;
 ---
 
 <Portal title={post.title}>
   <article class="mx-auto max-w-2xl">
     <a href="/news" class="text-sm text-white/50 hover:text-white">← {t('All news')}</a>
-    <p class="mt-8 text-sm text-white/45">{fmt.longDate.format(new Date(post.published_at!))}</p>
+    <p class="mt-8 text-sm text-white/45">{isPublic && venture && <><span class="font-semibold text-lk-blue">{venture}</span> · </>}{fmt.longDate.format(new Date(post.published_at!))}</p>
     <h1 class="mt-2 text-4xl font-extrabold">{post.title}</h1>
     {post.excerpt && <p class="mt-4 text-lg text-white/65">{post.excerpt}</p>}
     {post.cover_url && <img src={post.cover_url} alt="" class="mt-8 w-full rounded-3xl" />}
-    <div class="mt-8"><Markdown source={post.body_md} /></div>
+    {!post.external && <div class="mt-8"><NewsBody html={post.body_html} markdown={post.body_md} /></div>}
+    {post.source_url && (
+      <div class="card mt-8 flex flex-wrap items-center justify-between gap-4">
+        <p class="text-sm text-white/60">{post.external ? t('This story was published on') : t('Originally published on')} <span class="font-semibold text-white">{post.source_name}</span></p>
+        <a href={post.source_url.startsWith('../') ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${post.source_url.slice(3)}` : post.source_url} target="_blank" rel="noopener" class="btn-primary">{t('Read the story')} ↗</a>
+      </div>
+    )}
+    {isPublic && <p class="mt-10 text-sm text-white/45">{t('Also on the Lakeba website:')} <a href={siteHref} target="_blank" rel="noopener" class="text-lk-blue hover:underline">{t('open the public page')} ↗</a></p>}
   </article>
 </Portal>

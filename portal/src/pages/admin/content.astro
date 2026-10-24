@@ -3,9 +3,8 @@ import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
-import { parseLocal, slugify } from '../../lib/admin-forms';
-import { dateTime, shortDate } from '../../lib/format';
-import { notifyMembers } from '../../lib/notify';
+import { parseLocal } from '../../lib/admin-forms';
+import { dateTime } from '../../lib/format';
 import { adminScope, formCompany } from '../../lib/admin-company';
 import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import CompanySelect from '../../components/CompanySelect.astro';
@@ -13,7 +12,6 @@ import CompanySelect from '../../components/CompanySelect.astro';
 const supabase = Astro.locals.supabase;
 const scope = await adminScope(Astro.locals, Astro.url);
 const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
-const editPost = Astro.url.searchParams.get('post');
 const tones = ['info', 'success', 'warning'];
 let error = '';
 let notice = '';
@@ -25,7 +23,7 @@ if (Astro.request.method === 'POST') {
   const id = field(form, 'id');
 
   const company = formCompany(scope, field(form, 'entity_id'));
-  if ((intent === 'save-announcement' || intent === 'save-post') && !company) {
+  if (intent === 'save-announcement' && !company) {
     error = 'Choose the company.';
   } else if (intent === 'save-announcement') {
     const row = {
@@ -42,26 +40,6 @@ if (Astro.request.method === 'POST') {
   } else if (intent === 'delete-announcement') {
     await supabase.from('announcements').delete().eq('id', id).throwOnError();
     notice = 'Announcement deleted.';
-  } else if (intent === 'save-post') {
-    const title = field(form, 'title');
-    const slug = slugify(field(form, 'slug') || title);
-    const publish = field(form, 'publish');
-    const { data: existing } = id ? await supabase.from('posts').select('published_at').eq('id', id).single() : { data: null };
-    const publishedAt = publish === 'yes' ? existing?.published_at ?? new Date().toISOString() : null;
-    const row = { entity_id: company!.id, title, slug, excerpt: field(form, 'excerpt'), body_md: String(form.get('body_md') ?? ''), cover_url: field(form, 'cover_url') || null, published_at: publishedAt };
-    const { error: e } = id ? await supabase.from('posts').update(row).eq('id', id) : await supabase.from('posts').insert(row);
-    if (e) error = e.code === '23505' ? 'Another post already uses that web address (slug).' : e.message;
-    else {
-      await log('admin_saved_post', { slug, published: Boolean(publishedAt) });
-      const newlyPublished = publishedAt && !existing?.published_at;
-      if (newlyPublished && field(form, 'notify') === 'yes') {
-        await notifyMembers({ kind: 'news', entityId: company!.id, title, body: row.excerpt || 'A new update is available in the investor portal.', link: `/news/${slug}`, origin: Astro.url.origin, pushDetail: title });
-      }
-      notice = newlyPublished ? 'Post published.' : 'Post saved.';
-    }
-  } else if (intent === 'delete-post') {
-    await supabase.from('posts').delete().eq('id', id).throwOnError();
-    notice = 'Post deleted.';
   } else if (intent === 'save-liquidity' && scope.isGroupAdmin) {
     const value = { title: field(form, 'title'), body: field(form, 'body'), url: field(form, 'url'), label: field(form, 'label') };
     await supabase.from('portal_settings').upsert({ key: 'liquidity', value, updated_at: new Date().toISOString() }).throwOnError();
@@ -70,19 +48,17 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const [{ data: announcements }, { data: posts }, { data: liquidityRow }] = await Promise.all([
+const [{ data: announcements }, { data: liquidityRow }] = await Promise.all([
   supabase.from('announcements').select('*').in('entity_id', scope.ids).order('starts_at', { ascending: false }),
-  supabase.from('posts').select('id, entity_id, slug, title, excerpt, body_md, cover_url, published_at, created_at').in('entity_id', scope.ids).order('created_at', { ascending: false }),
   supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle(),
 ]);
 const liquidity = (liquidityRow?.value ?? {}) as Record<string, string>;
-const post = editPost ? posts?.find((p) => p.id === editPost) : null;
 const now = new Date();
 const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.starts_at) <= now && (!a.ends_at || new Date(a.ends_at) > now);
 ---
 
-<Admin title="News & announcements">
-  <PageHeader title="News & announcements" subtitle="The banner at the top of the dashboard, news posts, and the secondary trading card." />
+<Admin title="Announcements">
+  <PageHeader title="Announcements" subtitle="The banner at the top of the dashboard and the secondary trading card. News posts are in Admin → News." />
   <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
@@ -115,33 +91,6 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
     </form>
   </section>
 
-  <section class="card mb-6">
-    <div class="flex items-center justify-between"><h2 class="text-lg font-bold">News posts</h2>{post && <a href="/admin/content" class="text-sm text-lk-blue hover:underline">New post</a>}</div>
-    <ul class="mt-4 divide-y divide-white/5 text-sm">
-      {(posts ?? []).map((p) => (
-        <li class="flex flex-wrap items-center justify-between gap-3 py-3">
-          <span><a href={`?post=${p.id}`} class="font-medium text-white/85 hover:underline">{p.title}</a>
-            <span class="block text-xs text-white/40">{scope.companies.length > 1 && `${companyName(p.entity_id)} · `}{p.published_at ? `Published ${shortDate.format(new Date(p.published_at))}` : 'Draft'} · /news/{p.slug}</span></span>
-          <form method="post" class="text-xs"><input type="hidden" name="id" value={p.id} /><button name="intent" value="delete-post" class="text-white/50 hover:text-lk-red" onclick="return confirm('Delete this post?')">Delete</button></form>
-        </li>
-      ))}
-    </ul>
-    <form method="post" class="mt-4 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-2">
-      <h3 class="font-display font-bold text-white sm:col-span-2">{post ? `Edit “${post.title}”` : 'New post'}</h3>
-      {post && <input type="hidden" name="id" value={post.id} />}
-      <div class="sm:col-span-2"><CompanySelect scope={scope} id="p-entity" value={post?.entity_id} /></div>
-      <div><label class="label" for="p-title">Title</label><input class="field" id="p-title" name="title" required value={post?.title} /></div>
-      <div><label class="label" for="p-slug">Web address (blank = from title)</label><input class="field" id="p-slug" name="slug" value={post?.slug} /></div>
-      <div class="sm:col-span-2"><label class="label" for="p-excerpt">Excerpt</label><input class="field" id="p-excerpt" name="excerpt" value={post?.excerpt} /></div>
-      <div class="sm:col-span-2"><label class="label" for="p-body">Body (Markdown)</label><textarea class="field font-mono text-sm" id="p-body" name="body_md" rows="10">{post?.body_md}</textarea></div>
-      <div><label class="label" for="p-cover">Cover image URL (optional)</label><input class="field" id="p-cover" name="cover_url" value={post?.cover_url} /></div>
-      <div class="flex flex-col justify-end gap-2 text-sm text-white/70">
-        <label class="flex items-center gap-2"><input type="checkbox" name="publish" value="yes" checked={Boolean(post?.published_at)} /> Published</label>
-        <label class="flex items-center gap-2"><input type="checkbox" name="notify" value="yes" /> Notify shareholders when first published</label>
-      </div>
-      <div><button name="intent" value="save-post" class="btn-primary">{post ? 'Save post' : 'Create post'}</button></div>
-    </form>
-  </section>
 
   {scope.isGroupAdmin && <section class="card">
     <h2 class="text-lg font-bold">Secondary trading card (Lakeba Group)</h2>

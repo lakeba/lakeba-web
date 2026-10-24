@@ -3,6 +3,7 @@ import { memberIds, notifyAdmins, notifyMembers } from './notify';
 import { CATEGORIES, DIGESTED } from './notification-events';
 import { processOutbox, pushEnabled } from './push';
 import { pollMailboxes, sendDueAutoReplies } from './shareholder-email';
+import { requestWebsiteDeploy } from './news-cms';
 
 // The notification worker inside the portal process: sends queued pushes and
 // runs the scheduled notifications. Each scheduled job claims a key in
@@ -100,6 +101,36 @@ export async function weeklyDigest(now = new Date(), { force = false } = {}) {
   return sent;
 }
 
+/**
+ * News: tells shareholders about posts whose scheduled time has come, and
+ * rebuilds the public website two minutes after public news last changed (so a
+ * burst of edits makes one rebuild). Scheduled public posts count as a change
+ * when their time comes.
+ */
+export async function newsJobs(now = new Date()) {
+  const svc = serviceClient();
+  const { data: due } = await svc.from('posts').select('id, entity_id, title, excerpt, slug').eq('notify_on_publish', true).is('notified_at', null).lte('published_at', now.toISOString());
+  for (const p of due ?? []) {
+    const { data: claimed } = await svc.from('posts').update({ notified_at: now.toISOString() }).eq('id', p.id).is('notified_at', null).select('id');
+    if (!claimed?.length) continue;
+    await notifyMembers({ kind: 'news', entityId: p.entity_id, title: p.title, body: p.excerpt || 'A new update is available in the investor portal.', link: `/news/${p.slug}`, origin: lastOrigin, pushDetail: p.title });
+  }
+
+  const { data: row } = await svc.from('portal_settings').select('value').eq('key', 'website_sync').maybeSingle();
+  const sync = (row?.value ?? {}) as { changed_at?: string | null; requested_at?: string | null; error?: string | null };
+  let changed = sync.changed_at ?? null;
+  const since = sync.requested_at ?? '1970-01-01T00:00:00Z';
+  const { data: scheduled } = await svc.from('posts').select('published_at').eq('visibility', 'public').gt('published_at', since).lte('published_at', now.toISOString()).order('published_at', { ascending: false }).limit(1);
+  const went = scheduled?.[0]?.published_at;
+  if (went && (!changed || went > changed)) changed = went;
+  if (!changed || (sync.requested_at && changed <= sync.requested_at)) return;
+  if (now.getTime() - new Date(changed).getTime() < 120_000) return;
+  const problem = await requestWebsiteDeploy();
+  if (problem === 'no GitHub token') return; // admins rebuild by hand; the page says so
+  await svc.from('portal_settings').upsert({ key: 'website_sync', value: { ...sync, changed_at: changed, requested_at: problem ? sync.requested_at ?? null : now.toISOString(), error: problem }, updated_at: now.toISOString() });
+  if (problem) console.error('website rebuild', problem);
+}
+
 /** Keeps the delivery log to 30 days. */
 async function cleanup(now = new Date()) {
   const svc = serviceClient();
@@ -119,7 +150,7 @@ export function startNotificationWorker() {
   const run = async () => {
     try {
       if (pushEnabled()) await processOutbox();
-      if (ticks % 4 === 0) await pollMailboxes(lastOrigin); // shareholder mailboxes, every minute
+      if (ticks % 4 === 0) { await pollMailboxes(lastOrigin); await newsJobs(); } // mailboxes and news, every minute
       await sendDueAutoReplies(lastOrigin); // automatic replies whose 5-minute undo window has passed
       if (ticks++ % 40 === 0) { await proxyReminders(); await votesSummary(); await weeklyDigest(); await cleanup(); }
     } catch (e) {

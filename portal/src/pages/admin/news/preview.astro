@@ -1,0 +1,48 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import NewsBody from '../../../components/NewsBody.astro';
+import { field } from '../../../lib/forms';
+import { cleanHtml } from '../../../lib/news-cms';
+import { longDate } from '../../../lib/format';
+
+// What the post will look like, from the editor's unsaved fields. Nothing is saved.
+if (Astro.request.method !== 'POST') return Astro.redirect('/admin/news');
+const form = await Astro.request.formData();
+const title = field(form, 'title') || 'Untitled';
+const excerpt = field(form, 'excerpt');
+const cover = field(form, 'cover_url');
+const body = cleanHtml(String(form.get('body_html') ?? ''));
+const isPublic = field(form, 'visibility') === 'public';
+const venture = field(form, 'venture') || 'Lakeba Group';
+const seo = field(form, 'seo_description') || excerpt;
+const date = longDate.format(new Date());
+---
+
+<Admin title={`Preview: ${title}`}>
+  <p class="mb-6 rounded-2xl border border-lk-orange/40 bg-lk-orange/10 px-5 py-3 text-sm">Preview of unsaved changes. Close this tab to go back to the editor.</p>
+  <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
+    <article class="card mx-auto w-full max-w-3xl sm:p-10">
+      <p class="text-sm text-white/45">{isPublic && <><span class="font-semibold text-lk-blue">{venture}</span> · </>}{date}</p>
+      <h1 class="mt-2 text-4xl font-extrabold">{title}</h1>
+      {excerpt && <p class="mt-4 text-lg text-white/65">{excerpt}</p>}
+      {cover && <img src={cover} alt="" class="mt-8 w-full rounded-3xl" />}
+      <div class="mt-8"><NewsBody html={body} /></div>
+    </article>
+    <aside class="space-y-4">
+      <section class="card">
+        <p class="text-xs uppercase tracking-widest text-white/40">News card</p>
+        {cover && <img src={cover} alt="" class="mt-3 aspect-video w-full rounded-xl object-cover" />}
+        <p class="mt-3 text-xs text-white/45"><span class="font-semibold text-lk-blue">{isPublic ? venture : 'Shareholders'}</span> · {date}</p>
+        <p class="mt-1 font-bold">{title}</p>
+        <p class="mt-1 line-clamp-3 text-sm text-white/55">{excerpt}</p>
+      </section>
+      {isPublic && (
+        <section class="card">
+          <p class="text-xs uppercase tracking-widest text-white/40">Search result</p>
+          <p class="mt-3 truncate text-sm text-[#8ab4f8]">{title} — Lakeba News</p>
+          <p class="mt-1 text-xs text-white/55">{seo.length > 158 ? `${seo.slice(0, 155)}…` : seo}</p>
+        </section>
+      )}
+    </aside>
+  </div>
+</Admin>
