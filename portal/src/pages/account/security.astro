@@ -2,15 +2,16 @@
 import Portal from '../../layouts/Portal.astro';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
-import { shortDate } from '../../lib/format';
+import { clientStrings } from '../../lib/i18n';
 import { passkeyError, stepUpProblem, type Passkey } from '../../lib/passkeys';
 import { notifySecurity } from '../../lib/notify';
 
 const supabase = Astro.locals.supabase;
+const { t, fmt } = Astro.locals;
 const isAdmin = Astro.locals.profile?.role === 'admin';
 // After a passkey sign-in, Supabase still wants the authenticator code to change two-step or passkeys.
 const needsCode = Astro.locals.mfaEnrolled && !Astro.locals.user?.codeVerified;
-let notice = Astro.url.searchParams.get('passkey') === 'added' ? 'Passkey added. Next time, choose “Sign in with a passkey”.' : '';
+let notice = Astro.url.searchParams.get('passkey') === 'added' ? t('Passkey added. Next time, choose “Sign in with a passkey”.') : '';
 let error = '';
 
 if (Astro.request.method === 'POST') {
@@ -23,18 +24,18 @@ if (Astro.request.method === 'POST') {
       await supabase.rpc('log_event', { event_action: 'mfa_removed' });
       await notifySecurity({ userId: Astro.locals.user!.id, origin: Astro.url.origin, title: 'Two-step verification was turned off', body: 'Two-step verification was just turned off for your Lakeba investor account. If this wasn’t you, turn it back on under Profile → Security and contact info@lakeba.com.' });
     }
-    notice = error ? 'Could not remove two-step verification.' : 'Two-step verification has been turned off.';
+    notice = error ? t('Could not remove two-step verification.') : t('Two-step verification has been turned off.');
   } else if (intent === 'rename-passkey') {
     const name = field(form, 'name').slice(0, 120);
     const { error: e } = name ? await supabase.auth.passkey.update({ passkeyId: field(form, 'passkeyId'), friendlyName: name }) : { error: null };
-    if (e) error = passkeyError(e); else if (name) notice = 'Passkey renamed.';
+    if (e) error = t(passkeyError(e)); else if (name) notice = t('Passkey renamed.');
   } else if (intent === 'remove-passkey') {
     const { error: e } = await supabase.auth.passkey.delete({ passkeyId: field(form, 'passkeyId') });
-    if (e) error = passkeyError(e);
+    if (e) error = t(passkeyError(e));
     else {
       await supabase.rpc('log_event', { event_action: 'passkey_removed', event_detail: { passkey_id: field(form, 'passkeyId') } });
       await notifySecurity({ userId: Astro.locals.user!.id, origin: Astro.url.origin, title: 'A passkey was removed from your account', body: 'A passkey was just removed from your Lakeba investor account. If this wasn’t you, contact info@lakeba.com.' });
-      notice = 'Passkey removed.';
+      notice = t('Passkey removed.');
     }
   }
 }
@@ -44,94 +45,110 @@ const totp = factors?.totp.find((f) => f.status === 'verified');
 const passkeys = (passkeyList ?? []) as Passkey[];
 // Adding a passkey asks for the password unless the person just signed in or completed two-step.
 const askPassword = !needsCode && (await stepUpProblem(supabase, Astro.locals.user!.email, '')) !== null;
+// Messages the "Add a passkey" button can show (from the browser or the passkey endpoints).
+const passkeyStrings = clientStrings(t, [
+  'Something went wrong. Please try again.',
+  'Your device couldn’t create a passkey. Please try again.',
+  'Enter your password to add a passkey.',
+  'That password is incorrect.',
+  'Too many attempts. Please wait a minute and try again.',
+  'You already have the maximum number of passkeys. Remove one first.',
+  'This passkey is already saved to your account.',
+  'That took too long. Please try again.',
+  'Finish two-step verification first, then try again.',
+  'This account has been disabled.',
+  'Please confirm your email address first.',
+  'Passkeys aren’t available right now.',
+  'Something went wrong with the passkey. Please try again.',
+]);
 ---
 
-<Portal title="Security">
-  <h1 class="text-3xl font-bold">Security</h1>
-  <p class="mt-2 text-white/55">Protect access to your shareholding information.</p>
+<Portal title={t('Security')}>
+  <h1 class="text-3xl font-bold">{t('Security')}</h1>
+  <p class="mt-2 text-white/55">{t('Protect access to your shareholding information.')}</p>
   {notice && <div class="mt-6 max-w-2xl"><Alert>{notice}</Alert></div>}
   {error && <div class="mt-6 max-w-2xl"><Alert tone="error">{error}</Alert></div>}
 
   {needsCode && (
-    <div class="mt-6 max-w-2xl"><Alert>You signed in with a passkey. To add or remove passkeys or turn off two-step verification, first <a href="/mfa/verify?next=/account/security" class="font-semibold underline">enter the code from your authenticator app</a>.</Alert></div>
+    <div class="mt-6 max-w-2xl"><Alert>{t('You signed in with a passkey. To add or remove passkeys or turn off two-step verification, first')} <a href="/mfa/verify?next=/account/security" class="font-semibold underline">{t('enter the code from your authenticator app')}</a>.</Alert></div>
   )}
 
   <div class="mt-8 grid max-w-2xl gap-4">
     <section class="card" id="passkeys">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 class="text-lg font-bold">Passkeys</h2>
-          <p class="mt-1 text-sm text-white/55">Sign in with Face ID, Touch ID, Windows Hello, your phone or a security key instead of your password. Passkeys can’t be phished or guessed.</p>
+          <h2 class="text-lg font-bold">{t('Passkeys')}</h2>
+          <p class="mt-1 text-sm text-white/55">{t('Sign in with Face ID, Touch ID, Windows Hello, your phone or a security key instead of your password. Passkeys can’t be phished or guessed.')}</p>
         </div>
-        <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', passkeys.length ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{passkeys.length ? `${passkeys.length} saved` : 'None'}</span>
+        <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', passkeys.length ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{passkeys.length ? t.n(passkeys.length, '1 saved', '{n} saved') : t('None')}</span>
       </div>
       {passkeys.length > 0 && (
         <ul class="mt-5 divide-y divide-white/5 text-sm">
           {passkeys.map((p) => (
             <li class="flex flex-wrap items-center justify-between gap-3 py-3">
               <div>
-                <p class="font-medium text-white/85">{p.friendly_name || 'Passkey'}</p>
-                <p class="text-xs text-white/40">Added {shortDate.format(new Date(p.created_at))}{p.last_used_at ? ` · last used ${shortDate.format(new Date(p.last_used_at))}` : ' · not used yet'}</p>
+                <p class="font-medium text-white/85">{p.friendly_name || t('Passkey')}</p>
+                <p class="text-xs text-white/40">{t('Added {date}', { date: fmt.shortDate.format(new Date(p.created_at)) })} · {p.last_used_at ? t('last used {date}', { date: fmt.shortDate.format(new Date(p.last_used_at)) }) : t('not used yet')}</p>
               </div>
               <div class="flex items-center gap-3 text-xs">
                 <details class="relative">
-                  <summary class="cursor-pointer list-none text-white/50 hover:text-white">Rename</summary>
+                  <summary class="cursor-pointer list-none text-white/50 hover:text-white">{t('Rename')}</summary>
                   <form method="post" class="mt-2 flex gap-2">
                     <input type="hidden" name="passkeyId" value={p.id} />
-                    <input class="field !py-1.5 text-xs" name="name" maxlength="120" value={p.friendly_name} aria-label="Passkey name" required />
-                    <button name="intent" value="rename-passkey" class="btn-ghost !px-3 !py-1.5 text-xs">Save</button>
+                    <input class="field !py-1.5 text-xs" name="name" maxlength="120" value={p.friendly_name} aria-label={t('Passkey name')} required />
+                    <button name="intent" value="rename-passkey" class="btn-ghost !px-3 !py-1.5 text-xs">{t('Save')}</button>
                   </form>
                 </details>
                 {!needsCode && <form method="post">
                   <input type="hidden" name="passkeyId" value={p.id} />
-                  <button name="intent" value="remove-passkey" class="text-white/50 hover:text-lk-red" onclick="return confirm('Remove this passkey? You can still sign in with your password.')">Remove</button>
+                  <button name="intent" value="remove-passkey" class="text-white/50 hover:text-lk-red" data-confirm={t('Remove this passkey? You can still sign in with your password.')} onclick="return confirm(this.dataset.confirm)">{t('Remove')}</button>
                 </form>}
               </div>
             </li>
           ))}
         </ul>
       )}
-      {!needsCode && <div id="passkey-add" class="mt-5" data-ask-password={askPassword ? '1' : ''}>
+      {!needsCode && <div id="passkey-add" class="mt-5" data-ask-password={askPassword ? '1' : ''} data-strings={passkeyStrings}>
         {askPassword && (
           <div class="mb-3 max-w-sm">
-            <label class="label" for="passkey-password">Confirm your password</label>
+            <label class="label" for="passkey-password">{t('Confirm your password')}</label>
             <input class="field" id="passkey-password" type="password" autocomplete="current-password" />
-            <p class="mt-1 text-xs text-white/40">Or sign out and in again: within 5 minutes of signing in, no password is needed.</p>
+            <p class="mt-1 text-xs text-white/40">{t('Or sign out and in again: within 5 minutes of signing in, no password is needed.')}</p>
           </div>
         )}
-        <button type="button" id="passkey-add-button" class="btn-primary" disabled>Add a passkey</button>
-        <p id="passkey-unsupported" class="mt-2 hidden text-sm text-white/45">This browser can’t create passkeys. Try Safari, Chrome, Edge or Firefox on an up-to-date device.</p>
+        <button type="button" id="passkey-add-button" class="btn-primary" disabled>{t('Add a passkey')}</button>
+        <p id="passkey-unsupported" class="mt-2 hidden text-sm text-white/45">{t('This browser can’t create passkeys. Try Safari, Chrome, Edge or Firefox on an up-to-date device.')}</p>
         <p id="passkey-add-error" class="mt-3 hidden text-sm text-lk-red" role="alert"></p>
       </div>}
     </section>
     <section class="card">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 class="text-lg font-bold">Two-step verification</h2>
-          <p class="mt-1 text-sm text-white/55">A code from your authenticator app each time you sign in.</p>
+          <h2 class="text-lg font-bold">{t('Two-step verification')}</h2>
+          <p class="mt-1 text-sm text-white/55">{t('A code from your authenticator app each time you sign in.')}</p>
         </div>
-        <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', totp ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{totp ? 'On' : 'Off'}</span>
+        <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', totp ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{totp ? t('On') : t('Off')}</span>
       </div>
       <div class="mt-5">
         {totp ? (
           isAdmin ? (
-            <p class="text-sm text-white/45">Required for administrators.</p>
+            <p class="text-sm text-white/45">{t('Required for administrators.')}</p>
           ) : (
-            needsCode ? <a href="/mfa/verify?next=/account/security" class="btn-ghost">Enter code to change</a> : (
+            needsCode ? <a href="/mfa/verify?next=/account/security" class="btn-ghost">{t('Enter code to change')}</a> : (
             <form method="post">
               <input type="hidden" name="factorId" value={totp.id} />
-              <button name="intent" value="remove-mfa" class="btn-ghost">Turn off</button>
+              <button name="intent" value="remove-mfa" class="btn-ghost">{t('Turn off')}</button>
             </form>)
           )
         ) : (
-          <a href="/mfa/setup?next=/account/security" class="btn-primary">Set up</a>
+          <a href="/mfa/setup?next=/account/security" class="btn-primary">{t('Set up')}</a>
         )}
       </div>
     </section>
     <section class="card">
-      <h2 class="text-lg font-bold">Password</h2>
-      <p class="mt-1 text-sm text-white/55">Choose a new password for {Astro.locals.user?.email}.</p>
-      <a href="/account/password" class="btn-ghost mt-5">Change password</a>
+      <h2 class="text-lg font-bold">{t('Password')}</h2>
+      <p class="mt-1 text-sm text-white/55">{t('Choose a new password for {email}.', { email: Astro.locals.user?.email ?? '' })}</p>
+      <a href="/account/password" class="btn-ghost mt-5">{t('Change password')}</a>
     </section>
   </div>
 </Portal>
@@ -142,6 +159,8 @@ const askPassword = !needsCode && (await stepUpProblem(supabase, Astro.locals.us
   const button = document.getElementById('passkey-add-button') as HTMLButtonElement | null;
   const message = document.getElementById('passkey-add-error');
   const password = document.getElementById('passkey-password') as HTMLInputElement | null;
+  const strings: Record<string, string> = JSON.parse(document.getElementById('passkey-add')?.dataset.strings || '{}');
+  const tr = (s: string) => strings[s] ?? s;
   if (button && message) {
     if (!passkeysSupported()) document.getElementById('passkey-unsupported')?.classList.remove('hidden');
     else {
@@ -152,7 +171,7 @@ const askPassword = !needsCode && (await stepUpProblem(supabase, Astro.locals.us
         const result = await addPasskey(password?.value ?? '').catch(() => ({ error: 'Something went wrong. Please try again.' }) as { error?: string; name?: string });
         if (result.name) return location.assign('/account/security?passkey=added');
         button.disabled = false;
-        if (result.error) { message.textContent = result.error; message.classList.remove('hidden'); password?.focus(); }
+        if (result.error) { message.textContent = tr(result.error); message.classList.remove('hidden'); password?.focus(); }
       });
     }
   }

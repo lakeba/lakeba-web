@@ -2,15 +2,17 @@
 // A link an admin can copy and send directly (e.g. when emails only reach
 // the local test inbox). It signs someone in, so share it privately.
 interface Props { url: string; label: string }
+import { clientStrings } from '../lib/i18n';
 const { url, label } = Astro.props;
+const { t } = Astro.locals;
 ---
 
-<div class="mb-6 rounded-2xl border border-lk-blue/30 bg-lk-blue/10 p-4 text-sm" data-share-link>
+<div class="mb-6 rounded-2xl border border-lk-blue/30 bg-lk-blue/10 p-4 text-sm" data-share-link data-strings={clientStrings(t, ['Copied'])}>
   <p class="font-semibold text-white">{label}</p>
-  <p class="mt-1 text-white/60">Send it privately; anyone with this link can set the password. It expires in 24 hours (invites) or 1 hour (resets).</p>
+  <p class="mt-1 text-white/60">{t('Send it privately; anyone with this link can set the password. It expires in 24 hours (invites) or 1 hour (resets).')}</p>
   <div class="mt-3 flex gap-2">
     <input readonly value={url} class="field !py-2 font-mono text-xs" aria-label={label} />
-    <button type="button" class="btn-ghost shrink-0 !py-2" data-copy>Copy</button>
+    <button type="button" class="btn-ghost shrink-0 !py-2" data-copy>{t('Copy')}</button>
   </div>
 </div>
 
@@ -18,9 +20,10 @@ const { url, label } = Astro.props;
   document.querySelectorAll<HTMLElement>('[data-share-link]').forEach((box) => {
     const input = box.querySelector('input')!;
     const button = box.querySelector<HTMLButtonElement>('[data-copy]')!;
+    const strings: Record<string, string> = JSON.parse(box.dataset.strings ?? '{}');
     button.addEventListener('click', async () => {
       try { await navigator.clipboard.writeText(input.value); } catch { input.select(); document.execCommand('copy'); }
-      button.textContent = 'Copied';
+      button.textContent = strings['Copied'] ?? 'Copied';
     });
   });
 </script>

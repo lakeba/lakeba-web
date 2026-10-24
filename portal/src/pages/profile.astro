@@ -7,9 +7,11 @@ import { holderKinds } from '../lib/format';
 import { serviceClient } from '../lib/admin';
 import { sendInvite } from '../lib/admin-auth';
 import { fyOf, taxYears } from '../lib/tax-pack';
+import { LANGUAGE_NAMES, LOCALES, isLocale } from '../lib/i18n';
 
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
+const { t } = Astro.locals;
 let notice = '';
 let shareNotice = '';
 let shareError = '';
@@ -27,34 +29,46 @@ if (form && intent === 'share') {
   const holderId = field(form, 'holder_id');
   const email = field(form, 'email').toLowerCase();
   const svc = serviceClient();
-  if (!(await ownedHolderIds()).has(holderId)) shareError = 'You can only share holdings you own.';
-  else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) shareError = 'Enter a valid email address.';
+  if (!(await ownedHolderIds()).has(holderId)) shareError = t('You can only share holdings you own.');
+  else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) shareError = t('Enter a valid email address.');
   else {
     const { data: existing } = await svc.from('profiles').select('id').ilike('email', email).maybeSingle();
     let viewerId = existing?.id as string | undefined;
     if (!viewerId) {
       const { error, userId: invited } = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') });
-      if (error || !invited) shareError = 'The invitation could not be sent. Please try again.';
+      if (error || !invited) shareError = t('The invitation could not be sent. Please try again.');
       viewerId = invited ?? undefined;
     }
-    if (viewerId && viewerId === userId) { shareError = 'That is your own email.'; viewerId = undefined; }
+    if (viewerId && viewerId === userId) { shareError = t('That is your own email.'); viewerId = undefined; }
     if (viewerId) {
       // Never downgrades: an existing owner link stays as it is.
       const { data: link } = await svc.from('holder_members').select('access').eq('holder_id', holderId).eq('user_id', viewerId).maybeSingle();
       if (!link) await svc.from('holder_members').insert({ holder_id: holderId, user_id: viewerId, access: 'viewer' }).throwOnError();
       await supabase.rpc('log_event', { event_action: 'holding_shared', event_detail: { holder_id: holderId, email, viewer_id: viewerId, new_account: !existing } });
-      shareNotice = existing ? `${email} can now see this holding (view only) when they sign in.` : `Invitation sent to ${email}. They can see this holding (view only) once they accept.`;
+      shareNotice = existing ? t('{email} can now see this holding (view only) when they sign in.', { email }) : t('Invitation sent to {email}. They can see this holding (view only) once they accept.', { email });
     }
   }
 } else if (form && intent === 'unshare') {
   const holderId = field(form, 'holder_id');
   const viewerId = field(form, 'user_id');
-  if (!(await ownedHolderIds()).has(holderId) || viewerId === userId) shareError = 'You can only change holdings you own.';
+  if (!(await ownedHolderIds()).has(holderId) || viewerId === userId) shareError = t('You can only change holdings you own.');
   else {
     await serviceClient().from('holder_members').delete().eq('holder_id', holderId).eq('user_id', viewerId).eq('access', 'viewer').throwOnError();
     await supabase.rpc('log_event', { event_action: 'holding_unshared', event_detail: { holder_id: holderId, viewer_id: viewerId } });
-    shareNotice = 'Access removed.';
+    shareNotice = t('Access removed.');
   }
+} else if (form && intent === 'language') {
+  // Saved on the profile, and in a cookie so the sign-in pages follow it too.
+  const value = field(form, 'locale');
+  const locale = isLocale(value) ? value : null;
+  const { error } = await supabase.from('profiles').update({ locale }).eq('id', userId);
+  if (!error) {
+    if (locale) Astro.cookies.set('lang', locale, { path: '/', maxAge: 31_536_000, sameSite: 'lax', secure: Astro.url.protocol === 'https:', httpOnly: true });
+    else Astro.cookies.delete('lang', { path: '/' });
+    await supabase.rpc('log_event', { event_action: 'language_changed', event_detail: { locale } });
+    return Astro.redirect('/profile?saved=language', 303);
+  }
+  notice = t('Your changes could not be saved.');
 } else if (form) {
   const { error } = await supabase.from('profiles').update({
     first_name: field(form, 'first_name'),
@@ -62,11 +76,11 @@ if (form && intent === 'share') {
     phone: field(form, 'phone') || null,
   }).eq('id', userId);
   if (!error) await supabase.rpc('log_event', { event_action: 'profile_updated' });
-  notice = error ? 'Your changes could not be saved.' : 'Saved.';
+  notice = error ? t('Your changes could not be saved.') : t('Saved.');
 }
 
 const [{ data: profile }, { data: links }] = await Promise.all([
-  supabase.from('profiles').select('email, first_name, last_name, phone, notify_email').eq('id', userId).single(),
+  supabase.from('profiles').select('email, first_name, last_name, phone, notify_email, locale').eq('id', userId).single(),
   supabase.from('holder_members').select('holder_id, access, holders(name, kind, registry_ref)').eq('user_id', userId),
 ]);
 // Who else can see the holders this person owns (read with the service key: RLS only shows own links).
@@ -80,60 +94,74 @@ const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
 const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder_id as string, (await taxYears(supabase, l.holder_id as string)).filter((y) => y <= lastClosedFy).slice(0, 4)] as const)));
 ---
 
-<Portal title="Profile">
-  <PageHeader eyebrow="Profile" title="Your details" />
+<Portal title={t('Profile')}>
+  <PageHeader eyebrow={t('Profile')} title={t('Your details')} />
   {!owned.length && shareError && <div class="mb-4 max-w-4xl"><Alert tone="error">{shareError}</Alert></div>}
   <div class="grid max-w-4xl gap-4 lg:grid-cols-2">
     <form method="post" class="card space-y-4">
-      <h2 class="text-lg font-bold">Contact details</h2>
-      {notice && <Alert tone={notice === 'Saved.' ? 'success' : 'error'}>{notice}</Alert>}
+      <h2 class="text-lg font-bold">{t('Contact details')}</h2>
+      {notice && <Alert tone={notice === t('Saved.') ? 'success' : 'error'}>{notice}</Alert>}
       <div class="grid gap-4 sm:grid-cols-2">
-        <div><label for="first_name" class="label">First name</label><input id="first_name" name="first_name" value={profile?.first_name} autocomplete="given-name" class="field" /></div>
-        <div><label for="last_name" class="label">Last name</label><input id="last_name" name="last_name" value={profile?.last_name} autocomplete="family-name" class="field" /></div>
+        <div><label for="first_name" class="label">{t('First name')}</label><input id="first_name" name="first_name" value={profile?.first_name} autocomplete="given-name" class="field" /></div>
+        <div><label for="last_name" class="label">{t('Last name')}</label><input id="last_name" name="last_name" value={profile?.last_name} autocomplete="family-name" class="field" /></div>
       </div>
-      <div><label for="phone" class="label">Phone</label><input id="phone" name="phone" type="tel" value={profile?.phone ?? ''} autocomplete="tel" class="field" /></div>
-      <div><p class="label">Email</p><p class="text-white/70">{profile?.email}</p><p class="mt-1 text-xs text-white/40">To change your sign-in email, ask in Board Q&amp;A.</p></div>
-      <p class="text-sm text-white/55">Emails and browser notifications: <a href="/account/notifications" class="text-lk-blue hover:underline">choose in Notifications</a>.</p>
-      <button class="btn-primary">Save</button>
+      <div><label for="phone" class="label">{t('Phone')}</label><input id="phone" name="phone" type="tel" value={profile?.phone ?? ''} autocomplete="tel" class="field" /></div>
+      <div><p class="label">{t('Email')}</p><p class="text-white/70">{profile?.email}</p><p class="mt-1 text-xs text-white/40">{t('To change your sign-in email, ask in Board Q&A.')}</p></div>
+      <p class="text-sm text-white/55">{t('Emails and browser notifications:')} <a href="/account/notifications" class="text-lk-blue hover:underline">{t('choose in Notifications')}</a>.</p>
+      <button class="btn-primary">{t('Save')}</button>
     </form>
     <section class="card h-fit">
-      <h2 class="text-lg font-bold">Holding entities</h2>
-      <p class="mt-1 text-sm text-white/55">Holdings this login can see.</p>
+      <h2 class="text-lg font-bold">{t('Holding entities')}</h2>
+      <p class="mt-1 text-sm text-white/55">{t('Holdings this login can see.')}</p>
       <ul class="mt-5 divide-y divide-white/5">
         {(links ?? []).map((l) => {
           const h = l.holders as unknown as { name: string; kind: string; registry_ref: string | null };
           return (
             <li class="flex items-center justify-between gap-4 py-3">
-              <div><p class="font-semibold text-white">{h.name}</p><p class="text-xs text-white/40">{holderKinds[h.kind]}{h.registry_ref && ` · ${h.registry_ref}`}</p>
-                {years.get(l.holder_id)?.length ? <p class="mt-1 text-xs text-white/45">Tax-time pack: {years.get(l.holder_id)!.map((y, i) => <>{i > 0 && ' · '}<a class="text-lk-blue hover:underline" href={`/statement/${l.holder_id}/tax/${y}`}>FY{String(y).slice(2)} ↓</a></>)}</p> : null}
+              <div><p class="font-semibold text-white">{h.name}</p><p class="text-xs text-white/40">{t(holderKinds[h.kind])}{h.registry_ref && ` · ${h.registry_ref}`}</p>
+                {years.get(l.holder_id)?.length ? <p class="mt-1 text-xs text-white/45">{t('Tax-time pack:')} {years.get(l.holder_id)!.map((y, i) => <>{i > 0 && ' · '}<a class="text-lk-blue hover:underline" href={`/statement/${l.holder_id}/tax/${y}`}>FY{String(y).slice(2)} ↓</a></>)}</p> : null}
               </div>
-              <span class="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/60">{l.access === 'owner' ? 'Owner' : 'View only'}</span>
+              <span class="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/60">{l.access === 'owner' ? t('Owner') : t('View only')}</span>
             </li>
           );
         })}
       </ul>
     </section>
+    <form method="post" class="card h-fit lg:col-span-2" id="language">
+      <input type="hidden" name="intent" value="language" />
+      <h2 class="text-lg font-bold">{t('Language')}</h2>
+      <p class="mt-1 text-sm text-white/55">{t('The language of the portal’s menus, pages and buttons. Documents and news stay in the language they were written in.')}</p>
+      {Astro.url.searchParams.get('saved') === 'language' && <div class="mt-4"><Alert tone="success">{t('Language saved.')}</Alert></div>}
+      <div class="mt-4 flex flex-wrap items-end gap-3">
+        <div class="min-w-56"><label class="label" for="locale">{t('Language')}</label>
+          <select id="locale" name="locale" class="field">
+            <option value="" selected={!profile?.locale}>{t('Same as my browser')}</option>
+            {LOCALES.map((l) => <option value={l} lang={l === 'zh' ? 'zh-Hans' : l} selected={profile?.locale === l}>{LANGUAGE_NAMES[l]}</option>)}
+          </select></div>
+        <button class="btn-primary">{t('Save')}</button>
+      </div>
+    </form>
     {owned.length > 0 && (
       <section class="card lg:col-span-2" id="share">
-        <h2 class="text-lg font-bold">Share with my accountant</h2>
-        <p class="mt-1 text-sm text-white/55">Give someone view-only access to a holding you own: they can see its holdings, statements and tax-time packs, and documents sent to all investors. They can't vote, sell or change anything. You can remove them at any time.</p>
+        <h2 class="text-lg font-bold">{t('Share with my accountant')}</h2>
+        <p class="mt-1 text-sm text-white/55">{t('Give someone view-only access to a holding you own: they can see its holdings, statements and tax-time packs, and documents sent to all investors. They can’t vote, sell or change anything. You can remove them at any time.')}</p>
         {shareNotice && <div class="mt-4"><Alert tone="success">{shareNotice}</Alert></div>}
         {shareError && <div class="mt-4"><Alert tone="error">{shareError}</Alert></div>}
         <form method="post" class="mt-5 grid gap-3 sm:grid-cols-[1.4fr_1fr_1fr_1.6fr_auto] sm:items-end">
           <input type="hidden" name="intent" value="share" />
-          <div><label class="label" for="share_holder">Holding</label>
+          <div><label class="label" for="share_holder">{t('Holding')}</label>
             <select id="share_holder" name="holder_id" class="field">{(links ?? []).filter((l) => l.access === 'owner').map((l) => <option value={l.holder_id}>{(l.holders as unknown as { name: string }).name}</option>)}</select></div>
-          <div><label class="label" for="share_first">First name</label><input id="share_first" name="first_name" class="field" /></div>
-          <div><label class="label" for="share_last">Last name</label><input id="share_last" name="last_name" class="field" /></div>
-          <div><label class="label" for="share_email">Email</label><input id="share_email" name="email" type="email" required class="field" /></div>
-          <button class="btn-primary">Share</button>
+          <div><label class="label" for="share_first">{t('First name')}</label><input id="share_first" name="first_name" class="field" /></div>
+          <div><label class="label" for="share_last">{t('Last name')}</label><input id="share_last" name="last_name" class="field" /></div>
+          <div><label class="label" for="share_email">{t('Email')}</label><input id="share_email" name="email" type="email" required class="field" /></div>
+          <button class="btn-primary">{t('Share')}</button>
         </form>
         <ul class="mt-5 divide-y divide-white/5">
           {owned.flatMap((hid) => othersOf(hid).map((o) => (
             <li class="flex items-center justify-between gap-4 py-3 text-sm">
-              <div><p class="text-white">{[o.profiles?.first_name, o.profiles?.last_name].filter(Boolean).join(' ') || o.profiles?.email}</p><p class="text-xs text-white/40">{o.profiles?.email} · {((links ?? []).find((l) => l.holder_id === hid)?.holders as unknown as { name: string })?.name} · {o.access === 'owner' ? 'Owner' : 'View only'}</p></div>
+              <div><p class="text-white">{[o.profiles?.first_name, o.profiles?.last_name].filter(Boolean).join(' ') || o.profiles?.email}</p><p class="text-xs text-white/40">{o.profiles?.email} · {((links ?? []).find((l) => l.holder_id === hid)?.holders as unknown as { name: string })?.name} · {o.access === 'owner' ? t('Owner') : t('View only')}</p></div>
               {o.access === 'viewer' && (
-                <form method="post"><input type="hidden" name="intent" value="unshare" /><input type="hidden" name="holder_id" value={hid} /><input type="hidden" name="user_id" value={o.user_id} /><button class="btn-ghost px-3 py-1.5 text-xs">Remove</button></form>
+                <form method="post"><input type="hidden" name="intent" value="unshare" /><input type="hidden" name="holder_id" value={hid} /><input type="hidden" name="user_id" value={o.user_id} /><button class="btn-ghost px-3 py-1.5 text-xs">{t('Remove')}</button></form>
               )}
             </li>
           )))}

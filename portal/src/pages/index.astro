@@ -1,6 +1,6 @@
 ---
 import Portal from '../layouts/Portal.astro';
-import { fyLabel, fyOf } from '../lib/tax-pack';
+import { fyOf } from '../lib/tax-pack';
 import Sparkline from '../components/Sparkline.astro';
 import LinkedInCard from '../components/LinkedInCard.astro';
 import HoldingNote from '../components/HoldingNote.astro';
@@ -9,12 +9,13 @@ import { inCompany, isShareClass, latestPrices, loadPositions, loadPrices, sourc
 import { myHolderIds, onBoardOf, onlyMyDocuments } from '../lib/scope';
 import { loadNews } from '../lib/news';
 import { legalName } from '../lib/companies';
-import { aud, audPrecise, categoryLabels, holderKinds, longDate, percent, shares, shortDate } from '../lib/format';
+import { categoryLabels, holderKinds } from '../lib/format';
 
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
 const role = Astro.locals.profile?.role;
-const { company, companies } = Astro.locals;
+const { company, companies, t, fmt } = Astro.locals;
+const { aud, audPrecise, longDate, percent, shares, shortDate } = fmt;
 const isGroup = company?.relationship === 'group';
 const entityId = company?.id ?? '00000000-0000-0000-0000-000000000000';
 const [allPositions, holderIds, onBoard, allPrices] = await Promise.all([
@@ -67,45 +68,57 @@ const liquidity = settings?.value as { title: string; body: string; url: string;
 // The price card spans both columns when it would otherwise sit alone in its row.
 const priceWide = positions.length > 0 && positions.length % 2 === 0 && !liquidity;
 const meeting = meetings?.[0];
-const firstName = Astro.locals.profile?.first_name || 'there';
+const firstName = Astro.locals.profile?.first_name;
 const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-lk-green/30 bg-lk-green/10', warning: 'border-lk-orange/40 bg-lk-orange/10' };
 const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
+const fyShort = String(lastClosedFy).slice(2);
+// Same as fyLabel() from tax-pack, with the dates in the reader's language.
+const fyTitle = t('Holdings and changes for FY{yy} ({start} – {end})', {
+  yy: fyShort,
+  start: longDate.format(new Date(`${lastClosedFy - 1}-07-01T12:00:00Z`)),
+  end: longDate.format(new Date(`${lastClosedFy}-06-30T12:00:00Z`)),
+});
+// News labels come from loadNews(): 'Shareholders', '<company> shareholders' or a venture name.
+const newsLabel = (label: string) =>
+  label === 'Shareholders' ? t('Shareholders') : label.endsWith(' shareholders') ? t('{company} shareholders', { company: label.slice(0, -' shareholders'.length) }) : label;
+// Sentences with a link inside are split around the {link} placeholder.
+const [noHoldingsBefore, noHoldingsAfter] = t('If you are a shareholder, ask a question in {link} or email {email} and we\'ll link your holding to this account.', { email: 'info@lakeba.com' }).split('{link}');
 ---
 
-<Portal title="Dashboard">
+<Portal title={t('Dashboard')}>
   {(announcements ?? []).map((a) => (
     <div class:list={['mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-5 py-3.5 text-sm', toneStyles[a.tone as keyof typeof toneStyles]]}>
       <p><span class="font-semibold text-white">{a.title}</span>{a.body && <span class="text-white/65"> · {a.body}</span>}</p>
-      {a.link_url && <a href={a.link_url} class="font-semibold text-white underline-offset-4 hover:underline">{a.link_label ?? 'Learn more'} →</a>}
+      {a.link_url && <a href={a.link_url} class="font-semibold text-white underline-offset-4 hover:underline">{a.link_label ?? t('Learn more')} →</a>}
     </div>
   ))}
 
   <div class="mt-6 flex flex-wrap items-end justify-between gap-6">
     <div>
-      <p class="eyebrow">Investor portal</p>
-      <h1 class="mt-4 text-4xl font-extrabold sm:text-5xl">Welcome, {firstName}</h1>
-      <p class="mt-3 text-white/55">{company ? `Your investment in ${legalName(company)}.` : 'Your investor account.'}</p>
+      <p class="eyebrow">{t('Investor portal')}</p>
+      <h1 class="mt-4 text-4xl font-extrabold sm:text-5xl">{firstName ? t('Welcome, {name}', { name: firstName }) : t('Welcome, there')}</h1>
+      <p class="mt-3 text-white/55">{company ? t('Your investment in {company}.', { company: legalName(company) }) : t('Your investor account.')}</p>
     </div>
     {sharePositions.length > 1 && (
       <div>
         <div class="flex flex-wrap gap-x-8 gap-y-4">
-          <div><p class="text-xs uppercase tracking-widest text-white/40">Total shares</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{shares.format(totalShares)}</p></div>
-          {pricedValues.length > 0 && <div><p class="text-xs uppercase tracking-widest text-white/40">Indicative value</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{aud.format(totalValue)}</p></div>}
+          <div><p class="text-xs uppercase tracking-widest text-white/40">{t('Total shares')}</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{shares.format(totalShares)}</p></div>
+          {pricedValues.length > 0 && <div><p class="text-xs uppercase tracking-widest text-white/40">{t('Indicative value')}</p><p class="font-display text-2xl sm:text-3xl font-bold text-white">{aud.format(totalValue)}</p></div>}
         </div>
-        <p class="mt-1 text-xs text-white/40">Across your {sharePositions.length} holdings{unpricedClasses.length > 0 && pricedValues.length > 0 && ` · value excludes ${unpricedClasses.join(', ')} (no reference price)`}</p>
+        <p class="mt-1 text-xs text-white/40">{t('Across your {n} holdings', { n: sharePositions.length })}{unpricedClasses.length > 0 && pricedValues.length > 0 && ` · ${t('value excludes {classes} (no reference price)', { classes: unpricedClasses.join(', ') })}`}</p>
       </div>
     )}
   </div>
 
   {ownership.length > 1 && (
-    <section class="mt-10" aria-label="My ownership">
-      <h2 class="text-xs uppercase tracking-widest text-white/40">My ownership</h2>
+    <section class="mt-10" aria-label={t('My ownership')}>
+      <h2 class="text-xs uppercase tracking-widest text-white/40">{t('My ownership')}</h2>
       <div class="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {ownership.map((o) => (
           <a href={`/company/${o.company.code}?next=/`} class:list={['card block p-5 transition hover:bg-white/[0.07]', o.company.id === company?.id && 'ring-1 ring-white/20']}>
-            <p class="flex items-center gap-2 text-sm font-semibold text-white"><span class="size-2.5 rounded-full" style={`background:${o.company.brand_color ?? '#2563EB'}`}></span>{o.company.display_name}{o.company.id === company?.id && <span class="ml-auto text-[11px] font-normal text-white/40">Viewing</span>}</p>
-            <p class="mt-3 font-display text-2xl font-bold text-white">{shares.format(o.shares)} <span class="text-sm font-normal text-white/45">shares</span></p>
-            <p class="text-sm text-white/55">{o.priced ? `${aud.format(o.value)} indicative` : 'No reference price yet'}{o.options > 0 && ` · ${shares.format(o.options)} options`}</p>
+            <p class="flex items-center gap-2 text-sm font-semibold text-white"><span class="size-2.5 rounded-full" style={`background:${o.company.brand_color ?? '#2563EB'}`}></span>{o.company.display_name}{o.company.id === company?.id && <span class="ml-auto text-[11px] font-normal text-white/40">{t('Viewing')}</span>}</p>
+            <p class="mt-3 font-display text-2xl font-bold text-white">{shares.format(o.shares)} <span class="text-sm font-normal text-white/45">{t.n(o.shares, 'share', 'shares')}</span></p>
+            <p class="text-sm text-white/55">{o.priced ? t('{value} indicative', { value: aud.format(o.value) }) : t('No reference price yet')}{o.options > 0 && ` · ${t.n(o.options, '{n} option', '{n} options', { n: shares.format(o.options) })}`}</p>
           </a>
         ))}
       </div>
@@ -116,28 +129,28 @@ const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
        so a single holding sits next to the price chart. -->
   <div class="mt-10 grid gap-4 lg:grid-cols-2">
     {positions.length ? positions.map((p) => (
-      <article class="card scroll-mt-36" id={holdingAnchor(p.holder.id, p.row.share_class_id)} aria-label={`Holding: ${p.holder.name}`}>
+      <article class="card scroll-mt-36" id={holdingAnchor(p.holder.id, p.row.share_class_id)} aria-label={t('Holding: {name}', { name: p.holder.name })}>
         <div class="flex items-start justify-between gap-4">
           <div>
             <h2 class="text-lg font-bold">{p.holder.name}</h2>
-            <p class="text-sm text-white/45">{holderKinds[p.holder.kind]} · {p.row.share_classes?.name}</p>
+            <p class="text-sm text-white/45">{t(holderKinds[p.holder.kind])} · {p.row.share_classes?.name}</p>
           </div>
           <div class="flex flex-wrap justify-end gap-2">
-            <a href={`/statement/${p.holder.id}?class=${p.row.share_class_id}`} class="btn-ghost px-3 py-2 text-xs">Holding statement ↓</a>
-            <a href={`/statement/${p.holder.id}/tax/${lastClosedFy}`} class="btn-ghost px-3 py-2 text-xs" title={`Holdings and changes for ${fyLabel(lastClosedFy)}`}>Tax pack FY{String(lastClosedFy).slice(2)} ↓</a>
+            <a href={`/statement/${p.holder.id}?class=${p.row.share_class_id}`} class="btn-ghost px-3 py-2 text-xs">{t('Holding statement')} ↓</a>
+            <a href={`/statement/${p.holder.id}/tax/${lastClosedFy}`} class="btn-ghost px-3 py-2 text-xs" title={fyTitle}>{t('Tax pack FY{yy}', { yy: fyShort })} ↓</a>
           </div>
         </div>
         <dl class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
-          <div><dt class="text-xs uppercase tracking-widest text-white/40">{isShareClass(p) ? 'Shares' : 'Options'}</dt><dd class="mt-1 flex items-center gap-1.5 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{shares.format(p.row.shares)}<HoldingNote note={p.note} class="text-base" /></dd></div>
-          <div><dt class="text-xs uppercase tracking-widest text-white/40">Of total</dt><dd class="mt-1 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{p.total ? percent.format(p.row.shares / p.total) : '—'}</dd></div>
-          <div><dt class="text-xs uppercase tracking-widest text-white/40">Indicative</dt><dd class="mt-1 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{value(p) !== null ? aud.format(value(p)!) : '—'}</dd></div>
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">{isShareClass(p) ? t('Shares') : t('Options')}</dt><dd class="mt-1 flex items-center gap-1.5 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{shares.format(p.row.shares)}<HoldingNote note={p.note} class="text-base" /></dd></div>
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">{t('Of total')}</dt><dd class="mt-1 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{p.total ? percent.format(p.row.shares / p.total) : '—'}</dd></div>
+          <div><dt class="text-xs uppercase tracking-widest text-white/40">{t('Indicative')}</dt><dd class="mt-1 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{value(p) !== null ? aud.format(value(p)!) : '—'}</dd></div>
         </dl>
-        <p class="mt-6 border-t border-white/5 pt-4 text-xs text-white/40">As at {longDate.format(new Date(p.row.as_at))} · {shares.format(p.total)} {p.row.share_classes?.name.toLowerCase()} on issue{p.row.exercise_price != null && ` · exercise price ${audPrecise.format(Number(p.row.exercise_price))}`}{p.row.expires_on && ` · expires ${longDate.format(new Date(p.row.expires_on))}`}{!isShareClass(p) && ' · not included in ownership %'}</p>
+        <p class="mt-6 border-t border-white/5 pt-4 text-xs text-white/40">{t('As at {date}', { date: longDate.format(new Date(p.row.as_at)) })} · {t('{n} {class} on issue', { n: shares.format(p.total), class: p.row.share_classes?.name.toLowerCase() ?? '' })}{p.row.exercise_price != null && ` · ${t('exercise price {price}', { price: audPrecise.format(Number(p.row.exercise_price)) })}`}{p.row.expires_on && ` · ${t('expires {date}', { date: longDate.format(new Date(p.row.expires_on)) })}`}{!isShareClass(p) && ` · ${t('not included in ownership %')}`}</p>
       </article>
     )) : (
       <div class="card lg:col-span-2">
-        <h2 class="text-lg font-bold">No holdings linked yet</h2>
-        <p class="mt-2 text-sm text-white/55">If you are a shareholder, ask a question in <a class="text-lk-blue hover:underline" href="/board">Board Q&amp;A</a> or email info@lakeba.com and we'll link your holding to this account.</p>
+        <h2 class="text-lg font-bold">{t('No holdings linked yet')}</h2>
+        <p class="mt-2 text-sm text-white/55">{noHoldingsBefore}<a class="text-lk-blue hover:underline" href="/board">{t('Board Q&A')}</a>{noHoldingsAfter}</p>
       </div>
     )}
 
@@ -146,14 +159,25 @@ const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
       <section class:list={['card', priceWide && 'lg:col-span-2']}>
         <div class="flex flex-wrap items-start justify-between gap-4">
           <div>
-            <h2 class="text-lg font-bold">Reference price</h2>
+            <h2 class="text-lg font-bold">{t('Reference price')}</h2>
             {chartClassName && <p class="text-xs text-white/40">{chartClassName}</p>}
-            <p class="text-sm text-white/45">{sourceLabels[price.source]} · {shortDate.format(new Date(price.priced_on))}</p>
+            <p class="text-sm text-white/45">{t(sourceLabels[price.source] ?? price.source)} · {shortDate.format(new Date(price.priced_on))}</p>
           </div>
           <p class="font-display text-3xl font-bold text-white">{audPrecise.format(price.price)}</p>
         </div>
-        <Sparkline class="mt-6 h-28 w-full" points={prices.map((pr) => ({ label: `${shortDate.format(new Date(pr.priced_on))}: ${audPrecise.format(pr.price)} (${sourceLabels[pr.source]})`, value: pr.price }))} />
-        <p class="mt-3 text-xs text-white/35">Indicative only. Lakeba shares are unlisted; values use the latest capital raise, secondary trade or directors’ valuation and are not financial advice.</p>
+        <Sparkline class="mt-6 h-28 w-full" points={prices.map((pr) => ({ label: `${shortDate.format(new Date(pr.priced_on))}: ${audPrecise.format(pr.price)} (${t(sourceLabels[pr.source] ?? pr.source)})`, value: pr.price }))} />
+        <p class="mt-3 text-xs text-white/35">{t('Indicative only. Lakeba shares are unlisted; values use the latest capital raise, secondary trade or directors’ valuation and are not financial advice.')}</p>
+      </section>
+    )}
+
+    {Astro.locals.features.trading && (
+      <section class="card flex flex-col bg-gradient-to-br from-lk-blue/15 to-transparent lg:col-span-2 lg:flex-row lg:items-center lg:gap-8">
+        <div class="flex-1">
+          <p class="eyebrow w-fit">{t('Liquidity')}</p>
+          <h2 class="mt-4 text-lg font-bold">{t('Secondary trading board')}</h2>
+          <p class="mt-2 text-sm text-white/60">{t('Register your interest to buy or sell {company} shares. The company pairs sellers with buyers and arranges the transfer.', { company: company?.display_name ?? '' })}</p>
+        </div>
+        <a href="/trading" class="btn-primary mt-6 shrink-0 lg:mt-0">{t('Open the trading board')}</a>
       </section>
     )}
 
@@ -161,7 +185,7 @@ const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
     {liquidity && (
       <section class:list={['card flex flex-col bg-gradient-to-br from-lk-green/15 to-transparent', liquidityWide && 'lg:col-span-2 lg:flex-row lg:items-center lg:gap-8']}>
         <div class="flex-1">
-          <p class="eyebrow w-fit">Liquidity</p>
+          <p class="eyebrow w-fit">{t('Liquidity')}</p>
           <h2 class="mt-4 text-lg font-bold">{liquidity.title}</h2>
           <p class="mt-2 text-sm text-white/60">{liquidity.body}</p>
         </div>
@@ -174,8 +198,8 @@ const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
     <!-- Latest documents -->
     <section class="card lg:col-span-2">
       <div class="flex items-center justify-between">
-        <h2 class="text-lg font-bold">Latest documents</h2>
-        <a href="/documents" class="text-sm text-lk-blue hover:underline">All documents →</a>
+        <h2 class="text-lg font-bold">{t('Latest documents')}</h2>
+        <a href="/documents" class="text-sm text-lk-blue hover:underline">{t('All documents')} →</a>
       </div>
       <ul class="mt-4 divide-y divide-white/5">
         {(docs ?? []).map((d) => {
@@ -184,10 +208,10 @@ const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
             <li>
               <a href={`/documents/${d.id}`} class="flex flex-col gap-1 py-3 hover:text-white sm:flex-row sm:items-center sm:justify-between sm:gap-4">
                 <span class="flex items-center gap-3">
-                  {unread ? <span class="size-2 shrink-0 rounded-full bg-lk-orange" title="New" /> : <span class="size-2 shrink-0" />}
+                  {unread ? <span class="size-2 shrink-0 rounded-full bg-lk-orange" title={t('New')} /> : <span class="size-2 shrink-0" />}
                   <span class:list={[unread ? 'font-semibold text-white' : 'text-white/75']}>{d.title}</span>
                 </span>
-                <span class="pl-5 text-xs text-white/40 sm:shrink-0 sm:pl-0">{categoryLabels[d.category]} · {shortDate.format(new Date(d.published_at!))}</span>
+                <span class="pl-5 text-xs text-white/40 sm:shrink-0 sm:pl-0">{t(categoryLabels[d.category] ?? d.category)} · {shortDate.format(new Date(d.published_at!))}</span>
               </a>
             </li>
           );
@@ -199,17 +223,17 @@ const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
     <div class="grid gap-4">
       {meeting && (
         <a href={`/agm/${meeting.id}`} class="card block transition hover:bg-white/[0.07]">
-          <p class="text-xs uppercase tracking-widest text-lk-orange">Upcoming meeting</p>
+          <p class="text-xs uppercase tracking-widest text-lk-orange">{t('Upcoming meeting')}</p>
           <h2 class="mt-2 text-lg font-bold">{meeting.title}</h2>
           <p class="mt-1 text-sm text-white/55">{longDate.format(new Date(meeting.starts_at))}</p>
-          <p class="mt-4 text-sm text-white/70">Lodge your proxy by {shortDate.format(new Date(meeting.proxy_deadline))} →</p>
+          <p class="mt-4 text-sm text-white/70">{t('Lodge your proxy by {date}', { date: shortDate.format(new Date(meeting.proxy_deadline)) })} →</p>
         </a>
       )}
       {Astro.locals.features.boardQa && (
         <a href="/board" class="card block transition hover:bg-white/[0.07]">
-          <p class="text-xs uppercase tracking-widest text-white/40">Board Q&amp;A</p>
+          <p class="text-xs uppercase tracking-widest text-white/40">{t('Board Q&A')}</p>
           <p class="mt-2 font-display text-3xl font-bold text-white">{openQueries ?? 0}</p>
-          <p class="text-sm text-white/55">{openQueries === 1 ? 'question' : 'questions'} awaiting a reply · the board replies within 7 working days</p>
+          <p class="text-sm text-white/55">{t.n(openQueries ?? 0, 'question awaiting a reply', 'questions awaiting a reply')} · {t('the board replies within 7 working days')}</p>
         </a>
       )}
       {isGroup && <LinkedInCard src="card" />}
@@ -228,13 +252,13 @@ const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
     <!-- News -->
     <section class:list={['card', !video && 'lg:col-span-3']}>
       <div class="flex items-center justify-between">
-        <h2 class="text-lg font-bold">News</h2>
-        <a href="/news" class="text-sm text-lk-blue hover:underline">All news →</a>
+        <h2 class="text-lg font-bold">{t('News')}</h2>
+        <a href="/news" class="text-sm text-lk-blue hover:underline">{t('All news')} →</a>
       </div>
       <ul class="mt-4 space-y-4">
         {(posts ?? []).map((n) => (
           <li><a href={n.href} target={n.external ? '_blank' : undefined} rel={n.external ? 'noopener' : undefined} class="group block">
-            <p class="text-xs text-white/40">{n.label} · {shortDate.format(n.date)}</p>
+            <p class="text-xs text-white/40">{newsLabel(n.label)} · {shortDate.format(n.date)}</p>
             <p class="font-semibold text-white group-hover:underline">{n.title}</p>
             <p class="line-clamp-2 text-sm text-white/55">{n.excerpt}</p>
           </a></li>

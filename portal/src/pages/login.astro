@@ -5,9 +5,24 @@ import Turnstile from '../components/Turnstile.astro';
 import { safeNext } from '../lib/supabase';
 import { captchaToken, field } from '../lib/forms';
 import { recordSignIn } from '../lib/sign-in';
+import { clientStrings } from '../lib/i18n';
+
+const { t } = Astro.locals;
+// Messages the passkey button can show (from the browser or the passkey-login endpoints).
+const passkeyStrings = clientStrings(t, [
+  'Something went wrong. Please try again.',
+  'Your device couldn’t use a passkey. Try again, or sign in with your password.',
+  'That took too long. Please try again.',
+  'That passkey wasn’t recognised. Try another one, or sign in with your password.',
+  'This account has been disabled.',
+  'Please confirm your email address first.',
+  'Passkeys aren’t available right now.',
+  'Too many attempts. Please wait a minute and try again.',
+  'Something went wrong with the passkey. Please try again.',
+]);
 
 const next = safeNext(Astro.url.searchParams.get('next'));
-let error = Astro.url.searchParams.get('error') === 'link' ? 'That link has expired or was already used. Please sign in again.' : '';
+let error = Astro.url.searchParams.get('error') === 'link' ? t('That link has expired or was already used. Please sign in again.') : '';
 let sent = false;
 let email = '';
 
@@ -37,41 +52,41 @@ if (Astro.request.method === 'POST') {
       await recordSignIn({ supabase, userId: signedIn.user!.id, method: 'password', request: Astro.request, origin: Astro.url.origin });
       return Astro.redirect(next);
     }
-    error = signInError.status === 429 ? 'Too many attempts. Please wait a minute and try again.' : 'Email or password is incorrect.';
+    error = signInError.status === 429 ? t('Too many attempts. Please wait a minute and try again.') : t('Email or password is incorrect.');
   }
 }
 ---
 
-<Auth title="Sign in" subtitle="Lakeba shareholders and directors only.">
+<Auth title={t('Sign in')} subtitle={t('Lakeba shareholders and directors only.')}>
   {error && <div class="mb-5"><Alert tone="error">{error}</Alert></div>}
   {sent ? (
-    <Alert tone="success">If an account exists for {email}, we've emailed a sign-in link. It expires in 1 hour.</Alert>
+    <Alert tone="success">{t('If an account exists for {email}, we’ve emailed a sign-in link. It expires in 1 hour.', { email })}</Alert>
   ) : (
     <>
-    <div id="passkey-box" class="mb-5 hidden">
+    <div id="passkey-box" class="mb-5 hidden" data-strings={passkeyStrings}>
       <button type="button" id="passkey-signin" class="btn-primary flex w-full items-center justify-center gap-2" data-next={next}>
         <svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="8" r="4"/><path d="M2 21v-1a6 6 0 0 1 9.5-4.9"/><circle cx="18" cy="13" r="2.5"/><path d="M18 15.5V21l1.5-1.2M18 18.5h1.5"/></svg>
-        Sign in with a passkey
+        {t('Sign in with a passkey')}
       </button>
       <p id="passkey-error" class="mt-3 hidden text-sm text-lk-red" role="alert"></p>
-      <div class="mt-5 flex items-center gap-3 text-xs text-white/35"><span class="h-px flex-1 bg-white/10"></span>or use your email<span class="h-px flex-1 bg-white/10"></span></div>
+      <div class="mt-5 flex items-center gap-3 text-xs text-white/35"><span class="h-px flex-1 bg-white/10"></span>{t('or use your email')}<span class="h-px flex-1 bg-white/10"></span></div>
     </div>
     <form method="post" class="space-y-4">
       <div>
-        <label for="email" class="label">Email</label>
+        <label for="email" class="label">{t('Email')}</label>
         <input id="email" name="email" type="email" autocomplete="username" required value={email} class="field" />
       </div>
       <div>
         <div class="flex items-baseline justify-between">
-          <label for="password" class="label">Password</label>
-          <a href="/forgot-password" class="text-xs text-lk-blue hover:underline">Forgot password?</a>
+          <label for="password" class="label">{t('Password')}</label>
+          <a href="/forgot-password" class="text-xs text-lk-blue hover:underline">{t('Forgot password?')}</a>
         </div>
         <input id="password" name="password" type="password" autocomplete="current-password" class="field" />
       </div>
       <Turnstile />
-      <button name="intent" value="password" class="btn-primary w-full">Sign in</button>
-      <div class="flex items-center gap-3 text-xs text-white/35"><span class="h-px flex-1 bg-white/10"></span>or<span class="h-px flex-1 bg-white/10"></span></div>
-      <button name="intent" value="magic-link" formnovalidate class="btn-ghost w-full">Email me a sign-in link</button>
+      <button name="intent" value="password" class="btn-primary w-full">{t('Sign in')}</button>
+      <div class="flex items-center gap-3 text-xs text-white/35"><span class="h-px flex-1 bg-white/10"></span>{t('or')}<span class="h-px flex-1 bg-white/10"></span></div>
+      <button name="intent" value="magic-link" formnovalidate class="btn-ghost w-full">{t('Email me a sign-in link')}</button>
     </form>
     </>
   )}
@@ -83,6 +98,8 @@ if (Astro.request.method === 'POST') {
   const box = document.getElementById('passkey-box');
   const button = document.getElementById('passkey-signin') as HTMLButtonElement | null;
   const message = document.getElementById('passkey-error');
+  const strings: Record<string, string> = JSON.parse(box?.dataset.strings || '{}');
+  const tr = (s: string) => strings[s] ?? s;
   if (box && button && message && passkeysSupported()) {
     box.classList.remove('hidden');
     button.addEventListener('click', async () => {
@@ -92,7 +109,7 @@ if (Astro.request.method === 'POST') {
       const result = await signInWithPasskey(button.dataset.next ?? '/', captcha).catch(() => ({ error: 'Something went wrong. Please try again.' }) as { error?: string; redirect?: string });
       if (result.redirect) return location.assign(result.redirect);
       button.disabled = false;
-      if (result.error) { message.textContent = result.error; message.classList.remove('hidden'); }
+      if (result.error) { message.textContent = tr(result.error); message.classList.remove('hidden'); }
     });
   }
 </script>

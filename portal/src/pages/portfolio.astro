@@ -2,11 +2,11 @@
 import Portal from '../layouts/Portal.astro';
 import PageHeader from '../components/PageHeader.astro';
 import Empty from '../components/Empty.astro';
-import { percent, shortDate, smallPercent } from '../lib/format';
 import { inCompany, isShareClass, loadPositions } from '../lib/holdings';
 
 // The group's portfolio view is for Lakeba Group shareholders (RLS enforces it too).
-const { group, user } = Astro.locals;
+const { group, user, t, fmt } = Astro.locals;
+const { percent, shortDate, smallPercent } = fmt;
 if (!group) return Astro.redirect('/');
 const supabase = Astro.locals.supabase;
 const [positions, { data: stakes }, { data: groupClasses }, { data: onIssue }] = await Promise.all([
@@ -39,14 +39,17 @@ const groups = [
   { status: 'building', title: 'Building with LakebaOS', note: 'Ventures co-founded through LakebaOS, where Lakeba holds up to 49%.' },
   { status: 'exited', title: 'Exits' },
 ];
+// The look-through sentence has two highlighted parts, split around {pct} and {term}.
+const [lookBefore, lookRest = ''] = t('You hold {pct} of Lakeba Group. Each row shows your indicative {term} interest: your share of Lakeba × Lakeba’s share of that company. It is indirect ownership through Lakeba, not shares you hold yourself.').split('{pct}');
+const [lookMiddle, lookAfter = ''] = lookRest.split('{term}');
 const updatesOf = (v: { venture_updates: unknown }) => [...(v.venture_updates as { title: string; body: string; happened_on: string }[])].sort((a, b) => b.happened_on.localeCompare(a.happened_on));
 ---
 
-<Portal title="Portfolio">
-  <PageHeader eyebrow="Portfolio" title="What your shares own" subtitle="Lakeba’s ventures, its stake in each, and their latest milestones." />
+<Portal title={t('Portfolio')}>
+  <PageHeader eyebrow={t('Portfolio')} title={t('What your shares own')} subtitle={t('Lakeba’s ventures, its stake in each, and their latest milestones.')} />
   {myGroupPct > 0 && (
     <p class="mb-8 max-w-3xl rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-sm text-white/65">
-      You hold <span class="font-semibold text-white">{percent.format(myGroupPct)}</span> of Lakeba Group. Each row shows your indicative <span class="font-semibold text-white">look-through</span> interest: your share of Lakeba × Lakeba’s share of that company. It is indirect ownership through Lakeba, not shares you hold yourself.
+      {lookBefore}<span class="font-semibold text-white">{percent.format(myGroupPct)}</span>{lookMiddle}<span class="font-semibold text-white">{t('look-through')}</span>{lookAfter}
     </p>
   )}
   {ventures?.length ? groups.map((g) => {
@@ -56,18 +59,18 @@ const updatesOf = (v: { venture_updates: unknown }) => [...(v.venture_updates as
     const stakeText = (v: (typeof items)[number]) => v.lakeba_stake != null ? `${Number(v.lakeba_stake)}%` : Number.isFinite(lakebaPct(v.entity_id)) ? `${Math.round(lakebaPct(v.entity_id) * 1000) / 10}%` : null;
     return items.length > 0 && (
       <section class="mb-12">
-        <h2 class="text-xl font-bold">{g.title}</h2>
-        {g.note && <p class="mt-1 text-sm text-white/50">{g.note}</p>}
+        <h2 class="text-xl font-bold">{t(g.title)}</h2>
+        {g.note && <p class="mt-1 text-sm text-white/50">{t(g.note)}</p>}
         <div class="card mt-5 overflow-x-auto !p-0">
           <table class="w-full text-left text-sm">
             <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40">
               <tr>
-                <th class="py-3 pl-5 font-medium"><span class="sr-only">Logo</span></th>
-                <th class="px-5 py-3 font-medium">Company</th>
-                <th class="px-5 py-3 font-medium">Type</th>
-                <th class="px-5 py-3 text-right font-medium">Lakeba stake</th>
-                {myGroupPct > 0 && <th class="px-5 py-3 text-right font-medium">Your look-through</th>}
-                {anyUpdates && <th class="px-5 py-3 font-medium">Latest update</th>}              </tr>
+                <th class="py-3 pl-5 font-medium"><span class="sr-only">{t('Logo')}</span></th>
+                <th class="px-5 py-3 font-medium">{t('Company')}</th>
+                <th class="px-5 py-3 font-medium">{t('Type')}</th>
+                <th class="px-5 py-3 text-right font-medium">{t('Lakeba stake')}</th>
+                {myGroupPct > 0 && <th class="px-5 py-3 text-right font-medium">{t('Your look-through')}</th>}
+                {anyUpdates && <th class="px-5 py-3 font-medium">{t('Latest update')}</th>}              </tr>
             </thead>
             <tbody class="divide-y divide-white/5">
               {items.map((v) => {
@@ -79,12 +82,12 @@ const updatesOf = (v: { venture_updates: unknown }) => [...(v.venture_updates as
                     <td class="py-3 pl-5">
                       {/* Always-white tile (the theme swaps the white token) so dark logos stay visible; links to the website. */}
                       {site ? (
-                        <a href={site} target="_blank" rel="noopener" title={`${domain(site)} (opens in a new tab)`} aria-label={`${v.name} website, ${domain(site)}`} class="flex h-12 w-28 items-center justify-center rounded-lg bg-[#fff] px-2 py-1.5 ring-1 ring-[#0f172a]/10 transition hover:ring-2 hover:ring-lk-blue focus-visible:ring-2 focus-visible:ring-lk-blue">
+                        <a href={site} target="_blank" rel="noopener" title={t('{domain} (opens in a new tab)', { domain: domain(site) })} aria-label={t('{name} website, {domain}', { name: v.name, domain: domain(site) })} class="flex h-12 w-28 items-center justify-center rounded-lg bg-[#fff] px-2 py-1.5 ring-1 ring-[#0f172a]/10 transition hover:ring-2 hover:ring-lk-blue focus-visible:ring-2 focus-visible:ring-lk-blue">
                           {logo ? <img src={logo} alt="" class="max-h-full max-w-full object-contain" loading="lazy" /> : <span class="font-display text-lg font-bold text-[#94a3b8]">{v.name.slice(0, 1)}</span>}
                         </a>
                       ) : (
                         <div class="flex h-12 w-28 items-center justify-center rounded-lg bg-[#fff] px-2 py-1.5 ring-1 ring-[#0f172a]/10">
-                          {logo ? <img src={logo} alt={`${v.name} logo`} class="max-h-full max-w-full object-contain" loading="lazy" /> : <span class="font-display text-lg font-bold text-[#94a3b8]" aria-hidden="true">{v.name.slice(0, 1)}</span>}
+                          {logo ? <img src={logo} alt={t('{name} logo', { name: v.name })} class="max-h-full max-w-full object-contain" loading="lazy" /> : <span class="font-display text-lg font-bold text-[#94a3b8]" aria-hidden="true">{v.name.slice(0, 1)}</span>}
                         </div>
                       )}
                     </td>
@@ -100,5 +103,5 @@ const updatesOf = (v: { venture_updates: unknown }) => [...(v.venture_updates as
         </div>
       </section>
     );
-  }) : <Empty title="No ventures listed yet">The portfolio will appear here once it is published.</Empty>}
+  }) : <Empty title={t('No ventures listed yet')}>{t('The portfolio will appear here once it is published.')}</Empty>}
 </Portal>

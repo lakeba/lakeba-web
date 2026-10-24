@@ -2,7 +2,7 @@
 import Portal from '../../layouts/Portal.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
-import { categoryLabels, fileSize, shortDate } from '../../lib/format';
+import { categoryLabels, fileSize } from '../../lib/format';
 import { myHolderIds, onBoardOf, onlyMyDocuments } from '../../lib/scope';
 
 const params = Astro.url.searchParams;
@@ -11,7 +11,7 @@ const year = params.get('year') ?? '';
 const q = (params.get('q') ?? '').trim();
 const userId = Astro.locals.user!.id;
 const role = Astro.locals.profile?.role;
-const { company } = Astro.locals;
+const { company, t, fmt } = Astro.locals;
 const [holderIds, onBoard] = await Promise.all([myHolderIds(Astro.locals.supabase, userId), onBoardOf(Astro.locals.supabase, userId, company, role)]);
 const scope = { holderIds, onBoard, company };
 
@@ -37,31 +37,31 @@ const link = (overrides: Record<string, string>) => {
   for (const [k, v] of [...p]) if (!v) p.delete(k);
   return `/documents${p.size ? `?${p}` : ''}`;
 };
-const kind = (mime: string) => (mime === 'application/pdf' ? 'PDF' : mime.startsWith('video/') ? 'Video' : mime.split('/')[1]?.toUpperCase() ?? 'File');
+const kind = (mime: string) => (mime === 'application/pdf' ? 'PDF' : mime.startsWith('video/') ? t('Video') : mime.split('/')[1]?.toUpperCase() ?? t('File'));
 ---
 
-<Portal title="Documents">
-  <PageHeader eyebrow={company?.display_name ?? 'Documents'} title="Reports & documents" subtitle="Annual reports, meeting papers, shareholder updates and governance documents." />
+<Portal title={t('Documents')}>
+  <PageHeader eyebrow={company?.display_name ?? t('Documents')} title={t('Reports & documents')} subtitle={t('Annual reports, meeting papers, shareholder updates and governance documents.')} />
 
   <div class="grid gap-8 lg:grid-cols-[14rem_1fr]">
     <aside class="space-y-6">
       <form method="get" action="/documents">
         {category && <input type="hidden" name="category" value={category} />}
         {year && <input type="hidden" name="year" value={year} />}
-        <label for="q" class="label">Search titles</label>
-        <input id="q" name="q" type="search" value={q} placeholder="e.g. annual report" class="field" />
+        <label for="q" class="label">{t('Search titles')}</label>
+        <input id="q" name="q" type="search" value={q} placeholder={t('e.g. annual report')} class="field" />
       </form>
-      <nav aria-label="Categories" class="flex flex-wrap gap-1 text-sm lg:flex-col">
-        <a href={link({ category: '' })} class:list={['rounded-lg px-3 py-2', !category ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>All documents</a>
+      <nav aria-label={t('Categories')} class="flex flex-wrap gap-1 text-sm lg:flex-col">
+        <a href={link({ category: '' })} class:list={['rounded-lg px-3 py-2', !category ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{t('All documents')}</a>
         {Object.entries(categoryLabels).filter(([k]) => counts.has(k)).map(([k, label]) => (
           <a href={link({ category: k })} class:list={['flex justify-between rounded-lg px-3 py-2', category === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>
-            <span>{label}</span><span class="text-white/35">{counts.get(k)}</span>
+            <span>{t(label)}</span><span class="text-white/35">{counts.get(k)}</span>
           </a>
         ))}
       </nav>
       {years.size > 1 && (
         <div class="flex flex-wrap gap-2 text-sm">
-          <a href={link({ year: '' })} class:list={['rounded-full border px-3 py-1', !year ? 'border-lk-blue text-white' : 'border-white/10 text-white/55']}>Any year</a>
+          <a href={link({ year: '' })} class:list={['rounded-full border px-3 py-1', !year ? 'border-lk-blue text-white' : 'border-white/10 text-white/55']}>{t('Any year')}</a>
           {[...years].sort().reverse().map((y) => (
             <a href={link({ year: y })} class:list={['rounded-full border px-3 py-1', year === y ? 'border-lk-blue text-white' : 'border-white/10 text-white/55']}>{y}</a>
           ))}
@@ -78,20 +78,20 @@ const kind = (mime: string) => (mime === 'application/pdf' ? 'PDF' : mime.starts
               <li class="card flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">
                 <div class="min-w-0">
                   <p class="flex items-center gap-2 text-xs text-white/40">
-                    {unread && <span class="rounded-full bg-lk-orange/20 px-2 py-0.5 font-semibold text-lk-orange">New</span>}
-                    {categoryLabels[d.category]} · {shortDate.format(new Date(d.published_at!))} · {kind(d.mime_type)} {fileSize(d.size_bytes)}
-                    {d.entity_id !== company?.id && <span class="rounded-full bg-white/10 px-2 py-0.5 text-white/60">Shared by {(d.entities as unknown as { display_name: string } | null)?.display_name}</span>}
+                    {unread && <span class="rounded-full bg-lk-orange/20 px-2 py-0.5 font-semibold text-lk-orange">{t('New')}</span>}
+                    {t(categoryLabels[d.category] ?? d.category)} · {fmt.shortDate.format(new Date(d.published_at!))} · {kind(d.mime_type)} {fileSize(d.size_bytes)}
+                    {d.entity_id !== company?.id && <span class="rounded-full bg-white/10 px-2 py-0.5 text-white/60">{t('Shared by {company}', { company: (d.entities as unknown as { display_name: string } | null)?.display_name ?? '' })}</span>}
                   </p>
                   <h2 class="mt-1 text-lg font-bold">{d.title}</h2>
                   {d.summary && <p class="mt-1 text-sm text-white/55">{d.summary}</p>}
                 </div>
-                <a href={`/documents/${d.id}`} target="_blank" rel="noopener" class="btn-ghost shrink-0">{d.mime_type.startsWith('video/') ? 'Watch' : 'Open'}</a>
+                <a href={`/documents/${d.id}`} target="_blank" rel="noopener" class="btn-ghost shrink-0">{d.mime_type.startsWith('video/') ? t('Watch') : t('Open')}</a>
               </li>
             );
           })}
         </ul>
       ) : (
-        <Empty title="No documents found">{q || category || year ? 'Try a different search or filter.' : 'Documents will appear here when they are published.'}</Empty>
+        <Empty title={t('No documents found')}>{q || category || year ? t('Try a different search or filter.') : t('Documents will appear here when they are published.')}</Empty>
       )}
     </section>
   </div>

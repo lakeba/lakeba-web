@@ -3,12 +3,20 @@ import '../styles/portal.css';
 import Mark from '../../../src/components/Mark.astro';
 import ThemeInit from '../../../src/components/ThemeInit.astro';
 import ThemeToggle from '../../../src/components/ThemeToggle.astro';
+import { HTML_LANG, LANGUAGE_NAMES, LOCALES } from '../lib/i18n';
 interface Props { title: string; subtitle?: string; wide?: boolean }
 const { title, subtitle, wide = false } = Astro.props;
+const { t, locale } = Astro.locals;
+// Language links for signed-out people: the same page with ?lang=xx (other query params kept).
+const languageLinks = LOCALES.map((l) => {
+  const params = new URLSearchParams(Astro.url.search);
+  params.set('lang', l);
+  return { locale: l, name: LANGUAGE_NAMES[l], href: `${Astro.url.pathname}?${params}` };
+});
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang={HTML_LANG[locale]}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -20,7 +28,7 @@ const { title, subtitle, wide = false } = Astro.props;
     <meta name="apple-mobile-web-app-title" content="Lakeba Investors" />
     <meta name="theme-color" content="#050b16" />
     <ThemeInit />
-    <title>{title} · Lakeba Investor Portal</title>
+    <title>{title} · {t('{brand} Investor Portal', { brand: 'Lakeba' })}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -36,14 +44,19 @@ const { title, subtitle, wide = false } = Astro.props;
       <a href="/" class="mb-8 flex items-center justify-center gap-2.5">
         <Mark class="size-9" />
         <span class="font-display text-xl font-bold text-white">lakeba</span>
-        <span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">Investors</span>
+        <span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span>
       </a>
       <div class="card">
         <h1 class="text-2xl font-bold">{title}</h1>
         {subtitle && <p class="mt-2 text-sm text-white/55">{subtitle}</p>}
         <div class="mt-6"><slot /></div>
       </div>
-      <p class="mt-6 text-center text-xs text-white/35">Need help? <a href="mailto:info@lakeba.com" class="underline hover:text-white">info@lakeba.com</a></p>
+      <p class="mt-6 text-center text-xs text-white/35">{t('Need help?')} <a href="mailto:info@lakeba.com" class="underline hover:text-white">info@lakeba.com</a></p>
+      <nav aria-label={t('Language')} class="mt-3 flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs text-white/35">
+        {languageLinks.map((l) => (
+          <a href={l.href} hreflang={HTML_LANG[l.locale]} lang={HTML_LANG[l.locale]} aria-current={l.locale === locale ? 'true' : undefined} class:list={['hover:text-white', l.locale === locale && 'text-white/60 underline']}>{l.name}</a>
+        ))}
+      </nav>
     </main>
   </body>
 </html>

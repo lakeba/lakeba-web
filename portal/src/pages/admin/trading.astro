@@ -1,0 +1,240 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
+import { serviceClient } from '../../lib/admin';
+import { adminScope, withCompany } from '../../lib/admin-company';
+import { displayName } from '../../lib/admin-forms';
+import { notifyMembers } from '../../lib/notify';
+import { field } from '../../lib/forms';
+import { audPrecise, aud, shares as fmtShares, shortDate } from '../../lib/format';
+import { LIVE, fills, forgetTradingSetting, latestShares, refreshStatus, tradingSettings, windowState, type Interest, type Match } from '../../lib/trading';
+
+// Secondary trading for one company: settings, every interest with names,
+// pairing sellers with buyers, and completing a transfer (which updates the
+// register). Service key throughout, limited to the companies this admin manages.
+const svc = serviceClient();
+const scope = await adminScope(Astro.locals, Astro.url);
+const company = scope.selected ?? scope.defaultCompany;
+const userId = Astro.locals.user!.id;
+let notice = '';
+let error = '';
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { ...detail, entity_id: company?.id } });
+const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney' }).format(new Date());
+
+/** The people to tell about an interest: the person who registered it, and the holder's owners. */
+async function peopleOf(i: { holder_id: string; user_id: string | null }) {
+  const { data } = await svc.from('holder_members').select('user_id').eq('holder_id', i.holder_id).eq('access', 'owner');
+  return [...new Set([...(data ?? []).map((m) => m.user_id as string), ...(i.user_id ? [i.user_id] : [])])];
+}
+const tell = async (i: { holder_id: string; user_id: string | null }, title: string, body: string) =>
+  notifyMembers({ kind: 'trade', userIds: await peopleOf(i), entityId: company!.id, title, body, link: '/trading', origin: Astro.url.origin });
+
+if (company && Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const interest = async (id: string) => {
+    const { data } = await svc.from('trade_interests').select('*').eq('id', id).eq('entity_id', company.id).maybeSingle();
+    return data as Interest | null;
+  };
+  if (intent === 'settings') {
+    const opens = field(form, 'window_opens') || null, closes = field(form, 'window_closes') || null;
+    if (opens && closes && closes < opens) error = 'The window must close after it opens.';
+    else {
+      await svc.from('trading_settings').upsert({ entity_id: company.id, enabled: form.get('enabled') === 'on', window_opens: opens, window_closes: closes, rules: field(form, 'rules'), show_book: form.get('show_book') === 'on', updated_by: userId, updated_at: new Date().toISOString() }).throwOnError();
+      forgetTradingSetting(company.id);
+      await log('admin_saved_trading_settings', { enabled: form.get('enabled') === 'on', opens, closes });
+      notice = 'Trading settings saved.';
+    }
+  } else if (intent === 'pair') {
+    const sell = await interest(field(form, 'sell_id')), buy = await interest(field(form, 'buy_id'));
+    const count = Math.floor(Number(field(form, 'shares').replace(/[,\s]/g, '')));
+    const price = Number(field(form, 'price').replace(/[$,\s]/g, ''));
+    const { data: existing } = sell && buy ? await svc.from('trade_matches').select('sell_id, buy_id, shares, status, id, price, share_class_id, created_at, completed_on, admin_note').or(`sell_id.in.(${sell.id},${buy.id}),buy_id.in.(${sell.id},${buy.id})`) : { data: [] };
+    const { available } = fills((existing ?? []) as Match[]);
+    if (!sell || !buy || sell.side !== 'sell' || buy.side !== 'buy') error = 'Choose one seller and one buyer.';
+    else if (!LIVE.includes(sell.status) || !LIVE.includes(buy.status)) error = 'Both interests must still be open.';
+    else if (sell.share_class_id !== buy.share_class_id) error = 'They are for different share classes.';
+    else if (sell.holder_id === buy.holder_id) error = 'That is the same holder on both sides.';
+    else if (!(count >= 1) || count > available(sell) || count > available(buy)) error = `Enter up to ${fmtShares.format(Math.min(available(sell), available(buy)))} shares (what's still open on both).`;
+    else if (!(price > 0)) error = 'Enter the agreed price per share.';
+    else if (count > (await latestShares(svc, sell.holder_id, sell.share_class_id))) error = 'The seller no longer holds that many shares.';
+    else {
+      const { data: m } = await svc.from('trade_matches').insert({ entity_id: company.id, share_class_id: sell.share_class_id, sell_id: sell.id, buy_id: buy.id, shares: count, price, admin_note: field(form, 'admin_note'), created_by: userId }).select('id').single().throwOnError();
+      await refreshStatus(svc, [sell.id, buy.id]);
+      await log('admin_paired_trade', { match_id: m!.id, sell_id: sell.id, buy_id: buy.id, shares: count, price });
+      const what = `${fmtShares.format(count)} shares at ${audPrecise.format(price)} per share`;
+      await tell(sell, 'Your interest to sell was paired with a buyer', `${company.display_name} paired ${what} from your interest to sell with a buyer. We'll contact you with the transfer documents. Nothing changes until the transfer is signed and approved.`);
+      await tell(buy, 'Your interest to buy was paired with a seller', `${company.display_name} paired ${what} from your interest to buy with a seller. We'll contact you with the transfer documents and payment details. Nothing changes until the transfer is signed and approved.`);
+      notice = `Paired ${what}. Both shareholders were told.`;
+    }
+  } else if (intent === 'complete' || intent === 'cancel-match') {
+    const { data: m } = await svc.from('trade_matches').select('*').eq('id', field(form, 'match_id')).eq('entity_id', company.id).maybeSingle();
+    const sell = m ? await interest(m.sell_id) : null, buy = m ? await interest(m.buy_id) : null;
+    if (!m || !sell || !buy || m.status !== 'approved') error = 'That pairing was not found or is already finished.';
+    else if (intent === 'cancel-match') {
+      await svc.from('trade_matches').update({ status: 'cancelled', admin_note: [m.admin_note, field(form, 'reason')].filter(Boolean).join(' · ') }).eq('id', m.id).throwOnError();
+      await refreshStatus(svc, [sell.id, buy.id]);
+      await log('admin_cancelled_trade_pairing', { match_id: m.id });
+      for (const i of [sell, buy]) await tell(i, 'A trading pairing was cancelled', `The pairing of ${fmtShares.format(Number(m.shares))} shares was cancelled. Your interest is open again for those shares.`);
+      notice = 'Pairing cancelled; both interests are open again for those shares.';
+    } else {
+      const on = field(form, 'completed_on') || today;
+      const [sellerHas, buyerHas] = await Promise.all([latestShares(svc, sell.holder_id, m.share_class_id), latestShares(svc, buy.holder_id, m.share_class_id)]);
+      if (sellerHas < Number(m.shares)) error = `The register shows the seller with ${fmtShares.format(sellerHas)} shares, fewer than this transfer.`;
+      else if (on > today) error = 'The completion date can’t be in the future.';
+      else {
+        // The register: one new row per holder, dated the transfer.
+        await svc.from('holdings').upsert([
+          { holder_id: sell.holder_id, share_class_id: m.share_class_id, shares: sellerHas - Number(m.shares), as_at: on },
+          { holder_id: buy.holder_id, share_class_id: m.share_class_id, shares: buyerHas + Number(m.shares), as_at: on },
+        ], { onConflict: 'holder_id,share_class_id,as_at' }).throwOnError();
+        await svc.from('trade_matches').update({ status: 'completed', completed_on: on, completed_by: userId }).eq('id', m.id).throwOnError();
+        await refreshStatus(svc, [sell.id, buy.id]);
+        if (form.get('record_price') === 'on') {
+          await svc.from('reference_prices').upsert({ share_class_id: m.share_class_id, price: m.price, priced_on: on, source: 'secondary_trade', note: `${fmtShares.format(Number(m.shares))} shares` }, { onConflict: 'share_class_id,priced_on,source' }).throwOnError();
+        }
+        await log('admin_completed_trade', { match_id: m.id, shares: m.shares, price: m.price, completed_on: on, seller_before: sellerHas, buyer_before: buyerHas, reference_price: form.get('record_price') === 'on' });
+        await tell(sell, 'Your share sale is complete', `The transfer of ${fmtShares.format(Number(m.shares))} shares is complete and your holding has been updated.`);
+        await tell(buy, 'Your share purchase is complete', `The transfer of ${fmtShares.format(Number(m.shares))} shares is complete and your holding has been updated.`);
+        notice = `Transfer completed and the register updated (as at ${shortDate.format(new Date(on))}).`;
+      }
+    }
+  } else if (intent === 'cancel-interest') {
+    const i = await interest(field(form, 'interest_id'));
+    const { count: active } = i ? await svc.from('trade_matches').select('id', { count: 'exact', head: true }).or(`sell_id.eq.${i.id},buy_id.eq.${i.id}`).eq('status', 'approved') : { count: 0 };
+    if (!i || !LIVE.includes(i.status)) error = 'That interest is not open.';
+    else if (active) error = 'Cancel or complete its pairings first.';
+    else {
+      await svc.from('trade_interests').update({ status: 'cancelled', updated_at: new Date().toISOString() }).eq('id', i.id).throwOnError();
+      await log('admin_cancelled_trade_interest', { interest_id: i.id });
+      await tell(i, 'Your trading interest was closed', `Your interest to ${i.side} ${fmtShares.format(Number(i.shares))} shares was closed by ${company.display_name}.${field(form, 'reason') ? ` Reason: ${field(form, 'reason')}` : ''}`);
+      notice = 'Interest closed and the shareholder told.';
+    }
+  }
+}
+
+const settings = company ? await tradingSettings(svc, company.id) : null;
+const [{ data: rows }, { data: matchRows }, { data: classRows }] = company ? await Promise.all([
+  svc.from('trade_interests').select('*, holders(name)').eq('entity_id', company.id).order('created_at', { ascending: false }).limit(300),
+  svc.from('trade_matches').select('*').eq('entity_id', company.id).order('created_at', { ascending: false }).limit(200),
+  svc.from('share_classes').select('id, name').eq('entity_id', company.id),
+]) : [{ data: [] }, { data: [] }, { data: [] }];
+type Row = Interest & { holders: { name: string } | null; profiles: { email: string; first_name: string | null; last_name: string | null } | null };
+const people = new Map<string, Row['profiles']>();
+const userIds = [...new Set((rows ?? []).map((r) => r.user_id).filter(Boolean))] as string[];
+if (userIds.length) for (const p of (await svc.from('profiles').select('id, email, first_name, last_name').in('id', userIds)).data ?? []) people.set(p.id, p);
+const interests = (rows ?? []).map((r) => ({ ...r, profiles: people.get(r.user_id) ?? null })) as unknown as Row[];
+const matches = (matchRows ?? []) as Match[];
+const { available } = fills(matches);
+const byId = new Map(interests.map((i) => [i.id, i]));
+const className = new Map((classRows ?? []).map((c) => [c.id, c.name]));
+const live = interests.filter((i) => LIVE.includes(i.status));
+const sellers = live.filter((i) => i.side === 'sell' && available(i) > 0);
+const buyers = live.filter((i) => i.side === 'buy' && available(i) > 0);
+const label = (i: Row) => `${i.holders?.name ?? '—'} · ${fmtShares.format(available(i))} ${className.get(i.share_class_id) ?? ''} at ${audPrecise.format(Number(i.price))}`;
+const state = settings ? windowState(settings) : 'off';
+const statusTone: Record<string, string> = { open: 'bg-white/10 text-white/70', matched: 'bg-lk-blue/15 text-lk-blue', completed: 'bg-lk-green/15 text-lk-green', withdrawn: 'bg-white/5 text-white/40', cancelled: 'bg-white/5 text-white/40' };
+---
+
+<Admin title="Secondary trading">
+  <PageHeader eyebrow="Admin" title="Secondary trading" subtitle="Shareholders register non-binding interests to buy or sell. You pair a seller with a buyer once any pre-emptive rights and approvals are dealt with, then complete the transfer, which updates the register." />
+  <AdminCompanyFilter scope={scope} allowAll={false} />
+  {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
+  {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+  {!company || !settings ? <p class="text-white/55">No company to show.</p> : (
+    <>
+      <details class="card mb-6" open={!settings.enabled}>
+        <summary class="flex cursor-pointer items-center justify-between font-display text-lg font-bold text-white">
+          Settings for {company.display_name}
+          <span class:list={['rounded-full px-2.5 py-0.5 font-sans text-xs font-normal', state === 'open' ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{state === 'off' ? 'Off' : state === 'open' ? 'Window open' : 'Window closed'}</span>
+        </summary>
+        <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
+          <input type="hidden" name="intent" value="settings" />
+          <label class="flex items-center gap-3 text-sm sm:col-span-2"><input type="checkbox" name="enabled" checked={settings.enabled} class="size-4 accent-lk-blue" /> Show the trading board to {company.display_name} shareholders</label>
+          <div><label class="label" for="window_opens">Window opens (optional)</label><input id="window_opens" name="window_opens" type="date" value={settings.window_opens ?? ''} class="field" /></div>
+          <div><label class="label" for="window_closes">Window closes (optional)</label><input id="window_closes" name="window_closes" type="date" value={settings.window_closes ?? ''} class="field" /></div>
+          <label class="flex items-center gap-3 text-sm sm:col-span-2"><input type="checkbox" name="show_book" checked={settings.show_book} class="size-4 accent-lk-blue" /> Show shareholders an anonymous order book (prices and share numbers, no names)</label>
+          <div class="sm:col-span-2"><label class="label" for="rules">How trading works (shown to shareholders)</label><textarea id="rules" name="rules" rows="6" class="field text-sm" placeholder="E.g. pre-emptive rights under clause X, board approval, transfer forms, fees, timing.">{settings.rules}</textarea>
+            <p class="mt-1 text-xs text-white/40">Have this checked by your lawyer against the constitution and shareholders' agreement before switching the board on.</p></div>
+          <div><button class="btn-primary">Save settings</button></div>
+        </form>
+      </details>
+
+      <section class="card mb-6">
+        <h2 class="text-lg font-bold">Pair a seller with a buyer</h2>
+        {!sellers.length || !buyers.length ? <p class="mt-2 text-sm text-white/55">You need at least one open seller and one open buyer.</p> : (
+          <form method="post" class="mt-4 grid gap-4 sm:grid-cols-2">
+            <input type="hidden" name="intent" value="pair" />
+            <div><label class="label" for="sell_id">Seller</label><select id="sell_id" name="sell_id" class="field">{sellers.map((i) => <option value={i.id}>{label(i)}</option>)}</select></div>
+            <div><label class="label" for="buy_id">Buyer</label><select id="buy_id" name="buy_id" class="field">{buyers.map((i) => <option value={i.id}>{label(i)}</option>)}</select></div>
+            <div><label class="label" for="p_shares">Shares</label><input id="p_shares" name="shares" inputmode="numeric" required class="field" /></div>
+            <div><label class="label" for="p_price">Agreed price per share (AUD)</label><input id="p_price" name="price" inputmode="decimal" required class="field" /></div>
+            <div class="sm:col-span-2"><label class="label" for="admin_note">Internal note (optional)</label><input id="admin_note" name="admin_note" class="field" placeholder="E.g. pre-emptive offer lapsed 12 Nov; board approved 14 Nov" /></div>
+            <div class="sm:col-span-2"><button class="btn-primary">Pair and tell both shareholders</button></div>
+          </form>
+        )}
+      </section>
+
+      <section class="card mb-6 overflow-hidden p-0">
+        <h2 class="px-5 py-4 text-lg font-bold">Pairings</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="border-y border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-3 font-medium">Seller → buyer</th><th class="px-5 py-3 text-right font-medium">Shares</th><th class="px-5 py-3 text-right font-medium">Price</th><th class="px-5 py-3 text-right font-medium">Value</th><th class="px-5 py-3 font-medium">Status</th><th class="px-5 py-3"><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody class="divide-y divide-white/5">
+              {matches.map((m) => (
+                <tr class="align-top">
+                  <td class="px-5 py-3"><span class="text-white/85">{byId.get(m.sell_id)?.holders?.name}</span> <span class="text-white/40">→</span> <span class="text-white/85">{byId.get(m.buy_id)?.holders?.name}</span>
+                    <span class="block text-xs text-white/40">{className.get(m.share_class_id)} · paired {shortDate.format(new Date(m.created_at))}{m.admin_note && ` · ${m.admin_note}`}</span></td>
+                  <td class="px-5 py-3 text-right tabular-nums">{fmtShares.format(Number(m.shares))}</td>
+                  <td class="px-5 py-3 text-right tabular-nums">{audPrecise.format(Number(m.price))}</td>
+                  <td class="px-5 py-3 text-right tabular-nums text-white/60">{aud.format(Number(m.shares) * Number(m.price))}</td>
+                  <td class="px-5 py-3 text-white/60">{m.status === 'approved' ? 'Arranging transfer' : m.status === 'completed' ? `Completed ${shortDate.format(new Date(m.completed_on!))}` : 'Cancelled'}</td>
+                  <td class="px-5 py-3">{m.status === 'approved' && (
+                    <div class="flex flex-col items-end gap-2">
+                      <form method="post" class="flex flex-wrap items-center justify-end gap-2" onsubmit="return confirm('Complete this transfer and update the register for both holders?')">
+                        <input type="hidden" name="intent" value="complete" /><input type="hidden" name="match_id" value={m.id} />
+                        <input type="date" name="completed_on" value={today} max={today} aria-label="Transfer date" class="field w-auto py-1.5 text-xs" />
+                        <label class="flex items-center gap-1.5 text-xs text-white/60"><input type="checkbox" name="record_price" class="accent-lk-blue" /> Record as reference price</label>
+                        <button class="btn-primary px-3 py-1.5 text-xs">Complete transfer</button>
+                      </form>
+                      <form method="post" class="flex items-center gap-2" onsubmit="return confirm('Cancel this pairing?')"><input type="hidden" name="intent" value="cancel-match" /><input type="hidden" name="match_id" value={m.id} /><input name="reason" placeholder="Reason (internal)" class="field w-40 py-1.5 text-xs" /><button class="btn-ghost px-3 py-1.5 text-xs">Cancel pairing</button></form>
+                    </div>
+                  )}</td>
+                </tr>
+              ))}
+              {!matches.length && <tr><td colspan="6" class="px-5 py-6 text-center text-white/45">No pairings yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="card overflow-hidden p-0">
+        <h2 class="px-5 py-4 text-lg font-bold">Interests</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="border-y border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-3 font-medium">Registered</th><th class="px-5 py-3 font-medium">Shareholder</th><th class="px-5 py-3 font-medium">Interest</th><th class="px-5 py-3 text-right font-medium">Price</th><th class="px-5 py-3 font-medium">Status</th><th class="px-5 py-3"><span class="sr-only">Actions</span></th></tr></thead>
+            <tbody class="divide-y divide-white/5">
+              {interests.map((i) => (
+                <tr class="align-top">
+                  <td class="whitespace-nowrap px-5 py-3 text-white/55">{shortDate.format(new Date(i.created_at))}</td>
+                  <td class="px-5 py-3"><span class="text-white/85">{i.holders?.name}</span><span class="block text-xs text-white/40">{i.profiles ? `${displayName(i.profiles)} · ${i.profiles.email}` : ''}</span>{i.note && <span class="mt-1 block text-xs italic text-white/50">“{i.note}”</span>}</td>
+                  <td class="px-5 py-3"><span class:list={['font-medium', i.side === 'buy' ? 'text-lk-green' : 'text-lk-orange']}>{i.side === 'buy' ? 'Buy' : 'Sell'}</span> {fmtShares.format(Number(i.shares))} <span class="text-white/45">{className.get(i.share_class_id)}</span>
+                    {LIVE.includes(i.status) && available(i) < Number(i.shares) && <span class="block text-xs text-white/45">{fmtShares.format(available(i))} still open</span>}</td>
+                  <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums">{audPrecise.format(Number(i.price))}</td>
+                  <td class="px-5 py-3"><span class:list={['rounded-full px-2 py-0.5 text-xs', statusTone[i.status]]}>{i.status === 'matched' ? 'paired' : i.status}</span></td>
+                  <td class="px-5 py-3 text-right">{LIVE.includes(i.status) && available(i) === Number(i.shares) && (
+                    <form method="post" class="flex items-center justify-end gap-2" onsubmit="return confirm('Close this interest and tell the shareholder?')"><input type="hidden" name="intent" value="cancel-interest" /><input type="hidden" name="interest_id" value={i.id} /><input name="reason" placeholder="Reason (shown to them)" class="field w-44 py-1.5 text-xs" /><button class="btn-ghost px-3 py-1.5 text-xs">Close</button></form>
+                  )}</td>
+                </tr>
+              ))}
+              {!interests.length && <tr><td colspan="6" class="px-5 py-6 text-center text-white/45">No interests yet.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+      <p class="mt-4 text-xs text-white/35">Every change is in the <a class="underline" href={withCompany(scope, '/admin/audit')}>audit log</a>, including the register before and after each completed transfer.</p>
+    </>
+  )}
+</Admin>

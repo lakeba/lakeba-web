@@ -6,23 +6,25 @@ import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 import LinkedInIcon from '../components/LinkedInIcon.astro';
 import { brandName } from '../lib/companies';
 import NoteBanner from '../components/NoteBanner.astro';
+import { HTML_LANG } from '../lib/i18n';
 interface Props { title: string }
 const { title } = Astro.props;
-const { profile, supabase, user, company, companies, adminOf, features } = Astro.locals;
+const { profile, supabase, user, company, companies, adminOf, features, t, locale } = Astro.locals;
 const path = Astro.url.pathname;
 const canAdmin = profile?.role === 'admin' || adminOf.length > 0;
 const isGroup = company?.relationship === 'group';
 const brand = brandName(company);
 
 const nav = [
-  { href: '/', label: 'Dashboard' },
-  { href: '/documents', label: 'Documents' },
-  ...(isGroup ? [{ href: '/portfolio', label: 'Portfolio' }] : []),
-  { href: '/agm', label: 'Meetings' },
-  { href: '/news', label: 'News' },
-  ...(company && features.ask ? [{ href: '/ask', label: `Ask ${brand}` }] : []),
-  ...(features.boardQa ? [{ href: '/board', label: 'Board Q&A' }] : []),
-  ...(canAdmin ? [{ href: '/admin', label: 'Admin' }] : []),
+  { href: '/', label: t('Dashboard') },
+  { href: '/documents', label: t('Documents') },
+  ...(isGroup ? [{ href: '/portfolio', label: t('Portfolio') }] : []),
+  { href: '/agm', label: t('Meetings') },
+  { href: '/news', label: t('News') },
+  ...(company && features.ask ? [{ href: '/ask', label: t('Ask {brand}', { brand }) }] : []),
+  ...(features.boardQa ? [{ href: '/board', label: t('Board Q&A') }] : []),
+  ...(features.trading ? [{ href: '/trading', label: t('Trading') }] : []),
+  ...(canAdmin ? [{ href: '/admin', label: t('Admin') }] : []),
 ];
 const switchHref = (code: string) => `/company/${code}?next=${encodeURIComponent(path)}`;
 const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
@@ -34,7 +36,7 @@ const { count: unread } = user
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang={HTML_LANG[locale]}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -46,7 +48,7 @@ const { count: unread } = user
     <meta name="apple-mobile-web-app-title" content="Lakeba Investors" />
     <meta name="theme-color" content="#050b16" />
     <ThemeInit />
-    <title>{title} · {brand} Investor Portal</title>
+    <title>{title} · {t('{brand} Investor Portal', { brand })}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -60,22 +62,22 @@ const { count: unread } = user
         <a href="/" class="flex shrink-0 items-center gap-2.5">
           <Mark class="size-7" />
           <span class:list={["font-display text-lg font-bold text-white", company && (companies.length > 1 || !isGroup) && "hidden sm:inline"]}>lakeba</span>
-          <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">Investors</span>
+          <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">{t('Investors')}</span>
         </a>
         {company && (companies.length > 1 ? (
           <details class="relative mr-auto">
-            <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label="Switch company">
+            <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label={t('Switch company')}>
               <span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>
               <span class="max-w-[10rem] truncate font-medium">{company.display_name}</span>
               <svg viewBox="0 0 20 20" class="size-4 text-white/45" fill="currentColor" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </summary>
             <div class="glass absolute left-0 mt-2 w-64 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
-              <p class="px-3 py-2 text-xs text-white/45">Your companies</p>
+              <p class="px-3 py-2 text-xs text-white/45">{t('Your companies')}</p>
               {companies.map((c) => (
                 <a href={switchHref(c.code)} aria-current={c.id === company.id ? 'true' : undefined} class:list={['flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-white/5', c.id === company.id && 'bg-white/5 text-white']}>
                   <span class="size-2.5 shrink-0 rounded-full" style={`background:${c.brand_color ?? '#2563EB'}`}></span>
                   <span class="truncate">{c.display_name}</span>
-                  {c.id === company.id && <span class="ml-auto text-xs text-white/40">Viewing</span>}
+                  {c.id === company.id && <span class="ml-auto text-xs text-white/40">{t('Viewing')}</span>}
                 </a>
               ))}
             </div>
@@ -87,7 +89,7 @@ const { count: unread } = user
         ))}
         <div class="flex items-center gap-2">
           <ThemeToggle />
-          <a href="/inbox" class="relative grid size-9 place-items-center rounded-full text-white/60 transition hover:bg-white/5 hover:text-white" aria-label={`Inbox${unread ? `, ${unread} unread` : ''}`}>
+          <a href="/inbox" class="relative grid size-9 place-items-center rounded-full text-white/60 transition hover:bg-white/5 hover:text-white" aria-label={unread ? t('Inbox, {n} unread', { n: unread }) : t('Inbox')}>
             <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1112 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 003.4 0" /></svg>
             {unread ? <span class="absolute -top-0.5 -right-0.5 grid min-w-4 place-items-center rounded-full bg-lk-orange px-1 text-[10px] font-bold text-ink">{unread > 9 ? '9+' : unread}</span> : null}
           </a>
@@ -95,16 +97,16 @@ const { count: unread } = user
             <summary class="grid size-9 cursor-pointer list-none place-items-center rounded-full bg-gradient-to-br from-lk-blue to-lk-green font-display text-sm font-bold text-white" title={profile?.email}>{initials}</summary>
             <div class="glass absolute right-0 mt-2 w-56 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
               <p class="truncate px-3 py-2 text-xs text-white/45">{profile?.email}</p>
-              <a href="/profile" class="block rounded-lg px-3 py-2 hover:bg-white/5">Profile</a>
-              <a href="/account/security" class="block rounded-lg px-3 py-2 hover:bg-white/5">Security</a>
-              <a href="/account/notifications" class="block rounded-lg px-3 py-2 hover:bg-white/5">Notifications</a>
-              <a href="/inbox" class="block rounded-lg px-3 py-2 hover:bg-white/5">Inbox</a>
-              <form method="post" action="/logout"><button class="w-full rounded-lg px-3 py-2 text-left text-white/70 hover:bg-white/5 hover:text-white">Sign out</button></form>
+              <a href="/profile" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Profile')}</a>
+              <a href="/account/security" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Security')}</a>
+              <a href="/account/notifications" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Notifications')}</a>
+              <a href="/inbox" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Inbox')}</a>
+              <form method="post" action="/logout"><button class="w-full rounded-lg px-3 py-2 text-left text-white/70 hover:bg-white/5 hover:text-white">{t('Sign out')}</button></form>
             </div>
           </details>
         </div>
       </div>
-      <nav class="container-x -mb-px flex gap-1 overflow-x-auto pb-px text-sm [scrollbar-width:none]" aria-label="Portal">
+      <nav class="container-x -mb-px flex gap-1 overflow-x-auto pb-px text-sm [scrollbar-width:none]" aria-label={t('Portal')}>
         {nav.map((n) => (
           <a href={n.href} aria-current={isActive(n.href) ? 'page' : undefined}
             class:list={['shrink-0 border-b-2 px-3 py-3 transition', isActive(n.href) ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{n.label}</a>
@@ -116,8 +118,8 @@ const { count: unread } = user
       <slot />
     </main>
     <footer class="container-x flex flex-col justify-between gap-2 border-t border-white/5 py-8 text-xs text-white/35 sm:flex-row">
-      <p>{isGroup || !company ? `© ${new Date().getFullYear()} Lakeba Group Limited` : `${company.display_name} Investor Portal, powered by Lakeba`}</p>
-      <p>Questions: {features.boardQa && <><a href="/board" class="hover:text-white">Board Q&amp;A</a> · </>}<a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
+      <p>{isGroup || !company ? `© ${new Date().getFullYear()} Lakeba Group Limited` : t('{company} Investor Portal, powered by Lakeba', { company: company.display_name })}</p>
+      <p>{t('Questions:')} {features.boardQa && <><a href="/board" class="hover:text-white">{t('Board Q&A')}</a> · </>}<a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
     </footer>
   </body>
 </html>

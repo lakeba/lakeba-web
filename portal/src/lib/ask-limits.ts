@@ -57,7 +57,7 @@ async function alertAdminsOnce(svc: SupabaseClient, kind: string, title: string,
 
 export type Gate =
   | { ok: true; budgetReached: boolean }
-  | { ok: false; status: number; error: string };
+  | { ok: false; status: number; error: string; vars?: Record<string, number> };
 
 /**
  * Decides whether this account may ask now. Called before anything is sent
@@ -91,9 +91,9 @@ export async function checkAskAllowed(svc: SupabaseClient, userId: string, limit
         });
       }
     }
-    return { ok: false, status: 429, error: `You’ve reached today’s limit of ${limits.perDay} questions. Ask Lakeba resets at midnight (Sydney time).` };
+    return { ok: false, status: 429, error: 'You’ve reached today’s limit of {n} questions. Ask Lakeba resets at midnight (Sydney time).', vars: { n: limits.perDay } };
   }
-  if (lastHour >= limits.perHour) return { ok: false, status: 429, error: `You’ve asked ${limits.perHour} questions in the last hour. Please try again a little later.` };
+  if (lastHour >= limits.perHour) return { ok: false, status: 429, error: 'You’ve asked {n} questions in the last hour. Please try again a little later.', vars: { n: limits.perHour } };
 
   const spent = await spendToday(svc);
   if (spent >= limits.dailyBudgetUsd) {

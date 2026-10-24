@@ -9,6 +9,7 @@ import { safeNext } from '../../lib/supabase';
 // One-time sign-in link from a reply to a shareholder email. Opening the link
 // only shows this page (email link scanners open links too); the click on
 // "Continue" uses the link and signs the person in.
+const { t } = Astro.locals;
 const svc = serviceClient();
 const tokenHash = createHash('sha256').update(Astro.params.token ?? '').digest('hex');
 const { data: link } = await svc.from('email_sign_in_links').select('user_id, next_path, expires_at, used_at').eq('token_hash', tokenHash).maybeSingle();
@@ -29,22 +30,22 @@ if (Astro.request.method === 'POST' && valid) {
       await recordSignIn({ supabase: Astro.locals.supabase, userId: link!.user_id, method: 'email_reply_link', request: Astro.request, origin: Astro.url.origin });
       return Astro.redirect(next, 303);
     }
-    error = 'This link couldn’t sign you in. Please sign in with your email and password.';
-  } else error = 'This link has already been used.';
+    error = t('This link couldn’t sign you in. Please sign in with your email and password.');
+  } else error = t('This link has already been used.');
 }
 ---
 
-<Auth title="Open the investor portal" subtitle={valid ? 'From the email we sent you.' : undefined}>
+<Auth title={t('Open the investor portal')} subtitle={valid ? t('From the email we sent you.') : undefined}>
   {error && <div class="mb-5"><Alert tone="error">{error}</Alert></div>}
   {valid && !error ? (
     <form method="post" class="space-y-4">
-      <p class="text-sm text-white/60">Continue to sign in and open what you asked for. This link works once.</p>
-      <button class="btn-primary w-full">Continue to the portal</button>
+      <p class="text-sm text-white/60">{t('Continue to sign in and open what you asked for. This link works once.')}</p>
+      <button class="btn-primary w-full">{t('Continue to the portal')}</button>
     </form>
   ) : (
     <div class="space-y-4">
-      {!error && <Alert>This link has expired or was already used. Links in our emails work once, for a limited time.</Alert>}
-      <a href={`/login?next=${encodeURIComponent(next)}`} class="btn-primary w-full">Sign in</a>
+      {!error && <Alert>{t('This link has expired or was already used. Links in our emails work once, for a limited time.')}</Alert>}
+      <a href={`/login?next=${encodeURIComponent(next)}`} class="btn-primary w-full">{t('Sign in')}</a>
     </div>
   )}
 </Auth>

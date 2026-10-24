@@ -2,23 +2,22 @@
 import Portal from '../../layouts/Portal.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
-import { longDate } from '../../lib/format';
 
-const { company } = Astro.locals;
+const { company, t, fmt } = Astro.locals;
 const { data: meetings } = await Astro.locals.supabase.from('meetings').select('id, title, kind, starts_at, location, status').eq('entity_id', company?.id ?? '00000000-0000-0000-0000-000000000000').order('starts_at', { ascending: false });
 const statusLabel: Record<string, string> = { upcoming: 'Upcoming', open: 'Proxy voting open', closed: 'Voting closed', results: 'Results available' };
 ---
 
-<Portal title="Meetings">
-  <PageHeader eyebrow={company?.display_name ?? 'Meetings'} title="AGM & shareholder meetings" subtitle="Notices, proxy voting, questions for the board, results and minutes." />
+<Portal title={t('Meetings')}>
+  <PageHeader eyebrow={company?.display_name ?? t('Meetings')} title={t('AGM & shareholder meetings')} subtitle={t('Notices, proxy voting, questions for the board, results and minutes.')} />
   {meetings?.length ? (
     <ul class="grid max-w-3xl gap-3">
       {meetings.map((m) => (
         <li><a href={`/agm/${m.id}`} class="card flex flex-wrap items-center justify-between gap-4 p-5 transition hover:bg-white/[0.07]">
-          <div><p class="font-semibold text-white">{m.title}</p><p class="text-sm text-white/45">{longDate.format(new Date(m.starts_at))}{m.location && ` · ${m.location}`}</p></div>
-          <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', m.status === 'open' ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{statusLabel[m.status]}</span>
+          <div><p class="font-semibold text-white">{m.title}</p><p class="text-sm text-white/45">{fmt.longDate.format(new Date(m.starts_at))}{m.location && ` · ${m.location}`}</p></div>
+          <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', m.status === 'open' ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{t(statusLabel[m.status] ?? m.status)}</span>
         </a></li>
       ))}
     </ul>
-  ) : <Empty title="No meetings scheduled">Notices of meeting will appear here.</Empty>}
+  ) : <Empty title={t('No meetings scheduled')}>{t('Notices of meeting will appear here.')}</Empty>}
 </Portal>

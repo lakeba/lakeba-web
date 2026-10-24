@@ -5,42 +5,106 @@ interface Props { title: string }
 const { title } = Astro.props;
 const path = Astro.url.pathname;
 const groupAdmin = Astro.locals.profile?.role === 'admin';
-const allSections = [
-  { href: '/admin', label: 'Overview' },
-  { href: '/admin/investors', label: 'Investors' },
-  { href: '/admin/holdings', label: 'Holders & holdings' },
-  { href: '/admin/engagement', label: 'Engagement' },
-  { href: '/admin/import', label: 'Import data' },
-  { href: '/admin/documents', label: 'Documents' },
-  { href: '/admin/data-rooms', label: 'Data rooms' },
-  { href: '/admin/ask-review', label: 'Ask review' },
-  { href: '/admin/ask-knowledge', label: 'Ask knowledge' },
-  { href: '/admin/ask-tests', label: 'Ask tests' },
-  { href: '/admin/queries', label: 'Board Q&A' },
-  { href: '/admin/emails', label: 'Shareholder emails' },
-  { href: '/admin/content', label: 'News & announcements' },
-  { href: '/admin/linkedin', label: 'LinkedIn campaign' },
-  { href: '/admin/agm', label: 'Meetings' },
-  { href: '/admin/ventures', label: 'Ventures & prices' },
-  { href: '/admin/notifications', label: 'Notifications' },
-  { href: '/admin/audit', label: 'Audit log' },
+const groups = [
+  { label: 'People', items: [
+    { href: '/admin/investors', label: 'Investors' },
+    { href: '/admin/holdings', label: 'Holders & holdings' },
+    { href: '/admin/engagement', label: 'Engagement' },
+    { href: '/admin/import', label: 'Import data' },
+  ] },
+  { label: 'Content', items: [
+    { href: '/admin/documents', label: 'Documents' },
+    { href: '/admin/content', label: 'News & announcements' },
+    { href: '/admin/linkedin', label: 'LinkedIn campaign' },
+    { href: '/admin/data-rooms', label: 'Data rooms' },
+  ] },
+  { label: 'Shareholder contact', items: [
+    { href: '/admin/emails', label: 'Shareholder emails' },
+    { href: '/admin/queries', label: 'Board Q&A' },
+    { href: '/admin/notifications', label: 'Notifications' },
+  ] },
+  { label: 'Ask', items: [
+    { href: '/admin/ask-review', label: 'Ask review' },
+    { href: '/admin/ask-knowledge', label: 'Ask knowledge' },
+    { href: '/admin/ask-tests', label: 'Ask tests' },
+  ] },
+  { label: 'Company & capital', items: [
+    { href: '/admin/agm', label: 'Meetings' },
+    { href: '/admin/ventures', label: 'Ventures & prices' },
+    { href: '/admin/trading', label: 'Secondary trading' },
+  ] },
+  { label: 'System', items: [
+    { href: '/admin/audit', label: 'Audit log' },
+  ] },
 ];
-// Company admins see only the sections they can use.
-const sections = groupAdmin ? allSections : allSections.filter((s) => companyAdminMayOpen(s.href));
-const active = (href: string) => (href === '/admin' ? path === '/admin' : path.startsWith(href));
+const active = (href: string) => (href === '/admin' ? path === '/admin' : path === href || path.startsWith(`${href}/`));
+// Company admins see only the sections they can use; empty groups are left out.
+const visible = groups
+  .map((g) => ({ ...g, items: groupAdmin ? g.items : g.items.filter((i) => companyAdminMayOpen(i.href)) }))
+  .filter((g) => g.items.length);
+const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.label ?? (path === '/admin' ? 'Overview' : title);
 ---
 
 <Portal title={`${title} · Admin`}>
   <div class="grid gap-8 lg:grid-cols-[13rem_1fr]">
-    <aside class="lg:sticky lg:top-32 lg:self-start">
-      <p class="eyebrow">Admin</p>
-      <nav class="mt-4 flex gap-1 overflow-x-auto text-sm lg:flex-col" aria-label="Admin">
-        {sections.map((s) => (
-          <a href={s.href} aria-current={active(s.href) ? 'page' : undefined}
-            class:list={['shrink-0 rounded-lg px-3 py-2 transition', active(s.href) ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{s.label}</a>
-        ))}
+    <aside class="lg:sticky lg:top-32 lg:max-h-[calc(100vh-9rem)] lg:self-start lg:overflow-y-auto">
+      <!-- On phones the whole menu folds away under the current page's name. -->
+      <details class="group/menu lg:hidden" data-admin-menu>
+        <summary class="flex cursor-pointer list-none items-center justify-between rounded-xl border border-white/10 px-4 py-3 text-sm">
+          <span><span class="text-white/45">Admin ·</span> <span class="font-medium text-white">{current}</span></span>
+          <svg viewBox="0 0 20 20" class="size-4 text-white/45 transition group-open/menu:rotate-180" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+        </summary>
+        <div class="mt-2" data-admin-menu-slot></div>
+      </details>
+      <p class="eyebrow hidden lg:block" data-admin-eyebrow>Admin</p>
+      <nav class="mt-2 hidden text-sm lg:mt-4 lg:block" aria-label="Admin" data-admin-nav>
+        <a href="/admin" aria-current={active('/admin') ? 'page' : undefined}
+          class:list={['block rounded-lg px-3 py-2 transition', active('/admin') ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>Overview</a>
+        {visible.map((g) => {
+          const open = g.items.some((i) => active(i.href));
+          return (
+            <details class="group/sec mt-1" open={open} data-admin-group={g.label} data-current={open ? '' : undefined}>
+              <summary class="flex cursor-pointer list-none items-center justify-between rounded-lg px-3 py-2 text-[11px] font-semibold uppercase tracking-widest text-white/40 hover:text-white/70">
+                {g.label}
+                <svg viewBox="0 0 20 20" class="size-3.5 transition group-open/sec:rotate-180" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+              </summary>
+              <div class="mb-1 ml-2 border-l border-white/10 pl-2">
+                {g.items.map((s) => (
+                  <a href={s.href} aria-current={active(s.href) ? 'page' : undefined}
+                    class:list={['block rounded-lg px-3 py-1.5 transition', active(s.href) ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{s.label}</a>
+                ))}
+              </div>
+            </details>
+          );
+        })}
       </nav>
     </aside>
     <div class="min-w-0"><slot /></div>
   </div>
 </Portal>
+
+<script>
+  // One menu for both sizes: on phones it moves inside the fold-away panel.
+  const nav = document.querySelector<HTMLElement>('[data-admin-nav]');
+  const slot = document.querySelector<HTMLElement>('[data-admin-menu-slot]');
+  const wide = window.matchMedia('(min-width: 1024px)');
+  const place = () => {
+    if (!nav || !slot) return;
+    if (wide.matches) { document.querySelector('[data-admin-eyebrow]')?.after(nav); nav.classList.add('hidden', 'lg:block'); }
+    else { slot.append(nav); nav.classList.remove('hidden'); }
+  };
+  place();
+  wide.addEventListener('change', place);
+
+  // Remember which sections were left open (the current page's section always opens).
+  const KEY = 'lakeba.adminMenu';
+  let saved: string[] = [];
+  try { saved = JSON.parse(localStorage.getItem(KEY) ?? '[]'); } catch {}
+  for (const d of document.querySelectorAll<HTMLDetailsElement>('[data-admin-group]')) {
+    if (saved.includes(d.dataset.adminGroup!)) d.open = true;
+    d.addEventListener('toggle', () => {
+      const open = [...document.querySelectorAll<HTMLDetailsElement>('[data-admin-group]')].filter((x) => x.open && x.dataset.current === undefined).map((x) => x.dataset.adminGroup!);
+      try { localStorage.setItem(KEY, JSON.stringify(open)); } catch {}
+    });
+  }
+</script>

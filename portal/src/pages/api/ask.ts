@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import Anthropic from '@anthropic-ai/sdk';
 import { buildKnowledgeBase } from '../../lib/knowledge';
 import { serviceClient } from '../../lib/admin';
-import { askName, buildMessages, client, costUsd, declineFor, FULL_CONTEXT_LIMIT, isDecline, loadHouseRules, MODEL, searchPassages, sourcesFor, systemPrompt, validateTurns, type ChatTurn, type SourceRef } from '../../lib/ask';
+import { buildMessages, client, costUsd, declineFor, FULL_CONTEXT_LIMIT, isDecline, loadHouseRules, MODEL, searchPassages, sourcesFor, systemPrompt, validateTurns, type ChatTurn, type SourceRef } from '../../lib/ask';
 import { checkAskAllowed, loadLimits, precheckOnTopic, PRECHECK_MODEL } from '../../lib/ask-limits';
 import { loadRetrieval, retrieveKnowledgeBase, standaloneQuery } from '../../lib/retrieval';
 
@@ -18,17 +18,23 @@ import { loadRetrieval, retrieveKnowledgeBase, standaloneQuery } from '../../lib
 export const POST: APIRoute = async ({ request, locals, url }) => {
   if (request.headers.get('origin') !== url.origin) return new Response('Forbidden', { status: 403 });
   const supabase = locals.supabase;
+  const { t, locale } = locals;
 
   const body = await request.json().catch(() => null);
   // Each company has its own assistant, answering from that company's material only.
   // The company must be one this person belongs to (membership comes from the database).
   const company = locals.companies.find((c) => c.code === body?.company) ?? null;
-  if (!company) return Response.json({ error: 'Ask is available to shareholders of the company you are viewing.' }, { status: 403 });
+  if (!company) return Response.json({ error: t('Ask is available to shareholders of the company you are viewing.') }, { status: 403 });
+  // "Ask Lakeba" / "Ask Ezifin" in the reader's language, for status messages.
+  const name = t('Ask {brand}', { brand: company.relationship === 'group' ? 'Lakeba' : company.display_name });
+  // Answers in the reader's interface language; the decline sentence stays exact (isDecline relies on it).
+  const replyIn = ({ es: 'Spanish', it: 'Italian', zh: 'Simplified Chinese' } as Record<string, string>)[locale];
+  const languageRule = replyIn ? `\n\nReply in ${replyIn} unless the person writes in another language. The exact decline sentence above stays in English, word for word.` : '';
   const DECLINE = declineFor(company);
   const turns = body?.turns as ChatTurn[];
   const conversationId = /^[0-9a-f-]{36}$/.test(body?.conversationId ?? '') ? body.conversationId : crypto.randomUUID();
   const invalid = validateTurns(turns);
-  if (invalid) return Response.json({ error: invalid }, { status: 400 });
+  if (invalid) return Response.json({ error: t(invalid) }, { status: 400 });
 
   const svc = serviceClient();
   const [limits, retrieval] = await Promise.all([loadLimits(svc), loadRetrieval(svc)]);
@@ -37,7 +43,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   const admin = locals.profile?.role === 'admin' && locals.user?.aal === 'aal2';
   let mode: 'full' | 'retrieval' = admin && ['full', 'retrieval'].includes(body?.mode) ? body.mode : retrieval.enabled ? 'retrieval' : 'full';
   const gate = await checkAskAllowed(svc, locals.user!.id, limits, url.origin);
-  if (!gate.ok) return Response.json({ error: gate.error }, { status: gate.status });
+  if (!gate.ok) return Response.json({ error: t(gate.error, gate.vars) }, { status: gate.status });
   await supabase.rpc('log_event', { event_action: 'ask_question', event_detail: { length: turns.at(-1)!.content.length, turn: Math.ceil(turns.length / 2) } });
 
   const encoder = new TextEncoder();
@@ -52,9 +58,9 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
         if (!client || gate.budgetReached) {
           // AI answers off or today's budget used: point to the most relevant passages instead.
           const passages = await searchPassages(supabase, turns.at(-1)!.content, company);
-          const why = !client ? 'AI answers are not switched on yet.' : `${askName(company)} has reached its daily limit for AI answers; they resume at midnight (Sydney time).`;
-          record.answer = passages.length ? `${why} These passages look most relevant:` : `${why} No published document matches that question.`;
-          record.sources = passages.map((p) => ({ title: p.title, detail: p.page ? `page ${p.page}` : null, href: `/documents/${p.document_id}` }));
+          const why = !client ? t('AI answers are not switched on yet.') : t('{name} has reached its daily limit for AI answers; they resume at midnight (Sydney time).', { name });
+          record.answer = `${why} ${passages.length ? t('These passages look most relevant:') : t('No published document matches that question.')}`;
+          record.sources = passages.map((p) => ({ title: p.title, detail: p.page ? t('page {n}', { n: p.page }) : null, href: `/documents/${p.document_id}` }));
           record.error = !client ? 'ai_off' : 'budget';
           send({ text: record.answer });
           send({ sources: record.sources });
@@ -95,7 +101,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           // Re-runs on a fallback model if a safety classifier declines.
           betas: ['server-side-fallback-2026-07-01'],
           fallbacks: 'default',
-          system: systemPrompt(houseRules, company),
+          system: systemPrompt(houseRules, company) + languageRule,
           messages: buildMessages(kb, turns),
         }, { signal: request.signal });
         for await (const event of response) {
@@ -106,12 +112,12 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
         }
         const message = await response.finalMessage();
         if (message.stop_reason === 'max_tokens') {
-          const note = '\n\n*(Answer shortened. Ask a more specific question for more detail.)*';
+          const note = `\n\n*(${t('Answer shortened. Ask a more specific question for more detail.')})*`;
           record.answer += note;
           send({ text: note });
         }
         if (message.stop_reason === 'refusal') {
-          const note = '\n\nI can’t answer that one. Please ask the board through Board Q&A.';
+          const note = `\n\n${t('I can’t answer that one. Please ask the board through Board Q&A.')}`;
           record.answer += note;
           send({ text: note });
         }
@@ -141,7 +147,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
         else {
           console.error('Ask Lakeba failed', error instanceof Anthropic.APIError ? `${error.status} ${error.message}` : error);
           record.error = error instanceof Anthropic.APIError ? `api_${error.status}` : 'failed';
-          send({ error: `${askName(company)} is unavailable right now. Please try again shortly.` });
+          send({ error: t('{name} is unavailable right now. Please try again shortly.', { name }) });
         }
       } finally {
         const { data: stored } = await svc.from('ask_exchanges').insert({

@@ -3,6 +3,10 @@ import { createSupabase } from './lib/supabase';
 import { loadCompanyContext } from './lib/companies';
 import { companyAdminMayOpen } from './lib/admin-company';
 import { rememberOrigin, startNotificationWorker } from './lib/notify-jobs';
+import { serviceClient } from './lib/admin';
+import { tradingEnabled } from './lib/trading';
+import { INTL, fromAcceptLanguage, isLocale, translator, type Locale } from './lib/i18n';
+import { formats } from './lib/format';
 
 // Sends queued browser notifications and runs scheduled ones (reminders, daily summaries).
 startNotificationWorker();
@@ -26,7 +30,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.company = null;
   locals.group = null;
   locals.adminOf = [];
-  locals.features = { ask: false, boardQa: false };
+  locals.features = { ask: false, boardQa: false, trading: false };
+  // Language: ?lang= (remembered in a cookie), else the cookie, else the browser; the profile choice wins once signed in.
+  const asked = url.searchParams.get('lang');
+  if (isLocale(asked)) context.cookies.set('lang', asked, { path: '/', maxAge: 31_536_000, sameSite: 'lax', secure: url.protocol === 'https:', httpOnly: true });
+  const setLocale = (l: Locale) => { locals.locale = l; locals.t = translator(l); locals.fmt = formats(INTL[l]); };
+  const cookieLang = context.cookies.get('lang')?.value;
+  setLocale(isLocale(asked) ? asked : isLocale(cookieLang) ? cookieLang : fromAcceptLanguage(context.request.headers.get('accept-language')) ?? 'en');
 
   // getClaims() validates the JWT signature rather than trusting the cookie.
   const { data } = await locals.supabase.auth.getClaims();
@@ -57,10 +67,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   const { data: profile } = await locals.supabase
     .from('profiles')
-    .select('email, first_name, last_name, role')
+    .select('email, first_name, last_name, role, locale')
     .eq('id', locals.user.id)
     .single();
   locals.profile = profile;
+  if (isLocale(profile?.locale) && !isLocale(asked)) setLocale(profile.locale);
 
   const companyContext = await loadCompanyContext(locals.supabase, context.cookies);
   locals.companies = companyContext.companies;
@@ -68,7 +79,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.group = companyContext.group;
   locals.adminOf = companyContext.adminOf;
   const { data: flags } = await locals.supabase.rpc('my_portal_flags').maybeSingle();
-  locals.features = { ask: (flags as { ask_enabled?: boolean } | null)?.ask_enabled ?? true, boardQa: (flags as { board_qa_enabled?: boolean } | null)?.board_qa_enabled ?? true };
+  locals.features = {
+    ask: (flags as { ask_enabled?: boolean } | null)?.ask_enabled ?? true,
+    boardQa: (flags as { board_qa_enabled?: boolean } | null)?.board_qa_enabled ?? true,
+    trading: locals.company ? await tradingEnabled(serviceClient(), locals.company.id) : false,
+  };
 
   // Admins (and company admins) cannot use the portal until they have enrolled MFA.
   const companyAdmin = locals.adminOf.length > 0;

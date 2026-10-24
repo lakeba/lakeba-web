@@ -5,26 +5,25 @@ import PageHeader from '../../components/PageHeader.astro';
 import Alert from '../../components/Alert.astro';
 import Empty from '../../components/Empty.astro';
 import { field } from '../../lib/forms';
-import { shortDate } from '../../lib/format';
 
-const supabase = Astro.locals.supabase;
+const { supabase, t, fmt } = Astro.locals;
 const userId = Astro.locals.user!.id;
 const { company } = Astro.locals;
 const entityId = company?.id ?? '00000000-0000-0000-0000-000000000000';
-const boardName = company && company.relationship !== 'group' ? `the ${company.display_name} board` : 'the board';
+const ownBoard = company && company.relationship !== 'group';
 let error = '';
 
 if (Astro.request.method === 'POST' && !Astro.locals.features.boardQa) {
-  error = 'Sending questions to the board isn’t available for your account.';
+  error = t('Sending questions to the board isn’t available for your account.');
 } else if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const subject = field(form, 'subject');
   const body = field(form, 'body');
-  if (form.get('terms') !== 'on') error = 'Please accept the terms for shareholder queries.';
-  else if (subject.length < 3 || body.length < 1) error = 'Add a subject and your question.';
+  if (form.get('terms') !== 'on') error = t('Please accept the terms for shareholder queries.');
+  else if (subject.length < 3 || body.length < 1) error = t('Add a subject and your question.');
   else {
     const { data: created, error: insertError } = await supabase.from('queries').insert({ user_id: userId, subject, entity_id: entityId }).select('id').single();
-    if (insertError || !created) error = 'Your question could not be sent. Only shareholders can ask the board.';
+    if (insertError || !created) error = t('Your question could not be sent. Only shareholders can ask the board.');
     else {
       await supabase.from('query_messages').insert({ query_id: created.id, author_id: userId, body }).throwOnError();
       await supabase.rpc('log_event', { event_action: 'query_created', event_detail: { query_id: created.id } });
@@ -39,47 +38,53 @@ const statusStyles: Record<string, string> = { open: 'bg-lk-orange/15 text-lk-or
 const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 'Answered', closed: 'Closed' };
 ---
 
-<Portal title="Board Q&A">
-  <PageHeader eyebrow={company?.display_name ?? 'Board Q&A'} title={`Ask ${boardName}`} subtitle={`Questions about ${company && company.relationship !== 'group' ? company.display_name : 'the company'}’s operations, performance or governance. We aim to reply within 7 working days.`} />
+<Portal title={t('Board Q&A')}>
+  <PageHeader
+    eyebrow={company?.display_name ?? t('Board Q&A')}
+    title={ownBoard ? t('Ask the {company} board', { company: company.display_name }) : t('Ask the board')}
+    subtitle={ownBoard
+      ? t('Questions about {company}’s operations, performance or governance. We aim to reply within 7 working days.', { company: company.display_name })
+      : t('Questions about the company’s operations, performance or governance. We aim to reply within 7 working days.')}
+  />
 
   <div class="grid gap-8 lg:grid-cols-[1fr_24rem]">
     <section>
-      <h2 class="mb-4 text-lg font-bold">Your questions</h2>
+      <h2 class="mb-4 text-lg font-bold">{t('Your questions')}</h2>
       {queries?.length ? (
         <ul class="grid gap-3">
           {queries.map((q) => (
             <li><a href={`/board/${q.id}`} class="card flex flex-wrap items-center justify-between gap-3 p-5 transition hover:bg-white/[0.07]">
               <div>
                 <p class="font-semibold text-white">{q.subject}</p>
-                <p class="text-xs text-white/40">Asked {shortDate.format(new Date(q.created_at))}{q.status === 'open' && ` · reply due by ${shortDate.format(new Date(q.due_at))}`}</p>
+                <p class="text-xs text-white/40">{t('Asked {date}', { date: fmt.shortDate.format(new Date(q.created_at)) })}{q.status === 'open' && ` · ${t('reply due by {date}', { date: fmt.shortDate.format(new Date(q.due_at)) })}`}</p>
               </div>
-              <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', statusStyles[q.status]]}>{statusLabel[q.status]}</span>
+              <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', statusStyles[q.status]]}>{t(statusLabel[q.status] ?? q.status)}</span>
             </a></li>
           ))}
         </ul>
-      ) : <Empty title="No questions yet">Use the form to send your first question to the board.</Empty>}
+      ) : <Empty title={t('No questions yet')}>{t('Use the form to send your first question to the board.')}</Empty>}
     </section>
 
     {Astro.locals.features.boardQa ? (
     <section class="card h-fit">
-      <h2 class="text-lg font-bold">New question</h2>
+      <h2 class="text-lg font-bold">{t('New question')}</h2>
       {error && <div class="mt-4"><Alert tone="error">{error}</Alert></div>}
       <form method="post" class="mt-5 space-y-4">
-        <div><label for="subject" class="label">Subject</label><input id="subject" name="subject" maxlength="200" required class="field" /></div>
-        <div><label for="body" class="label">Your question</label><textarea id="body" name="body" rows="6" maxlength="10000" required class="field"></textarea></div>
+        <div><label for="subject" class="label">{t('Subject')}</label><input id="subject" name="subject" maxlength="200" required class="field" /></div>
+        <div><label for="body" class="label">{t('Your question')}</label><textarea id="body" name="body" rows="6" maxlength="10000" required class="field"></textarea></div>
         <label class="flex gap-3 text-sm text-white/60">
           <input type="checkbox" name="terms" required class="mt-1 accent-lk-blue" />
-          <span>I agree to the <details class="inline"><summary class="inline cursor-pointer text-lk-blue">terms for responding to shareholder queries</summary>
-            <span class="mt-2 block text-xs text-white/50">Queries should relate to the company’s operations, financial performance or governance. The company will acknowledge receipt and aims to respond within 7 working days, and may decline queries that are irrelevant, inappropriate or unlawful. Responses are general information, not financial advice.</span>
+          <span>{t('I agree to the')} <details class="inline"><summary class="inline cursor-pointer text-lk-blue">{t('terms for responding to shareholder queries')}</summary>
+            <span class="mt-2 block text-xs text-white/50">{t('Queries should relate to the company’s operations, financial performance or governance. The company will acknowledge receipt and aims to respond within 7 working days, and may decline queries that are irrelevant, inappropriate or unlawful. Responses are general information, not financial advice.')}</span>
           </details></span>
         </label>
-        <button class="btn-primary w-full">Send to {boardName}</button>
+        <button class="btn-primary w-full">{ownBoard ? t('Send to the {company} board', { company: company.display_name }) : t('Send to the board')}</button>
       </form>
     </section>
     ) : (
       <section class="card h-fit">
-        <h2 class="text-lg font-bold">New questions</h2>
-        <p class="mt-2 text-sm text-white/60">Sending questions to the board isn’t available for your account. For help, email <a href="mailto:info@lakeba.com" class="text-lk-blue hover:underline">info@lakeba.com</a>.</p>
+        <h2 class="text-lg font-bold">{t('New questions')}</h2>
+        <p class="mt-2 text-sm text-white/60">{t('Sending questions to the board isn’t available for your account.')} {t('For help, email')} <a href="mailto:info@lakeba.com" class="text-lk-blue hover:underline">info@lakeba.com</a>.</p>
       </section>
     )}
   </div>

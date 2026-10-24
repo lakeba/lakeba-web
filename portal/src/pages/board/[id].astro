@@ -3,9 +3,8 @@ import Portal from '../../layouts/Portal.astro';
 import { notifyAdmins } from '../../lib/notify';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
-import { dateTime, shortDate } from '../../lib/format';
 
-const supabase = Astro.locals.supabase;
+const { supabase, t, fmt } = Astro.locals;
 const userId = Astro.locals.user!.id;
 const id = Astro.params.id!;
 let error = '';
@@ -21,7 +20,7 @@ if (Astro.request.method === 'POST') {
     if (q) await notifyAdmins({ kind: 'admin_query', entityId: q.entity_id, origin: Astro.url.origin, link: `/admin/queries/${id}`, title: `New reply on a board question: ${q.subject}`, body: `${Astro.locals.profile?.email ?? 'An investor'} replied on “${q.subject}”.` });
     return Astro.redirect(`/board/${id}`);
   }
-  error = 'Your reply could not be sent.';
+  error = t('Your reply could not be sent.');
 }
 
 // Only the user's own question, without internal notes (admins could read them via RLS).
@@ -35,13 +34,13 @@ const sent = Astro.url.searchParams.get('sent') === '1';
 
 <Portal title={query.subject}>
   <div class="mx-auto max-w-3xl">
-    <a href="/board" class="text-sm text-white/50 hover:text-white">← Board Q&amp;A</a>
+    <a href="/board" class="text-sm text-white/50 hover:text-white">← {t('Board Q&A')}</a>
     <h1 class="mt-6 text-3xl font-extrabold">{query.subject}</h1>
     <p class="mt-2 text-sm text-white/45">
-      Asked {shortDate.format(new Date(query.created_at))} ·
-      {query.status === 'open' ? `Reply due by ${shortDate.format(new Date(query.due_at))}` : query.status === 'answered' ? 'Answered' : 'Closed'}
+      {t('Asked {date}', { date: fmt.shortDate.format(new Date(query.created_at)) })} ·
+      {query.status === 'open' ? t('Reply due by {date}', { date: fmt.shortDate.format(new Date(query.due_at)) }) : query.status === 'answered' ? t('Answered') : t('Closed')}
     </p>
-    {sent && <div class="mt-6"><Alert tone="success">Your question has been sent. The board aims to reply by {shortDate.format(new Date(query.due_at))}.</Alert></div>}
+    {sent && <div class="mt-6"><Alert tone="success">{t('Your question has been sent. The board aims to reply by {date}.', { date: fmt.shortDate.format(new Date(query.due_at)) })}</Alert></div>}
 
     <ol class="mt-8 space-y-4">
       {(messages ?? []).map((m) => {
@@ -50,7 +49,7 @@ const sent = Astro.url.searchParams.get('sent') === '1';
         return (
           <li class:list={['flex', mine ? 'justify-end' : 'justify-start']}>
             <div class:list={['max-w-[85%] rounded-3xl p-5', mine ? 'bg-lk-blue/20 rounded-br-md' : 'glass rounded-bl-md']}>
-              <p class="text-xs text-white/45">{mine ? 'You' : `${author?.first_name ?? ''} ${author?.last_name ?? ''}`.trim() || 'Lakeba'}{!mine && ' · Lakeba'} · {dateTime.format(new Date(m.created_at))}</p>
+              <p class="text-xs text-white/45">{mine ? t('You') : `${author?.first_name ?? ''} ${author?.last_name ?? ''}`.trim() || 'Lakeba'}{!mine && ' · Lakeba'} · {fmt.dateTime.format(new Date(m.created_at))}</p>
               <p class="mt-2 whitespace-pre-line text-white/85">{m.body}</p>
             </div>
           </li>
@@ -61,9 +60,9 @@ const sent = Astro.url.searchParams.get('sent') === '1';
     {query.status !== 'closed' && Astro.locals.features.boardQa && (
       <form method="post" class="card mt-8 space-y-4">
         {error && <Alert tone="error">{error}</Alert>}
-        <label for="body" class="label">Add a reply</label>
+        <label for="body" class="label">{t('Add a reply')}</label>
         <textarea id="body" name="body" rows="4" maxlength="10000" required class="field"></textarea>
-        <button class="btn-primary">Send reply</button>
+        <button class="btn-primary">{t('Send reply')}</button>
       </form>
     )}
   </div>

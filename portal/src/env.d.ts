@@ -15,6 +15,7 @@ declare namespace App {
       first_name: string;
       last_name: string;
       role: 'investor' | 'board' | 'admin';
+      locale: import('./lib/i18n').Locale | null;
     } | null;
     /** Whether the user has a verified MFA factor. */
     mfaEnrolled: boolean;
@@ -25,6 +26,10 @@ declare namespace App {
     /** Companies this person administers as a company admin. */
     adminOf: string[];
     /** Per-person switches set by admins (Admin → Investors). */
-    features: { ask: boolean; boardQa: boolean };
+    features: { ask: boolean; boardQa: boolean; trading: boolean };
+    /** Interface language, its translate function and date/number formats. */
+    locale: import('./lib/i18n').Locale;
+    t: import('./lib/i18n').T;
+    fmt: ReturnType<typeof import('./lib/format').formats>;
   }
 }

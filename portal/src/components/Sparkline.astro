@@ -2,6 +2,7 @@
 // Small line chart for a price series; no client JavaScript.
 interface Props { points: { label: string; value: number }[]; class?: string }
 const { points, class: cls = '' } = Astro.props;
+const { t } = Astro.locals;
 const w = 320;
 const h = 90;
 const pad = 6;
@@ -16,7 +17,7 @@ const id = `spark-${Math.random().toString(36).slice(2, 8)}`;
 ---
 
 {points.length > 1 && (
-  <svg viewBox={`0 0 ${w} ${h}`} class={cls} role="img" aria-label={`Reference price from ${points[0].label} to ${points.at(-1)?.label}`}>
+  <svg viewBox={`0 0 ${w} ${h}`} class={cls} role="img" aria-label={t('Reference price from {from} to {to}', { from: points[0].label, to: points.at(-1)?.label ?? '' })}>
     <defs>
       <linearGradient id={id} x1="0" x2="0" y1="0" y2="1">
         <stop offset="0" stop-color="#276ae7" stop-opacity="0.35" />

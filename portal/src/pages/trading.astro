@@ -1,0 +1,192 @@
+---
+import Portal from '../layouts/Portal.astro';
+import PageHeader from '../components/PageHeader.astro';
+import Alert from '../components/Alert.astro';
+import { serviceClient } from '../lib/admin';
+import { notifyAdmins } from '../lib/notify';
+import { field } from '../lib/forms';
+// English formats only for the notifications to admins (they stay in English).
+import { audPrecise as audEn, shares as sharesEn } from '../lib/format';
+import { LIVE, TRADABLE_KINDS, fills, orderBook, sellable, tradingSettings, windowState, type Interest, type Match } from '../lib/trading';
+
+// Secondary trading board for the company being viewed: register a non-binding
+// interest to buy or sell, see your interests and (if the company allows) an
+// anonymous order book. Reads and writes use the service key, limited to the
+// holders this person owns in this company.
+const { company, user, t, fmt } = Astro.locals;
+if (!company || !Astro.locals.features.trading) return Astro.redirect('/');
+const svc = serviceClient();
+const userId = user!.id;
+const settings = await tradingSettings(svc, company.id);
+const state = windowState(settings);
+let error = '';
+let notice = '';
+
+// Holders this login owns that hold shares of this company.
+const { data: links } = await svc.from('holder_members').select('holder_id, access, holders(id, name)').eq('user_id', userId);
+const myHolderIds = (links ?? []).map((l) => l.holder_id as string);
+const owned: { id: string; name: string }[] = [];
+for (const l of links ?? []) {
+  if (l.access !== 'owner') continue;
+  if ((await svc.rpc('holder_in_entity', { target_holder: l.holder_id, target_entity: company.id })).data) owned.push(l.holders as unknown as { id: string; name: string });
+}
+const { data: classRows } = await svc.from('share_classes').select('id, code, name, kind').eq('entity_id', company.id).in('kind', TRADABLE_KINDS).order('code');
+const classes = classRows ?? [];
+const className = new Map(classes.map((c) => [c.id, c.name]));
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'register') {
+    const side = field(form, 'side');
+    const holderId = field(form, 'holder_id');
+    const classId = field(form, 'share_class_id');
+    const count = Math.floor(Number(field(form, 'shares').replace(/[,\s]/g, '')));
+    const price = Number(field(form, 'price').replace(/[$,\s]/g, ''));
+    if (state !== 'open') error = t('Interests can’t be registered at the moment.');
+    else if (side !== 'buy' && side !== 'sell') error = t('Choose buy or sell.');
+    else if (!owned.some((h) => h.id === holderId)) error = t('Choose one of your holdings.');
+    else if (!className.has(classId)) error = t('Choose a share class.');
+    else if (!Number.isFinite(count) || count < 1) error = t('Enter the number of shares.');
+    else if (!Number.isFinite(price) || price <= 0 || price > 1_000_000) error = t('Enter a price per share.');
+    else if (form.get('ack') !== 'on') error = t('Please confirm you understand this is an expression of interest.');
+    else if (side === 'sell' && count > (await sellable(svc, holderId, classId))) {
+      const max = await sellable(svc, holderId, classId);
+      error = t.n(max, 'You can offer up to {n} share of this class from this holding (what you hold, less what you’ve already offered).', 'You can offer up to {n} shares of this class from this holding (what you hold, less what you’ve already offered).', { n: fmt.shares.format(max) });
+    } else {
+      const { data: row, error: e } = await svc.from('trade_interests').insert({ entity_id: company.id, share_class_id: classId, holder_id: holderId, user_id: userId, side, shares: count, price, note: field(form, 'note').slice(0, 500) }).select('id').single();
+      if (e || !row) error = t('Your interest could not be saved. Please try again.');
+      else {
+        await Astro.locals.supabase.rpc('log_event', { event_action: 'trade_interest_registered', event_detail: { interest_id: row.id, side, shares: count, price, entity_id: company.id } });
+        await notifyAdmins({ kind: 'admin_trade', entityId: company.id, origin: Astro.url.origin, link: '/admin/trading', title: `Secondary trading: interest to ${side} ${sharesEn.format(count)} shares`, body: `A shareholder registered an interest to ${side} ${sharesEn.format(count)} ${className.get(classId)} at ${audEn.format(price)} per share.` });
+        notice = side === 'sell' ? t('Your interest to sell is registered.') : t('Your interest to buy is registered.');
+      }
+    }
+  } else if (intent === 'withdraw') {
+    const { data: i } = await svc.from('trade_interests').select('id, holder_id, status, side, shares').eq('id', field(form, 'interest_id')).maybeSingle();
+    const { count: paired } = i ? await svc.from('trade_matches').select('id', { count: 'exact', head: true }).or(`sell_id.eq.${i.id},buy_id.eq.${i.id}`).eq('status', 'approved') : { count: 0 };
+    if (!i || !myHolderIds.includes(i.holder_id) || !owned.some((h) => h.id === i.holder_id)) error = t('That interest was not found.');
+    else if (i.status !== 'open') error = t('Only open interests can be withdrawn.');
+    else if (paired) error = t('Part of this interest is already paired with another shareholder. Please contact us to change it.');
+    else {
+      await svc.from('trade_interests').update({ status: 'withdrawn', updated_at: new Date().toISOString() }).eq('id', i.id).throwOnError();
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'trade_interest_withdrawn', event_detail: { interest_id: i.id } });
+      await notifyAdmins({ kind: 'admin_trade', entityId: company.id, origin: Astro.url.origin, link: '/admin/trading', title: 'Secondary trading: interest withdrawn', body: `A shareholder withdrew an interest to ${i.side} ${sharesEn.format(Number(i.shares))} shares.` });
+      notice = t('Your interest was withdrawn.');
+    }
+  }
+}
+
+const [{ data: mine }, { data: open }] = await Promise.all([
+  myHolderIds.length ? svc.from('trade_interests').select('*').eq('entity_id', company.id).in('holder_id', myHolderIds).order('created_at', { ascending: false }).limit(50) : Promise.resolve({ data: [] }),
+  settings.show_book ? svc.from('trade_interests').select('*').eq('entity_id', company.id).in('status', LIVE) : Promise.resolve({ data: [] }),
+]);
+const interestIds = [...new Set([...(mine ?? []), ...(open ?? [])].map((i) => i.id))];
+const { data: matchRows } = interestIds.length
+  ? await svc.from('trade_matches').select('id, sell_id, buy_id, shares, price, status, share_class_id, created_at, completed_on, admin_note').or(`sell_id.in.(${interestIds.join(',')}),buy_id.in.(${interestIds.join(',')})`)
+  : { data: [] };
+const matches = (matchRows ?? []) as Match[];
+const { paired, done, available } = fills(matches);
+const books = classes.map((c) => ({ c, book: orderBook(((open ?? []) as Interest[]).filter((i) => i.share_class_id === c.id), matches) })).filter((b) => b.book.buy.length || b.book.sell.length);
+const holderName = new Map((links ?? []).map((l) => [l.holder_id as string, (l.holders as unknown as { name: string }).name]));
+const statusLabel: Record<string, string> = { open: t.c('trade status', 'Open'), matched: t('Paired'), completed: t('Completed'), withdrawn: t.c('trade status', 'Withdrawn'), cancelled: t('Cancelled') };
+const windowText = state === 'open'
+  ? settings.window_closes ? t('Open until {date}.', { date: fmt.longDate.format(new Date(settings.window_closes)) }) : t('Open.')
+  : state === 'before' ? t('Opens {date}.', { date: fmt.longDate.format(new Date(settings.window_opens!)) }) : settings.window_closes ? t('Closed on {date}.', { date: fmt.longDate.format(new Date(settings.window_closes)) }) : t('Closed.');
+---
+
+<Portal title={t('Secondary trading')}>
+  <PageHeader eyebrow={t('Liquidity')} title={t('Secondary trading')} subtitle={t('Register your interest to buy or sell {company} shares. The company pairs sellers with buyers, following the constitution, and arranges the transfer.', { company: company.display_name })} />
+  {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
+  {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+
+  <div class="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
+    <section class="card">
+      <div class="flex items-center justify-between gap-3">
+        <h2 class="text-lg font-bold">{t('Register an interest')}</h2>
+        <span class:list={['rounded-full px-2.5 py-0.5 text-xs', state === 'open' ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{state === 'open' ? t('Window open') : t('Window closed')}</span>
+      </div>
+      <p class="mt-1 text-sm text-white/55">{windowText}</p>
+      {state !== 'open' ? null : !owned.length ? (
+        <p class="mt-4 text-sm text-white/55">{t('Only the owner of a holding can register an interest. If you manage a holding as view-only, ask its owner.')}</p>
+      ) : (
+        <form method="post" class="mt-5 grid gap-4 sm:grid-cols-2">
+          <input type="hidden" name="intent" value="register" />
+          <fieldset class="sm:col-span-2"><legend class="label">{t('I’d like to')}</legend>
+            <div class="flex gap-3">
+              <label class="flex flex-1 cursor-pointer items-center gap-2 rounded-xl border border-white/10 px-4 py-3 has-[:checked]:border-lk-blue"><input type="radio" name="side" value="sell" required class="accent-lk-blue" /> {t('Sell shares')}</label>
+              <label class="flex flex-1 cursor-pointer items-center gap-2 rounded-xl border border-white/10 px-4 py-3 has-[:checked]:border-lk-blue"><input type="radio" name="side" value="buy" class="accent-lk-blue" /> {t('Buy shares')}</label>
+            </div>
+          </fieldset>
+          <div><label class="label" for="holder_id">{t('Holding')}</label><select id="holder_id" name="holder_id" class="field">{owned.map((h) => <option value={h.id}>{h.name}</option>)}</select></div>
+          <div><label class="label" for="share_class_id">{t('Share class')}</label><select id="share_class_id" name="share_class_id" class="field">{classes.map((c) => <option value={c.id}>{c.name}</option>)}</select></div>
+          <div><label class="label" for="shares">{t('Number of shares')}</label><input id="shares" name="shares" inputmode="numeric" required class="field" /></div>
+          <div><label class="label" for="price">{t('Price per share (AUD)')}</label><input id="price" name="price" inputmode="decimal" required class="field" placeholder="0.00" /></div>
+          <div class="sm:col-span-2"><label class="label" for="note">{t('Note for the company (optional)')}</label><textarea id="note" name="note" rows="2" maxlength="500" class="field"></textarea></div>
+          <label class="flex items-start gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="ack" required class="mt-0.5 size-4 accent-lk-blue" /> {t('I understand this is an expression of interest, not a binding offer. Any sale needs a signed transfer and may be subject to pre-emptive rights and board approval under the constitution.')}</label>
+          <div class="sm:col-span-2"><button class="btn-primary">{t('Register interest')}</button></div>
+        </form>
+      )}
+      {settings.rules && (
+        <details class="mt-6 border-t border-white/5 pt-4">
+          <summary class="cursor-pointer text-sm font-semibold text-white/80">{t('How trading works')}</summary>
+          <p class="mt-3 whitespace-pre-line text-sm leading-relaxed text-white/60">{settings.rules}</p>
+        </details>
+      )}
+    </section>
+
+    <section class="card">
+      <h2 class="text-lg font-bold">{t('Order book')}</h2>
+      {!settings.show_book ? <p class="mt-2 text-sm text-white/55">{t('{company} doesn’t show interests from other shareholders.', { company: company.display_name })}</p> : !books.length ? <p class="mt-2 text-sm text-white/55">{t('No open interests at the moment.')}</p> : books.map(({ c, book }) => (
+        <div class="mt-4">
+          {classes.length > 1 && <p class="mb-2 text-xs uppercase tracking-widest text-white/40">{c.name}</p>}
+          <div class="grid grid-cols-2 gap-3 text-sm">
+            {(['buy', 'sell'] as const).map((side) => (
+              <div>
+                <p class:list={['mb-1 text-xs font-semibold uppercase tracking-widest', side === 'buy' ? 'text-lk-green' : 'text-lk-orange']}>{side === 'buy' ? t('Buyers') : t('Sellers')}</p>
+                <table class="w-full">
+                  <thead class="text-[11px] text-white/40"><tr><th class="py-1 text-left font-medium">{t('Price')}</th><th class="py-1 text-right font-medium">{t('Shares')}</th></tr></thead>
+                  <tbody class="tabular-nums">
+                    {book[side].map((l) => <tr class="border-t border-white/5"><td class="py-1.5 text-white/85">{fmt.audPrecise.format(l.price)}</td><td class="py-1.5 text-right text-white/70">{fmt.shares.format(l.shares)}</td></tr>)}
+                    {!book[side].length && <tr><td colspan="2" class="py-2 text-white/35">{t.c('order book', 'None')}</td></tr>}
+                  </tbody>
+                </table>
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
+      <p class="mt-4 text-xs text-white/40">{t('Open interests only, without names. Prices are what shareholders proposed, not a valuation.')}</p>
+    </section>
+  </div>
+
+  <section class="card mt-4 overflow-hidden p-0">
+    <h2 class="px-5 py-4 text-lg font-bold">{t('Your interests')}</h2>
+    <div class="overflow-x-auto">
+      <table class="w-full text-left text-sm">
+        <thead class="border-y border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-3 font-medium">{t('Registered')}</th><th class="px-5 py-3 font-medium">{t('Holding')}</th><th class="px-5 py-3 font-medium">{t('Interest')}</th><th class="px-5 py-3 text-right font-medium">{t('Price')}</th><th class="px-5 py-3 font-medium">{t('Status')}</th><th class="px-5 py-3"><span class="sr-only">{t('Actions')}</span></th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {((mine ?? []) as Interest[]).map((i) => {
+            const p = paired.get(i.id) ?? 0, d = done.get(i.id) ?? 0;
+            return (
+              <tr>
+                <td class="whitespace-nowrap px-5 py-3 text-white/55">{fmt.shortDate.format(new Date(i.created_at))}</td>
+                <td class="px-5 py-3 text-white/75">{holderName.get(i.holder_id)}</td>
+                <td class="px-5 py-3"><span class:list={['font-medium', i.side === 'buy' ? 'text-lk-green' : 'text-lk-orange']}>{i.side === 'buy' ? t('Buy') : t('Sell')}</span> <span class="text-white/80">{fmt.shares.format(Number(i.shares))}</span> <span class="text-white/45">{className.get(i.share_class_id)}</span>
+                  {p > 0 && <span class="block text-xs text-white/45">{t('{n} paired', { n: fmt.shares.format(p) })}{d > 0 && `, ${t('{n} transferred', { n: fmt.shares.format(d) })}`}{LIVE.includes(i.status) && available(i) > 0 && ` · ${t('{n} still open', { n: fmt.shares.format(available(i)) })}`}</span>}
+                </td>
+                <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums text-white/80">{fmt.audPrecise.format(Number(i.price))}</td>
+                <td class="px-5 py-3 text-white/60">{statusLabel[i.status] ?? i.status}{i.status === 'matched' && <span class="block text-xs text-white/40">{t('We’ll contact you about the transfer.')}</span>}</td>
+                <td class="px-5 py-3 text-right">{i.status === 'open' && p === 0 && owned.some((h) => h.id === i.holder_id) && (
+                  <form method="post" onsubmit={`return confirm(${JSON.stringify(t('Withdraw this interest?'))})`}><input type="hidden" name="intent" value="withdraw" /><input type="hidden" name="interest_id" value={i.id} /><button class="btn-ghost px-3 py-1.5 text-xs">{t('Withdraw')}</button></form>
+                )}</td>
+              </tr>
+            );
+          })}
+          {!mine?.length && <tr><td colspan="6" class="px-5 py-6 text-center text-white/45">{t('You haven’t registered any interests.')}</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  </section>
+  <p class="mt-4 text-xs text-white/35">{t('{company} doesn’t give financial advice or act as a broker. Shares are unlisted and may be hard to sell. Please get independent advice before buying or selling.', { company: company.display_name })}</p>
+</Portal>

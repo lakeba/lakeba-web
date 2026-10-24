@@ -2,18 +2,19 @@
 import Portal from '../../layouts/Portal.astro';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
-import { shortDate } from '../../lib/format';
+import { clientStrings } from '../../lib/i18n';
 import { serviceClient } from '../../lib/admin';
 import { CATEGORIES } from '../../lib/notification-events';
 import { processOutbox, pushEnabled, queuePush, vapidPublicKey } from '../../lib/push';
 
 const supabase = Astro.locals.supabase;
+const { t, fmt } = Astro.locals;
 const userId = Astro.locals.user!.id;
 const isAdmin = Astro.locals.profile?.role === 'admin' || Astro.locals.adminOf.length > 0;
 const categories = CATEGORIES.filter((c) => c.audience === 'investor' || isAdmin);
 const tested = Astro.url.searchParams.get('tested');
 const testedDevices = Number(Astro.url.searchParams.get('devices') ?? 0);
-let notice = tested ? `Test sent to ${testedDevices} device${testedDevices === 1 ? '' : 's'}. It should appear in a few seconds.` : '';
+let notice = tested ? t.n(testedDevices, 'Test sent to {n} device. It should appear in a few seconds.', 'Test sent to {n} devices. It should appear in a few seconds.') : '';
 let error = '';
 
 if (Astro.request.method === 'POST') {
@@ -24,17 +25,17 @@ if (Astro.request.method === 'POST') {
       user_id: userId, category: c.key, email: form.get(`email_${c.key}`) === 'on', push: form.get(`push_${c.key}`) === 'on', updated_at: new Date().toISOString(),
     }));
     const { error: e } = await supabase.from('notification_preferences').upsert(rows);
-    if (e) error = 'Could not save your choices.';
-    else { await supabase.rpc('log_event', { event_action: 'notification_preferences_saved' }); notice = 'Your notification choices are saved.'; }
+    if (e) error = t('Could not save your choices.');
+    else { await supabase.rpc('log_event', { event_action: 'notification_preferences_saved' }); notice = t('Your notification choices are saved.'); }
   } else if (intent === 'remove-device') {
     await supabase.from('push_subscriptions').delete().eq('id', field(form, 'id')).eq('user_id', userId);
-    notice = 'Device removed. It won’t get browser notifications any more.';
+    notice = t('Device removed. It won’t get browser notifications any more.');
   } else if (intent === 'test') {
     const queued = await queuePush(serviceClient(), [userId], 'test', { title: 'Lakeba: test notification', body: 'Browser notifications work on this device.', url: '/account/notifications', tag: 'test' });
     await processOutbox();
     // Back as a normal page; the page then checks whether this browser received it.
     if (queued) return Astro.redirect(`/account/notifications?tested=${Date.now()}&devices=${queued}`, 303);
-    notice = 'Turn on notifications on this device first.';
+    notice = t('Turn on notifications on this device first.');
   }
 }
 
@@ -47,61 +48,81 @@ const groups = [
   { title: 'Updates for you', items: categories.filter((c) => c.audience === 'investor') },
   ...(isAdmin ? [{ title: 'For admins', items: categories.filter((c) => c.audience === 'admin') }] : []),
 ];
+// Texts the browser script shows (push state, the test check, and errors from turning notifications on).
+const pushStrings = clientStrings(t, [
+  'On', 'Off', 'Blocked', 'Not available', 'Home Screen needed',
+  'Notifications are blocked for this site. Allow them in your browser’s site settings, then reload this page.',
+  'This browser doesn’t support notifications. Try an up-to-date Chrome, Edge, Firefox or Safari.',
+  'Browser notifications aren’t available yet.',
+  'Checking whether this browser received the test…',
+  'the browser reported: {error}',
+  'the browser showed it without errors',
+  '{n} in the notification list',
+  'permission: {permission}',
+  'This browser received the test at {time}. Didn’t see it?',
+  'Details: {detail}.',
+  'This browser hasn’t received the test.',
+  'Notifications are on for this device.',
+  'Notifications are off for this device.',
+  'Something went wrong. Please try again.',
+  'Notifications are blocked for this site. Allow them in your browser settings, then try again.',
+  'Notifications weren’t allowed.',
+]);
 ---
 
-<Portal title="Notifications">
-  <h1 class="text-3xl font-bold">Notifications</h1>
-  <p class="mt-2 text-white/55">Choose how the portal tells you about new things. Everything also appears in your Inbox.</p>
+<Portal title={t('Notifications')}>
+  <h1 class="text-3xl font-bold">{t('Notifications')}</h1>
+  <p class="mt-2 text-white/55">{t('Choose how the portal tells you about new things. Everything also appears in your Inbox.')}</p>
   {notice && <div class="mt-6 max-w-3xl"><Alert>{notice}</Alert></div>}
   {error && <div class="mt-6 max-w-3xl"><Alert tone="error">{error}</Alert></div>}
 
   <div class="mt-8 grid max-w-3xl gap-4">
-    <section class="card" id="this-device" data-vapid={pushEnabled() ? vapidPublicKey() : ''}>
+    <section class="card" id="this-device" data-vapid={pushEnabled() ? vapidPublicKey() : ''} data-strings={pushStrings}>
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
-          <h2 class="text-lg font-bold">Browser notifications on this device</h2>
-          <p class="mt-1 text-sm text-white/55">A notification on your computer or phone when something new arrives, even when the portal isn’t open. The text never includes amounts or personal details.</p>
+          <h2 class="text-lg font-bold">{t('Browser notifications on this device')}</h2>
+          <p class="mt-1 text-sm text-white/55">{t('A notification on your computer or phone when something new arrives, even when the portal isn’t open. The text never includes amounts or personal details.')}</p>
         </div>
-        <span id="push-badge" class="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/60">Checking…</span>
+        <span id="push-badge" class="rounded-full bg-white/10 px-3 py-1 text-xs font-semibold text-white/60">{t('Checking…')}</span>
       </div>
       <div class="mt-5 flex flex-wrap items-center gap-3">
-        <button type="button" id="push-on" class="btn-primary hidden">Turn on notifications</button>
-        <button type="button" id="push-off" class="btn-ghost hidden">Turn off on this device</button>
-        <form method="post" id="push-test" class="hidden"><button name="intent" value="test" class="btn-ghost">Send me a test</button></form>
+        <button type="button" id="push-on" class="btn-primary hidden">{t('Turn on notifications')}</button>
+        <button type="button" id="push-off" class="btn-ghost hidden">{t('Turn off on this device')}</button>
+        <form method="post" id="push-test" class="hidden"><button name="intent" value="test" class="btn-ghost">{t('Send me a test')}</button></form>
       </div>
       <p id="push-message" class="mt-3 hidden text-sm text-white/60" role="status"></p>
       <div id="push-check" class="mt-4 hidden rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70" data-tested={tested ?? ''} role="status">
         <p id="push-check-text" class="font-semibold text-white"></p>
         <p id="push-detail" class="mt-1 hidden font-mono text-xs text-white/50"></p>
         <div id="push-tips" class="mt-2 hidden space-y-1.5 text-white/60">
-          <p>The portal delivered it and your browser got it, so the notification was hidden by your device. Check:</p>
+          <p>{t('The portal delivered it and your browser got it, so the notification was hidden by your device. Check:')}</p>
           <ul class="list-disc space-y-1 pl-5">
-            <li><strong>Mac:</strong> System Settings → Notifications → your browser (e.g. Microsoft Edge) → turn on <em>Allow notifications</em>, and check Focus / Do Not Disturb is off.</li>
-            <li><strong>Windows:</strong> Settings → System → Notifications → turn on notifications and your browser; check Do not disturb / Focus is off.</li>
-            <li><strong>Linux:</strong> your desktop’s notification settings, and Do Not Disturb.</li>
-            <li><strong>Android:</strong> Settings → Apps → your browser → Notifications: allowed (including the browser’s “Sites” or “Websites” category), Do Not Disturb off, and battery use not restricted.</li>
-            <li><strong>In Edge or Chrome:</strong> Settings → Privacy (or Cookies and site permissions) → Notifications: this site should be under <em>Allow</em>, and “Quiet notification requests” off.</li>
+            <li><strong>Mac:</strong> {t('System Settings → Notifications → your browser (e.g. Microsoft Edge) → turn on “Allow notifications”, and check Focus / Do Not Disturb is off.')}</li>
+            <li><strong>Windows:</strong> {t('Settings → System → Notifications → turn on notifications and your browser; check Do not disturb / Focus is off.')}</li>
+            <li><strong>Linux:</strong> {t('your desktop’s notification settings, and Do Not Disturb.')}</li>
+            <li><strong>Android:</strong> {t('Settings → Apps → your browser → Notifications: allowed (including the browser’s “Sites” or “Websites” category), Do Not Disturb off, and battery use not restricted.')}</li>
+            <li><strong>{t('In Edge or Chrome:')}</strong> {t('Settings → Privacy (or Cookies and site permissions) → Notifications: this site should be under “Allow”, and “Quiet notification requests” off.')}</li>
           </ul>
         </div>
-        <p id="push-notreceived" class="mt-2 hidden text-white/60">Your browser hasn’t received it yet. On a computer, notifications only arrive while the browser is running (it can be minimised). Keep it open and try again; if it still doesn’t arrive, turn notifications off and on again on this device.</p>
+        <p id="push-notreceived" class="mt-2 hidden text-white/60">{t('Your browser hasn’t received it yet. On a computer, notifications only arrive while the browser is running (it can be minimised). Keep it open and try again; if it still doesn’t arrive, turn notifications off and on again on this device.')}</p>
       </div>
       <div id="push-ios" class="mt-4 hidden rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-white/70">
-        <p class="font-semibold text-white">On iPhone or iPad, add the portal to your Home Screen first</p>
+        <p class="font-semibold text-white">{t('On iPhone or iPad, add the portal to your Home Screen first')}</p>
         <ol class="mt-2 list-decimal space-y-1 pl-5">
-          <li>In Safari, tap the Share button <span aria-hidden="true">(square with an arrow)</span>.</li>
-          <li>Choose <strong>Add to Home Screen</strong>, then <strong>Add</strong>.</li>
-          <li>Open <strong>Lakeba Investors</strong> from your Home Screen, sign in, and come back to this page.</li>
+          <li>{t('In Safari, tap the Share button')} <span aria-hidden="true">{t('(square with an arrow)')}</span>.</li>
+          <li>{t('Choose “Add to Home Screen”, then “Add”.')}</li>
+          <li>{t('Open “Lakeba Investors” from your Home Screen, sign in, and come back to this page.')}</li>
         </ol>
       </div>
       {(devices ?? []).length > 0 && (
         <div class="mt-6 border-t border-white/5 pt-5">
-          <h3 class="text-sm font-semibold text-white">Your devices with notifications on</h3>
+          <h3 class="text-sm font-semibold text-white">{t('Your devices with notifications on')}</h3>
           <ul class="mt-2 divide-y divide-white/5 text-sm">
             {devices!.map((d) => (
               <li class="flex flex-wrap items-center justify-between gap-3 py-2.5">
-                <span><span class="text-white/85">{d.device || 'Browser'}</span>
-                  <span class="block text-xs text-white/40">Since {shortDate.format(new Date(d.created_at))}{d.last_success_at ? ` · last notified ${shortDate.format(new Date(d.last_success_at))}` : ''}</span></span>
-                <form method="post"><input type="hidden" name="id" value={d.id} /><button name="intent" value="remove-device" class="text-xs text-white/50 hover:text-lk-red">Remove</button></form>
+                <span><span class="text-white/85">{d.device || t('Browser')}</span>
+                  <span class="block text-xs text-white/40">{t('Since {date}', { date: fmt.shortDate.format(new Date(d.created_at)) })}{d.last_success_at ? ` · ${t('last notified {date}', { date: fmt.shortDate.format(new Date(d.last_success_at)) })}` : ''}</span></span>
+                <form method="post"><input type="hidden" name="id" value={d.id} /><button name="intent" value="remove-device" class="text-xs text-white/50 hover:text-lk-red">{t('Remove')}</button></form>
               </li>
             ))}
           </ul>
@@ -110,19 +131,19 @@ const groups = [
     </section>
 
     <form method="post" class="card">
-      <h2 class="text-lg font-bold">What to tell you about</h2>
+      <h2 class="text-lg font-bold">{t('What to tell you about')}</h2>
       {groups.map((g) => (
         <div class="mt-5">
-          <h3 class="text-xs font-semibold uppercase tracking-widest text-white/40">{g.title}</h3>
+          <h3 class="text-xs font-semibold uppercase tracking-widest text-white/40">{t(g.title)}</h3>
           <div class="mt-2 overflow-x-auto">
             <table class="w-full text-left text-sm">
-              <thead class="text-xs text-white/40"><tr><th class="py-2 pr-4 font-medium"></th><th class="w-20 py-2 text-center font-medium">Email</th><th class="w-20 py-2 text-center font-medium">Browser</th></tr></thead>
+              <thead class="text-xs text-white/40"><tr><th class="py-2 pr-4 font-medium"></th><th class="w-20 py-2 text-center font-medium">{t('Email')}</th><th class="w-20 py-2 text-center font-medium">{t('Browser')}</th></tr></thead>
               <tbody class="divide-y divide-white/5">
                 {g.items.map((c) => (
                   <tr>
-                    <td class="py-3 pr-4"><p class="text-white/85">{c.label}{c.locked && <span class="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/50">always on</span>}</p><p class="text-xs text-white/45">{c.description}</p></td>
-                    <td class="py-3 text-center"><input type="checkbox" name={`email_${c.key}`} checked={c.locked || pref(c).email} disabled={c.locked} aria-label={`Email: ${c.label}`} class="size-4 accent-lk-blue" /></td>
-                    <td class="py-3 text-center">{c.emailOnly ? <span class="text-white/25">—</span> : <input type="checkbox" name={`push_${c.key}`} checked={c.locked || pref(c).push} disabled={c.locked} aria-label={`Browser: ${c.label}`} class="size-4 accent-lk-blue" />}</td>
+                    <td class="py-3 pr-4"><p class="text-white/85">{t(c.label)}{c.locked && <span class="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/50">{t('always on')}</span>}</p><p class="text-xs text-white/45">{t(c.description)}</p></td>
+                    <td class="py-3 text-center"><input type="checkbox" name={`email_${c.key}`} checked={c.locked || pref(c).email} disabled={c.locked} aria-label={t('Email: {category}', { category: t(c.label) })} class="size-4 accent-lk-blue" /></td>
+                    <td class="py-3 text-center">{c.emailOnly ? <span class="text-white/25">—</span> : <input type="checkbox" name={`push_${c.key}`} checked={c.locked || pref(c).push} disabled={c.locked} aria-label={t('Browser: {category}', { category: t(c.label) })} class="size-4 accent-lk-blue" />}</td>
                   </tr>
                 ))}
               </tbody>
@@ -130,7 +151,7 @@ const groups = [
           </div>
         </div>
       ))}
-      <button name="intent" value="save-preferences" class="btn-primary mt-6">Save choices</button>
+      <button name="intent" value="save-preferences" class="btn-primary mt-6">{t('Save choices')}</button>
     </form>
   </div>
 </Portal>
@@ -140,6 +161,8 @@ const groups = [
 
   const card = document.getElementById('this-device')!;
   const vapid = card.dataset.vapid ?? '';
+  const strings: Record<string, string> = JSON.parse(card.dataset.strings || '{}');
+  const tr = (s: string, vars: Record<string, string | number> = {}) => (strings[s] ?? s).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
   const badge = document.getElementById('push-badge')!;
   const on = document.getElementById('push-on')!;
   const off = document.getElementById('push-off')!;
@@ -150,14 +173,14 @@ const groups = [
   async function render() {
     const state = vapid ? await pushState() : 'unsupported';
     const labels = { on: 'On', off: 'Off', denied: 'Blocked', unsupported: 'Not available', 'ios-install': 'Home Screen needed' } as const;
-    badge.textContent = labels[state];
+    badge.textContent = tr(labels[state]);
     badge.className = `rounded-full px-3 py-1 text-xs font-semibold ${state === 'on' ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60'}`;
     on.classList.toggle('hidden', state !== 'off');
     off.classList.toggle('hidden', state !== 'on');
     test.classList.toggle('hidden', state !== 'on');
     document.getElementById('push-ios')!.classList.toggle('hidden', state !== 'ios-install');
-    if (state === 'denied') say('Notifications are blocked for this site. Allow them in your browser’s site settings, then reload this page.');
-    if (state === 'unsupported') say(vapid ? 'This browser doesn’t support notifications. Try an up-to-date Chrome, Edge, Firefox or Safari.' : 'Browser notifications aren’t available yet.');
+    if (state === 'denied') say(tr('Notifications are blocked for this site. Allow them in your browser’s site settings, then reload this page.'));
+    if (state === 'unsupported') say(tr(vapid ? 'This browser doesn’t support notifications. Try an up-to-date Chrome, Edge, Firefox or Safari.' : 'Browser notifications aren’t available yet.'));
     if (state === 'on') syncPush().catch(() => {});
   }
 
@@ -172,36 +195,36 @@ const groups = [
     if (!testedAt || !('caches' in window)) return;
     check.classList.remove('hidden');
     const text = document.getElementById('push-check-text')!;
-    text.textContent = 'Checking whether this browser received the test…';
+    text.textContent = tr('Checking whether this browser received the test…');
     const until = Date.now() + 15_000;
     while (Date.now() < until) {
       const receipt = await lastReceipt();
       if (receipt && receipt.at >= testedAt - 2_000) {
-        const when = new Date(receipt.at).toLocaleTimeString();
-        const detail = [receipt.error ? `the browser reported: ${receipt.error}` : 'the browser showed it without errors',
-          receipt.inTray != null ? `${receipt.inTray} in the notification list` : '', receipt.permission ? `permission: ${receipt.permission}` : ''].filter(Boolean).join(' · ');
-        text.textContent = `This browser received the test at ${when}. Didn’t see it?`;
-        const d = document.getElementById('push-detail')!; d.textContent = `Details: ${detail}.`; d.classList.remove('hidden');
+        const when = new Date(receipt.at).toLocaleTimeString(document.documentElement.lang || undefined);
+        const detail = [receipt.error ? tr('the browser reported: {error}', { error: receipt.error }) : tr('the browser showed it without errors'),
+          receipt.inTray != null ? tr('{n} in the notification list', { n: receipt.inTray }) : '', receipt.permission ? tr('permission: {permission}', { permission: receipt.permission }) : ''].filter(Boolean).join(' · ');
+        text.textContent = tr('This browser received the test at {time}. Didn’t see it?', { time: when });
+        const d = document.getElementById('push-detail')!; d.textContent = tr('Details: {detail}.', { detail }); d.classList.remove('hidden');
         document.getElementById('push-tips')!.classList.remove('hidden');
         return;
       }
       await new Promise((r) => setTimeout(r, 1_000));
     }
-    text.textContent = 'This browser hasn’t received the test.';
+    text.textContent = tr('This browser hasn’t received the test.');
     document.getElementById('push-notreceived')!.classList.remove('hidden');
   }
   checkTest();
 
   on.addEventListener('click', async () => {
     (on as HTMLButtonElement).disabled = true; say('');
-    try { await enablePush(vapid); say('Notifications are on for this device.'); location.reload(); }
-    catch (e) { say((e as Error).message); }
+    try { await enablePush(vapid); say(tr('Notifications are on for this device.')); location.reload(); }
+    catch (e) { say(tr((e as Error).message)); }
     (on as HTMLButtonElement).disabled = false;
     render();
   });
   off.addEventListener('click', async () => {
-    try { await disablePush(); say('Notifications are off for this device.'); location.reload(); }
-    catch (e) { say((e as Error).message); }
+    try { await disablePush(); say(tr('Notifications are off for this device.')); location.reload(); }
+    catch (e) { say(tr((e as Error).message)); }
   });
   render();
 </script>

@@ -7,6 +7,6 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
   if (bad) return bad;
   const { captchaToken } = (await request.json().catch(() => ({}))) as { captchaToken?: string };
   const { data, error } = await locals.supabase.auth.passkey.startAuthentication({ options: { captchaToken } });
-  if (error || !data) return json({ error: passkeyError(error) }, 400);
+  if (error || !data) return json({ error: locals.t(passkeyError(error)) }, 400);
   return json({ challenge_id: data.challenge_id, options: data.options });
 };

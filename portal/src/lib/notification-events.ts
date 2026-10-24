@@ -20,6 +20,7 @@ export const CATEGORIES: Category[] = [
   { key: 'news', audience: 'investor', label: 'News and announcements', description: 'Company news, announcements and campaigns.', email: true, push: true, kinds: ['news', 'linkedin', 'reminder'] },
   { key: 'replies', audience: 'investor', label: 'Answers to your questions', description: 'The board answered your question, or your AGM question was answered.', email: true, push: true, kinds: ['query_reply', 'agm_answer'] },
   { key: 'holdings', audience: 'investor', label: 'Your holdings', description: 'A new holding statement is ready, or a note was added to one of your holdings.', email: true, push: true, kinds: ['holding_note', 'statement_ready'] },
+  { key: 'trading', audience: 'investor', label: 'Secondary trading', description: 'Your interest to buy or sell shares was matched, completed or cancelled.', email: true, push: true, kinds: ['trade'] },
   { key: 'digest', audience: 'investor', label: 'Weekly digest', description: 'One email each Monday with the week’s new documents, news and holding updates, instead of a separate email for each.', email: false, push: false, emailOnly: true, kinds: ['digest'] },
   { key: 'security', audience: 'investor', label: 'Account security', description: 'A passkey was added or removed, your password changed, or two-step verification changed.', email: true, push: true, locked: true, kinds: ['security'] },
   { key: 'admin_questions', audience: 'admin', label: 'Board Q&A', description: 'A new question or an investor’s reply.', email: false, push: true, kinds: ['admin_query'] },
@@ -27,6 +28,7 @@ export const CATEGORIES: Category[] = [
   { key: 'admin_votes', audience: 'admin', label: 'Proxy votes (daily summary)', description: 'Each morning, how many proxy votes were lodged the day before.', email: false, push: true, kinds: ['admin_votes_summary'] },
   { key: 'admin_signins', audience: 'admin', label: 'First sign-ins', description: 'An investor signed in for the first time.', email: false, push: true, kinds: ['admin_first_signin'] },
   { key: 'admin_emails', audience: 'admin', label: 'Shareholder emails', description: 'An email to a shareholder mailbox has a reply ready or needs a person.', email: false, push: true, kinds: ['admin_email'] },
+  { key: 'admin_trading', audience: 'admin', label: 'Secondary trading', description: 'A shareholder registered or withdrew an interest to buy or sell.', email: false, push: true, kinds: ['admin_trade'] },
   { key: 'admin_ask', audience: 'admin', label: 'Ask Lakeba', description: 'An answer was rated 👎, or a cost or usage limit was reached.', email: true, push: true, kinds: ['ask_alert', 'admin_ask_feedback'] },
   { key: 'admin_security', audience: 'admin', label: 'Admin security', description: 'An admin account signed in from a new device, or someone’s two-step was reset.', email: true, push: true, locked: true, kinds: ['admin_security'] },
 ];
@@ -50,6 +52,8 @@ export function pushText(kind: string, brand: string, detail?: string): { title:
     case 'agm_answer': return { title: 'Your meeting question was answered', body: open };
     case 'holding_note': return { title: 'A note was added to your holding', body: open };
     case 'statement_ready': return { title: 'Your holding statement is ready', body: open };
+    case 'trade': return { title: `${brand}: update on your trading interest`, body: open };
+    case 'admin_trade': return { title: 'Secondary trading: new interest', body: open };
     case 'digest': return { title: 'Your week at Lakeba', body: open };
     case 'security': return { title: 'Security alert for your account', body: detail ?? open };
     case 'admin_query': return { title: 'Board Q&A: new message from an investor', body: open };

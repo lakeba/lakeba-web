@@ -9,9 +9,9 @@ export const POST: APIRoute = async ({ request, url, locals }) => {
   const bad = badRequest(request, url);
   if (bad) return bad;
   const { challenge_id, credential, next } = (await request.json().catch(() => ({}))) as { challenge_id?: string; credential?: unknown; next?: string };
-  if (!challenge_id || !credential) return json({ error: 'Missing passkey response.' }, 400);
+  if (!challenge_id || !credential) return json({ error: locals.t('Missing passkey response.') }, 400);
   const { data, error } = await locals.supabase.auth.passkey.verifyAuthentication({ challengeId: challenge_id, credential: credential as never });
-  if (error || !data?.session) return json({ error: passkeyError(error) }, 400);
+  if (error || !data?.session) return json({ error: locals.t(passkeyError(error)) }, 400);
   // The device checked the person (Face ID, Touch ID, Windows Hello, PIN): that counts as two-step,
   // so no authenticator code is asked. Without that check, people with two-step still enter their code.
   const verified = userVerified(credential);

@@ -1,24 +1,28 @@
 ---
 import Portal from '../layouts/Portal.astro';
 import Mark from '../../../src/components/Mark.astro';
-import { askEnabled, askName } from '../lib/ask';
+import { askEnabled } from '../lib/ask';
+import { clientStrings } from '../lib/i18n';
 
-const { company, features } = Astro.locals;
+const { company, features, t } = Astro.locals;
 if (!company) return Astro.redirect('/');
 const off = !features.ask;
 const isGroup = company.relationship === 'group';
-const title = askName(company);
+const title = t('Ask {brand}', { brand: isGroup ? 'Lakeba' : company.display_name });
+const name = company.display_name;
 const examples = isGroup ? [
-  'What were the FY24 revenue and profit?',
-  'How many shares are on issue, and what is the latest price?',
-  'What has Bricklet announced recently?',
-  'Who audits Lakeba and when did that change?',
+  t('What were the FY24 revenue and profit?'),
+  t('How many shares are on issue, and what is the latest price?'),
+  t('What has Bricklet announced recently?'),
+  t('Who audits Lakeba and when did that change?'),
 ] : [
-  `What were ${company.display_name}’s latest results?`,
-  'How many shares are on issue, and what is the latest price?',
-  'When is the next shareholder meeting?',
-  `What has ${company.display_name} announced recently?`,
+  t('What were {company}’s latest results?', { company: name }),
+  t('How many shares are on issue, and what is the latest price?'),
+  t('When is the next shareholder meeting?'),
+  t('What has {company} announced recently?', { company: name }),
 ];
+// Texts the browser script shows.
+const i18n = clientStrings(t, ['Thanks for the feedback.', 'Could not save your feedback.', 'Sources', '+{n} more', '{name} is unavailable right now.', 'Stopped.']);
 const isAdmin = Astro.locals.profile?.role === 'admin';
 ---
 
@@ -26,22 +30,22 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
   {off ? (
     <div class="mx-auto max-w-xl py-16 text-center">
       <p class="eyebrow">{title}</p>
-      <h1 class="mt-4 text-3xl font-extrabold">Not available for your account</h1>
-      <p class="mt-3 text-white/60">Ask isn’t switched on for your account. For help, email <a href="mailto:info@lakeba.com" class="text-lk-blue hover:underline">info@lakeba.com</a>.</p>
+      <h1 class="mt-4 text-3xl font-extrabold">{t('Not available for your account')}</h1>
+      <p class="mt-3 text-white/60">{t('Ask isn’t switched on for your account.')} {t('For help, email')} <a href="mailto:info@lakeba.com" class="text-lk-blue hover:underline">info@lakeba.com</a>.</p>
     </div>
   ) : (
-  <div class="mx-auto flex min-h-[calc(100dvh-14rem)] max-w-3xl flex-col" data-chat data-company={company.code} data-name={title}>
+  <div class="mx-auto flex min-h-[calc(100dvh-14rem)] max-w-3xl flex-col" data-chat data-company={company.code} data-name={title} data-i18n={i18n}>
     <div class="flex items-center justify-between gap-4">
       <div>
         <p class="eyebrow">{title}</p>
-        <h1 class="mt-3 text-3xl font-extrabold">Ask about {isGroup ? 'your company' : company.display_name}</h1>
+        <h1 class="mt-3 text-3xl font-extrabold">{isGroup ? t('Ask about your company') : t('Ask about {company}', { company: name })}</h1>
       </div>
-      <button type="button" data-new-chat class="btn-ghost px-4 py-2 text-sm" hidden>New chat</button>
+      <button type="button" data-new-chat class="btn-ghost px-4 py-2 text-sm" hidden>{t('New chat')}</button>
     </div>
 
     <div data-empty class="flex flex-1 flex-col items-center justify-center py-12 text-center">
       <Mark class="size-14" animated />
-      <p class="mt-6 max-w-md text-white/60">{isGroup ? 'Answers come only from the documents in this portal and the news on Lakeba’s website, with links to the sources.' : `Answers come only from ${company.display_name}’s documents in this portal and news about ${company.display_name}, with links to the sources.`}</p>
+      <p class="mt-6 max-w-md text-white/60">{isGroup ? t('Answers come only from the documents in this portal and the news on Lakeba’s website, with links to the sources.') : t('Answers come only from {company}’s documents in this portal and news about {company}, with links to the sources.', { company: name })}</p>
       <div class="mt-8 grid w-full gap-2 sm:grid-cols-2">
         {examples.map((e) => <button type="button" data-example class="glass rounded-2xl px-4 py-3 text-left text-sm text-white/75 transition hover:text-white">{e}</button>)}
       </div>
@@ -51,18 +55,18 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
 
     <form data-form class="sticky bottom-4 mt-4">
       <div class="glass flex items-end gap-2 rounded-3xl p-2 shadow-2xl shadow-black/30">
-        <label for="question" class="sr-only">Your question</label>
-        <textarea id="question" data-input rows="1" maxlength="4000" placeholder={isGroup ? 'Ask about results, shares, meetings or ventures…' : 'Ask about results, shares or meetings…'} class="max-h-48 min-h-11 flex-1 resize-none bg-transparent px-3 py-2.5 text-white outline-none placeholder:text-white/35"></textarea>
-        <button type="submit" data-send class="btn-primary size-11 shrink-0 rounded-2xl p-0" aria-label="Send">
+        <label for="question" class="sr-only">{t('Your question')}</label>
+        <textarea id="question" data-input rows="1" maxlength="4000" placeholder={isGroup ? t('Ask about results, shares, meetings or ventures…') : t('Ask about results, shares or meetings…')} class="max-h-48 min-h-11 flex-1 resize-none bg-transparent px-3 py-2.5 text-white outline-none placeholder:text-white/35"></textarea>
+        <button type="submit" data-send class="btn-primary size-11 shrink-0 rounded-2xl p-0" aria-label={t('Send')}>
           <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
         </button>
-        <button type="button" data-stop class="btn-ghost size-11 shrink-0 rounded-2xl p-0" aria-label="Stop" hidden>
+        <button type="button" data-stop class="btn-ghost size-11 shrink-0 rounded-2xl p-0" aria-label={t('Stop')} hidden>
           <svg viewBox="0 0 24 24" class="size-4" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
         </button>
       </div>
       <p class="mt-2 text-center text-xs text-white/35">
-        AI answers from company documents. Check the sources; this is not financial advice.
-        {!askEnabled && isAdmin && ' AI answers are off: set ANTHROPIC_API_KEY.'}
+        {t('AI answers from company documents. Check the sources; this is not financial advice.')}
+        {!askEnabled && isAdmin && ` ${t('AI answers are off: set ANTHROPIC_API_KEY.')}`}
       </p>
     </form>
   </div>
@@ -77,13 +81,13 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
         <div class="ask-answer leading-relaxed text-white/85" data-text><span class="typing"><i></i><i></i><i></i></span></div>
         <div class="mt-3 flex flex-wrap gap-2 text-xs" data-sources hidden></div>
         <div class="mt-2 flex items-center gap-1 text-white/40" data-rate hidden>
-          <button type="button" data-rating="1" class="rate-btn" aria-label="Good answer" title="Good answer">👍</button>
-          <button type="button" data-rating="-1" class="rate-btn" aria-label="Not helpful" title="Not helpful">👎</button>
+          <button type="button" data-rating="1" class="rate-btn" aria-label={t('Good answer')} title={t('Good answer')}>👍</button>
+          <button type="button" data-rating="-1" class="rate-btn" aria-label={t('Not helpful')} title={t('Not helpful')}>👎</button>
           <span class="ml-1 text-xs" data-rate-status></span>
         </div>
         <form class="mt-2 flex gap-2" data-rate-note hidden>
-          <input maxlength="1000" placeholder="What was wrong? (optional)" aria-label="What was wrong?" class="field !py-2 text-sm" />
-          <button class="btn-ghost shrink-0 !px-3 !py-2 text-sm">Send</button>
+          <input maxlength="1000" placeholder={t('What was wrong? (optional)')} aria-label={t('What was wrong?')} class="field !py-2 text-sm" />
+          <button class="btn-ghost shrink-0 !px-3 !py-2 text-sm">{t('Send')}</button>
         </form>
       </div>
     </li>
@@ -128,6 +132,9 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
   if (chatEl) {
   const COMPANY = chatEl.dataset.company ?? '';
   const NAME = chatEl.dataset.name ?? 'Ask Lakeba';
+  // Interface texts in the reader's language (English when missing).
+  const L: Record<string, string> = JSON.parse(chatEl.dataset.i18n ?? '{}');
+  const tr = (s: string, vars: Record<string, string | number> = {}) => (L[s] ?? s).replace(/\{(\w+)\}/g, (m, k) => (k in vars ? String(vars[k]) : m));
   // One saved conversation per company.
   const STORE = `lakeba-ask-chat:${COMPANY}`;
   const root = document.querySelector<HTMLElement>('[data-chat]')!;
@@ -161,7 +168,7 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
     const mark = () => buttons.forEach((b) => b.setAttribute('aria-pressed', String(Number(b.dataset.rating) === turn.rating)));
     const rate = async (rating: number, note?: string) => {
       const res = await fetch('/api/ask-feedback', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: turn.exchange, rating, note }) });
-      status.textContent = res.ok ? 'Thanks for the feedback.' : 'Could not save your feedback.';
+      status.textContent = res.ok ? tr('Thanks for the feedback.') : tr('Could not save your feedback.');
       if (res.ok) { turn.rating = rating; save(); mark(); }
     };
     buttons.forEach((b) => b.addEventListener('click', async () => {
@@ -191,13 +198,13 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
     };
     const label = document.createElement('span');
     label.className = 'py-1 text-white/35';
-    label.textContent = 'Sources';
+    label.textContent = tr('Sources');
     el.append(label, ...sources.slice(0, LIMIT).map(chip));
     if (sources.length > LIMIT) {
       const more = document.createElement('button');
       more.type = 'button';
       more.className = 'rounded-full px-3 py-1 text-white/45 hover:text-white';
-      more.textContent = `+${sources.length - LIMIT} more`;
+      more.textContent = tr('+{n} more', { n: sources.length - LIMIT });
       more.onclick = () => more.replaceWith(...sources.slice(LIMIT).map(chip));
       el.append(more);
     }
@@ -248,7 +255,7 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
       });
       if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({}));
-        throw new Error(err.error ?? `${NAME} is unavailable right now.`);
+        throw new Error(err.error ?? tr('{name} is unavailable right now.', { name: NAME }));
       }
       const reader = res.body.pipeThrough(new TextDecoderStream()).getReader();
       let buffer = '';
@@ -270,9 +277,9 @@ const isAdmin = Astro.locals.profile?.role === 'admin';
       if ((error as Error).name !== 'AbortError') answer += `${answer ? '\n\n' : ''}*${(error as Error).message}*`;
     } finally {
       cancelAnimationFrame(frame);
-      view.text.innerHTML = render(answer || '*Stopped.*');
+      view.text.innerHTML = render(answer || `*${tr('Stopped.')}*`);
       showSources(view.sources, sources);
-      const turn: Turn = { role: 'assistant', content: answer || 'Stopped.', sources, exchange };
+      const turn: Turn = { role: 'assistant', content: answer || tr('Stopped.'), sources, exchange };
       turns.push(turn);
       setupRating(view.li, turn);
       save();
