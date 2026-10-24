@@ -5,6 +5,8 @@ import type { Catalogue } from '../lib/i18n';
 // notification categories' labels and descriptions).
 export default {
   es: {
+    'Quarterly newsletter': 'Boletín trimestral',
+    'The company’s quarterly newsletter for shareholders, by email.': 'El boletín trimestral de la empresa para los accionistas, por correo electrónico.',
     // Sign-in layout
     'Need help?': '¿Necesita ayuda?',
     // Sign in
@@ -200,6 +202,8 @@ export default {
     'An admin account signed in from a new device, or someone’s two-step was reset.': 'Una cuenta de administrador inició sesión desde un dispositivo nuevo, o se restableció la verificación en dos pasos de alguien.',
   },
   it: {
+    'Quarterly newsletter': 'Newsletter trimestrale',
+    'The company’s quarterly newsletter for shareholders, by email.': 'La newsletter trimestrale della società per gli azionisti, via email.',
     // Sign-in layout
     'Need help?': 'Serve aiuto?',
     // Sign in
@@ -395,6 +399,8 @@ export default {
     'An admin account signed in from a new device, or someone’s two-step was reset.': 'Un account amministratore ha effettuato l’accesso da un nuovo dispositivo, o è stata reimpostata la verifica in due passaggi di qualcuno.',
   },
   zh: {
+    'Quarterly newsletter': '季度通讯',
+    'The company’s quarterly newsletter for shareholders, by email.': '公司面向股东的季度通讯（电子邮件）。',
     // Sign-in layout
     'Need help?': '需要帮助？',
     // Sign in

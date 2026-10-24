@@ -12,7 +12,7 @@ import { formats } from './lib/format';
 startNotificationWorker();
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login', '/e', '/room', '/news-media', '/api/public'];
+const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login', '/e', '/room', '/news-media', '/api/public', '/n', '/favicon.ico'];
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 
@@ -105,7 +105,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
 function withSecurityHeaders(response: Response) {
   const h = response.headers;
-  h.set('X-Frame-Options', 'DENY');
+  // Never shown inside other sites' frames; a route may allow the portal's own (newsletter previews).
+  if (h.get('X-Frame-Options') !== 'SAMEORIGIN') h.set('X-Frame-Options', 'DENY');
   h.set('X-Content-Type-Options', 'nosniff');
   h.set('Referrer-Policy', 'same-origin');
   h.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');

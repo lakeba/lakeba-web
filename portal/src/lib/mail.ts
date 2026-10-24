@@ -3,6 +3,13 @@ import { MAIL_FROM, SMTP_URL } from 'astro:env/server';
 
 const transport = SMTP_URL ? nodemailer.createTransport(SMTP_URL) : null;
 
+/** Sends a fully built email (newsletters). Returns false when SMTP isn't configured. */
+export async function sendRaw(message: { to: string; subject: string; html: string; text: string; replyTo?: string; headers?: Record<string, string> }) {
+  if (!transport) return false;
+  await transport.sendMail({ from: MAIL_FROM, ...message });
+  return true;
+}
+
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /**

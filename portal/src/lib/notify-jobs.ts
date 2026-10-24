@@ -4,6 +4,8 @@ import { CATEGORIES, DIGESTED } from './notification-events';
 import { processOutbox, pushEnabled } from './push';
 import { pollMailboxes, sendDueAutoReplies } from './shareholder-email';
 import { requestWebsiteDeploy } from './news-cms';
+import { sendQueued, startScheduled } from './newsletter';
+import { createSignInLink } from './sign-in-links';
 
 // The notification worker inside the portal process: sends queued pushes and
 // runs the scheduled notifications. Each scheduled job claims a key in
@@ -131,6 +133,13 @@ export async function newsJobs(now = new Date()) {
   if (problem) console.error('website rebuild', problem);
 }
 
+/** Newsletters: scheduled issues start, and queued copies go out a few at a time (about 20 a minute). */
+async function newsletterJobs() {
+  const svc = serviceClient();
+  await startScheduled(svc, lastOrigin, (userId) => createSignInLink(svc, { userId, origin: lastOrigin, next: '/?from=newsletter', hours: 24 * 14 }));
+  await sendQueued(svc, lastOrigin);
+}
+
 /** Keeps the delivery log to 30 days. */
 async function cleanup(now = new Date()) {
   const svc = serviceClient();
@@ -152,6 +161,7 @@ export function startNotificationWorker() {
       if (pushEnabled()) await processOutbox();
       if (ticks % 4 === 0) { await pollMailboxes(lastOrigin); await newsJobs(); } // mailboxes and news, every minute
       await sendDueAutoReplies(lastOrigin); // automatic replies whose 5-minute undo window has passed
+      await newsletterJobs();
       if (ticks++ % 40 === 0) { await proxyReminders(); await votesSummary(); await weeklyDigest(); await cleanup(); }
     } catch (e) {
       console.error('notification worker', (e as Error).message);

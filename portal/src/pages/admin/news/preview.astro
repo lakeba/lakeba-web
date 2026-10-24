@@ -1,6 +1,7 @@
 ---
 import Admin from '../../../layouts/Admin.astro';
 import NewsBody from '../../../components/NewsBody.astro';
+import NewsArticlePreview from '../../../components/NewsArticlePreview.astro';
 import { field } from '../../../lib/forms';
 import { cleanHtml } from '../../../lib/news-cms';
 import { longDate } from '../../../lib/format';
@@ -16,7 +17,12 @@ const isPublic = field(form, 'visibility') === 'public';
 const venture = field(form, 'venture') || 'Lakeba Group';
 const seo = field(form, 'seo_description') || excerpt;
 const date = longDate.format(new Date());
+// ?bare: just the article, for the editor's full-screen live preview.
+const bare = Astro.url.searchParams.has('bare');
+if (bare) Astro.response.headers.set('X-Frame-Options', 'SAMEORIGIN');
 ---
+
+{bare ? <NewsArticlePreview title={title} excerpt={excerpt} cover={cover} body={body} isPublic={isPublic} venture={venture} date={date} /> : (
 
 <Admin title={`Preview: ${title}`}>
   <p class="mb-6 rounded-2xl border border-lk-orange/40 bg-lk-orange/10 px-5 py-3 text-sm">Preview of unsaved changes. Close this tab to go back to the editor.</p>
@@ -46,3 +52,4 @@ const date = longDate.format(new Date());
     </aside>
   </div>
 </Admin>
+)}

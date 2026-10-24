@@ -3,6 +3,13 @@ import type { Catalogue } from '../lib/i18n';
 // Documents, news, meetings (proxy voting, meeting questions) and Board Q&A.
 export default {
   es: {
+    'Newsletters': 'Boletines',
+    'Every newsletter we have sent, in case you missed one.': 'Todos los boletines que hemos enviado, por si se perdió alguno.',
+    'Public newsletter': 'Boletín público',
+    'Shareholder newsletter': 'Boletín para accionistas',
+    'No newsletters yet': 'Aún no hay boletines',
+    'Newsletters will appear here after they are sent.': 'Los boletines aparecerán aquí cuando se envíen.',
+    'Past newsletters': 'Boletines anteriores',
     'Read the story': 'Leer la noticia',
     'This story was published on': 'Esta noticia se publicó en',
     'Originally published on': 'Publicado originalmente en',
@@ -107,6 +114,13 @@ export default {
     "Your reply could not be sent.": "No se pudo enviar su respuesta.",
   },
   it: {
+    'Newsletters': 'Newsletter',
+    'Every newsletter we have sent, in case you missed one.': 'Tutte le newsletter inviate, nel caso te ne sia persa una.',
+    'Public newsletter': 'Newsletter pubblica',
+    'Shareholder newsletter': 'Newsletter per gli azionisti',
+    'No newsletters yet': 'Ancora nessuna newsletter',
+    'Newsletters will appear here after they are sent.': 'Le newsletter compariranno qui dopo l’invio.',
+    'Past newsletters': 'Newsletter precedenti',
     'Read the story': 'Leggi la notizia',
     'This story was published on': 'Questa notizia è stata pubblicata su',
     'Originally published on': 'Pubblicato originariamente su',
@@ -211,6 +225,13 @@ export default {
     "Your reply could not be sent.": "Non è stato possibile inviare la risposta.",
   },
   zh: {
+    'Newsletters': '通讯',
+    'Every newsletter we have sent, in case you missed one.': '我们发送过的所有通讯，以免您错过。',
+    'Public newsletter': '公开通讯',
+    'Shareholder newsletter': '股东通讯',
+    'No newsletters yet': '暂无通讯',
+    'Newsletters will appear here after they are sent.': '通讯发送后将显示在这里。',
+    'Past newsletters': '往期通讯',
     'Read the story': '阅读全文',
     'This story was published on': '本文发表于',
     'Originally published on': '原文发表于',

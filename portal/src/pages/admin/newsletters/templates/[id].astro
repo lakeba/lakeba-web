@@ -1,0 +1,149 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import NewsletterEditor from '../../../../components/NewsletterEditor.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { adminScope, formCompany, withCompany } from '../../../../lib/admin-company';
+import { field } from '../../../../lib/forms';
+import { dateTime } from '../../../../lib/format';
+import { newsEditor } from '../../../../lib/news-editors';
+import { composeToHtml, type Company, type Issue } from '../../../../lib/newsletter';
+import { compileMjml, composeToMjml } from '../../../../lib/newsletter-design';
+import { designFields, issueFields } from '../../../../lib/newsletter-form';
+import { loadTemplate, mayManageTemplate, originalOf, saveTemplateVersion, type TemplateRow } from '../../../../lib/newsletter-template-store';
+
+// Editing a newsletter template with the same editor as an issue. Every save
+// keeps the previous version (the last 20); built-in templates can be restored
+// to the original.
+const svc = serviceClient();
+const scope = await adminScope(Astro.locals, Astro.url);
+const editor = newsEditor(Astro.locals)!;
+const me = Astro.locals.user!;
+let t = await loadTemplate(svc, Astro.params.id!);
+if (!t || !mayManageTemplate(t, editor.mayEdit, editor.group)) return Astro.redirect(withCompany(scope, '/admin/newsletters'));
+let error = '';
+let designErrors: string[] = [];
+const notice = ({ saved: 'Template saved. New issues use it from now on; existing issues don’t change.', restored: 'Restored.', original: 'Back to the original built-in version.', copy: 'Saved as a new template.', html: 'Now in HTML mode.', compose: 'Back in compose mode.', design: 'Now in the designer.' } as Record<string, string>)[Astro.url.searchParams.get('done') ?? ''] ?? '';
+const back = (id: string, done: string) => Astro.redirect(withCompany(scope, `/admin/newsletters/templates/${id}?done=${done}`), 303);
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
+const audience = t.audience === 'public' ? 'public' : 'shareholders';
+const groupEntity = scope.companies.find((c) => c.relationship === 'group') ?? null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (['save', 'to-html', 'to-compose', 'to-design', 'save-copy'].includes(intent)) {
+    const fields = issueFields(form, audience);
+    const design = await designFields(form);
+    designErrors = design?.errors ?? [];
+    const name = field(form, 'template_name') || t.name;
+    // Scope: group admins choose "all companies" or one; company admins keep their company.
+    const scopeChoice = field(form, 'template_scope');
+    const entity_id = editor.group ? (scopeChoice === 'all' ? null : formCompany(scope, field(form, 'entity_id'))?.id ?? t.entity_id) : t.entity_id;
+    const { segment: _s, ...rest } = fields;
+    const row: Record<string, unknown> = { ...rest, ...(design ? { mjml: design.mjml, design_json: design.design_json, design_html: design.design_html } : {}), name: name.slice(0, 80), description: field(form, 'template_description').slice(0, 300), entity_id, updated_by: me.id, updated_at: new Date().toISOString() };
+    const merged = { ...t, ...row } as TemplateRow;
+    if (intent === 'to-html') {
+      row.mode = 'html';
+      if (!t.html_body.trim()) {
+        const company = (await svc.from('entities').select('id, code, display_name, legal_name, brand_color, relationship, shareholder_mailbox').eq('id', entity_id ?? groupEntity!.id).single()).data as Company;
+        row.html_body = composeToHtml({ ...merged, content: { ...merged.content, post_ids: ['-'], document_ids: ['-'] }, id: t.id, audience, entity_id: company.id, segment: { segment: 'all' }, status: 'draft', scheduled_at: null, sent_at: null } as unknown as Issue, company, { posts: [], docs: [], meetings: [] } as never, Astro.url.origin);
+      }
+    }
+    if (intent === 'to-compose') row.mode = 'compose';
+    if (intent === 'to-design') {
+      row.mode = 'design';
+      if (!t.mjml.trim()) {
+        const c = merged.content;
+        row.mjml = composeToMjml({ audience, company: '{{company}}', color: '#276ae7', intro: c.intro_html ?? '', sections: c.sections ?? [], closing: c.closing_html ?? '', cta: c.cta_label && c.cta_url ? { label: c.cta_label, url: c.cta_url } : null, holding: Boolean(c.holding), documents: true, meetings: Boolean(c.meetings) });
+        row.design_json = null;
+        row.design_html = (await compileMjml(String(row.mjml))).html;
+      }
+    }
+    if (intent === 'save-copy') {
+      const { data: copy, error: e } = await svc.from('newsletter_templates').insert({ ...row, name: `${name} (copy)`, audience: t.audience, builtin_key: null, created_by: me.id }).select('id').single();
+      if (e) error = e.message;
+      else { await log('admin_copied_newsletter_template', { from: t.name }); return back(copy.id, 'copy'); }
+    } else {
+      await saveTemplateVersion(svc, t, me.id);
+      await svc.from('newsletter_templates').update(row).eq('id', t.id).throwOnError();
+      await log('admin_saved_newsletter_template', { id: t.id, name });
+      return back(t.id, intent === 'save' ? 'saved' : intent.slice(3));
+    }
+  } else if (intent === 'restore-version') {
+    const { data: rev } = await svc.from('newsletter_template_revisions').select('snapshot').eq('id', Number(field(form, 'revision_id'))).eq('template_id', t.id).maybeSingle();
+    if (!rev) error = 'That version was not found.';
+    else {
+      const s = rev.snapshot as Partial<TemplateRow>;
+      await saveTemplateVersion(svc, t, me.id);
+      await svc.from('newsletter_templates').update({ name: s.name, description: s.description, subject: s.subject, preheader: s.preheader, content: s.content, mode: s.mode, html_body: s.html_body, mjml: s.mjml ?? '', design_json: s.design_json ?? null, design_html: s.design_html ?? '', updated_by: me.id, updated_at: new Date().toISOString() }).eq('id', t.id).throwOnError();
+      await log('admin_restored_newsletter_template', { id: t.id });
+      return back(t.id, 'restored');
+    }
+  } else if (intent === 'restore-original' && t.builtin_key) {
+    const original = await originalOf(t.builtin_key);
+    if (original) {
+      await saveTemplateVersion(svc, t, me.id);
+      await svc.from('newsletter_templates').update({ ...original, updated_by: me.id, updated_at: new Date().toISOString() }).eq('id', t.id).throwOnError();
+      await log('admin_restored_original_newsletter_template', { key: t.builtin_key });
+      return back(t.id, 'original');
+    }
+  } else if (intent === 'delete' && !t.builtin_key) {
+    await svc.from('newsletter_templates').delete().eq('id', t.id);
+    await log('admin_deleted_newsletter_template', { name: t.name });
+    return Astro.redirect(withCompany(scope, '/admin/newsletters'), 303);
+  }
+  t = (await loadTemplate(svc, t.id))!;
+}
+
+const { data: revisions } = await svc.from('newsletter_template_revisions').select('id, saved_at, saved_by, snapshot->>name').eq('template_id', t.id).order('saved_at', { ascending: false }).limit(20);
+const authorIds = [...new Set((revisions ?? []).map((r) => r.saved_by).filter(Boolean))] as string[];
+const { data: authors } = authorIds.length ? await svc.from('profiles').select('id, email').in('id', authorIds) : { data: [] };
+const authorOf = new Map((authors ?? []).map((a) => [a.id, a.email]));
+const brand = scope.companies.find((c) => c.id === t!.entity_id)?.brand_color ?? '#276ae7';
+const record = { id: t.id, audience, entity_id: t.entity_id, subject: t.subject, preheader: t.preheader, content: t.content ?? {}, mode: t.mode as 'compose' | 'html' | 'design', html_body: t.html_body, mjml: t.mjml, design_json: t.design_json } as const;
+---
+
+<Admin title={`Template: ${t.name}`}>
+  <a href={withCompany(scope, '/admin/newsletters')} class="text-sm text-white/50 hover:text-white">← All newsletters and templates</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">Template: {t.name}</h1>
+  <p class="mt-1 text-sm text-white/45">{t.builtin_key ? 'Built-in' : 'Saved'} · {audience === 'public' ? 'public newsletter' : t.entity_id ? `for ${scope.companies.find((c) => c.id === t!.entity_id)?.display_name ?? 'one company'}` : 'for all companies'} · last changed {dateTime.format(new Date(t.updated_at))}</p>
+  <div class="mt-5 space-y-3">
+    {notice && <Alert tone="success">{notice}</Alert>}
+    {error && <Alert tone="error">{error}</Alert>}
+  </div>
+  <div class="mt-6">
+    <NewsletterEditor kind="template" record={record} scope={scope} postOptions={[]} docOptions={[]} previewUrl={`/admin/newsletters/templates/${t.id}/preview`} brand={brand} showCompany={false} designErrors={designErrors}>
+      <div slot="side" class="space-y-4">
+        <section class="card space-y-3">
+          <h2 class="font-display text-lg font-bold">Template</h2>
+          <div><label class="label" for="template_name">Name</label><input id="template_name" name="template_name" value={t.name} class="field" /></div>
+          <div><label class="label" for="template_description">What it's for</label><textarea id="template_description" name="template_description" rows="2" class="field text-sm">{t.description}</textarea></div>
+          {editor.group && audience === 'shareholders' && (
+            <div><label class="label" for="template_scope">Available to</label>
+              <select id="template_scope" name="template_scope" class="field"><option value="all" selected={!t.entity_id}>All companies</option><option value="company" selected={Boolean(t.entity_id)}>One company</option></select>
+              <select name="entity_id" class="field mt-2" aria-label="Company">{scope.companies.map((c) => <option value={c.id} selected={c.id === t!.entity_id}>{c.display_name}</option>)}</select></div>
+          )}
+          <div class="flex flex-wrap gap-2 border-t border-white/5 pt-3">
+            <button name="intent" value="save" class="btn-primary">Save template</button>
+            <button name="intent" value="save-copy" class="btn-ghost">Save as a copy</button>
+          </div>
+          <p class="text-xs text-white/40">The preview uses example data: a sample reader and holding, and the latest news, documents and meetings.</p>
+          {t.builtin_key && <button name="intent" value="restore-original" class="btn-ghost w-full text-sm" onclick="return confirm('Replace this template with the original built-in version? The current one is kept in the version list.')">Restore original</button>}
+          {!t.builtin_key && <button name="intent" value="delete" class="w-full text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Delete this template? Issues made from it are not affected.')">Delete template</button>}
+        </section>
+        <section class="card">
+          <h2 class="font-display text-lg font-bold">Earlier versions</h2>
+          <ul class="mt-2 divide-y divide-white/5 text-sm">
+            {(revisions ?? []).map((r) => (
+              <li class="flex items-center justify-between gap-3 py-2"><span><span class="text-white/80">{dateTime.format(new Date(r.saved_at))}</span><span class="block text-xs text-white/40">{r.name}{r.saved_by && ` · ${authorOf.get(r.saved_by) ?? 'someone'}`}</span></span>
+                <button name="intent" value="restore-version" class="btn-ghost px-3 py-1 text-xs" onclick={`this.form.revision_id.value='${r.id}';return confirm('Go back to this version? The current one is kept in the list.')`}>Restore</button></li>
+            ))}
+            {!revisions?.length && <li class="py-3 text-white/45">No earlier versions yet. Each save keeps the one before (the last 20).</li>}
+          </ul>
+          <input type="hidden" name="revision_id" />
+        </section>
+      </div>
+    </NewsletterEditor>
+  </div>
+</Admin>

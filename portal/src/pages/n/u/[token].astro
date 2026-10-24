@@ -1,0 +1,31 @@
+---
+import Auth from '../../../layouts/Auth.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { recipientByToken, unsubscribe } from '../../../lib/newsletter';
+
+// Unsubscribe from newsletters. Opening the page doesn't unsubscribe (mail
+// scanners open links); the button does, and so does a mail app's built-in
+// "Unsubscribe" (a one-click POST, RFC 8058).
+const svc = serviceClient();
+const r = await recipientByToken(svc, Astro.params.token ?? '');
+let done = Boolean(r?.unsubscribed_at);
+if (r && Astro.request.method === 'POST') {
+  await unsubscribe(svc, r);
+  await svc.from('audit_log').insert({ user_id: r.user_id, action: 'newsletter_unsubscribed', detail: { issue_id: r.issue_id, email: r.email, one_click: !(Astro.request.headers.get('content-type') ?? '').includes('form') || undefined } });
+  done = true;
+}
+Astro.response.headers.set('Cache-Control', 'no-store');
+---
+
+<Auth title="Newsletter emails">
+  {!r ? <Alert tone="error">This link is not valid.</Alert> : done ? (
+    <div class="space-y-4"><Alert tone="success">Done: {r.email} won't receive our newsletters any more.</Alert>
+      <p class="text-sm text-white/55">{r.user_id ? 'Formal notices, such as notices of meetings, are still sent to you. You can turn newsletters back on in the investor portal under Profile → Notifications.' : 'You can subscribe again on our website at any time.'}</p></div>
+  ) : (
+    <form method="post" class="space-y-4">
+      <p class="text-sm text-white/65">Stop newsletter emails to <strong class="text-white">{r.email}</strong>?</p>
+      <button class="btn-primary w-full">Unsubscribe</button>
+    </form>
+  )}
+</Auth>

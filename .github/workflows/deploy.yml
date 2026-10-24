@@ -30,6 +30,7 @@ jobs:
           SITE: https://${{ github.repository_owner }}.github.io
           BASE: /${{ github.event.repository.name }}
           NEWS_FEED_URL: https://investors.lakeba.com/api/public/news.json
+          PUBLIC_PORTAL_URL: https://investors.lakeba.com
       - uses: actions/upload-pages-artifact@v3
         with:
           path: dist

@@ -1,0 +1,293 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import Alert from '../../../components/Alert.astro';
+import CompanySelect from '../../../components/CompanySelect.astro';
+import NewsletterEditor from '../../../components/NewsletterEditor.astro';
+import { serviceClient } from '../../../lib/admin';
+import { adminScope, formCompany, withCompany } from '../../../lib/admin-company';
+import { parseLocal } from '../../../lib/admin-forms';
+import { field } from '../../../lib/forms';
+import { dateTime } from '../../../lib/format';
+import { newsEditor } from '../../../lib/news-editors';
+import { audienceOf, claimIssue, composeToHtml, loadParts, prepareIssue, renderIssue, type Company, type Issue } from '../../../lib/newsletter';
+import { compileMjml, composeToMjml } from '../../../lib/newsletter-design';
+import { designFields, issueFields } from '../../../lib/newsletter-form';
+import { issueFromTemplate, listTemplates } from '../../../lib/newsletter-template-store';
+import { sendRaw } from '../../../lib/mail';
+import { createSignInLink } from '../../../lib/sign-in-links';
+
+// One newsletter issue: start from a template, compose / design / write HTML,
+// preview live, test, schedule or send, then see the results.
+const svc = serviceClient();
+const scope = await adminScope(Astro.locals, Astro.url);
+const editor = newsEditor(Astro.locals)!;
+const me = Astro.locals.user!;
+const isNew = Astro.params.id === 'new';
+let error = '';
+let designErrors: string[] = [];
+const notice = ({ saved: 'Saved.', test: 'Test email sent to you.', sending: 'Sending has started. It takes a few minutes; this page shows progress.', scheduled: 'Scheduled.', cancelled: 'Schedule cancelled; the issue is a draft again.', template: 'Saved as a template.', html: 'Now in HTML mode.', compose: 'Back in compose mode.', design: 'Now in the designer: drag blocks from the panel on the right.' } as Record<string, string>)[Astro.url.searchParams.get('done') ?? ''] ?? '';
+const companyCols = 'id, code, display_name, legal_name, brand_color, relationship, shareholder_mailbox';
+type Row = Issue & { started_at: string | null; updated_at: string; mode: 'compose' | 'html' | 'design'; html_body: string; mjml: string; design_json: unknown; design_html: string };
+const load = async (id: string) => (await svc.from('newsletter_issues').select('*').eq('id', id).maybeSingle()).data as Row | null;
+let issue = isNew ? null : await load(Astro.params.id!);
+const groupEntity = scope.companies.find((c) => c.relationship === 'group') ?? null;
+const mayManage = (i: { audience: string; entity_id: string }) => (i.audience === 'public' ? editor.group : editor.mayEdit(i.entity_id));
+if (!isNew && (!issue || !mayManage(issue))) return Astro.redirect(withCompany(scope, '/admin/newsletters'));
+const editable = !issue || issue.status === 'draft' || issue.status === 'scheduled';
+const back = (id: string, done: string, extra = '') => Astro.redirect(withCompany(scope, `/admin/newsletters/${id}?done=${done}${extra}`), 303);
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
+const signIn = (userId: string) => createSignInLink(svc, { userId, origin: Astro.url.origin, next: '/?from=newsletter', hours: 24 * 14 });
+const companyOf = async (id: string) => (await svc.from('entities').select(companyCols).eq('id', id).single()).data as Company;
+const templates = isNew ? await listTemplates(svc, editor.mayEdit, editor.group) : [];
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (isNew && intent === 'from-template') {
+    const t = templates.find((x) => x.id === field(form, 'template_id'));
+    const audience = (t?.audience === 'public' || ((!t || t.audience === 'any') && field(form, 'audience') === 'public' && editor.group)) ? 'public' : 'shareholders';
+    const company = audience === 'public' ? groupEntity : formCompany(scope, field(form, 'entity_id'));
+    if (!t && field(form, 'template_id') !== 'blank') error = 'That template isn’t available to you. Only group admins can send the public newsletter.';
+    else if (audience === 'public' && !editor.group) error = 'Only group admins can send the public newsletter.';
+    else if (!company) error = 'Choose the company.';
+    else {
+      const base = t ?? { subject: '', preheader: '', mode: 'compose' as const, content: { meetings: audience === 'shareholders', holding: audience === 'shareholders' }, html_body: '', mjml: '', design_json: null };
+      const filled = await issueFromTemplate(base, { name: audience === 'public' ? 'Lakeba' : company.display_name, color: company.brand_color }, Astro.url.origin);
+      // News and documents published since the last issue start ticked.
+      const { data: last } = await svc.from('newsletter_issues').select('sent_at').eq('audience', audience).eq('entity_id', company.id).eq('status', 'sent').order('sent_at', { ascending: false }).limit(1).maybeSingle();
+      const since = last?.sent_at ?? new Date(Date.now() - 92 * 86_400_000).toISOString();
+      const [{ data: posts }, { data: docs }] = await Promise.all([
+        svc.from('posts').select('id').not('published_at', 'is', null).gt('published_at', since).lte('published_at', new Date().toISOString()).or(audience === 'public' ? 'visibility.eq.public' : `visibility.eq.public,entity_id.eq.${company.id}`).order('published_at', { ascending: false }).limit(8),
+        audience === 'shareholders' ? svc.from('documents').select('id').eq('entity_id', company.id).eq('audience', 'all_investors').not('published_at', 'is', null).gt('published_at', since).limit(8) : Promise.resolve({ data: [] }),
+      ]);
+      const content = { ...filled.content, post_ids: (posts ?? []).map((x) => x.id), document_ids: (docs ?? []).map((x) => x.id), brief: field(form, 'brief').slice(0, 6000) };
+      const { data: created, error: e } = await svc.from('newsletter_issues').insert({ ...filled, content, audience, entity_id: company.id, created_by: me.id, updated_by: me.id }).select('id').single();
+      if (e) error = e.message;
+      else {
+        await log('admin_started_newsletter', { id: created.id, template: t?.name ?? (field(form, 'brief') ? 'Build with AI' : 'Blank') });
+        return back(created.id, 'saved', field(form, 'brief') ? '&ai=1' : '');
+      }
+    }
+  } else if (issue && editable && ['save', 'test', 'schedule', 'send', 'to-html', 'to-compose', 'to-design', 'save-template'].includes(intent)) {
+    const company = issue.audience === 'public' ? groupEntity : formCompany(scope, field(form, 'entity_id')) ?? scope.companies.find((c) => c.id === issue!.entity_id) ?? null;
+    const fields = issueFields(form, issue.audience);
+    const design = await designFields(form);
+    if (!company) error = 'Choose the company.';
+    else {
+      const row: Record<string, unknown> = { ...fields, ...(design ? { mjml: design.mjml, design_json: design.design_json, design_html: design.design_html } : {}), entity_id: company.id, updated_by: me.id, updated_at: new Date().toISOString() };
+      designErrors = design?.errors ?? [];
+      const merged = { ...issue, ...row } as Row;
+      if (intent === 'to-html') {
+        row.mode = 'html';
+        // First time: start the HTML from what was composed. Later: keep the HTML already written.
+        row.html_body = issue.html_body.trim() ? issue.html_body : composeToHtml(merged, await companyOf(company.id), await loadParts(svc, merged), Astro.url.origin);
+      }
+      if (intent === 'to-compose') row.mode = 'compose';
+      if (intent === 'to-design') {
+        row.mode = 'design';
+        // First time: a design with the same words as the composed issue. Later: keep the design.
+        if (!issue.mjml.trim()) {
+          const c = merged.content;
+          row.mjml = composeToMjml({ audience: issue.audience, company: issue.audience === 'public' ? 'Lakeba' : company.display_name, color: company.brand_color ?? '#276ae7', intro: c.intro_html ?? '', sections: c.sections ?? [], closing: c.closing_html ?? '', cta: c.cta_label && c.cta_url ? { label: c.cta_label, url: c.cta_url } : null, holding: Boolean(c.holding), documents: Boolean(c.document_ids?.length), meetings: Boolean(c.meetings) });
+          row.design_json = null;
+          row.design_html = (await compileMjml(String(row.mjml))).html;
+        }
+      }
+      await svc.from('newsletter_issues').update(row).eq('id', issue.id).throwOnError();
+      issue = await load(issue.id);
+      await log('admin_saved_newsletter', { id: issue!.id, mode: issue!.mode, subject: issue!.subject });
+      if (intent === 'save') return back(issue!.id, 'saved');
+      if (intent === 'to-html') return back(issue!.id, 'html');
+      if (intent === 'to-compose') return back(issue!.id, 'compose');
+      if (intent === 'to-design') return back(issue!.id, 'design');
+      if (intent === 'save-template') {
+        const name = field(form, 'template_name');
+        if (name.length < 2) error = 'Give the template a name.';
+        else {
+          await svc.from('newsletter_templates').insert({
+            name, description: field(form, 'template_description'), audience: issue!.audience,
+            entity_id: field(form, 'template_scope') === 'all' && editor.group ? null : issue!.entity_id,
+            subject: issue!.subject, preheader: issue!.preheader, content: { ...issue!.content, post_ids: [], document_ids: [] }, mode: issue!.mode,
+            html_body: issue!.html_body, mjml: issue!.mjml, design_json: issue!.design_json, design_html: issue!.design_html, created_by: me.id, updated_by: me.id,
+          }).throwOnError();
+          await log('admin_saved_newsletter_template', { name });
+          return back(issue!.id, 'template');
+        }
+      } else if (!issue!.subject) error = 'Add a subject first.';
+      else if (issue!.mode === 'design' && !issue!.design_html) error = 'The design is empty or couldn’t be turned into an email. Check it in the designer.';
+      else if (intent === 'test') {
+        const comp = await companyOf(issue!.entity_id);
+        const { html, text } = renderIssue(issue!, comp, await loadParts(svc, issue!), { firstName: Astro.locals.profile?.first_name || null, holding: null, setupUrl: null, token: null }, Astro.url.origin);
+        await sendRaw({ to: Astro.locals.profile!.email, subject: `[Test] ${issue!.subject}`, html, text, replyTo: comp.shareholder_mailbox ?? undefined });
+        await log('admin_tested_newsletter', { id: issue!.id });
+        return back(issue!.id, 'test');
+      } else if (intent === 'schedule') {
+        const at = parseLocal(field(form, 'scheduled_at'));
+        if (!at || at <= new Date().toISOString()) error = 'Choose a time in the future.';
+        else { await svc.from('newsletter_issues').update({ status: 'scheduled', scheduled_at: at }).eq('id', issue!.id); await log('admin_scheduled_newsletter', { id: issue!.id, at }); return back(issue!.id, 'scheduled'); }
+      } else if (intent === 'send') {
+        const expected = Number(field(form, 'expected'));
+        const count = (await audienceOf(svc, issue!)).length;
+        if (!count) error = 'Nobody would receive this issue.';
+        else if (count !== expected) error = `The audience changed to ${count} people while you were editing. Check and send again.`;
+        else if (await claimIssue(svc, issue!.id)) {
+          const queued = await prepareIssue(svc, issue!.id, Astro.url.origin, signIn);
+          await log('admin_sent_newsletter', { id: issue!.id, recipients: queued });
+          return back(issue!.id, 'sending');
+        } else error = 'This issue is already being sent.';
+      }
+    }
+  } else if (issue && intent === 'cancel-schedule' && issue.status === 'scheduled' && !issue.started_at) {
+    await svc.from('newsletter_issues').update({ status: 'draft', scheduled_at: null }).eq('id', issue.id).eq('status', 'scheduled');
+    return back(issue.id, 'cancelled');
+  } else if (issue && intent === 'delete' && issue.status === 'draft') {
+    await svc.from('newsletter_issues').delete().eq('id', issue.id);
+    await log('admin_deleted_newsletter', { id: issue.id });
+    return Astro.redirect(withCompany(scope, '/admin/newsletters'), 303);
+  } else if (issue && intent === 'duplicate') {
+    const { data: copy } = await svc.from('newsletter_issues').insert({ audience: issue.audience, entity_id: issue.entity_id, subject: `${issue.subject} (copy)`, preheader: issue.preheader, content: issue.content, segment: issue.segment, mode: issue.mode, html_body: issue.html_body, mjml: issue.mjml, design_json: issue.design_json, design_html: issue.design_html, created_by: me.id, updated_by: me.id }).select('id').single();
+    return back(copy!.id, 'saved');
+  }
+}
+
+// --- What the page shows --------------------------------------------------------------
+const audience = issue?.audience ?? 'shareholders';
+const entityId = issue?.entity_id ?? scope.defaultCompany?.id ?? '';
+const since = new Date(Date.now() - 120 * 86_400_000).toISOString();
+const [{ data: postOptions }, { data: docOptions }, { data: classes }] = issue ? await Promise.all([
+  svc.from('posts').select('id, title, published_at, visibility').not('published_at', 'is', null).lte('published_at', new Date().toISOString()).gte('published_at', since)
+    .or(audience === 'public' ? 'visibility.eq.public' : `visibility.eq.public,entity_id.eq.${entityId}`).order('published_at', { ascending: false }).limit(30),
+  audience === 'shareholders' ? svc.from('documents').select('id, title, published_at').eq('entity_id', entityId).eq('audience', 'all_investors').not('published_at', 'is', null).gte('published_at', since).order('published_at', { ascending: false }).limit(30) : Promise.resolve({ data: [] }),
+  svc.from('share_classes').select('id, name').eq('entity_id', entityId),
+]) : [{ data: [] }, { data: [] }, { data: [] }];
+const segmentValue = issue?.segment?.segment === 'class' ? `class:${issue.segment.share_class_id}` : issue?.segment?.segment ?? 'all';
+const readers = issue && editable ? await audienceOf(svc, issue) : [];
+let unreachable: string[] = [];
+if (issue?.audience === 'shareholders' && editable) {
+  const { data: hs } = await svc.from('holdings').select('holder_id, shares, share_classes!inner(entity_id), holders(name, holder_members(user_id))').eq('share_classes.entity_id', issue.entity_id).gt('shares', 0);
+  unreachable = [...new Set((hs ?? []).filter((h) => !((h.holders as unknown as { holder_members: unknown[] }).holder_members.length)).map((h) => (h.holders as unknown as { name: string }).name))];
+}
+const { data: recs } = issue && !editable ? await svc.from('newsletter_recipients').select('id, email, name, status, error, sent_at, opened_at, clicked_at, click_count, unsubscribed_at').eq('issue_id', issue.id).order('email') : { data: [] };
+const { data: clicks } = recs?.length ? await svc.from('newsletter_clicks').select('url').in('recipient_id', recs.map((r) => r.id)) : { data: [] };
+const byUrl = [...(clicks ?? []).reduce((m, c) => m.set(c.url, (m.get(c.url) ?? 0) + 1), new Map<string, number>())].sort((a, b) => b[1] - a[1]);
+const total = recs?.length ?? 0;
+const sent = (recs ?? []).filter((r) => r.status === 'sent').length;
+const pct = (n: number) => (sent ? `${Math.round((n / sent) * 100)}%` : '—');
+const localDate = (iso: string | null | undefined) => (iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '');
+const brand = scope.companies.find((c) => c.id === entityId)?.brand_color ?? '#276ae7';
+const pickable = templates.filter((t) => t.audience !== 'public' || editor.group);
+---
+
+<Admin title={issue?.subject || 'New newsletter'}>
+  <a href={withCompany(scope, '/admin/newsletters')} class="text-sm text-white/50 hover:text-white">← All newsletters</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{isNew ? 'New newsletter issue' : issue?.subject || 'Untitled issue'}</h1>
+  {issue && <p class="mt-1 text-sm text-white/45">{issue.audience === 'public' ? 'Public newsletter' : `${scope.companies.find((c) => c.id === issue!.entity_id)?.display_name ?? ''} shareholders`} · {issue.status}{issue.status === 'scheduled' && issue.scheduled_at && ` for ${dateTime.format(new Date(issue.scheduled_at))}`}{issue.sent_at && ` · finished ${dateTime.format(new Date(issue.sent_at))}`}</p>}
+  <div class="mt-5 space-y-3">
+    {notice && <Alert tone="success">{notice}</Alert>}
+    {error && <Alert tone="error">{error}</Alert>}
+  </div>
+
+  {isNew ? (
+    <>
+      <p class="mt-6 text-white/65">Start from a template, or let Claude draft it. Everything stays editable, and news and documents published since the last issue are ticked for you.</p>
+      <div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <form method="post" class="card flex flex-col border border-lk-blue/40 bg-gradient-to-br from-lk-blue/15 to-transparent md:col-span-2 xl:col-span-3">
+          <input type="hidden" name="intent" value="from-template" /><input type="hidden" name="template_id" value="blank" />
+          <p class="text-xs uppercase tracking-widest text-lk-blue">✨ Build with AI</p>
+          <h2 class="mt-2 font-display text-lg font-bold">Start from what you want to say</h2>
+          <p class="mt-1 text-sm text-white/60">List the points to communicate, as rough notes. Claude drafts the whole issue from your notes and the recent news; you review and edit everything before it goes out. (To have it in a designed layout, start from a designed template below and use Build with AI there.)</p>
+          <div class="mt-4 grid gap-3 lg:grid-cols-[2fr_1fr] lg:items-end">
+            <textarea name="brief" rows="5" required minlength="15" class="field" placeholder={"- Signed three new bank partners this quarter\n- FY26 results are out: revenue up 40% (see the annual report)\n- AGM on 20 November, please vote online\n- Thank shareholders for their support"}></textarea>
+            <div class="space-y-3">
+              {editor.group && <select name="audience" class="field text-sm" aria-label="Newsletter"><option value="shareholders">For shareholders</option><option value="public">Public newsletter</option></select>}
+              <CompanySelect scope={scope} id="c-ai" value={entityId} />
+              <button class="btn-primary w-full">Continue</button>
+            </div>
+          </div>
+        </form>
+        {[...pickable, { id: 'blank', builtin_key: null, name: 'Blank', description: 'An empty issue: write your own introduction and sections, then tick news and documents.', audience: 'any', mode: 'compose', entity_id: null }].map((t) => (
+          <form method="post" class="card flex flex-col">
+            <input type="hidden" name="intent" value="from-template" /><input type="hidden" name="template_id" value={t.id} />
+            <p class="text-xs uppercase tracking-widest text-white/40">{t.id === 'blank' ? 'Start fresh' : t.builtin_key ? 'Built-in' : 'Saved template'} · {t.mode === 'design' ? 'designed' : t.mode === 'html' ? 'HTML' : 'composed'}</p>
+            <h2 class="mt-2 font-display text-lg font-bold">{t.name}</h2>
+            <p class="mt-1 flex-1 text-sm text-white/55">{t.description}</p>
+            <div class="mt-4 space-y-3">
+              {t.audience === 'any' && editor.group && <select name="audience" class="field text-sm" aria-label="Newsletter"><option value="shareholders">For shareholders</option><option value="public">Public newsletter</option></select>}
+              {t.audience !== 'public' && <CompanySelect scope={scope} id={`c-${t.id}`} value={t.entity_id ?? entityId} />}
+              {t.audience === 'public' && <p class="text-xs text-white/45">For website subscribers.</p>}
+              <div class="flex gap-2"><button class="btn-primary flex-1">Use this template</button>{t.id !== 'blank' && <a href={withCompany(scope, `/admin/newsletters/templates/${t.id}`)} class="btn-ghost">Edit</a>}</div>
+            </div>
+          </form>
+        ))}
+      </div>
+    </>
+  ) : !editable ? (
+    <>
+      <div class="mt-6 grid gap-3 sm:grid-cols-5">
+        {[['Sent', `${sent} / ${total}`], ['Opened', pct((recs ?? []).filter((r) => r.opened_at).length)], ['Clicked', pct((recs ?? []).filter((r) => r.clicked_at).length)], ['Unsubscribed', String((recs ?? []).filter((r) => r.unsubscribed_at).length)], ['Failed', String((recs ?? []).filter((r) => r.status === 'failed').length)]].map(([k, v]) => (
+          <div class="card p-4"><p class="text-xs uppercase tracking-widest text-white/40">{k}</p><p class="mt-1 font-display text-2xl font-bold">{v}</p></div>
+        ))}
+      </div>
+      {issue!.status === 'sending' && <p class="mt-3 text-sm text-white/55">Sending about 20 emails a minute. Reload to see progress.</p>}
+      <div class="mt-6 grid gap-6 xl:grid-cols-2">
+        <section class="card overflow-hidden p-0">
+          <h2 class="px-5 py-4 font-display text-lg font-bold">Recipients</h2>
+          <div class="max-h-[32rem] overflow-y-auto"><table class="w-full text-left text-sm"><tbody class="divide-y divide-white/5">
+            {(recs ?? []).map((r) => (
+              <tr><td class="px-5 py-2"><span class="text-white/85">{r.email}</span>{r.name && <span class="block text-xs text-white/40">{r.name}</span>}</td>
+                <td class="px-5 py-2 text-xs text-white/55">{r.status === 'failed' ? <span class="text-lk-red" title={r.error ?? ''}>failed</span> : r.status}{r.opened_at && ' · opened'}{r.clicked_at && ` · ${r.click_count} click${r.click_count === 1 ? '' : 's'}`}{r.unsubscribed_at && ' · unsubscribed'}</td></tr>
+            ))}
+          </tbody></table></div>
+        </section>
+        <section class="card">
+          <h2 class="font-display text-lg font-bold">Clicks by link</h2>
+          <ul class="mt-3 space-y-2 text-sm">{byUrl.map(([url, n]) => <li class="flex justify-between gap-3"><span class="truncate text-white/70" title={url}>{url}</span><span class="tabular-nums text-white/85">{n}</span></li>)}</ul>
+          {!byUrl.length && <p class="mt-3 text-sm text-white/45">No clicks yet.</p>}
+          <form method="post" class="mt-6"><button name="intent" value="duplicate" class="btn-ghost text-sm">Start a new issue from this one</button></form>
+        </section>
+      </div>
+      <iframe sandbox="allow-same-origin allow-popups" title="The newsletter as sent" src={`/admin/newsletters/${issue!.id}/preview`} class="mt-6 h-[70rem] w-full rounded-2xl bg-white"></iframe>
+    </>
+  ) : (
+    <div class="mt-6">
+      <NewsletterEditor kind="issue" record={issue!} scope={scope} postOptions={postOptions ?? []} docOptions={docOptions ?? []} previewUrl={`/admin/newsletters/${issue!.id}/preview`} brand={brand} designErrors={designErrors}>
+        <section slot="side" class="card space-y-4">
+          <h2 class="font-display text-lg font-bold">Audience and sending</h2>
+          {audience === 'shareholders' ? (
+            <>
+              <CompanySelect scope={scope} value={entityId} />
+              <div><label class="label" for="segment">Who</label>
+                <select id="segment" name="segment" class="field">
+                  <option value="all" selected={segmentValue === 'all'}>All shareholders</option>
+                  <option value="quiet" selected={segmentValue === 'quiet'}>Not signed in for 90 days (or never)</option>
+                  {(classes ?? []).map((c) => <option value={`class:${c.id}`} selected={segmentValue === `class:${c.id}`}>Holders of {c.name}</option>)}
+                </select></div>
+            </>
+          ) : <p class="text-sm text-white/65">Public newsletter: goes to people who subscribed on the website.</p>}
+          <p class="text-sm text-white/70">Goes to <strong class="text-white">{readers.length}</strong> {readers.length === 1 ? 'person' : 'people'}{audience === 'shareholders' && `, ${readers.filter((r) => r.neverSignedIn).length} of them not yet signed in to the portal (they get a button that signs them in)`}. People who unsubscribed are left out.</p>
+          {unreachable.length > 0 && <p class="text-xs text-lk-orange">No email address for {unreachable.length} holder{unreachable.length === 1 ? '' : 's'} ({unreachable.slice(0, 4).join(', ')}{unreachable.length > 4 ? '…' : ''}): link them to a person in Admin → Investors to include them.</p>}
+          <div class="flex flex-wrap gap-2 border-t border-white/5 pt-3">
+            <button name="intent" value="save" class="btn-ghost">Save</button>
+            <button name="intent" value="test" class="btn-ghost">Send me a test</button>
+          </div>
+          <div><label class="label" for="scheduled_at">Schedule for (your time)</label>
+            <div class="flex gap-2"><input id="scheduled_at" name="scheduled_at" type="datetime-local" value={localDate(issue!.scheduled_at)} class="field" /><button name="intent" value="schedule" class="btn-ghost shrink-0">Schedule</button></div></div>
+          {issue!.status === 'scheduled' && <button name="intent" value="cancel-schedule" class="btn-ghost w-full text-sm">Cancel the schedule</button>}
+          <input type="hidden" name="expected" value={readers.length} />
+          <button name="intent" value="send" class="btn-primary w-full" disabled={!readers.length} onclick={`return confirm('Send this issue now to ${readers.length} ${readers.length === 1 ? 'person' : 'people'}? It can\\'t be undone.')`}>Send now to {readers.length}</button>
+          <details class="border-t border-white/5 pt-3">
+            <summary class="cursor-pointer text-sm text-lk-blue">Save as a template</summary>
+            <div class="mt-3 space-y-3">
+              <input name="template_name" placeholder="Template name" class="field" aria-label="Template name" />
+              <input name="template_description" placeholder="What it's for (optional)" class="field" aria-label="Template description" />
+              {editor.group && <select name="template_scope" class="field" aria-label="Template for"><option value="company">For this company</option><option value="all">For all companies</option></select>}
+              <button name="intent" value="save-template" class="btn-ghost w-full">Save as template</button>
+              <p class="text-xs text-white/40">Keeps the subject, text, sections and design; the ticked news and documents start fresh each time.</p>
+            </div>
+          </details>
+          {issue!.status === 'draft' && <button name="intent" value="delete" class="w-full text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Delete this draft?')">Delete draft</button>}
+        </section>
+      </NewsletterEditor>
+    </div>
+  )}
+</Admin>

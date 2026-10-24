@@ -1,0 +1,22 @@
+---
+// A bare page showing an article as investors see it, for the news editor's
+// full-screen live preview (no portal menus).
+import '../styles/portal.css';
+import NewsBody from './NewsBody.astro';
+interface Props { title: string; excerpt: string; cover: string; body: string; isPublic: boolean; venture: string; date: string }
+const { title, excerpt, cover, body, isPublic, venture, date } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><title>Preview</title></head>
+  <body class="px-5 py-8">
+    <article class="mx-auto w-full max-w-2xl">
+      <p class="text-sm text-white/45">{isPublic && <><span class="font-semibold text-lk-blue">{venture}</span> · </>}{date}</p>
+      <h1 class="mt-2 text-3xl font-extrabold sm:text-4xl">{title}</h1>
+      {excerpt && <p class="mt-4 text-lg text-white/65">{excerpt}</p>}
+      {cover && <img src={cover} alt="" class="mt-8 w-full rounded-3xl" />}
+      <div class="mt-8"><NewsBody html={body} /></div>
+    </article>
+  </body>
+</html>

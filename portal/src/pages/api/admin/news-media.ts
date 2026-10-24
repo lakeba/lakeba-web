@@ -20,3 +20,13 @@ export const POST: APIRoute = async ({ request, locals }) => {
   await locals.supabase.rpc('log_event', { event_action: 'admin_uploaded_news_image', event_detail: { path, bytes: file.size } });
   return Response.json({ url: `${MEDIA_PREFIX}${path}` });
 };
+
+/** Recently uploaded images, for the designer's image library (newest first). */
+export const GET: APIRoute = async ({ locals }) => {
+  if (!newsEditor(locals)) return Response.json({ error: 'Not allowed.' }, { status: 403 });
+  const svc = serviceClient();
+  const year = new Date().getUTCFullYear();
+  const lists = await Promise.all([year, year - 1].map(async (y) => ((await svc.storage.from('news-media').list(String(y), { limit: 200, sortBy: { column: 'created_at', order: 'desc' } })).data ?? []).map((f) => ({ path: `${y}/${f.name}`, at: f.created_at ?? '' }))));
+  const items = lists.flat().filter((f) => /\.(png|jpg|webp|gif)$/.test(f.path)).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 80);
+  return Response.json({ images: items.map((f) => `${MEDIA_PREFIX}${f.path}`) });
+};

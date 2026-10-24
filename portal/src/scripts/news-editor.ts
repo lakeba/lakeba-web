@@ -274,4 +274,38 @@ export function initNewsEditor() {
     if (!postId) { try { localStorage.removeItem('lakeba.newsDraft'); } catch {} }
   });
   window.addEventListener('beforeunload', (e) => { if (dirty) e.preventDefault(); });
+
+  // Full screen: editor, publishing and a live preview side by side; Esc leaves.
+  const fsBtn = form.querySelector<HTMLButtonElement>('[data-fullscreen]');
+  const frame = form.querySelector<HTMLIFrameElement>('[data-news-frame]');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const refreshPreview = () => {
+    if (!frame || !form.classList.contains('is-fullscreen')) return;
+    clearTimeout(timer);
+    timer = setTimeout(async () => {
+      bodyInput.value = editor.getHTML();
+      const res = await fetch('/admin/news/preview?bare=1', { method: 'POST', body: new FormData(form) }).catch(() => null);
+      if (res?.ok) frame.srcdoc = await res.text();
+    }, 600);
+  };
+  const setFull = (on: boolean) => {
+    form.classList.toggle('is-fullscreen', on);
+    document.documentElement.classList.toggle('nl-fullscreen-open', on);
+    if (fsBtn) fsBtn.textContent = on ? '⤡ Leave full screen' : '⤢ Full screen';
+    if (on && !document.fullscreenElement) form.requestFullscreen?.().catch(() => {});
+    if (!on && document.fullscreenElement) document.exitFullscreen?.().catch(() => {});
+    if (on) refreshPreview();
+  };
+  fsBtn?.addEventListener('click', () => setFull(!form.classList.contains('is-fullscreen')));
+  document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement && form.classList.contains('is-fullscreen')) setFull(false); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && form.classList.contains('is-fullscreen') && !document.fullscreenElement) setFull(false); });
+  form.addEventListener('input', refreshPreview);
+  form.addEventListener('change', refreshPreview);
+  editor.on('update', refreshPreview);
+  for (const b of form.querySelectorAll<HTMLButtonElement>('[data-device]')) {
+    b.addEventListener('click', () => {
+      if (frame) frame.style.width = b.dataset.device === 'mobile' ? '390px' : '100%';
+      for (const x of form.querySelectorAll<HTMLButtonElement>('[data-device]')) { const on = x === b; x.setAttribute('aria-pressed', String(on)); x.classList.toggle('bg-white/10', on); x.classList.toggle('text-white/55', !on); }
+    });
+  }
 }

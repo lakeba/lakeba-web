@@ -1,0 +1,31 @@
+---
+import Auth from '../../../layouts/Auth.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { hashToken } from '../../../lib/newsletter';
+
+// Confirms a website newsletter sign-up (double opt-in). The click on the
+// button confirms, not opening the page.
+const svc = serviceClient();
+const token = Astro.params.token ?? '';
+const { data: sub } = /^[A-Za-z0-9_-]{20,64}$/.test(token) ? await svc.from('newsletter_subscribers').select('id, email, status, confirm_sent_at').eq('confirm_token_hash', hashToken(token)).maybeSingle() : { data: null };
+const expired = sub?.confirm_sent_at && Date.now() - new Date(sub.confirm_sent_at).getTime() > 14 * 86_400_000;
+let done = sub?.status === 'subscribed';
+if (sub && !expired && Astro.request.method === 'POST') {
+  await svc.from('newsletter_subscribers').update({ status: 'subscribed', confirmed_at: new Date().toISOString(), unsubscribed_at: null }).eq('id', sub.id);
+  await svc.from('audit_log').insert({ action: 'newsletter_subscribed', detail: { email: sub.email } });
+  done = true;
+}
+Astro.response.headers.set('Cache-Control', 'no-store');
+---
+
+<Auth title="Lakeba newsletter">
+  {!sub || expired ? <Alert tone="error">This confirmation link is not valid or has expired. Please sign up again on our website.</Alert> : done ? (
+    <Alert tone="success">You're subscribed. The next Lakeba newsletter will come to {sub.email}.</Alert>
+  ) : (
+    <form method="post" class="space-y-4">
+      <p class="text-sm text-white/65">Confirm that you'd like to receive the Lakeba newsletter at <strong class="text-white">{sub.email}</strong>. You can unsubscribe at any time.</p>
+      <button class="btn-primary w-full">Confirm my subscription</button>
+    </form>
+  )}
+</Auth>

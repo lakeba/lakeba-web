@@ -1,5 +1,6 @@
 ---
 import Mark from './Mark.astro';
+import NewsletterSignup from './NewsletterSignup.astro';
 import { href } from '../lib/paths';
 const offices = ['Sydney', 'India', 'Indonesia', 'Italy', 'United Kingdom', 'United States'];
 const cols = [
@@ -24,6 +25,9 @@ const cols = [
         </ul>
       </div>
     ))}
+  </div>
+  <div class="container-x">
+    <NewsletterSignup compact />
   </div>
   <div class="container-x mt-14 flex flex-col justify-between gap-3 border-t border-white/5 pt-6 text-xs text-white/35 sm:flex-row">
     <p>© 2026 Lakeba Group Limited</p>

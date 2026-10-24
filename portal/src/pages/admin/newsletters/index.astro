@@ -1,0 +1,157 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
+import { serviceClient } from '../../../lib/admin';
+import { adminScope, withCompany } from '../../../lib/admin-company';
+import { field } from '../../../lib/forms';
+import { dateTime, shortDate } from '../../../lib/format';
+import { newsEditor } from '../../../lib/news-editors';
+import { listTemplates } from '../../../lib/newsletter-template-store';
+
+// Newsletter issues (shareholders per company; the public newsletter for
+// group admins) and the public newsletter's subscribers.
+const svc = serviceClient();
+const scope = await adminScope(Astro.locals, Astro.url);
+const group = scope.isGroupAdmin;
+let notice = '';
+let error = '';
+const editor = newsEditor(Astro.locals)!;
+
+const form = Astro.request.method === 'POST' ? await Astro.request.formData() : null;
+if (form && ['rename-template', 'delete-template'].includes(field(form, 'intent'))) {
+  // Saved templates: their company's admins (or group admins) may change them.
+  const { data: tpl } = await svc.from('newsletter_templates').select('id, entity_id, name').eq('id', field(form, 'template_id')).maybeSingle();
+  if (!tpl || (tpl.entity_id ? !editor.mayEdit(tpl.entity_id) : !group)) error = 'That template was not found.';
+  else if (field(form, 'intent') === 'delete-template') {
+    await svc.from('newsletter_templates').delete().eq('id', tpl.id);
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_deleted_newsletter_template', event_detail: { name: tpl.name } });
+    notice = `Template “${tpl.name}” deleted.`;
+  } else if (field(form, 'name').length >= 2) {
+    await svc.from('newsletter_templates').update({ name: field(form, 'name').slice(0, 80), description: field(form, 'description').slice(0, 300), updated_at: new Date().toISOString() }).eq('id', tpl.id);
+    notice = 'Template saved.';
+  }
+} else if (form && group) {
+  const intent = field(form, 'intent');
+  const email = field(form, 'email').toLowerCase();
+  if (intent === 'add-subscriber') {
+    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email)) error = 'Enter a valid email address.';
+    else if (form.get('consent') !== 'on') error = 'Only add people who asked to receive the newsletter.';
+    else {
+      const { data: existing } = await svc.from('newsletter_subscribers').select('id').ilike('email', email).maybeSingle();
+      const row = { email, name: field(form, 'name'), status: 'subscribed', confirmed_at: new Date().toISOString(), unsubscribed_at: null };
+      const { error: e } = existing ? await svc.from('newsletter_subscribers').update(row).eq('id', existing.id) : await svc.from('newsletter_subscribers').insert({ ...row, source: 'admin' });
+      if (e) error = e.message;
+      else { await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_added_newsletter_subscriber', event_detail: { email } }); notice = `${email} is subscribed.`; }
+    }
+  } else if (intent === 'unsubscribe') {
+    await svc.from('newsletter_subscribers').update({ status: 'unsubscribed', unsubscribed_at: new Date().toISOString() }).eq('id', field(form, 'id'));
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_unsubscribed_newsletter_subscriber', event_detail: { id: field(form, 'id') } });
+    notice = 'Unsubscribed.';
+  } else if (intent === 'delete') {
+    await svc.from('newsletter_subscribers').delete().eq('id', field(form, 'id'));
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_deleted_newsletter_subscriber', event_detail: { id: field(form, 'id') } });
+    notice = 'Removed from the list.';
+  }
+}
+
+let query = svc.from('newsletter_issues').select('id, audience, entity_id, subject, status, scheduled_at, sent_at, created_at').order('created_at', { ascending: false }).limit(100);
+query = group && !scope.selected ? query : query.in('entity_id', scope.ids).eq('audience', 'shareholders');
+const { data: issues } = await query;
+const ids = (issues ?? []).map((i) => i.id);
+const { data: recs } = ids.length ? await svc.from('newsletter_recipients').select('issue_id, status, opened_at, clicked_at').in('issue_id', ids) : { data: [] };
+const stats = new Map<string, { sent: number; total: number; opened: number; clicked: number }>();
+for (const r of recs ?? []) {
+  const s = stats.get(r.issue_id) ?? { sent: 0, total: 0, opened: 0, clicked: 0 };
+  s.total++; if (r.status === 'sent') s.sent++; if (r.opened_at) s.opened++; if (r.clicked_at) s.clicked++;
+  stats.set(r.issue_id, s);
+}
+const q = Astro.url.searchParams.get('q')?.trim() ?? '';
+let subQuery = svc.from('newsletter_subscribers').select('id, email, name, source, status, confirmed_at, created_at, unsubscribed_at').order('created_at', { ascending: false }).limit(200);
+if (q) subQuery = subQuery.or(`email.ilike.%${q.replace(/[%,()]/g, '')}%,name.ilike.%${q.replace(/[%,()]/g, '')}%`);
+const { data: subs } = group ? await subQuery : { data: [] };
+const counts = group ? await Promise.all(['subscribed', 'pending', 'unsubscribed'].map(async (st) => [st, (await svc.from('newsletter_subscribers').select('id', { count: 'exact', head: true }).eq('status', st)).count ?? 0] as const)) : [];
+const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
+const templates = await listTemplates(svc, editor.mayEdit, group);
+const statusTone: Record<string, string> = { draft: 'bg-white/10 text-white/60', scheduled: 'bg-lk-orange/15 text-lk-orange', sending: 'bg-lk-blue/15 text-lk-blue', sent: 'bg-lk-green/15 text-lk-green', cancelled: 'bg-white/5 text-white/40' };
+---
+
+<Admin title="Newsletters">
+  <PageHeader title="Newsletters" subtitle="Quarterly newsletters for each company's shareholders, and the public newsletter for people who subscribe on the website.">
+    <a href={withCompany(scope, '/admin/newsletters/new')} class="btn-primary">New issue</a>
+  </PageHeader>
+  <AdminCompanyFilter scope={scope} />
+  {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
+  {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+
+  <section class="card overflow-hidden p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-3 font-medium">Issue</th><th class="px-5 py-3 font-medium">For</th><th class="px-5 py-3 font-medium">Status</th><th class="px-5 py-3 text-right font-medium">Sent</th><th class="px-5 py-3 text-right font-medium">Opened</th><th class="px-5 py-3 text-right font-medium">Clicked</th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {(issues ?? []).map((i) => {
+          const s = stats.get(i.id);
+          return (
+            <tr class="hover:bg-white/[0.02]">
+              <td class="px-5 py-3"><a href={withCompany(scope, `/admin/newsletters/${i.id}`)} class="font-medium text-white hover:underline">{i.subject || 'Untitled issue'}</a>
+                <span class="block text-xs text-white/40">{i.sent_at ? `Sent ${dateTime.format(new Date(i.sent_at))}` : i.scheduled_at && i.status === 'scheduled' ? `Scheduled for ${dateTime.format(new Date(i.scheduled_at))}` : `Created ${shortDate.format(new Date(i.created_at))}`}</span></td>
+              <td class="px-5 py-3 text-white/60">{i.audience === 'public' ? <span class="rounded-full bg-lk-blue/15 px-2 py-0.5 text-xs text-lk-blue">Public subscribers</span> : `${companyName(i.entity_id)} shareholders`}</td>
+              <td class="px-5 py-3"><span class:list={['rounded-full px-2 py-0.5 text-xs', statusTone[i.status]]}>{i.status}</span></td>
+              <td class="px-5 py-3 text-right tabular-nums text-white/70">{s ? `${s.sent} / ${s.total}` : '—'}</td>
+              <td class="px-5 py-3 text-right tabular-nums text-white/70">{s?.sent ? `${Math.round((s.opened / s.sent) * 100)}%` : '—'}</td>
+              <td class="px-5 py-3 text-right tabular-nums text-white/70">{s?.sent ? `${Math.round((s.clicked / s.sent) * 100)}%` : '—'}</td>
+            </tr>
+          );
+        })}
+        {!issues?.length && <tr><td colspan="6" class="px-5 py-6 text-center text-white/45">No issues yet.</td></tr>}
+      </tbody>
+    </table>
+  </section>
+  <p class="mt-2 text-xs text-white/35">Opens are approximate: some mail apps load images for everyone (counted as opened), others block them.</p>
+
+  <section class="card mt-8">
+    <h2 class="font-display text-lg font-bold">Templates</h2>
+    <p class="mt-1 text-sm text-white/55">New issues start from one of these. Save any issue as a template from its editor.</p>
+    <ul class="mt-4 divide-y divide-white/5 text-sm">
+      {templates.map((t) => (
+        <li class="flex flex-wrap items-center justify-between gap-3 py-2.5">
+          <span><span class="text-white/85">{t.name}</span> <span class="text-xs text-white/40">· {t.builtin_key ? 'built-in' : 'saved'} · {t.mode === 'design' ? 'designed' : t.mode === 'html' ? 'HTML' : 'composed'} · {t.audience === 'public' ? 'public' : t.entity_id ? companyName(t.entity_id) : 'all companies'}</span><span class="block text-xs text-white/45">{t.description}</span></span>
+          <a href={withCompany(scope, `/admin/newsletters/templates/${t.id}`)} class="btn-ghost px-3 py-1.5 text-xs">Edit</a>
+        </li>
+      ))}
+    </ul>
+  </section>
+
+  {group && (
+    <section class="card mt-8">
+      <div class="flex flex-wrap items-end justify-between gap-3">
+        <div><h2 class="font-display text-lg font-bold">Public newsletter subscribers</h2>
+          <p class="mt-1 text-sm text-white/55">{counts.map(([st, n]) => `${n} ${st}`).join(' · ')}. People sign up on the website and confirm by email.</p></div>
+        <a href="/admin/newsletters/subscribers.csv" class="btn-ghost text-sm">Export CSV</a>
+      </div>
+      <form method="get" class="mt-4 flex gap-2"><input name="q" value={q} placeholder="Search email or name" class="field max-w-xs" /><button class="btn-ghost">Search</button></form>
+      <ul class="mt-4 divide-y divide-white/5 text-sm">
+        {(subs ?? []).map((s) => (
+          <li class="flex flex-wrap items-center justify-between gap-3 py-2.5">
+            <span><span class="text-white/85">{s.email}</span>{s.name && <span class="text-white/45"> · {s.name}</span>}
+              <span class="block text-xs text-white/40">{s.status === 'subscribed' ? `Subscribed ${s.confirmed_at ? shortDate.format(new Date(s.confirmed_at)) : ''}` : s.status === 'pending' ? `Waiting for confirmation since ${shortDate.format(new Date(s.created_at))}` : `Unsubscribed ${s.unsubscribed_at ? shortDate.format(new Date(s.unsubscribed_at)) : ''}`} · {s.source === 'admin' ? 'added by an admin' : 'website'}</span></span>
+            <form method="post" class="flex gap-2"><input type="hidden" name="id" value={s.id} />
+              {s.status !== 'unsubscribed' && <button name="intent" value="unsubscribe" class="btn-ghost px-3 py-1 text-xs">Unsubscribe</button>}
+              <button name="intent" value="delete" class="btn-ghost px-3 py-1 text-xs text-lk-red" onclick="return confirm('Remove this person from the list completely?')">Remove</button></form>
+          </li>
+        ))}
+        {!subs?.length && <li class="py-4 text-white/45">No subscribers yet.</li>}
+      </ul>
+      <details class="mt-4">
+        <summary class="cursor-pointer text-sm text-lk-blue">Add someone by hand</summary>
+        <form method="post" class="mt-3 grid gap-3 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+          <input type="hidden" name="intent" value="add-subscriber" />
+          <div><label class="label" for="s-email">Email</label><input id="s-email" name="email" type="email" required class="field" /></div>
+          <div><label class="label" for="s-name">Name (optional)</label><input id="s-name" name="name" class="field" /></div>
+          <button class="btn-primary">Add</button>
+          <label class="flex items-start gap-2 text-xs text-white/60 sm:col-span-3"><input type="checkbox" name="consent" required class="mt-0.5 accent-lk-blue" /> They asked to receive the newsletter (the law requires their consent).</label>
+        </form>
+      </details>
+    </section>
+  )}
+</Admin>

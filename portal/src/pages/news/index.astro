@@ -16,6 +16,7 @@ const target = (external: boolean) => (external ? { target: '_blank', rel: 'noop
 
 <Portal title={t('News')}>
   <PageHeader eyebrow={t('News')} title={t('News for shareholders')} subtitle={company && company.relationship !== 'group' ? t('{company} shareholder updates, plus Lakeba’s public News & Media.', { company: company.display_name }) : t('Shareholder updates and Lakeba’s public News & Media, in one place.')} />
+  <p class="-mt-4 mb-6 text-sm"><a href="/newsletters" class="text-lk-blue hover:underline">{t('Past newsletters')} →</a></p>
   {company?.relationship === 'group' && <LinkedInCard src="news" compact />}
   {lead ? (
     <>

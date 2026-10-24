@@ -1,0 +1,29 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Empty from '../../components/Empty.astro';
+import { serviceClient } from '../../lib/admin';
+
+// Past newsletters: the company's shareholder issues and the public newsletter.
+const { company, companies, t, fmt } = Astro.locals;
+const mine = companies.map((c) => c.id);
+const { data: issues } = await serviceClient().from('newsletter_issues').select('id, subject, preheader, audience, entity_id, sent_at').eq('status', 'sent')
+  .or(`audience.eq.public,entity_id.in.(${(company ? [company.id] : mine).join(',') || '00000000-0000-0000-0000-000000000000'})`)
+  .order('sent_at', { ascending: false }).limit(40);
+const visible = (issues ?? []).filter((i) => i.audience === 'public' || mine.includes(i.entity_id));
+---
+
+<Portal title={t('Newsletters')}>
+  <PageHeader eyebrow={t('News')} title={t('Newsletters')} subtitle={t('Every newsletter we have sent, in case you missed one.')} />
+  {visible.length ? (
+    <ul class="grid gap-4 md:grid-cols-2">
+      {visible.map((i) => (
+        <li><a href={`/newsletters/${i.id}`} target="_blank" rel="noopener" class="card group block">
+          <p class="text-xs text-white/45"><span class="font-semibold text-lk-blue">{i.audience === 'public' ? t('Public newsletter') : t('Shareholder newsletter')}</span> · {fmt.longDate.format(new Date(i.sent_at!))}</p>
+          <h2 class="mt-2 text-lg font-bold group-hover:underline">{i.subject}</h2>
+          {i.preheader && <p class="mt-1 text-sm text-white/55">{i.preheader}</p>}
+        </a></li>
+      ))}
+    </ul>
+  ) : <Empty title={t('No newsletters yet')}>{t('Newsletters will appear here after they are sent.')}</Empty>}
+</Portal>

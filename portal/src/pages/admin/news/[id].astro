@@ -198,6 +198,7 @@ const companyNames = Object.fromEntries(scope.companies.map((c) => [c.id, c.disp
           <div class="flex flex-wrap gap-2">
             <button class="btn-primary">Save</button>
             <button type="submit" formaction="/admin/news/preview" formtarget="_blank" class="btn-ghost" data-preview>Preview</button>
+            <button type="button" class="btn-ghost" data-fullscreen title="Full screen with a live preview (Esc to leave)">⤢ Full screen</button>
           </div>
         </fieldset>
       </section>
@@ -232,6 +233,18 @@ const companyNames = Object.fromEntries(scope.companies.map((c) => [c.id, c.disp
           <div><label class="label" for="source_name">Publication</label><input id="source_name" name="source_name" value={post?.source_name ?? ''} placeholder="e.g. Australian Financial Review" class="field text-sm" /></div>
         </fieldset>
       </section>
+    </aside>
+    <aside data-news-preview class="min-w-0">
+      <div class="card sticky top-0 p-0">
+        <div class="flex items-center justify-between gap-2 px-4 py-3">
+          <h2 class="font-display text-base font-bold">Live preview</h2>
+          <span class="flex rounded-full border border-white/10 p-0.5 text-xs" role="group" aria-label="Preview width">
+            <button type="button" class="rounded-full bg-white/10 px-2.5 py-1" data-device="desktop" aria-pressed="true">Desktop</button>
+            <button type="button" class="rounded-full px-2.5 py-1 text-white/55" data-device="mobile" aria-pressed="false">Mobile</button>
+          </span>
+        </div>
+        <div class="flex justify-center rounded-b-2xl bg-black/30"><iframe sandbox="allow-same-origin" title="Live preview" class="h-[calc(100vh-7rem)] w-full transition-[width]" data-news-frame></iframe></div>
+      </div>
     </aside>
   </form>
 
@@ -270,6 +283,11 @@ const companyNames = Object.fromEntries(scope.companies.map((c) => [c.id, c.disp
 </Admin>
 
 <style is:global>
+  /* Full screen: editor and live preview side by side, filling the window. */
+  #news-form.is-fullscreen { position: fixed; inset: 0; z-index: 80; overflow: auto; padding: 1rem 1.25rem; background: var(--color-ink, #050b16); grid-template-columns: minmax(0, 1fr) 20rem minmax(0, 1fr); }
+  #news-form.is-fullscreen [data-news-preview] { display: block; }
+  [data-news-preview] { display: none; }
+  html.nl-fullscreen-open { overflow: hidden; }
   .news-editor .ProseMirror { outline: none; min-height: 22rem; color: color-mix(in oklab, var(--color-white) 85%, transparent); line-height: 1.75; }
   .news-editor .ProseMirror p { margin: 0 0 0.9rem; }
   .news-editor .ProseMirror h2 { margin: 1.6rem 0 0.6rem; font-size: 1.5rem; font-weight: 700; color: var(--color-white); }

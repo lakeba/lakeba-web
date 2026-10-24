@@ -23,7 +23,7 @@
 }
 
 @utility btn-primary {
-  @apply btn bg-lk-blue text-white shadow-lg shadow-lk-blue/25 hover:bg-[#3a78ee];
+  @apply btn bg-lk-blue text-[#fff] shadow-lg shadow-lk-blue/25 hover:bg-[#3a78ee];
 }
 
 @utility btn-ghost {

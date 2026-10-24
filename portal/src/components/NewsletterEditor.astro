@@ -1,0 +1,258 @@
+---
+// The newsletter editing area shared by issues and templates: Compose, HTML
+// and Designer modes, the content pickers, Build with AI (issues), the live
+// preview with desktop/mobile widths, and full screen. The page passes its own
+// side panel (sending for issues; name, versions and restore for templates).
+import CompanySelect from './CompanySelect.astro';
+import { PLACEHOLDERS, type IssueContent } from '../lib/newsletter';
+import { SNIPPETS } from '../lib/newsletter-templates';
+import type { AdminScope } from '../lib/admin-company';
+import { shortDate } from '../lib/format';
+
+interface Props {
+  kind: 'issue' | 'template';
+  record: { id: string; audience: 'shareholders' | 'public'; entity_id: string | null; subject: string; preheader: string; content: IssueContent; mode: 'compose' | 'html' | 'design'; html_body: string; mjml: string; design_json: unknown };
+  scope: AdminScope;
+  postOptions: { id: string; title: string; published_at: string | null; visibility: string }[];
+  docOptions: { id: string; title: string; published_at: string | null }[];
+  previewUrl: string;
+  brand: string;
+  showCompany?: boolean;
+  designErrors?: string[];
+}
+const { kind, record, scope, postOptions, docOptions, previewUrl, brand, showCompany = true, designErrors = [] } = Astro.props;
+const content = record.content ?? {};
+const sections = content.sections ?? [];
+const mode = record.mode;
+const audience = record.audience;
+const tab = (m: string) => ['rounded-full border px-4 py-1.5 text-sm', mode === m ? 'border-lk-blue text-white' : 'border-white/10 text-white/55 hover:text-white'];
+---
+
+<form method="post" id="nl-form" data-issue={kind === 'issue' ? record.id : ''} data-preview-url={previewUrl} class="nl-editor">
+  <input type="hidden" name="mode" value={mode} />
+  <div class="mb-4 flex flex-wrap items-center gap-2" data-nl-toolbar>
+    <div class="flex flex-wrap items-center gap-2" role="tablist" aria-label="How to write it">
+      <button name="intent" value="to-compose" role="tab" aria-selected={mode === 'compose'} class:list={tab('compose')} disabled={mode === 'compose'}>Compose</button>
+      <button name="intent" value="to-design" role="tab" aria-selected={mode === 'design'} class:list={tab('design')} disabled={mode === 'design'}>Designer</button>
+      <button name="intent" value="to-html" role="tab" aria-selected={mode === 'html'} class:list={tab('html')} disabled={mode === 'html'}>HTML</button>
+    </div>
+    <span class="hidden text-xs text-white/40 lg:inline">{mode === 'design' ? 'Drag blocks from the right; click anything to edit or style it.' : mode === 'html' ? 'Edit the HTML; the preview follows as you type.' : 'Switching keeps each version saved; the active tab is the one sent.'}</span>
+    <span class="ml-auto flex items-center gap-2">
+      <button type="button" class="btn-ghost px-3 py-1.5 text-xs" data-fullscreen title="Full screen (Esc to leave)">⤢ Full screen</button>
+    </span>
+  </div>
+  {designErrors.length > 0 && <p class="mb-3 rounded-xl border border-lk-orange/40 bg-lk-orange/10 px-4 py-2 text-xs text-white/80">Design notes: {designErrors.slice(0, 3).join(' · ')}</p>}
+
+  <div class:list={['nl-grid grid gap-6', mode === 'design' ? '' : '2xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]']}>
+    <div class="nl-main min-w-0 space-y-5">
+      <section class="card space-y-4" data-nl-meta>
+        <div class="grid gap-4 lg:grid-cols-2">
+          <div><label class="label" for="subject">Subject</label><input id="subject" name="subject" value={record.subject} maxlength="200" class="field font-semibold" /></div>
+          <div><label class="label" for="preheader">Preview text (shown after the subject in inboxes)</label><input id="preheader" name="preheader" value={record.preheader} maxlength="200" class="field" /></div>
+        </div>
+        {kind === 'issue' && <div class="flex flex-wrap gap-2"><button type="button" class="rounded-lg border border-lk-blue/40 px-2.5 py-1 text-xs text-lk-blue hover:bg-lk-blue/10" data-assist="subjects">✨ Suggest subject lines</button><span class="text-xs text-white/45" data-assist-out="subjects"></span></div>}
+        {kind === 'template' && <p class="text-xs text-white/40">You can use {'{{company}}'}, {'{{quarter}}'}, {'{{month_year}}'} and {'{{year}}'}: they're filled in when an issue starts from this template.</p>}
+      </section>
+
+      {kind === 'issue' && mode !== 'html' && (
+        <details class="card space-y-3 border border-lk-blue/30 bg-gradient-to-br from-lk-blue/10 to-transparent" open={Astro.url.searchParams.has('ai') || (mode === 'compose' && !content.intro_html && !sections.length)} data-ai-panel>
+          <summary class="cursor-pointer font-display text-lg font-bold">✨ Build with AI</summary>
+          <p class="text-sm text-white/60">Write the points you want to communicate. Claude drafts the subject{mode === 'design' ? ' and the content area of the design' : ', introduction, sections and closing'} from your notes{audience === 'shareholders' ? ', the ticked news, documents and meetings' : ' and the ticked news'}. It only uses facts you give it, and leaves [square brackets] where it needs more detail.</p>
+          <textarea name="brief" rows="5" class="field" data-ai-brief placeholder={"- Signed three new bank partners this quarter\n- FY26 results are out: revenue up 40% (see the annual report)\n- AGM on 20 November, please vote online\n- Thank shareholders for their support"}>{content.brief ?? ''}</textarea>
+          <div class="grid gap-3 sm:grid-cols-3">
+            <div><label class="label" for="ai-tone">Tone</label><select id="ai-tone" class="field" data-ai-tone><option value="warm">Warm and personal</option><option value="formal">Formal and concise</option><option value="upbeat">Upbeat</option></select></div>
+            <div><label class="label" for="ai-length">Length</label><select id="ai-length" class="field" data-ai-length><option value="short">Short</option><option value="standard" selected>Standard</option><option value="detailed">Detailed</option></select></div>
+            <label class="flex items-end gap-2 pb-2 text-sm text-white/70"><input type="checkbox" checked class="accent-lk-blue" data-ai-sources /> Use the ticked items as sources</label>
+          </div>
+          <div class="flex flex-wrap items-center gap-2">
+            <button type="button" class="btn-primary" data-ai-build>Build the newsletter</button>
+            <button type="button" class="btn-ghost hidden" data-ai-undo>Undo AI build</button>
+            <span class="text-sm text-white/55" data-ai-status></span>
+          </div>
+          <div class="hidden space-y-2" data-ai-result>
+            <p class="text-xs uppercase tracking-widest text-white/40">Other subject lines</p><div data-ai-subjects></div>
+            <p class="text-xs uppercase tracking-widest text-white/40">Check before sending</p><ul class="space-y-1 text-sm" data-ai-checks></ul>
+          </div>
+        </details>
+      )}
+      {!(kind === 'issue' && mode !== 'html') && <input type="hidden" name="brief" value={content.brief ?? ''} />}
+
+      {mode === 'design' && (
+        <section class="card overflow-hidden p-0" data-designer-card>
+          <div class="space-y-2 border-b border-white/10 px-4 py-3" data-dai>
+            <div class="flex flex-wrap items-center gap-2">
+              <input class="field min-w-[16rem] flex-1 py-2" maxlength="1000" data-dai-input aria-label="Ask AI to change the design" placeholder="✨ Ask AI to change the design, e.g. “add the logo top right”" />
+              <button type="button" class="btn-primary py-2" data-dai-ask>Ask AI</button>
+              <select class="field hidden w-auto py-2 text-sm" aria-label="Quick actions on the selected element" data-dai-quick>
+                <option value="">Quick actions…</option>
+                <optgroup label="Text">
+                  <option value="Improve the wording of this text: clearer and more engaging, same meaning and length.">Improve the wording</option>
+                  <option value="Make this text about half as long, keeping the key facts.">Shorter</option>
+                  <option value="Make this text warmer and more personal, same facts.">Friendlier</option>
+                  <option value="Make this text more formal and concise, same facts.">More formal</option>
+                </optgroup>
+                <optgroup label="Layout">
+                  <option value="Split this into two columns side by side, sharing the content sensibly.">Two columns</option>
+                  <option value="Turn this into a button (or add a button after it) with a short, clear label.">Make it a button</option>
+                  <option value="Restyle this with the brand colour, keeping enough contrast for reading.">Use the brand colour</option>
+                  <option value="Turn this content into a simple, readable table.">Turn into a table</option>
+                  <option value="Give this more space around it (padding) so it breathes.">More space</option>
+                  <option value="Make this easier to read on a phone: larger text, comfortable line height, enough contrast.">Easier to read on phones</option>
+                </optgroup>
+              </select>
+              <button type="button" class="btn-ghost py-2" data-dai-check>Check design</button>
+              <button type="button" class="btn-ghost hidden py-2" data-dai-undo>Undo AI change</button>
+            </div>
+            <p class="text-xs text-white/50" data-dai-status>Select an element first to change just that part, or ask about the whole design.</p>
+            <ul class="hidden space-y-1.5 text-sm" data-dai-issues></ul>
+          </div>
+          <div class="nl-designer h-[78vh] min-h-[36rem] bg-white"><div class="h-full" data-designer data-brand={brand} data-entity={record.entity_id ?? ''} data-audience={audience}></div></div>
+          <input type="hidden" name="mjml" value={record.mjml} />
+          <input type="hidden" name="design_json" value={record.design_json ? JSON.stringify(record.design_json) : ''} />
+          <p class="px-5 py-3 text-xs text-white/45">Portal blocks such as <strong>News list</strong> or <strong>Their holding</strong> show their placeholder here and are filled in for each reader. Videos become their picture with a ▶ button, linking to the video (emails can't play video). The footer with the unsubscribe link is added automatically.</p>
+        </section>
+      )}
+
+      {mode === 'html' && (
+        <section class="card space-y-3">
+          <div class="flex flex-wrap items-center justify-between gap-2">
+            <h2 class="font-display text-lg font-bold">HTML</h2>
+            <select class="field w-auto py-1.5 text-xs" aria-label="Insert" data-insert>
+              <option value="">Insert…</option>
+              <optgroup label="From the portal">{PLACEHOLDERS.map((p) => <option value={`{{${p}}}`}>{`{{${p}}}`}</option>)}</optgroup>
+              <optgroup label="Pieces">{SNIPPETS.map((s) => <option value={s.html}>{s.label}</option>)}</optgroup>
+              <option value="__image">Image (upload)…</option>
+            </select>
+            <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-html-image />
+          </div>
+          <textarea name="html_body" rows="34" spellcheck="false" class="field font-mono text-xs leading-relaxed" data-html>{record.html_body}</textarea>
+          <p class="text-xs text-white/40">The header, footer and unsubscribe link are added around this. Placeholders: <code>{'{{greeting}}'}</code>, <code>{'{{holding}}'}</code>, <code>{'{{news}}'}</code>, <code>{'{{documents}}'}</code>, <code>{'{{meetings}}'}</code>, <code>{'{{portal_button}}'}</code>. Scripts and forms are removed when saved.</p>
+        </section>
+      )}
+      {mode !== 'html' && <input type="hidden" name="html_body" value={record.html_body} />}
+      {mode !== 'design' && <><input type="hidden" name="mjml" value={record.mjml} /><input type="hidden" name="design_json" value={record.design_json ? JSON.stringify(record.design_json) : ''} /></>}
+
+      {mode === 'compose' ? (
+        <>
+          <section class="card space-y-3">
+            <h2 class="font-display text-lg font-bold">Introduction</h2>
+            <div class="rounded-xl border border-white/10" data-rich="intro_html" data-placeholder="A few words from the chair or CEO…" set:html={content.intro_html ?? ''}></div>
+            <input type="hidden" name="intro_html" />
+            <p class="text-xs text-white/40">Starts with “Dear first name,” automatically.</p>
+          </section>
+          <section class="card space-y-3">
+            <div class="flex items-center justify-between"><h2 class="font-display text-lg font-bold">Your sections</h2><button type="button" class="btn-ghost px-3 py-1.5 text-xs" data-add-section>+ Add a section</button></div>
+            <p class="text-sm text-white/55">Highlights, a project update, an interview… They appear after the introduction, before the automatic news.</p>
+            <div class="space-y-3" data-sections>
+              {sections.map((s) => (
+                <div class="rounded-xl border border-white/10 p-3" data-section>
+                  <div class="flex gap-2"><input name="section_title" value={s.title} placeholder="Section heading" class="field" aria-label="Section heading" />
+                    <button type="button" class="btn-ghost px-2 text-xs" data-move="-1" aria-label="Move up">↑</button><button type="button" class="btn-ghost px-2 text-xs" data-move="1" aria-label="Move down">↓</button><button type="button" class="btn-ghost px-2 text-xs text-lk-red" data-remove aria-label="Remove section">✕</button></div>
+                  <div class="mt-2 rounded-xl border border-white/10" data-rich="section_html" data-placeholder="Write the section…" set:html={s.html}></div><input type="hidden" name="section_html" />
+                </div>
+              ))}
+            </div>
+            <template data-section-template>
+              <div class="rounded-xl border border-white/10 p-3" data-section>
+                <div class="flex gap-2"><input name="section_title" placeholder="Section heading" class="field" aria-label="Section heading" />
+                  <button type="button" class="btn-ghost px-2 text-xs" data-move="-1" aria-label="Move up">↑</button><button type="button" class="btn-ghost px-2 text-xs" data-move="1" aria-label="Move down">↓</button><button type="button" class="btn-ghost px-2 text-xs text-lk-red" data-remove aria-label="Remove section">✕</button></div>
+                <div class="mt-2 rounded-xl border border-white/10" data-rich="section_html" data-placeholder="Write the section…"></div><input type="hidden" name="section_html" />
+              </div>
+            </template>
+          </section>
+          <section class="card space-y-3">
+            <h2 class="font-display text-lg font-bold">Closing and button</h2>
+            <div class="rounded-xl border border-white/10" data-rich="closing_html" data-placeholder="Thank you for your support… (optional)" set:html={content.closing_html ?? ''}></div>
+            <input type="hidden" name="closing_html" />
+            <div class="grid gap-3 sm:grid-cols-2">
+              <div><label class="label" for="cta_label">Button text (optional)</label><input id="cta_label" name="cta_label" value={content.cta_label} class="field" placeholder="Read the full report" /></div>
+              <div><label class="label" for="cta_url">Button link</label><input id="cta_url" name="cta_url" value={content.cta_url} class="field" placeholder="https://…" /></div>
+            </div>
+          </section>
+        </>
+      ) : (
+        <>
+          <input type="hidden" name="intro_html" value={content.intro_html ?? ''} /><input type="hidden" name="closing_html" value={content.closing_html ?? ''} />
+          <input type="hidden" name="cta_label" value={content.cta_label ?? ''} /><input type="hidden" name="cta_url" value={content.cta_url ?? ''} />
+          {sections.map((s) => <><input type="hidden" name="section_title" value={s.title} /><input type="hidden" name="section_html" value={s.html} /></>)}
+        </>
+      )}
+
+      <div class="grid gap-5 xl:grid-cols-2">
+        <section class="card">
+          <h2 class="font-display text-lg font-bold">{mode === 'compose' ? 'News' : 'News for the news list'}</h2>
+          {kind === 'template' ? <p class="mt-1 text-sm text-white/55">Issues pick the news published since their last issue. The preview shows recent news as an example.</p> : (
+            <ul class="mt-3 max-h-64 space-y-1 overflow-y-auto text-sm">
+              {postOptions.map((p) => <li><label class="flex items-center gap-2"><input type="checkbox" name="post_ids" value={p.id} checked={content.post_ids?.includes(p.id)} class="accent-lk-blue" /><span class="text-white/85">{p.title}</span><span class="text-xs text-white/40">{p.published_at && shortDate.format(new Date(p.published_at))} · {p.visibility === 'public' ? 'public' : 'shareholders'}</span></label></li>)}
+              {!postOptions.length && <li class="text-white/45">No news in the last four months.</li>}
+            </ul>
+          )}
+        </section>
+        {audience === 'shareholders' && (
+          <section class="card space-y-3">
+            <h2 class="font-display text-lg font-bold">Documents, meetings and holdings</h2>
+            {kind === 'issue' && (
+              <ul class="max-h-56 space-y-1 overflow-y-auto text-sm">
+                {docOptions.map((d) => <li><label class="flex items-center gap-2"><input type="checkbox" name="document_ids" value={d.id} checked={content.document_ids?.includes(d.id)} class="accent-lk-blue" /><span class="text-white/85">{d.title}</span><span class="text-xs text-white/40">{d.published_at && shortDate.format(new Date(d.published_at))}</span></label></li>)}
+                {!docOptions.length && <li class="text-white/45">No documents in the last four months.</li>}
+              </ul>
+            )}
+            <label class="flex items-center gap-2 text-sm text-white/75"><input type="checkbox" name="meetings" checked={content.meetings} class="accent-lk-blue" /> Upcoming meetings and proxy deadlines</label>
+            {mode === 'compose' ? <label class="flex items-center gap-2 text-sm text-white/75"><input type="checkbox" name="holding" checked={content.holding} class="accent-lk-blue" /> Each reader's holding and its indicative value</label> : <input type="hidden" name="holding" value={content.holding ? 'on' : ''} />}
+          </section>
+        )}
+      </div>
+
+      {kind === 'issue' && (
+        <section class="card space-y-2">
+          <div class="flex flex-wrap items-center gap-2"><button type="button" class="rounded-lg border border-lk-blue/40 px-2.5 py-1 text-xs text-lk-blue hover:bg-lk-blue/10" data-assist="check">✨ Check the wording</button><span class="text-xs text-white/45">Looks for forecasts, advice or promises that shouldn't be in a newsletter.</span></div>
+          <ul class="space-y-1 text-sm" data-assist-out="check"></ul>
+        </section>
+      )}
+    </div>
+
+    <div class:list={['nl-side min-w-0 space-y-4', mode === 'design' && 'grid gap-4 xl:grid-cols-[24rem_minmax(0,1fr)] xl:space-y-0']}>
+      <div class="space-y-4">
+        {showCompany && audience === 'shareholders' && kind === 'template' && <section class="card"><CompanySelect scope={scope} value={record.entity_id ?? scope.defaultCompany?.id} /></section>}
+        <slot name="side" />
+      </div>
+      <section class="card p-0" data-preview-card>
+        <div class="flex flex-wrap items-center justify-between gap-2 px-5 py-3">
+          <h2 class="font-display text-lg font-bold">{mode === 'design' ? 'The email as sent' : 'Preview'}</h2>
+          <span class="flex items-center gap-2">
+            <span class="text-xs text-white/40" data-preview-status>Updates as you edit</span>
+            <span class="flex rounded-full border border-white/10 p-0.5 text-xs" role="group" aria-label="Preview width">
+              <button type="button" class="rounded-full bg-white/10 px-2.5 py-1" data-device="desktop" aria-pressed="true">Desktop</button>
+              <button type="button" class="rounded-full px-2.5 py-1 text-white/55" data-device="mobile" aria-pressed="false">Mobile</button>
+            </span>
+          </span>
+        </div>
+        <div class="flex justify-center rounded-b-2xl bg-[#eef2f8]">
+          <iframe sandbox="allow-same-origin allow-popups" title="Live preview" class="h-[60rem] w-full bg-white transition-[width]" data-preview src={previewUrl}></iframe>
+        </div>
+      </section>
+    </div>
+  </div>
+</form>
+
+<style is:global>
+  .rich-area .ProseMirror { outline: none; min-height: 6rem; color: color-mix(in oklab, var(--color-white) 85%, transparent); line-height: 1.7; }
+  .rich-area .ProseMirror p { margin: 0 0 0.7rem; } .rich-area .ProseMirror ul { list-style: disc; margin-left: 1.3rem; }
+  .rich-area .ProseMirror h3 { margin: 0.8rem 0 0.4rem; font-weight: 700; color: var(--color-white); }
+  .rich-area .ProseMirror a { color: #5b8ff0; text-decoration: underline; }
+  .rich-area .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); float: left; height: 0; pointer-events: none; color: color-mix(in oklab, var(--color-white) 35%, transparent); }
+  /* Full screen: the editor takes the whole window; editor and preview side by side. */
+  .nl-editor.is-fullscreen { position: fixed; inset: 0; z-index: 80; overflow: auto; padding: 1rem 1.25rem; background: var(--color-ink, #050b16); }
+  .nl-editor.is-fullscreen .nl-grid { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .nl-editor.is-fullscreen .nl-designer { height: calc(100vh - 16rem); }
+  .nl-designer { --gjs-left-width: 17rem; }
+  .nl-editor.is-fullscreen:has(.nl-designer) .nl-grid { grid-template-columns: minmax(0, 1fr); }
+  .nl-editor.is-fullscreen iframe[data-preview] { height: calc(100vh - 8rem); }
+  .nl-editor.is-fullscreen .nl-side { position: sticky; top: 0; align-self: start; }
+  html.nl-fullscreen-open { overflow: hidden; }
+</style>
+
+<script>
+  import { initNewsletterEditor } from '../scripts/newsletter-editor';
+  initNewsletterEditor();
+</script>
