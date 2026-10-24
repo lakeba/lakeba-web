@@ -6,7 +6,8 @@
 # Off-server copy: when /etc/lakeba-backup/offsite.env exists (set up by
 # lakeba-set-offsite-backup), each backup is encrypted on this server (GnuPG,
 # AES-256, passphrase kept root-only here and by you in a password manager)
-# and copied to Backblaze B2; copies older than REMOTE_KEEP_DAYS are deleted.
+# and copied to Azure Blob Storage (Australia East); copies older than
+# REMOTE_KEEP_DAYS are deleted there.
 set -euo pipefail
 DEST=/var/backups/lakeba
 KEEP_DAYS=14
@@ -31,11 +32,11 @@ OFFSITE=/etc/lakeba-backup/offsite.env
 if [[ -f "$OFFSITE" ]]; then
   # shellcheck disable=SC1090
   source "$OFFSITE"
-  export RCLONE_CONFIG_B2_TYPE=b2 RCLONE_CONFIG_B2_ACCOUNT="$B2_KEY_ID" RCLONE_CONFIG_B2_KEY="$B2_APP_KEY" RCLONE_CONFIG_B2_HARD_DELETE=true
+  export RCLONE_CONFIG_AZ_TYPE=azureblob RCLONE_CONFIG_AZ_ACCOUNT="$AZ_ACCOUNT" RCLONE_CONFIG_AZ_KEY="$AZ_KEY"
   enc="$(mktemp -p /var/tmp lakeba-backup.XXXXXX)"
   tar -C "$DEST" -cf - "$stamp" | gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase-file /etc/lakeba-backup/passphrase -o "$enc"
-  rclone copyto "$enc" "b2:$B2_BUCKET/lakeba/$stamp.tar.gpg" --b2-chunk-size 96M
+  rclone copyto "$enc" "az:$AZ_CONTAINER/lakeba/$stamp.tar.gpg"
   rm -f "$enc"
-  rclone delete "b2:$B2_BUCKET/lakeba" --min-age "${REMOTE_KEEP_DAYS:-35}d"
-  echo "Off-server copy: b2:$B2_BUCKET/lakeba/$stamp.tar.gpg"
+  rclone delete "az:$AZ_CONTAINER/lakeba" --min-age "${REMOTE_KEEP_DAYS:-35}d"
+  echo "Off-server copy: az:$AZ_CONTAINER/lakeba/$stamp.tar.gpg"
 fi

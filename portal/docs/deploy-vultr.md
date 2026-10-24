@@ -56,20 +56,28 @@ and matched the live database.
 These copies are on the same server: they protect against mistakes, not against
 losing the server. Vultr's automatic backups cover the whole machine.
 
-**Off-server copy (Backblaze B2).** Once `/etc/lakeba-backup/offsite.env` exists,
-each night's folder is also packed, encrypted with GPG (AES-256, passphrase in
-`/etc/lakeba-backup/passphrase`) and uploaded with rclone to
-`b2:<bucket>/lakeba/<date>.tar.gpg`; copies older than 35 days are deleted there.
-Set it up once with `ssh -t root@<server> lakeba-set-offsite-backup` (from
-`deploy/vultr/set-offsite-backup.sh`): it asks for the B2 key ID, application key
-and bucket, shows the new passphrase once (keep it in the password manager: the
-copies can't be read without it), runs a backup and test-restores the upload.
-In B2: a **private** bucket, and an application key limited to that bucket with
-read and write.
+**Off-server copy (Azure Blob Storage, Australia East).** Once
+`/etc/lakeba-backup/offsite.env` exists, each night's folder is also packed,
+encrypted with GPG (AES-256, passphrase in `/etc/lakeba-backup/passphrase`) and
+uploaded with rclone to `<container>/lakeba/<date>.tar.gpg`; copies older than
+35 days are deleted there. Set it up once with
+`ssh -t root@<server> lakeba-set-offsite-backup` (from
+`deploy/vultr/set-offsite-backup.sh`): it installs the current rclone (Ubuntu's
+package is too old for Azure), asks for the storage account name, an access key
+and the container, shows the new passphrase once (keep it in the password
+manager: the copies can't be read without it), runs a backup and test-restores
+the upload.
 
-Restore from B2 on any machine with rclone and gpg:
+In Azure: a storage account used only for these backups (Standard, LRS,
+region Australia East, default access tier **Cool**, public access off), with
+blob soft delete on (14 days) and a private container `lakeba-backups`. The
+server holds that account's access key; soft delete and any retention policy
+are set in the Azure portal, which the key can't change, so a compromised server
+can't erase the copies for good.
+
+Restore on any machine with rclone and gpg:
 ```
-rclone copy b2:<bucket>/lakeba/<date>.tar.gpg .
+rclone copy :azureblob,account=<account>,key=<key>:lakeba-backups/lakeba/<date>.tar.gpg .
 gpg --decrypt <date>.tar.gpg | tar -x   # asks for the passphrase
 ```
 
