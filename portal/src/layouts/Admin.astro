@@ -48,7 +48,7 @@ const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.lab
 ---
 
 <Portal title={`${title} · Admin`}>
-  <div class="grid gap-8 lg:grid-cols-[13rem_1fr]">
+  <div class="grid gap-6 lg:grid-cols-[12rem_1fr] xl:gap-8">
     <aside class="lg:sticky lg:top-32 lg:max-h-[calc(100vh-9rem)] lg:self-start lg:overflow-y-auto">
       <!-- On phones the whole menu folds away under the current page's name. -->
       <details class="group/menu lg:hidden" data-admin-menu>

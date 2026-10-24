@@ -59,7 +59,7 @@ const { count: unread } = user
       <div class="absolute -top-48 left-1/4 h-[30rem] w-[30rem] rounded-full bg-lk-blue/15 blur-[120px]"></div>
     </div>
     <header class="sticky top-0 z-40 border-b border-white/5 bg-ink/80 backdrop-blur-xl">
-      <div class="container-x flex h-16 items-center justify-between gap-4">
+      <div class="container-portal flex h-16 items-center justify-between gap-4">
         <a href="/" class="flex shrink-0 items-center gap-2.5">
           <Mark class="size-7" />
           <span class:list={["font-display text-lg font-bold text-white", company && (companies.length > 1 || !isGroup) && "hidden sm:inline"]}>lakeba</span>
@@ -107,18 +107,18 @@ const { count: unread } = user
           </details>
         </div>
       </div>
-      <nav class="container-x -mb-px flex gap-1 overflow-x-auto pb-px text-sm [scrollbar-width:none]" aria-label={t('Portal')}>
+      <nav class="container-portal -mb-px flex gap-1 overflow-x-auto pb-px text-sm [scrollbar-width:none]" aria-label={t('Portal')}>
         {nav.map((n) => (
           <a href={n.href} aria-current={isActive(n.href) ? 'page' : undefined}
             class:list={['shrink-0 border-b-2 px-3 py-3 transition', isActive(n.href) ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{n.label}</a>
         ))}
       </nav>
     </header>
-    <main class="container-x py-10">
+    <main class="container-portal py-10">
       <NoteBanner />
       <slot />
     </main>
-    <footer class="container-x flex flex-col justify-between gap-2 border-t border-white/5 py-8 text-xs text-white/35 sm:flex-row">
+    <footer class="container-portal flex flex-col justify-between gap-2 border-t border-white/5 py-8 text-xs text-white/35 sm:flex-row">
       <p>{isGroup || !company ? `© ${new Date().getFullYear()} Lakeba Group Limited` : t('{company} Investor Portal, powered by Lakeba', { company: company.display_name })}</p>
       <p>{t('Questions:')} {features.boardQa && <><a href="/board" class="hover:text-white">{t('Board Q&A')}</a> · </>}<a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
     </footer>

@@ -3,6 +3,8 @@
 
 @layer base {
   html { color-scheme: dark; }
+  /* Laptop screens (up to about 16"): everything a little smaller, in proportion. */
+  @media (max-width: 1800px) { html { font-size: 15px; } }
   body {
     @apply min-h-dvh bg-ink font-sans text-white/80 antialiased;
   }
@@ -10,8 +12,13 @@
   ::selection { background: var(--color-lk-blue); color: white; }
 }
 
+/* The portal's page width: wider than the website's, so laptop screens aren't half margin. */
+@utility container-portal {
+  @apply mx-auto w-full max-w-[1250px] px-4 sm:px-6 lg:px-8;
+}
+
 @utility field {
-  @apply w-full rounded-xl border border-white/10 bg-white/[0.04] px-4 py-3 text-white placeholder:text-white/30 outline-none transition focus:border-lk-blue focus:bg-white/[0.07] focus:ring-2 focus:ring-lk-blue/30;
+  @apply w-full rounded-xl border border-white/10 bg-white/[0.04] px-3.5 py-2.5 text-white placeholder:text-white/30 outline-none transition focus:border-lk-blue focus:bg-white/[0.07] focus:ring-2 focus:ring-lk-blue/30;
 }
 
 @utility label {
@@ -19,7 +26,7 @@
 }
 
 @utility btn {
-  @apply inline-flex items-center justify-center gap-2 rounded-xl px-5 py-3 font-semibold transition disabled:opacity-50;
+  @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 font-semibold transition disabled:opacity-50;
 }
 
 @utility btn-primary {

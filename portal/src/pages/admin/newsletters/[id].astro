@@ -271,7 +271,7 @@ const pickable = templates.filter((t) => t.audience !== 'public' || editor.group
             <button name="intent" value="test" class="btn-ghost">Send me a test</button>
           </div>
           <div><label class="label" for="scheduled_at">Schedule for (your time)</label>
-            <div class="flex gap-2"><input id="scheduled_at" name="scheduled_at" type="datetime-local" value={localDate(issue!.scheduled_at)} class="field" /><button name="intent" value="schedule" class="btn-ghost shrink-0">Schedule</button></div></div>
+            <div class="flex flex-wrap gap-2"><input id="scheduled_at" name="scheduled_at" type="datetime-local" value={localDate(issue!.scheduled_at)} class="field min-w-0 flex-1 basis-48" /><button name="intent" value="schedule" class="btn-ghost shrink-0">Schedule</button></div></div>
           {issue!.status === 'scheduled' && <button name="intent" value="cancel-schedule" class="btn-ghost w-full text-sm">Cancel the schedule</button>}
           <input type="hidden" name="expected" value={readers.length} />
           <button name="intent" value="send" class="btn-primary w-full" disabled={!readers.length} onclick={`return confirm('Send this issue now to ${readers.length} ${readers.length === 1 ? 'person' : 'people'}? It can\\'t be undone.')`}>Send now to {readers.length}</button>
