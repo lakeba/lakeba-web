@@ -7,7 +7,7 @@ import { dateTime } from '../../lib/format';
 import { serviceClient } from '../../lib/admin';
 import { categoryOf } from '../../lib/notification-events';
 import { processOutbox, pushEnabled } from '../../lib/push';
-import { proxyReminders, votesSummary } from '../../lib/notify-jobs';
+import { proxyReminders, votesSummary, weeklyDigest } from '../../lib/notify-jobs';
 
 // Group admins only (the middleware lets company admins open only their own pages).
 const svc = serviceClient();
@@ -20,6 +20,11 @@ if (intent === 'run-jobs') {
   await processOutbox();
   await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_ran_notification_jobs', event_detail: { reminders, summaries } });
   notice = `Done: ${reminders} proxy reminder${reminders === 1 ? '' : 's'} and ${summaries} vote summar${summaries === 1 ? 'y' : 'ies'} sent. (They also run automatically: reminders about a day before each proxy deadline, the summary each morning.)`;
+}
+if (intent === 'digest') {
+  const sent = await weeklyDigest(new Date(), { force: true });
+  await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_sent_weekly_digest', event_detail: { sent } });
+  notice = `Weekly digest sent to ${sent} ${sent === 1 ? 'person' : 'people'} (those who chose it and had updates in the last 7 days). It also goes out by itself on Monday mornings.`;
 }
 if (intent === 'retry') {
   await svc.from('notification_outbox').update({ failed_at: null, attempts: 0, next_attempt_at: new Date().toISOString() }).not('failed_at', 'is', null).gte('created_at', new Date(Date.now() - 7 * 86400_000).toISOString());
@@ -59,6 +64,7 @@ const status = (r: { sent_at: string | null; failed_at: string | null }) => (r.s
   <div class="mb-6 flex flex-wrap gap-3">
     <a href="/account/notifications" class="btn-ghost">My notifications and a test</a>
     <form method="post"><button name="intent" value="run-jobs" class="btn-ghost">Run reminders and summary now</button></form>
+    <form method="post" onsubmit="return confirm('Email this week’s digest now to everyone who chose it?')"><button name="intent" value="digest" class="btn-ghost">Send this week’s digest now</button></form>
     {(failed ?? 0) > 0 && <form method="post"><button name="intent" value="retry" class="btn-ghost">Retry failed</button></form>}
   </div>
 

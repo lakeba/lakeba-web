@@ -1,5 +1,6 @@
 ---
 import Portal from '../layouts/Portal.astro';
+import { fyLabel, fyOf } from '../lib/tax-pack';
 import Sparkline from '../components/Sparkline.astro';
 import LinkedInCard from '../components/LinkedInCard.astro';
 import HoldingNote from '../components/HoldingNote.astro';
@@ -68,6 +69,7 @@ const priceWide = positions.length > 0 && positions.length % 2 === 0 && !liquidi
 const meeting = meetings?.[0];
 const firstName = Astro.locals.profile?.first_name || 'there';
 const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-lk-green/30 bg-lk-green/10', warning: 'border-lk-orange/40 bg-lk-orange/10' };
+const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
 ---
 
 <Portal title="Dashboard">
@@ -120,7 +122,10 @@ const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-l
             <h2 class="text-lg font-bold">{p.holder.name}</h2>
             <p class="text-sm text-white/45">{holderKinds[p.holder.kind]} · {p.row.share_classes?.name}</p>
           </div>
-          <a href={`/statement/${p.holder.id}?class=${p.row.share_class_id}`} class="btn-ghost px-3 py-2 text-xs">Holding statement ↓</a>
+          <div class="flex flex-wrap justify-end gap-2">
+            <a href={`/statement/${p.holder.id}?class=${p.row.share_class_id}`} class="btn-ghost px-3 py-2 text-xs">Holding statement ↓</a>
+            <a href={`/statement/${p.holder.id}/tax/${lastClosedFy}`} class="btn-ghost px-3 py-2 text-xs" title={`Holdings and changes for ${fyLabel(lastClosedFy)}`}>Tax pack FY{String(lastClosedFy).slice(2)} ↓</a>
+          </div>
         </div>
         <dl class="mt-8 grid grid-cols-2 gap-4 sm:grid-cols-3">
           <div><dt class="text-xs uppercase tracking-widest text-white/40">{isShareClass(p) ? 'Shares' : 'Options'}</dt><dd class="mt-1 flex items-center gap-1.5 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{shares.format(p.row.shares)}<HoldingNote note={p.note} class="text-base" /></dd></div>

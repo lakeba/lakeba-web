@@ -1,5 +1,6 @@
 import { serviceClient } from './admin';
 import { memberIds, notifyAdmins, notifyMembers } from './notify';
+import { CATEGORIES, DIGESTED } from './notification-events';
 import { processOutbox, pushEnabled } from './push';
 import { pollMailboxes, sendDueAutoReplies } from './shareholder-email';
 
@@ -74,6 +75,31 @@ export async function votesSummary(now = new Date(), { force = false } = {}) {
   return sent;
 }
 
+/** Monday from 8am Sydney: one email per person on the digest, with the week's updates from their Inbox. */
+export async function weeklyDigest(now = new Date(), { force = false } = {}) {
+  const t = sydney(now);
+  const monday = new Intl.DateTimeFormat('en-AU', { timeZone: 'Australia/Sydney', weekday: 'short' }).format(now) === 'Mon';
+  if (!force && (!monday || Number(t.hour) < 8)) return 0;
+  const svc = serviceClient();
+  if (!(await claim(svc, force ? `digest:manual:${now.toISOString()}` : `digest:${t.year}-${t.month}-${t.day}`))) return 0;
+  const { data: subscribers } = await svc.from('notification_preferences').select('user_id').eq('category', 'digest').eq('email', true);
+  const kinds = CATEGORIES.filter((c) => DIGESTED.includes(c.key)).flatMap((c) => c.kinds);
+  const since = new Date(now.getTime() - 7 * 24 * 3600_000).toISOString();
+  let sent = 0;
+  for (const { user_id } of subscribers ?? []) {
+    const { data: items } = await svc.from('notifications').select('title, created_at').eq('user_id', user_id).in('kind', kinds).gte('created_at', since).order('created_at');
+    if (!items?.length) continue;
+    const lines = items.slice(0, 25).map((i) => `• ${i.title}`).join('\n') + (items.length > 25 ? `\n• …and ${items.length - 25} more` : '');
+    await notifyMembers({
+      kind: 'digest', userIds: [user_id], origin: lastOrigin, link: '/inbox', inbox: false,
+      title: `Your week at Lakeba: ${items.length} update${items.length === 1 ? '' : 's'}`,
+      body: `Here’s what was new for you in the investor portal this week:\n\n${lines}`,
+    });
+    sent++;
+  }
+  return sent;
+}
+
 /** Keeps the delivery log to 30 days. */
 async function cleanup(now = new Date()) {
   const svc = serviceClient();
@@ -95,7 +121,7 @@ export function startNotificationWorker() {
       if (pushEnabled()) await processOutbox();
       if (ticks % 4 === 0) await pollMailboxes(lastOrigin); // shareholder mailboxes, every minute
       await sendDueAutoReplies(lastOrigin); // automatic replies whose 5-minute undo window has passed
-      if (ticks++ % 40 === 0) { await proxyReminders(); await votesSummary(); await cleanup(); }
+      if (ticks++ % 40 === 0) { await proxyReminders(); await votesSummary(); await weeklyDigest(); await cleanup(); }
     } catch (e) {
       console.error('notification worker', (e as Error).message);
     }

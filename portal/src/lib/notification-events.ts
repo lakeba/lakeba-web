@@ -10,6 +10,7 @@ export type Category = {
   email: boolean; // default
   push: boolean; // default
   locked?: boolean; // always on (security)
+  emailOnly?: boolean; // no browser notification for this one
   kinds: string[];
 };
 
@@ -19,6 +20,7 @@ export const CATEGORIES: Category[] = [
   { key: 'news', audience: 'investor', label: 'News and announcements', description: 'Company news, announcements and campaigns.', email: true, push: true, kinds: ['news', 'linkedin', 'reminder'] },
   { key: 'replies', audience: 'investor', label: 'Answers to your questions', description: 'The board answered your question, or your AGM question was answered.', email: true, push: true, kinds: ['query_reply', 'agm_answer'] },
   { key: 'holdings', audience: 'investor', label: 'Your holdings', description: 'A new holding statement is ready, or a note was added to one of your holdings.', email: true, push: true, kinds: ['holding_note', 'statement_ready'] },
+  { key: 'digest', audience: 'investor', label: 'Weekly digest', description: 'One email each Monday with the week’s new documents, news and holding updates, instead of a separate email for each.', email: false, push: false, emailOnly: true, kinds: ['digest'] },
   { key: 'security', audience: 'investor', label: 'Account security', description: 'A passkey was added or removed, your password changed, or two-step verification changed.', email: true, push: true, locked: true, kinds: ['security'] },
   { key: 'admin_questions', audience: 'admin', label: 'Board Q&A', description: 'A new question or an investor’s reply.', email: false, push: true, kinds: ['admin_query'] },
   { key: 'admin_agm', audience: 'admin', label: 'AGM questions', description: 'An investor sent a question for a meeting.', email: false, push: true, kinds: ['admin_agm_question'] },
@@ -28,6 +30,9 @@ export const CATEGORIES: Category[] = [
   { key: 'admin_ask', audience: 'admin', label: 'Ask Lakeba', description: 'An answer was rated 👎, or a cost or usage limit was reached.', email: true, push: true, kinds: ['ask_alert', 'admin_ask_feedback'] },
   { key: 'admin_security', audience: 'admin', label: 'Admin security', description: 'An admin account signed in from a new device, or someone’s two-step was reset.', email: true, push: true, locked: true, kinds: ['admin_security'] },
 ];
+
+/** Categories whose emails the weekly digest replaces (for people who chose it). */
+export const DIGESTED = ['documents', 'news', 'holdings'];
 
 const byKind = new Map(CATEGORIES.flatMap((c) => c.kinds.map((k) => [k, c] as const)));
 export const categoryOf = (kind: string) => byKind.get(kind);
@@ -45,6 +50,7 @@ export function pushText(kind: string, brand: string, detail?: string): { title:
     case 'agm_answer': return { title: 'Your meeting question was answered', body: open };
     case 'holding_note': return { title: 'A note was added to your holding', body: open };
     case 'statement_ready': return { title: 'Your holding statement is ready', body: open };
+    case 'digest': return { title: 'Your week at Lakeba', body: open };
     case 'security': return { title: 'Security alert for your account', body: detail ?? open };
     case 'admin_query': return { title: 'Board Q&A: new message from an investor', body: open };
     case 'admin_agm_question': return { title: 'New AGM question', body: open };

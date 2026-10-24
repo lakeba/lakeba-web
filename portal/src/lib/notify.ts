@@ -1,6 +1,6 @@
 import { serviceClient } from './admin';
 import { sendMail } from './mail';
-import { categoryOf, pushText } from './notification-events';
+import { DIGESTED, categoryOf, pushText } from './notification-events';
 import { preferences, queuePush } from './push';
 import { createSignInLink } from './sign-in-links';
 
@@ -61,8 +61,8 @@ async function companyOf(svc: Svc, entityId?: string) {
  * `pushDetail` is a public line for the browser notification (e.g. a document
  * title); push texts are otherwise generic, as they can show on a locked screen.
  */
-export async function notifyMembers({ title, body, link, kind, userIds, origin, emailLink, email = true, entityId, pushDetail }: {
-  title: string; body: string; link: string; kind: string; userIds?: string[]; origin: string; emailLink?: string; email?: boolean; entityId?: string; pushDetail?: string;
+export async function notifyMembers({ title, body, link, kind, userIds, origin, emailLink, email = true, entityId, pushDetail, inbox = true }: {
+  title: string; body: string; link: string; kind: string; userIds?: string[]; origin: string; emailLink?: string; email?: boolean; entityId?: string; pushDetail?: string; inbox?: boolean;
 }) {
   const svc = serviceClient();
   const recipients = userIds ?? (await memberIds(entityId));
@@ -72,12 +72,17 @@ export async function notifyMembers({ title, body, link, kind, userIds, origin, 
   const via = (href: string) => (company && href.startsWith('/') && !href.startsWith('/go/') ? `/company/${company.code}?next=${encodeURIComponent(href)}` : href);
   const brand = company && company.relationship !== 'group' ? company.display_name : 'Lakeba';
 
-  await svc.from('notifications').insert(recipients.map((user_id) => ({ user_id, kind, title, body, link: via(link), entity_id: entityId ?? null }))).throwOnError();
-  await queuePush(svc, recipients, kind, { ...pushText(kind, brand, pushDetail), url: via(link), tag: kind });
+  if (inbox) await svc.from('notifications').insert(recipients.map((user_id) => ({ user_id, kind, title, body, link: via(link), entity_id: entityId ?? null }))).throwOnError();
+  if (!categoryOf(kind)?.emailOnly) await queuePush(svc, recipients, kind, { ...pushText(kind, brand, pushDetail), url: via(link), tag: kind });
   if (!email) return recipients.length;
   const category = categoryOf(kind);
   const prefs = category ? await preferences(svc, recipients, category.key) : null;
-  const emailTo = recipients.filter((id) => !prefs || prefs.get(id)?.email);
+  let emailTo = recipients.filter((id) => !prefs || prefs.get(id)?.email);
+  // People on the weekly digest get these in Monday's email instead.
+  if (category && DIGESTED.includes(category.key) && emailTo.length) {
+    const digest = await preferences(svc, emailTo, 'digest');
+    emailTo = emailTo.filter((id) => !digest.get(id)?.email);
+  }
   if (!emailTo.length) return recipients.length;
   const { data: profiles } = await svc.from('profiles').select('id, email').in('id', emailTo);
   // A personal one-time button that signs them in and opens it (not for tracked links, security or admin emails).

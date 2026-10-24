@@ -54,8 +54,24 @@ Files for all of this are in `portal/deploy/vultr/`.
 and matched the live database.
 
 These copies are on the same server: they protect against mistakes, not against
-losing the server. Vultr's automatic backups cover the whole machine; an
-off-server copy (e.g. Vultr Object Storage) is still to be set up.
+losing the server. Vultr's automatic backups cover the whole machine.
+
+**Off-server copy (Backblaze B2).** Once `/etc/lakeba-backup/offsite.env` exists,
+each night's folder is also packed, encrypted with GPG (AES-256, passphrase in
+`/etc/lakeba-backup/passphrase`) and uploaded with rclone to
+`b2:<bucket>/lakeba/<date>.tar.gpg`; copies older than 35 days are deleted there.
+Set it up once with `ssh -t root@<server> lakeba-set-offsite-backup` (from
+`deploy/vultr/set-offsite-backup.sh`): it asks for the B2 key ID, application key
+and bucket, shows the new passphrase once (keep it in the password manager: the
+copies can't be read without it), runs a backup and test-restores the upload.
+In B2: a **private** bucket, and an application key limited to that bucket with
+read and write.
+
+Restore from B2 on any machine with rclone and gpg:
+```
+rclone copy b2:<bucket>/lakeba/<date>.tar.gpg .
+gpg --decrypt <date>.tar.gpg | tar -x   # asks for the passphrase
+```
 
 Restore the database from a backup folder `D`:
 ```

@@ -3,8 +3,8 @@ import '../styles/portal.css';
 import Mark from '../../../src/components/Mark.astro';
 import ThemeInit from '../../../src/components/ThemeInit.astro';
 import ThemeToggle from '../../../src/components/ThemeToggle.astro';
-interface Props { title: string; subtitle?: string }
-const { title, subtitle } = Astro.props;
+interface Props { title: string; subtitle?: string; wide?: boolean }
+const { title, subtitle, wide = false } = Astro.props;
 ---
 
 <!doctype html>
@@ -32,7 +32,7 @@ const { title, subtitle } = Astro.props;
       <div class="absolute -top-40 left-1/2 h-[36rem] w-[36rem] -translate-x-full rounded-full bg-lk-blue/20 blur-[120px]"></div>
       <div class="absolute bottom-0 left-1/2 h-[28rem] w-[28rem] rounded-full bg-lk-orange/10 blur-[120px]"></div>
     </div>
-    <main class="w-full max-w-md">
+    <main class:list={['w-full', wide ? 'max-w-3xl' : 'max-w-md']}>
       <a href="/" class="mb-8 flex items-center justify-center gap-2.5">
         <Mark class="size-9" />
         <span class="font-display text-xl font-bold text-white">lakeba</span>

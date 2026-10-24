@@ -1,0 +1,152 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
+import { serviceClient } from '../../lib/admin';
+import { adminScope } from '../../lib/admin-company';
+import { memberIds } from '../../lib/notify';
+import { displayName } from '../../lib/admin-forms';
+import { percent, shortDate } from '../../lib/format';
+
+// Who is engaging with one company's portal: per person (sign-ins, documents
+// read, emails, votes, Ask and Board Q&A) and per document (how many read it).
+// The people are worked out with the service key, then every query is limited
+// to this company, so company admins only ever see their own shareholders.
+const svc = serviceClient();
+const scope = await adminScope(Astro.locals, Astro.url);
+const company = scope.selected ?? scope.defaultCompany;
+const quiet = Astro.url.searchParams.get('quiet') === '1';
+const DAY = 86_400_000;
+const since90 = new Date(Date.now() - 90 * DAY).toISOString();
+
+type Row = { id: string; email: string; first_name: string | null; last_name: string | null; lastSignIn: string | null; signIns: number; docsRead: number; emails: number; votes: number; ask: number; qa: number };
+let rows: Row[] = [];
+let total = 0;
+let docs: { id: string; title: string; published_at: string; audience: string; readers: number; eligible: number }[] = [];
+
+if (company) {
+  const ids = new Set(await memberIds(company.id));
+  total = ids.size;
+  const [{ data: people }, { data: authUsers }, { data: signIns }, { data: documents }, { data: emails }, { data: asks }, { data: queries }, { data: meetings }, { data: members }] = await Promise.all([
+    svc.from('profiles').select('id, email, first_name, last_name, role').neq('role', 'admin'),
+    svc.auth.admin.listUsers({ perPage: 1000 }),
+    svc.from('audit_log').select('user_id').eq('action', 'sign_in').gte('created_at', since90),
+    svc.from('documents').select('id, title, published_at, audience, holder_id').eq('entity_id', company.id).not('published_at', 'is', null).order('published_at', { ascending: false }),
+    svc.from('shareholder_emails').select('user_id').eq('entity_id', company.id).gte('received_at', since90).not('user_id', 'is', null),
+    svc.from('ask_exchanges').select('user_id').eq('entity_id', company.id).gte('created_at', since90),
+    svc.from('queries').select('user_id').eq('entity_id', company.id).gte('created_at', since90),
+    svc.from('meetings').select('id, resolutions(id)').eq('entity_id', company.id),
+    svc.from('holder_members').select('holder_id, user_id'),
+  ]);
+  const { data: board } = company.relationship === 'group'
+    ? await svc.from('profiles').select('id').eq('role', 'board')
+    : await svc.from('entity_board').select('id:user_id').eq('entity_id', company.id);
+  const docIds = (documents ?? []).map((d) => d.id);
+  const resolutionIds = (meetings ?? []).flatMap((m) => (m.resolutions as { id: string }[]).map((r) => r.id));
+  const [{ data: reads }, { data: votes }] = await Promise.all([
+    docIds.length ? svc.from('document_reads').select('document_id, user_id').in('document_id', docIds) : Promise.resolve({ data: [] as { document_id: string; user_id: string }[] }),
+    resolutionIds.length ? svc.from('proxy_votes').select('lodged_by, resolution_id').in('resolution_id', resolutionIds) : Promise.resolve({ data: [] as { lodged_by: string; resolution_id: string }[] }),
+  ]);
+  const count = (list: { user_id: string | null }[] | null) => {
+    const m = new Map<string, number>();
+    for (const r of list ?? []) if (r.user_id) m.set(r.user_id, (m.get(r.user_id) ?? 0) + 1);
+    return m;
+  };
+  const lastById = new Map((authUsers?.users ?? []).map((u) => [u.id, u.last_sign_in_at ?? null]));
+  const signInCount = count(signIns), emailCount = count(emails), askCount = count(asks), qaCount = count(queries);
+  const readCount = count(reads);
+  // A vote is counted once per meeting resolution set the person lodged, not per holder.
+  const voteCount = new Map<string, number>();
+  for (const [by, list] of Map.groupBy(votes ?? [], (v) => v.lodged_by)) voteCount.set(by, new Set(list.map((v) => v.resolution_id)).size);
+
+  rows = (people ?? []).filter((p) => ids.has(p.id)).map((p) => ({
+    id: p.id, email: p.email, first_name: p.first_name, last_name: p.last_name,
+    lastSignIn: lastById.get(p.id) ?? null, signIns: signInCount.get(p.id) ?? 0, docsRead: readCount.get(p.id) ?? 0,
+    emails: emailCount.get(p.id) ?? 0, votes: voteCount.get(p.id) ?? 0, ask: askCount.get(p.id) ?? 0, qa: qaCount.get(p.id) ?? 0,
+  }));
+  if (quiet) rows = rows.filter((r) => !r.lastSignIn || r.lastSignIn < since90);
+  rows.sort((a, b) => (b.lastSignIn ?? '').localeCompare(a.lastSignIn ?? '') || a.email.localeCompare(b.email));
+
+  // Who could read each document: everyone for all-investor documents, board members for board papers, the holder's people for personal ones.
+  const usersOfHolder = Map.groupBy(members ?? [], (m) => m.holder_id);
+  const everyone = [...ids];
+  const readersOf = Map.groupBy(reads ?? [], (r) => r.document_id);
+  docs = (documents ?? []).slice(0, 40).map((d) => {
+    const eligible = d.audience === 'holder' ? (usersOfHolder.get(d.holder_id!) ?? []).map((m) => m.user_id)
+      : d.audience === 'board' ? (board ?? []).map((b) => b.id as string) : everyone;
+    const set = new Set(eligible);
+    return { id: d.id, title: d.title, published_at: d.published_at!, audience: d.audience, eligible: set.size, readers: (readersOf.get(d.id) ?? []).filter((r) => set.has(r.user_id)).length };
+  });
+}
+const active90 = rows.filter((r) => r.lastSignIn && r.lastSignIn >= since90).length;
+const audienceLabel: Record<string, string> = { all_investors: 'All investors', board: 'Board', holder: 'One holder' };
+const quietHref = (on: boolean) => `${Astro.url.pathname}?${new URLSearchParams({ ...(company && scope.companies.length > 1 ? { company: company.code } : {}), ...(on ? { quiet: '1' } : {}) })}`;
+---
+
+<Admin title="Engagement">
+  <PageHeader eyebrow="Admin" title="Engagement" subtitle="Who is using the portal, and which documents are being read. Activity counts cover the last 90 days." />
+  <AdminCompanyFilter scope={scope} allowAll={false} />
+  {!company ? <p class="text-white/55">No company to show.</p> : (
+    <>
+      <div class="mb-6 grid gap-3 sm:grid-cols-3">
+        <div class="card p-5"><p class="text-xs uppercase tracking-widest text-white/40">People</p><p class="mt-1 font-display text-2xl font-bold">{total}</p></div>
+        <div class="card p-5"><p class="text-xs uppercase tracking-widest text-white/40">Signed in, last 90 days</p><p class="mt-1 font-display text-2xl font-bold">{quiet ? '—' : `${active90}`}{!quiet && total > 0 && <span class="ml-2 text-sm font-normal text-white/45">{percent.format(active90 / total)}</span>}</p></div>
+        <div class="card p-5"><p class="text-xs uppercase tracking-widest text-white/40">Documents published</p><p class="mt-1 font-display text-2xl font-bold">{docs.length}</p></div>
+      </div>
+
+      <section class="card overflow-hidden p-0">
+        <div class="flex flex-wrap items-center justify-between gap-3 px-5 py-4">
+          <h2 class="font-display text-lg font-bold">People</h2>
+          <nav class="flex gap-2 text-sm" aria-label="Filter">
+            <a href={quietHref(false)} aria-current={!quiet ? 'page' : undefined} class:list={['rounded-full border px-3 py-1', !quiet ? 'border-lk-blue text-white' : 'border-white/10 text-white/55 hover:text-white']}>Everyone</a>
+            <a href={quietHref(true)} aria-current={quiet ? 'page' : undefined} class:list={['rounded-full border px-3 py-1', quiet ? 'border-lk-blue text-white' : 'border-white/10 text-white/55 hover:text-white']}>Not signed in for 90 days</a>
+          </nav>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="border-y border-white/5 text-xs uppercase tracking-widest text-white/40">
+              <tr><th class="px-5 py-3 font-medium">Name</th><th class="px-5 py-3 font-medium">Last sign-in</th><th class="px-5 py-3 text-right font-medium">Sign-ins</th><th class="px-5 py-3 text-right font-medium">Documents read</th><th class="px-5 py-3 text-right font-medium">Emails</th><th class="px-5 py-3 text-right font-medium">Votes</th><th class="px-5 py-3 text-right font-medium">Ask</th><th class="px-5 py-3 text-right font-medium">Board Q&amp;A</th></tr>
+            </thead>
+            <tbody class="divide-y divide-white/5">
+              {rows.map((r) => (
+                <tr class="hover:bg-white/[0.02]">
+                  <td class="px-5 py-3"><span class="font-medium text-white">{displayName(r)}</span><span class="block text-xs text-white/40">{r.email}</span></td>
+                  <td class:list={['whitespace-nowrap px-5 py-3', r.lastSignIn && r.lastSignIn >= since90 ? 'text-white/70' : 'text-lk-red/80']}>{r.lastSignIn ? shortDate.format(new Date(r.lastSignIn)) : 'Never'}</td>
+                  {[r.signIns, r.docsRead, r.emails, r.votes, r.ask, r.qa].map((n) => <td class:list={['px-5 py-3 text-right tabular-nums', n ? 'text-white/80' : 'text-white/25']}>{n || '—'}</td>)}
+                </tr>
+              ))}
+              {!rows.length && <tr><td colspan="8" class="px-5 py-6 text-center text-white/45">{quiet ? 'Everyone has signed in within the last 90 days.' : 'No people yet.'}</td></tr>}
+            </tbody>
+          </table>
+        </div>
+        <p class="border-t border-white/5 px-5 py-3 text-xs text-white/35">Documents read counts this company's documents ever opened. Emails, votes, Ask and Board Q&amp;A count the last 90 days (votes: resolutions voted on, all meetings).</p>
+      </section>
+
+      <section class="card mt-6 overflow-hidden p-0">
+        <h2 class="px-5 py-4 font-display text-lg font-bold">Documents</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="border-y border-white/5 text-xs uppercase tracking-widest text-white/40">
+              <tr><th class="px-5 py-3 font-medium">Document</th><th class="px-5 py-3 font-medium">Published</th><th class="px-5 py-3 font-medium">For</th><th class="px-5 py-3 text-right font-medium">Read by</th><th class="w-48 px-5 py-3 font-medium"><span class="sr-only">Share read</span></th></tr>
+            </thead>
+            <tbody class="divide-y divide-white/5">
+              {docs.map((d) => {
+                const share = d.eligible ? d.readers / d.eligible : 0;
+                return (
+                  <tr>
+                    <td class="px-5 py-3 text-white/85">{d.title}</td>
+                    <td class="whitespace-nowrap px-5 py-3 text-white/55">{shortDate.format(new Date(d.published_at))}</td>
+                    <td class="px-5 py-3 text-white/55">{audienceLabel[d.audience] ?? d.audience}</td>
+                    <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums text-white/80">{d.readers} of {d.eligible}</td>
+                    <td class="px-5 py-3"><div class="flex items-center gap-2"><div class="h-1.5 flex-1 rounded-full bg-white/10"><div class="h-1.5 rounded-full bg-lk-blue" style={`width:${Math.round(share * 100)}%`}></div></div><span class="w-10 text-right text-xs tabular-nums text-white/55">{d.eligible ? percent.format(share).replace('.00', '') : '—'}</span></div></td>
+                  </tr>
+                );
+              })}
+              {!docs.length && <tr><td colspan="5" class="px-5 py-6 text-center text-white/45">No published documents.</td></tr>}
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </>
+  )}
+</Admin>

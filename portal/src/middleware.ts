@@ -8,7 +8,7 @@ import { rememberOrigin, startNotificationWorker } from './lib/notify-jobs';
 startNotificationWorker();
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login', '/e'];
+const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login', '/e', '/room'];
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 

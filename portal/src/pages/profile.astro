@@ -4,13 +4,58 @@ import PageHeader from '../components/PageHeader.astro';
 import Alert from '../components/Alert.astro';
 import { field } from '../lib/forms';
 import { holderKinds } from '../lib/format';
+import { serviceClient } from '../lib/admin';
+import { sendInvite } from '../lib/admin-auth';
+import { fyOf, taxYears } from '../lib/tax-pack';
 
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
 let notice = '';
+let shareNotice = '';
+let shareError = '';
 
-if (Astro.request.method === 'POST') {
-  const form = await Astro.request.formData();
+const ownedHolderIds = async () => {
+  const { data } = await supabase.from('holder_members').select('holder_id').eq('user_id', userId).eq('access', 'owner');
+  return new Set((data ?? []).map((m) => m.holder_id as string));
+};
+
+const form = Astro.request.method === 'POST' ? await Astro.request.formData() : null;
+const intent = form ? field(form, 'intent') : '';
+
+if (form && intent === 'share') {
+  // An owner gives someone (e.g. their accountant) view-only access to one holder.
+  const holderId = field(form, 'holder_id');
+  const email = field(form, 'email').toLowerCase();
+  const svc = serviceClient();
+  if (!(await ownedHolderIds()).has(holderId)) shareError = 'You can only share holdings you own.';
+  else if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) shareError = 'Enter a valid email address.';
+  else {
+    const { data: existing } = await svc.from('profiles').select('id').ilike('email', email).maybeSingle();
+    let viewerId = existing?.id as string | undefined;
+    if (!viewerId) {
+      const { error, userId: invited } = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') });
+      if (error || !invited) shareError = 'The invitation could not be sent. Please try again.';
+      viewerId = invited ?? undefined;
+    }
+    if (viewerId && viewerId === userId) { shareError = 'That is your own email.'; viewerId = undefined; }
+    if (viewerId) {
+      // Never downgrades: an existing owner link stays as it is.
+      const { data: link } = await svc.from('holder_members').select('access').eq('holder_id', holderId).eq('user_id', viewerId).maybeSingle();
+      if (!link) await svc.from('holder_members').insert({ holder_id: holderId, user_id: viewerId, access: 'viewer' }).throwOnError();
+      await supabase.rpc('log_event', { event_action: 'holding_shared', event_detail: { holder_id: holderId, email, viewer_id: viewerId, new_account: !existing } });
+      shareNotice = existing ? `${email} can now see this holding (view only) when they sign in.` : `Invitation sent to ${email}. They can see this holding (view only) once they accept.`;
+    }
+  }
+} else if (form && intent === 'unshare') {
+  const holderId = field(form, 'holder_id');
+  const viewerId = field(form, 'user_id');
+  if (!(await ownedHolderIds()).has(holderId) || viewerId === userId) shareError = 'You can only change holdings you own.';
+  else {
+    await serviceClient().from('holder_members').delete().eq('holder_id', holderId).eq('user_id', viewerId).eq('access', 'viewer').throwOnError();
+    await supabase.rpc('log_event', { event_action: 'holding_unshared', event_detail: { holder_id: holderId, viewer_id: viewerId } });
+    shareNotice = 'Access removed.';
+  }
+} else if (form) {
   const { error } = await supabase.from('profiles').update({
     first_name: field(form, 'first_name'),
     last_name: field(form, 'last_name'),
@@ -22,12 +67,22 @@ if (Astro.request.method === 'POST') {
 
 const [{ data: profile }, { data: links }] = await Promise.all([
   supabase.from('profiles').select('email, first_name, last_name, phone, notify_email').eq('id', userId).single(),
-  supabase.from('holder_members').select('access, holders(name, kind, registry_ref)').eq('user_id', userId),
+  supabase.from('holder_members').select('holder_id, access, holders(name, kind, registry_ref)').eq('user_id', userId),
 ]);
+// Who else can see the holders this person owns (read with the service key: RLS only shows own links).
+const owned = (links ?? []).filter((l) => l.access === 'owner').map((l) => l.holder_id as string);
+const { data: others } = owned.length
+  ? await serviceClient().from('holder_members').select('holder_id, user_id, access, profiles(email, first_name, last_name)').in('holder_id', owned).neq('user_id', userId)
+  : { data: [] };
+const othersOf = (holderId: string) => (others ?? []).filter((o) => o.holder_id === holderId) as unknown as { user_id: string; access: string; profiles: { email: string; first_name: string | null; last_name: string | null } | null }[];
+// Tax packs for completed financial years only (the current one isn't over yet).
+const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
+const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder_id as string, (await taxYears(supabase, l.holder_id as string)).filter((y) => y <= lastClosedFy).slice(0, 4)] as const)));
 ---
 
 <Portal title="Profile">
   <PageHeader eyebrow="Profile" title="Your details" />
+  {!owned.length && shareError && <div class="mb-4 max-w-4xl"><Alert tone="error">{shareError}</Alert></div>}
   <div class="grid max-w-4xl gap-4 lg:grid-cols-2">
     <form method="post" class="card space-y-4">
       <h2 class="text-lg font-bold">Contact details</h2>
@@ -49,12 +104,41 @@ const [{ data: profile }, { data: links }] = await Promise.all([
           const h = l.holders as unknown as { name: string; kind: string; registry_ref: string | null };
           return (
             <li class="flex items-center justify-between gap-4 py-3">
-              <div><p class="font-semibold text-white">{h.name}</p><p class="text-xs text-white/40">{holderKinds[h.kind]}{h.registry_ref && ` · ${h.registry_ref}`}</p></div>
+              <div><p class="font-semibold text-white">{h.name}</p><p class="text-xs text-white/40">{holderKinds[h.kind]}{h.registry_ref && ` · ${h.registry_ref}`}</p>
+                {years.get(l.holder_id)?.length ? <p class="mt-1 text-xs text-white/45">Tax-time pack: {years.get(l.holder_id)!.map((y, i) => <>{i > 0 && ' · '}<a class="text-lk-blue hover:underline" href={`/statement/${l.holder_id}/tax/${y}`}>FY{String(y).slice(2)} ↓</a></>)}</p> : null}
+              </div>
               <span class="rounded-full bg-white/10 px-2.5 py-0.5 text-xs text-white/60">{l.access === 'owner' ? 'Owner' : 'View only'}</span>
             </li>
           );
         })}
       </ul>
     </section>
+    {owned.length > 0 && (
+      <section class="card lg:col-span-2" id="share">
+        <h2 class="text-lg font-bold">Share with my accountant</h2>
+        <p class="mt-1 text-sm text-white/55">Give someone view-only access to a holding you own: they can see its holdings, statements and tax-time packs, and documents sent to all investors. They can't vote, sell or change anything. You can remove them at any time.</p>
+        {shareNotice && <div class="mt-4"><Alert tone="success">{shareNotice}</Alert></div>}
+        {shareError && <div class="mt-4"><Alert tone="error">{shareError}</Alert></div>}
+        <form method="post" class="mt-5 grid gap-3 sm:grid-cols-[1.4fr_1fr_1fr_1.6fr_auto] sm:items-end">
+          <input type="hidden" name="intent" value="share" />
+          <div><label class="label" for="share_holder">Holding</label>
+            <select id="share_holder" name="holder_id" class="field">{(links ?? []).filter((l) => l.access === 'owner').map((l) => <option value={l.holder_id}>{(l.holders as unknown as { name: string }).name}</option>)}</select></div>
+          <div><label class="label" for="share_first">First name</label><input id="share_first" name="first_name" class="field" /></div>
+          <div><label class="label" for="share_last">Last name</label><input id="share_last" name="last_name" class="field" /></div>
+          <div><label class="label" for="share_email">Email</label><input id="share_email" name="email" type="email" required class="field" /></div>
+          <button class="btn-primary">Share</button>
+        </form>
+        <ul class="mt-5 divide-y divide-white/5">
+          {owned.flatMap((hid) => othersOf(hid).map((o) => (
+            <li class="flex items-center justify-between gap-4 py-3 text-sm">
+              <div><p class="text-white">{[o.profiles?.first_name, o.profiles?.last_name].filter(Boolean).join(' ') || o.profiles?.email}</p><p class="text-xs text-white/40">{o.profiles?.email} · {((links ?? []).find((l) => l.holder_id === hid)?.holders as unknown as { name: string })?.name} · {o.access === 'owner' ? 'Owner' : 'View only'}</p></div>
+              {o.access === 'viewer' && (
+                <form method="post"><input type="hidden" name="intent" value="unshare" /><input type="hidden" name="holder_id" value={hid} /><input type="hidden" name="user_id" value={o.user_id} /><button class="btn-ghost px-3 py-1.5 text-xs">Remove</button></form>
+              )}
+            </li>
+          )))}
+        </ul>
+      </section>
+    )}
   </div>
 </Portal>

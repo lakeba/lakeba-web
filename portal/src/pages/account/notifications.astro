@@ -122,7 +122,7 @@ const groups = [
                   <tr>
                     <td class="py-3 pr-4"><p class="text-white/85">{c.label}{c.locked && <span class="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/50">always on</span>}</p><p class="text-xs text-white/45">{c.description}</p></td>
                     <td class="py-3 text-center"><input type="checkbox" name={`email_${c.key}`} checked={c.locked || pref(c).email} disabled={c.locked} aria-label={`Email: ${c.label}`} class="size-4 accent-lk-blue" /></td>
-                    <td class="py-3 text-center"><input type="checkbox" name={`push_${c.key}`} checked={c.locked || pref(c).push} disabled={c.locked} aria-label={`Browser: ${c.label}`} class="size-4 accent-lk-blue" /></td>
+                    <td class="py-3 text-center">{c.emailOnly ? <span class="text-white/25">—</span> : <input type="checkbox" name={`push_${c.key}`} checked={c.locked || pref(c).push} disabled={c.locked} aria-label={`Browser: ${c.label}`} class="size-4 accent-lk-blue" />}</td>
                   </tr>
                 ))}
               </tbody>

@@ -3,7 +3,10 @@
 # lakeba-backup.timer): the whole Supabase database (custom format), the
 # stored document files, and Supabase's settings and secrets (needed to
 # restore). Kept in /var/backups/lakeba for 14 days, root-only.
-# Off-server copies: see BACKUP_REMOTE below (set when a destination exists).
+# Off-server copy: when /etc/lakeba-backup/offsite.env exists (set up by
+# lakeba-set-offsite-backup), each backup is encrypted on this server (GnuPG,
+# AES-256, passphrase kept root-only here and by you in a password manager)
+# and copied to Backblaze B2; copies older than REMOTE_KEEP_DAYS are deleted.
 set -euo pipefail
 DEST=/var/backups/lakeba
 KEEP_DAYS=14
@@ -23,3 +26,16 @@ docker exec -i supabase-db pg_restore --list < "$dir/database.dump" > /dev/null
 
 find "$DEST" -mindepth 1 -maxdepth 1 -type d -mtime +"$KEEP_DAYS" -exec rm -rf {} +
 echo "Backup $stamp: $(du -sh "$dir" | cut -f1)"
+
+OFFSITE=/etc/lakeba-backup/offsite.env
+if [[ -f "$OFFSITE" ]]; then
+  # shellcheck disable=SC1090
+  source "$OFFSITE"
+  export RCLONE_CONFIG_B2_TYPE=b2 RCLONE_CONFIG_B2_ACCOUNT="$B2_KEY_ID" RCLONE_CONFIG_B2_KEY="$B2_APP_KEY" RCLONE_CONFIG_B2_HARD_DELETE=true
+  enc="$(mktemp -p /var/tmp lakeba-backup.XXXXXX)"
+  tar -C "$DEST" -cf - "$stamp" | gpg --batch --yes --symmetric --cipher-algo AES256 --passphrase-file /etc/lakeba-backup/passphrase -o "$enc"
+  rclone copyto "$enc" "b2:$B2_BUCKET/lakeba/$stamp.tar.gpg" --b2-chunk-size 96M
+  rm -f "$enc"
+  rclone delete "b2:$B2_BUCKET/lakeba" --min-age "${REMOTE_KEEP_DAYS:-35}d"
+  echo "Off-server copy: b2:$B2_BUCKET/lakeba/$stamp.tar.gpg"
+fi

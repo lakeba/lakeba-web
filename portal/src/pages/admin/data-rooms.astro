@@ -1,0 +1,249 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Alert from '../../components/Alert.astro';
+import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
+import { serviceClient } from '../../lib/admin';
+import { adminScope, formCompany, withCompany } from '../../lib/admin-company';
+import { DEFAULT_NDA, newGuestToken } from '../../lib/data-rooms';
+import { field } from '../../lib/forms';
+import { sendMail } from '../../lib/mail';
+import { dateTime, shortDate } from '../../lib/format';
+
+// Data rooms for prospective investors (see the data_rooms migration). All
+// reads and writes use the service key, limited to the companies this admin manages.
+const svc = serviceClient();
+const scope = await adminScope(Astro.locals, Astro.url);
+const userId = Astro.locals.user!.id;
+let notice = '';
+let error = '';
+let inviteLink = '';
+
+/** A room this admin may manage, or null. */
+async function myRoom(id: string) {
+  if (!id) return null;
+  const { data } = await svc.from('data_rooms').select('id, entity_id, name, description, nda_text, closed_at, created_at').eq('id', id).maybeSingle();
+  return data && scope.companies.some((c) => c.id === data.entity_id) ? data : null;
+}
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
+
+async function invite(room: { id: string; entity_id: string; name: string }, guest: { name: string; email: string; organisation: string }, days: number) {
+  const { token, tokenHash } = newGuestToken();
+  const expires = new Date(Date.now() + days * 86_400_000).toISOString();
+  const { data: row, error: e } = await svc.from('data_room_guests').insert({ room_id: room.id, ...guest, token_hash: tokenHash, expires_at: expires, invited_by: userId }).select('id').single();
+  if (e || !row) return { error: e?.message ?? 'Could not add the guest.' };
+  const company = scope.companies.find((c) => c.id === room.entity_id);
+  const brand = company && company.relationship !== 'group' ? { brand: company.display_name, color: company.brand_color ?? undefined } : {};
+  const link = `${Astro.url.origin}/room/${token}`;
+  await sendMail({
+    to: guest.email, subject: `${company?.display_name ?? 'Lakeba'}: confidential data room – ${room.name}`, ...brand,
+    text: `Hello ${guest.name},\n\nYou have been invited to the ${room.name} data room. It holds confidential documents for you to review. Please read and agree to the confidentiality terms when you open it.\n\nThis link is personal to you; please don't forward it. It works until ${shortDate.format(new Date(expires))}.`,
+    link, linkLabel: 'Open the data room',
+    footer: 'You receive this because you were invited to a confidential data room. Documents you open are marked with your name.',
+  });
+  await log('data_room_guest_invited', { room_id: room.id, guest_id: row.id, email: guest.email, days });
+  return { link };
+}
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'create') {
+    const company = formCompany(scope, field(form, 'entity_id'));
+    const name = field(form, 'name');
+    if (!company) error = 'Choose a company.';
+    else if (name.length < 2) error = 'Give the room a name.';
+    else {
+      const { data: room, error: e } = await svc.from('data_rooms').insert({ entity_id: company.id, name, description: field(form, 'description'), nda_text: field(form, 'nda_text') || DEFAULT_NDA, created_by: userId }).select('id').single();
+      if (e || !room) error = e?.message ?? 'Could not create the room.';
+      else { await log('data_room_created', { room_id: room.id, entity_id: company.id }); return Astro.redirect(withCompany(scope, `/admin/data-rooms?room=${room.id}`), 303); }
+    }
+  } else {
+    const room = await myRoom(field(form, 'room_id'));
+    if (!room) error = 'That data room was not found.';
+    else if (intent === 'save') {
+      await svc.from('data_rooms').update({ name: field(form, 'name') || room.name, description: field(form, 'description'), nda_text: field(form, 'nda_text') || DEFAULT_NDA }).eq('id', room.id).throwOnError();
+      notice = 'Saved. Guests who already agreed are not asked again.';
+    } else if (intent === 'documents') {
+      const wanted = form.getAll('document_id').map(String);
+      // Only this company's PDFs that aren't personal to one holder.
+      const { data: allowed } = await svc.from('documents').select('id').eq('entity_id', room.entity_id).eq('mime_type', 'application/pdf').neq('audience', 'holder');
+      const ok = new Set((allowed ?? []).map((d) => d.id));
+      const ids = wanted.filter((id) => ok.has(id));
+      await svc.from('data_room_documents').delete().eq('room_id', room.id).throwOnError();
+      if (ids.length) await svc.from('data_room_documents').insert(ids.map((document_id, sort) => ({ room_id: room.id, document_id, sort }))).throwOnError();
+      await log('data_room_documents_set', { room_id: room.id, count: ids.length });
+      notice = `The room now has ${ids.length} document${ids.length === 1 ? '' : 's'}.`;
+    } else if (intent === 'invite') {
+      const email = field(form, 'email').toLowerCase();
+      const name = field(form, 'name');
+      const days = Math.min(180, Math.max(1, Number(field(form, 'days')) || 30));
+      if (!name || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) error = 'Enter the guest’s name and email.';
+      else if (room.closed_at) error = 'Reopen the room first.';
+      else {
+        const r = await invite(room, { name, email, organisation: field(form, 'organisation') }, days);
+        if (r.error) error = r.error; else { notice = `Invitation sent to ${email}.`; inviteLink = r.link!; }
+      }
+    } else if (intent === 'resend' || intent === 'revoke') {
+      const { data: g } = await svc.from('data_room_guests').select('id, name, email, organisation, expires_at').eq('id', field(form, 'guest_id')).eq('room_id', room.id).maybeSingle();
+      if (!g) error = 'Guest not found.';
+      else {
+        // Either way the old link stops working.
+        await svc.from('data_room_guests').update({ revoked_at: new Date().toISOString() }).eq('id', g.id).throwOnError();
+        await log('data_room_guest_revoked', { room_id: room.id, guest_id: g.id, email: g.email, resent: intent === 'resend' });
+        if (intent === 'resend') {
+          const r = await invite(room, { name: g.name, email: g.email, organisation: g.organisation }, 30);
+          if (r.error) error = r.error; else { notice = `A new link was sent to ${g.email}; the old one no longer works.`; inviteLink = r.link!; }
+        } else notice = `${g.email} can no longer open the room.`;
+      }
+    } else if (intent === 'close' || intent === 'reopen') {
+      await svc.from('data_rooms').update({ closed_at: intent === 'close' ? new Date().toISOString() : null }).eq('id', room.id).throwOnError();
+      await log(`data_room_${intent === 'close' ? 'closed' : 'reopened'}`, { room_id: room.id });
+      notice = intent === 'close' ? 'Room closed: no guest can open it.' : 'Room reopened.';
+    }
+  }
+}
+
+const { data: rooms } = await svc.from('data_rooms').select('id, entity_id, name, closed_at, created_at, data_room_guests(id, revoked_at), data_room_documents(document_id)').in('entity_id', scope.ids.length ? scope.ids : ['00000000-0000-0000-0000-000000000000']).order('created_at', { ascending: false });
+const current = await myRoom(Astro.url.searchParams.get('room') ?? '');
+const companyOf = (id: string) => scope.companies.find((c) => c.id === id);
+
+let candidates: { id: string; title: string; category: string; published_at: string | null }[] = [];
+let chosen = new Set<string>();
+let guests: { id: string; name: string; email: string; organisation: string; expires_at: string; nda_accepted_at: string | null; revoked_at: string | null; last_seen_at: string | null; created_at: string }[] = [];
+let views: { guest_id: string; document_id: string | null; viewed_at: string }[] = [];
+if (current) {
+  const [{ data: docs }, { data: inRoom }, { data: g }] = await Promise.all([
+    svc.from('documents').select('id, title, category, published_at').eq('entity_id', current.entity_id).eq('mime_type', 'application/pdf').neq('audience', 'holder').order('created_at', { ascending: false }),
+    svc.from('data_room_documents').select('document_id').eq('room_id', current.id),
+    svc.from('data_room_guests').select('id, name, email, organisation, expires_at, nda_accepted_at, revoked_at, last_seen_at, created_at').eq('room_id', current.id).order('created_at', { ascending: false }),
+  ]);
+  candidates = docs ?? [];
+  chosen = new Set((inRoom ?? []).map((d) => d.document_id));
+  guests = g ?? [];
+  if (guests.length) views = (await svc.from('data_room_views').select('guest_id, document_id, viewed_at').in('guest_id', guests.map((x) => x.id)).order('viewed_at', { ascending: false }).limit(500)).data ?? [];
+}
+const titleOf = new Map(candidates.map((d) => [d.id, d.title]));
+const viewsBy = Map.groupBy(views, (v) => v.guest_id);
+const status = (g: (typeof guests)[number]) => g.revoked_at ? 'Revoked' : new Date(g.expires_at) < new Date() ? 'Expired' : g.nda_accepted_at ? 'Agreed' : 'Invited';
+---
+
+<Admin title="Data rooms">
+  <PageHeader eyebrow="Admin" title="Data rooms" subtitle="Share chosen PDFs with prospective investors. Guests agree to confidentiality terms, every page is marked with their name, and each view is recorded." />
+  <AdminCompanyFilter scope={scope} />
+  {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
+  {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+  {inviteLink && <div class="mb-4"><Alert>Their personal link (only share it with them): <span class="break-all font-mono text-xs">{inviteLink}</span></Alert></div>}
+
+  {!current ? (
+    <>
+      <section class="card overflow-hidden p-0">
+        <table class="w-full text-left text-sm">
+          <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-3 font-medium">Room</th><th class="px-5 py-3 font-medium">Company</th><th class="px-5 py-3 text-right font-medium">Documents</th><th class="px-5 py-3 text-right font-medium">Guests</th><th class="px-5 py-3 font-medium">Created</th></tr></thead>
+          <tbody class="divide-y divide-white/5">
+            {(rooms ?? []).map((r) => (
+              <tr class="hover:bg-white/[0.02]">
+                <td class="px-5 py-3"><a class="font-medium text-white hover:underline" href={withCompany(scope, `/admin/data-rooms?room=${r.id}`)}>{r.name}</a>{r.closed_at && <span class="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/55">Closed</span>}</td>
+                <td class="px-5 py-3 text-white/60">{companyOf(r.entity_id)?.display_name}</td>
+                <td class="px-5 py-3 text-right tabular-nums text-white/75">{(r.data_room_documents as unknown[]).length}</td>
+                <td class="px-5 py-3 text-right tabular-nums text-white/75">{(r.data_room_guests as { revoked_at: string | null }[]).filter((g) => !g.revoked_at).length}</td>
+                <td class="px-5 py-3 text-white/50">{shortDate.format(new Date(r.created_at))}</td>
+              </tr>
+            ))}
+            {!rooms?.length && <tr><td colspan="5" class="px-5 py-6 text-center text-white/45">No data rooms yet.</td></tr>}
+          </tbody>
+        </table>
+      </section>
+      <details class="card mt-6" open={!rooms?.length || Boolean(error)}>
+        <summary class="cursor-pointer font-display text-lg font-bold text-white">New data room</summary>
+        <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
+          <input type="hidden" name="intent" value="create" />
+          <div><label class="label" for="entity_id">Company</label><select id="entity_id" name="entity_id" class="field">{scope.companies.map((c) => <option value={c.id} selected={c.id === scope.defaultCompany?.id}>{c.display_name}</option>)}</select></div>
+          <div><label class="label" for="name">Name</label><input id="name" name="name" required class="field" placeholder="Series A – 2026" /></div>
+          <div class="sm:col-span-2"><label class="label" for="description">Note for guests (optional)</label><textarea id="description" name="description" rows="2" class="field"></textarea></div>
+          <div class="sm:col-span-2"><label class="label" for="nda_text">Confidentiality terms</label><textarea id="nda_text" name="nda_text" rows="8" class="field text-sm">{DEFAULT_NDA}</textarea><p class="mt-1 text-xs text-white/40">A plain-English starting point: have your lawyer check it before you use it.</p></div>
+          <div class="sm:col-span-2"><button class="btn-primary">Create room</button></div>
+        </form>
+      </details>
+    </>
+  ) : (
+    <>
+      <p class="mb-4 text-sm"><a class="text-lk-blue hover:underline" href={withCompany(scope, '/admin/data-rooms')}>← All data rooms</a></p>
+      <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
+        <h2 class="font-display text-2xl font-bold">{current.name} <span class="text-base font-normal text-white/45">· {companyOf(current.entity_id)?.display_name}</span></h2>
+        <form method="post"><input type="hidden" name="room_id" value={current.id} /><button name="intent" value={current.closed_at ? 'reopen' : 'close'} class="btn-ghost px-3 py-2 text-xs">{current.closed_at ? 'Reopen room' : 'Close room'}</button></form>
+      </div>
+      {current.closed_at && <div class="mb-4"><Alert>Closed {shortDate.format(new Date(current.closed_at))}: guests can't open it.</Alert></div>}
+
+      <div class="grid gap-6 xl:grid-cols-2">
+        <section class="card">
+          <h3 class="text-lg font-bold">Guests</h3>
+          <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+            <input type="hidden" name="intent" value="invite" /><input type="hidden" name="room_id" value={current.id} />
+            <div><label class="label" for="g_name">Name</label><input id="g_name" name="name" required class="field" /></div>
+            <div><label class="label" for="g_email">Email</label><input id="g_email" name="email" type="email" required class="field" /></div>
+            <div><label class="label" for="g_org">Organisation (optional)</label><input id="g_org" name="organisation" class="field" /></div>
+            <div><label class="label" for="g_days">Access for (days)</label><input id="g_days" name="days" type="number" min="1" max="180" value="30" class="field" /></div>
+            <div class="sm:col-span-2"><button class="btn-primary">Invite guest</button></div>
+          </form>
+          <ul class="mt-6 divide-y divide-white/5">
+            {guests.map((g) => {
+              const vs = viewsBy.get(g.id) ?? [];
+              const st = status(g);
+              return (
+                <li class="py-3 text-sm">
+                  <div class="flex flex-wrap items-start justify-between gap-3">
+                    <div>
+                      <p class="font-medium text-white">{g.name}{g.organisation && <span class="font-normal text-white/50"> · {g.organisation}</span>}</p>
+                      <p class="text-xs text-white/45">{g.email} · invited {shortDate.format(new Date(g.created_at))} · until {shortDate.format(new Date(g.expires_at))}</p>
+                      <p class="mt-1 text-xs text-white/55"><span class:list={['rounded-full px-2 py-0.5', st === 'Agreed' ? 'bg-lk-green/15 text-lk-green' : st === 'Invited' ? 'bg-white/10 text-white/60' : 'bg-lk-red/15 text-lk-red']}>{st}</span>
+                        {g.nda_accepted_at && ` agreed ${dateTime.format(new Date(g.nda_accepted_at))}`}{g.last_seen_at && ` · last seen ${dateTime.format(new Date(g.last_seen_at))}`} · {vs.length} view{vs.length === 1 ? '' : 's'}</p>
+                    </div>
+                    {!g.revoked_at && (
+                      <form method="post" class="flex gap-2"><input type="hidden" name="room_id" value={current.id} /><input type="hidden" name="guest_id" value={g.id} />
+                        <button name="intent" value="resend" class="btn-ghost px-3 py-1.5 text-xs">New link</button>
+                        <button name="intent" value="revoke" class="btn-ghost px-3 py-1.5 text-xs text-lk-red">Revoke</button>
+                      </form>
+                    )}
+                  </div>
+                  {vs.length > 0 && (
+                    <details class="mt-2"><summary class="cursor-pointer text-xs text-white/45">Views</summary>
+                      <ul class="mt-1 space-y-0.5 text-xs text-white/55">{vs.slice(0, 30).map((v) => <li>{dateTime.format(new Date(v.viewed_at))} · {(v.document_id && titleOf.get(v.document_id)) ?? 'Removed document'}</li>)}</ul>
+                    </details>
+                  )}
+                </li>
+              );
+            })}
+            {!guests.length && <li class="py-4 text-sm text-white/45">No guests yet.</li>}
+          </ul>
+        </section>
+
+        <section class="card">
+          <h3 class="text-lg font-bold">Documents</h3>
+          <p class="mt-1 text-sm text-white/55">PDFs of {companyOf(current.entity_id)?.display_name} (not personal ones). Upload new ones in <a class="text-lk-blue hover:underline" href={withCompany(scope, '/admin/documents')}>Documents</a>; they don't need to be published to investors.</p>
+          <form method="post" class="mt-4">
+            <input type="hidden" name="intent" value="documents" /><input type="hidden" name="room_id" value={current.id} />
+            <ul class="max-h-96 divide-y divide-white/5 overflow-y-auto rounded-xl border border-white/10">
+              {candidates.map((d) => (
+                <li><label class="flex items-center gap-3 px-4 py-2 text-sm"><input type="checkbox" name="document_id" value={d.id} checked={chosen.has(d.id)} class="size-4 accent-lk-blue" /><span class="flex-1 text-white/85">{d.title}</span><span class="text-xs text-white/40">{d.published_at ? shortDate.format(new Date(d.published_at)) : 'Not published'}</span></label></li>
+              ))}
+              {!candidates.length && <li class="px-4 py-6 text-center text-sm text-white/45">No PDFs for this company yet.</li>}
+            </ul>
+            <button class="btn-primary mt-4">Save documents</button>
+          </form>
+        </section>
+      </div>
+
+      <details class="card mt-6">
+        <summary class="cursor-pointer font-display text-lg font-bold text-white">Room details and confidentiality terms</summary>
+        <form method="post" class="mt-6 grid gap-4">
+          <input type="hidden" name="intent" value="save" /><input type="hidden" name="room_id" value={current.id} />
+          <div><label class="label" for="r_name">Name</label><input id="r_name" name="name" value={current.name} class="field" /></div>
+          <div><label class="label" for="r_desc">Note for guests</label><textarea id="r_desc" name="description" rows="2" class="field">{current.description}</textarea></div>
+          <div><label class="label" for="r_nda">Confidentiality terms</label><textarea id="r_nda" name="nda_text" rows="8" class="field text-sm">{current.nda_text}</textarea></div>
+          <div><button class="btn-primary">Save</button></div>
+        </form>
+      </details>
+    </>
+  )}
+</Admin>
