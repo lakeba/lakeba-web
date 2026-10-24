@@ -7,7 +7,7 @@ import { dateTime } from '../../lib/format';
 import { serviceClient } from '../../lib/admin';
 import { graph, graphConfigured } from '../../lib/graph';
 import { adminScope } from '../../lib/admin-company';
-import { AUTO_CONFIDENCE, AUTO_DELAY_MS, AUTO_PER_DAY, CATEGORIES, SELF_SERVICE, STATUS_LABELS, cancelAutoReply, pollMailboxes, prepare, sendReplyFor, shareholderContext, toBoardQa, type Category } from '../../lib/shareholder-email';
+import { AUTO_CONFIDENCE, AUTO_DELAY_MS, AUTO_PER_DAY, CATEGORIES, FLAGS, type Flag, SELF_SERVICE, STATUS_LABELS, cancelAutoReply, pollMailboxes, prepare, sendReplyFor, shareholderContext, toBoardQa, type Category } from '../../lib/shareholder-email';
 
 // Group admins see every company; company admins only their own company's emails (no mailbox settings).
 const svc = serviceClient();
@@ -158,6 +158,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
         </div>
         {current.summary && <p class="mt-4 rounded-xl bg-white/[0.04] px-4 py-3 text-sm text-white/75">{current.summary}</p>}
         {current.status !== 'auto_scheduled' && (current.requested as { auto?: string | null })?.auto && <p class="mt-2 text-xs text-white/45">Not automatic: {(current.requested as { auto: string }).auto}</p>}
+        {((current.requested as { flags?: string[] })?.flags ?? []).length > 0 && <div class="mt-2 flex flex-wrap gap-1.5">{(current.requested as { flags: string[] }).flags.map((f) => <span class:list={['rounded-full px-2 py-0.5 text-[11px] font-semibold', ['threat', 'distress'].includes(f) ? 'bg-lk-red/15 text-lk-red' : 'bg-lk-orange/15 text-lk-orange']}>{FLAGS[f as Flag] ?? f}</span>)}</div>}
         {current.error && <p class="mt-4 text-sm text-lk-red">{current.error}</p>}
         <pre class="mt-4 max-h-[32rem] overflow-auto whitespace-pre-wrap rounded-xl border border-white/5 bg-black/20 p-4 font-sans text-sm text-white/80">{current.body_text}</pre>
       </section>
