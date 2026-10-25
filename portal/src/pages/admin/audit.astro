@@ -1,4 +1,5 @@
 ---
+import { actionLabel, detailSummary } from '../../lib/audit-labels';
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
@@ -55,7 +56,7 @@ const csvHref = `/admin/audit.csv?${new URLSearchParams(Object.entries(filters).
   {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
   <form method="get" class="card mb-6 grid gap-4 sm:grid-cols-5">
-    <div><label class="label" for="action">Action</label><input class="field" id="action" name="action" value={filters.action} placeholder="sign_in" /></div>
+    <div><label class="label" for="action">Action</label><input class="field" id="action" name="action" value={filters.action} placeholder="e.g. sign_in" /></div>
     <div class="sm:col-span-2"><label class="label" for="email">User email</label><input class="field" id="email" name="email" value={filters.email} /></div>
     <div><label class="label" for="from">From</label><input class="field" id="from" name="from" type="date" value={filters.from} /></div>
     <div><label class="label" for="to">To</label><input class="field" id="to" name="to" type="date" value={filters.to} /></div>
@@ -91,8 +92,8 @@ const csvHref = `/admin/audit.csv?${new URLSearchParams(Object.entries(filters).
               <tr>
                 <td class="whitespace-nowrap px-5 py-2.5 text-white/50">{dateTime.format(new Date(r.created_at))}</td>
                 <td class="px-5 py-2.5 text-white/70">{r.user_id ? emails.get(r.user_id) ?? 'deleted user' : 'system'}</td>
-                <td class="px-5 py-2.5 font-mono text-white/85">{r.action}</td>
-                <td class="max-w-md truncate px-5 py-2.5 font-mono text-xs text-white/45" title={JSON.stringify(r.detail)}>{Object.keys(r.detail ?? {}).length ? JSON.stringify(r.detail) : ''}</td>
+                <td class="px-5 py-2.5"><span class="text-white/85">{actionLabel(r.action)}</span><span class="block font-mono text-[11px] text-white/35">{r.action}</span></td>
+                <td class="max-w-md truncate px-5 py-2.5 text-xs text-white/55" title={JSON.stringify(r.detail)}>{detailSummary(r.detail)}</td>
               </tr>
             ))}
           </tbody>

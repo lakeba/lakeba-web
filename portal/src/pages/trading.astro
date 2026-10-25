@@ -31,7 +31,11 @@ for (const l of links ?? []) {
   if ((await svc.rpc('holder_in_entity', { target_holder: l.holder_id, target_entity: company.id })).data) owned.push(l.holders as unknown as { id: string; name: string });
 }
 const { data: classRows } = await svc.from('share_classes').select('id, code, name, kind').eq('entity_id', company.id).in('kind', TRADABLE_KINDS).order('code');
-const classes = classRows ?? [];
+// The classes the first holding actually has come first (and are pre-selected), so selling starts on the right class.
+const { data: heldRows } = owned.length && classRows?.length ? await svc.from('holdings').select('share_class_id, shares, as_at').eq('holder_id', owned[0].id).in('share_class_id', classRows.map((c) => c.id)).order('as_at', { ascending: false }) : { data: [] };
+const latestHeld = new Map<string, number>();
+for (const h of heldRows ?? []) if (!latestHeld.has(h.share_class_id)) latestHeld.set(h.share_class_id, Number(h.shares));
+const classes = [...(classRows ?? [])].sort((a, b) => Number((latestHeld.get(b.id) ?? 0) > 0) - Number((latestHeld.get(a.id) ?? 0) > 0));
 const className = new Map(classes.map((c) => [c.id, c.name]));
 
 if (Astro.request.method === 'POST') {

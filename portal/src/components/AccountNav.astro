@@ -1,0 +1,20 @@
+---
+// The Account pages share one header: title, short description and tabs.
+interface Props { title: string; subtitle?: string }
+const { title, subtitle } = Astro.props;
+const { t } = Astro.locals;
+const path = Astro.url.pathname;
+const tabs = [
+  { href: '/profile', label: t('Profile') },
+  { href: '/account/security', label: t('Security') },
+  { href: '/account/notifications', label: t('Notifications') },
+];
+---
+<div class="mb-8">
+  <p class="eyebrow">{t('Your account')}</p>
+  <h1 class="mt-4 text-4xl font-extrabold sm:text-5xl">{title}</h1>
+  {subtitle && <p class="mt-3 max-w-2xl text-white/55">{subtitle}</p>}
+  <nav class="mt-6 flex gap-1 overflow-x-auto border-b border-white/10 text-sm [scrollbar-width:none]" aria-label={t('Your account')}>
+    {tabs.map((x) => <a href={x.href} aria-current={path.startsWith(x.href) ? 'page' : undefined} class:list={['-mb-px shrink-0 border-b-2 px-3 py-2', path.startsWith(x.href) ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{x.label}</a>)}
+  </nav>
+</div>

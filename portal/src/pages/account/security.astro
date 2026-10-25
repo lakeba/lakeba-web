@@ -1,4 +1,5 @@
 ---
+import AccountNav from '../../components/AccountNav.astro';
 import Portal from '../../layouts/Portal.astro';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
@@ -65,8 +66,7 @@ const passkeyStrings = clientStrings(t, [
 ---
 
 <Portal title={t('Security')}>
-  <h1 class="text-3xl font-bold">{t('Security')}</h1>
-  <p class="mt-2 text-white/55">{t('Protect access to your shareholding information.')}</p>
+  <AccountNav title={t('Security')} subtitle={t('Protect access to your shareholding information.')} />
   {notice && <div class="mt-6 max-w-2xl"><Alert>{notice}</Alert></div>}
   {error && <div class="mt-6 max-w-2xl"><Alert tone="error">{error}</Alert></div>}
 

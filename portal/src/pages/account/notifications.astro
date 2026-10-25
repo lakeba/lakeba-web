@@ -1,4 +1,5 @@
 ---
+import AccountNav from '../../components/AccountNav.astro';
 import Portal from '../../layouts/Portal.astro';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
@@ -71,8 +72,7 @@ const pushStrings = clientStrings(t, [
 ---
 
 <Portal title={t('Notifications')}>
-  <h1 class="text-3xl font-bold">{t('Notifications')}</h1>
-  <p class="mt-2 text-white/55">{t('Choose how the portal tells you about new things. Everything also appears in your Inbox.')}</p>
+  <AccountNav title={t('Notifications')} subtitle={t('Choose how the portal tells you about new things. Everything also appears in your Inbox.')} />
   {notice && <div class="mt-6 max-w-3xl"><Alert>{notice}</Alert></div>}
   {error && <div class="mt-6 max-w-3xl"><Alert tone="error">{error}</Alert></div>}
 

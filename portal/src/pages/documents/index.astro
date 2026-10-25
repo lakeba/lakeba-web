@@ -73,11 +73,12 @@ const kind = (mime: string) => (mime === 'application/pdf' ? 'PDF' : mime.starts
       {documents?.length ? (
         <ul class="grid gap-3">
           {documents.map((d) => {
-            const unread = !(d.document_reads as { user_id: string }[]).some((r) => r.user_id === userId);
+            // "New": published in the last 30 days and not opened yet (not every document a new investor hasn't read).
+            const unread = !(d.document_reads as { user_id: string }[]).some((r) => r.user_id === userId) && Boolean(d.published_at) && Date.now() - new Date(d.published_at!).getTime() < 30 * 86_400_000;
             return (
-              <li class="card flex flex-wrap items-center justify-between gap-4 p-5 sm:p-6">
+              <li class="card relative flex items-center justify-between gap-4 p-5 transition hover:bg-white/[0.07] sm:p-6">
                 <div class="min-w-0">
-                  <p class="flex items-center gap-2 text-xs text-white/40">
+                  <p class="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-white/40">
                     {unread && <span class="rounded-full bg-lk-orange/20 px-2 py-0.5 font-semibold text-lk-orange">{t('New')}</span>}
                     {t(categoryLabels[d.category] ?? d.category)} · {fmt.shortDate.format(new Date(d.published_at!))} · {kind(d.mime_type)} {fileSize(d.size_bytes)}
                     {d.entity_id !== company?.id && <span class="rounded-full bg-white/10 px-2 py-0.5 text-white/60">{t('Shared by {company}', { company: (d.entities as unknown as { display_name: string } | null)?.display_name ?? '' })}</span>}
@@ -85,7 +86,7 @@ const kind = (mime: string) => (mime === 'application/pdf' ? 'PDF' : mime.starts
                   <h2 class="mt-1 text-lg font-bold">{d.title}</h2>
                   {d.summary && <p class="mt-1 text-sm text-white/55">{d.summary}</p>}
                 </div>
-                <a href={`/documents/${d.id}`} target="_blank" rel="noopener" class="btn-ghost shrink-0">{d.mime_type.startsWith('video/') ? t('Watch') : t('Open')}</a>
+                <a href={`/documents/${d.id}`} target="_blank" rel="noopener" class="btn-ghost shrink-0 !px-3 after:absolute after:inset-0 after:rounded-[inherit] after:content-['']">{d.mime_type.startsWith('video/') ? t('Watch') : t('Open')}</a>
               </li>
             );
           })}

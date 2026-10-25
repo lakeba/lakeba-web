@@ -124,7 +124,7 @@ const valueOf = (p: Position) => { const pr = prices.get(p.row.share_class_id); 
 const totalsOf = (hs: HolderSummary[]) => {
   const ps = hs.flatMap((h) => h.positions);
   const values = ps.map(valueOf);
-  return { shares: ps.reduce((a, p) => a + p.row.shares, 0), value: values.reduce<number>((a, v) => a + (v ?? 0), 0), unpriced: values.some((v) => v === null) };
+  return { shares: ps.reduce((a, p) => a + p.row.shares, 0), value: values.reduce<number>((a, v) => a + (v ?? 0), 0), unpriced: values.some((v) => v === null), priced: values.some((v) => v !== null) };
 };
 const factorsOf = (id: string) => (authById.get(id)?.factors ?? []).filter((f) => f.status === 'verified').length;
 const isBanned = (id: string) => {
@@ -282,7 +282,7 @@ import ShareLink from '../../../components/ShareLink.astro';
                 )) : '—'}
               </td>
               <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums text-white/80">{t.shares ? shares.format(t.shares) : '—'}</td>
-              <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums text-white/80">{t.shares ? <>{aud.format(t.value)}{t.unpriced && <span class="block text-[11px] text-white/40">some classes unpriced</span>}</> : '—'}</td>
+              <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums text-white/80">{t.shares ? <>{t.priced ? aud.format(t.value) : <span class="text-white/40">not priced</span>}{t.unpriced && t.priced && <span class="block text-[11px] text-white/40">some classes not priced</span>}</> : '—'}</td>
               <td class="px-5 py-3">{factorsOf(p.id) ? <span class="text-lk-green">On</span> : <span class="text-white/40">Off</span>}</td>
               <td class="px-5 py-3 text-white/50">{auth?.last_sign_in_at ? shortDate.format(new Date(auth.last_sign_in_at)) : auth?.invited_at ? 'Invited' : 'Never'}</td>
             </tr>

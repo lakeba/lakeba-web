@@ -15,17 +15,28 @@ const canAdmin = Astro.locals.access.mayOpen('/admin');
 const isGroup = company?.relationship === 'group';
 const brand = brandName(company);
 
-const nav = [
+const nav: { href: string; label: string; tag?: string }[] = [
   { href: '/', label: t('Dashboard') },
   { href: '/documents', label: t('Documents') },
   ...(isGroup ? [{ href: '/portfolio', label: t('Portfolio') }] : []),
   { href: '/agm', label: t('Meetings') },
   { href: '/news', label: t('News') },
-  ...(company && features.ask ? [{ href: '/ask', label: t('Ask {brand}', { brand }) }] : []),
+  ...(company && features.ask ? [{ href: '/ask', label: t('Ask {brand}', { brand }), tag: 'AI' }] : []),
   ...(features.boardQa ? [{ href: '/board', label: t('Board Q&A') }] : []),
   ...(features.trading ? [{ href: '/trading', label: t('Trading') }] : []),
   ...(canAdmin ? [{ href: '/admin', label: t('Admin') }] : []),
 ];
+// Phones: four main sections in the bottom bar; everything else under More.
+const PRIMARY = ['/', '/documents', '/agm', '/news'];
+const primary = nav.filter((n) => PRIMARY.includes(n.href));
+const more = nav.filter((n) => !PRIMARY.includes(n.href));
+const ICONS: Record<string, string> = {
+  '/': 'M3 11.5 12 4l9 7.5M5.5 10v9.5h13V10',
+  '/documents': 'M7 3.5h7l4.5 4.5v12.5H7zM14 3.5V8h4.5M9.5 13h6M9.5 16.5h6',
+  '/agm': 'M4 6.5h16v13H4zM8 4v5M16 4v5M4 11h16',
+  '/news': 'M5 5.5h11v14H6.5A1.5 1.5 0 0 1 5 18zM16 9h3v9a1.5 1.5 0 0 1-3 0M8 9h5M8 12.5h5M8 16h3',
+  more: 'M5 12h.01M12 12h.01M19 12h.01',
+};
 const switchHref = (code: string) => `/company/${code}?next=${encodeURIComponent(path)}`;
 const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
 const initials = `${profile?.first_name?.[0] ?? ''}${profile?.last_name?.[0] ?? ''}`.toUpperCase() || '·';
@@ -107,18 +118,39 @@ const { count: unread } = user
           </details>
         </div>
       </div>
-      <nav class="container-portal -mb-px flex gap-1 overflow-x-auto pb-px text-sm [scrollbar-width:none]" aria-label={t('Portal')}>
+      <nav class="container-portal -mb-px hidden gap-1 overflow-x-auto pb-px text-sm [scrollbar-width:none] sm:flex" aria-label={t('Portal')}>
         {nav.map((n) => (
           <a href={n.href} aria-current={isActive(n.href) ? 'page' : undefined}
-            class:list={['shrink-0 border-b-2 px-3 py-3 transition', isActive(n.href) ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{n.label}</a>
+            class:list={['shrink-0 border-b-2 px-3 py-3 transition', isActive(n.href) ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{n.label}{n.tag && <span class="ml-1.5 rounded bg-lk-blue/15 px-1 py-px text-[10px] font-semibold text-lk-blue">{n.tag}</span>}</a>
         ))}
       </nav>
     </header>
-    <main class="container-portal py-10">
+    {/* Phones: the main sections in a bar at the bottom, the rest under More. */}
+    <nav class="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-ink/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden" aria-label={t('Portal')} data-bottom-nav>
+      <div class="grid grid-cols-5 text-[11px]">
+        {primary.map((n) => (
+          <a href={n.href} aria-current={isActive(n.href) ? 'page' : undefined} class:list={['flex flex-col items-center gap-1 px-1 py-2.5', isActive(n.href) ? 'text-lk-blue' : 'text-white/55']}>
+            <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={ICONS[n.href] ?? ICONS.more} /></svg>
+            <span class="truncate">{n.label}</span>
+          </a>
+        ))}
+        <details class="group/more relative">
+          <summary class:list={['flex cursor-pointer list-none flex-col items-center gap-1 px-1 py-2.5', more.some((n) => isActive(n.href)) ? 'text-lk-blue' : 'text-white/55']}>
+            <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d={ICONS.more} /></svg>
+            <span>{t('More')}</span>
+          </summary>
+          <div class="absolute bottom-full right-2 mb-2 w-56 rounded-2xl border border-white/10 bg-ink p-2 text-sm shadow-2xl">
+            {more.map((n) => <a href={n.href} aria-current={isActive(n.href) ? 'page' : undefined} class:list={['flex items-center justify-between rounded-lg px-3 py-2.5', isActive(n.href) ? 'bg-white/10 text-white' : 'text-white/70 hover:bg-white/5']}>{n.label}{n.tag && <span class="rounded bg-lk-blue/15 px-1 py-px text-[10px] font-semibold text-lk-blue">{n.tag}</span>}</a>)}
+            <a href="/profile" class="mt-1 block rounded-lg border-t border-white/5 px-3 py-2.5 text-white/70 hover:bg-white/5">{t('Your account')}</a>
+          </div>
+        </details>
+      </div>
+    </nav>
+    <main class="container-portal py-10 pb-28 sm:pb-10">
       <NoteBanner />
       <slot />
     </main>
-    <footer class="container-portal flex flex-col justify-between gap-2 border-t border-white/5 py-8 text-xs text-white/35 sm:flex-row">
+    <footer class="container-portal flex flex-col justify-between gap-2 border-t border-white/5 py-8 pb-28 text-xs text-white/35 sm:flex-row sm:pb-8">
       <p>{isGroup || !company ? `© ${new Date().getFullYear()} Lakeba Group Limited` : t('{company} Investor Portal, powered by Lakeba', { company: company.display_name })}</p>
       <p>{t('Questions:')} {features.boardQa && <><a href="/board" class="hover:text-white">{t('Board Q&A')}</a> · </>}<a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
     </footer>

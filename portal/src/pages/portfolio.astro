@@ -47,7 +47,7 @@ const updatesOf = (v: { venture_updates: unknown }) => [...(v.venture_updates as
 
 <Portal title={t('Portfolio')}>
   <PageHeader eyebrow={t('Portfolio')} title={t('What your shares own')} subtitle={t('Lakeba’s ventures, its stake in each, and their latest milestones.')} />
-  {myGroupPct > 0 && (
+  {myGroupPct > 0 && (ventures ?? []).some((v) => Number.isFinite(lakebaPct(v.entity_id))) && (
     <p class="mb-8 max-w-3xl rounded-2xl border border-white/10 bg-white/[0.03] px-5 py-4 text-sm text-white/65">
       {lookBefore}<span class="font-semibold text-white">{percent.format(myGroupPct)}</span>{lookMiddle}<span class="font-semibold text-white">{t('look-through')}</span>{lookAfter}
     </p>
@@ -57,6 +57,9 @@ const updatesOf = (v: { venture_updates: unknown }) => [...(v.venture_updates as
     const anyUpdates = items.some((v) => updatesOf(v).length > 0);
     // Lakeba stake: the stated figure, else Lakeba's share of the register.
     const stakeText = (v: (typeof items)[number]) => v.lakeba_stake != null ? `${Number(v.lakeba_stake)}%` : Number.isFinite(lakebaPct(v.entity_id)) ? `${Math.round(lakebaPct(v.entity_id) * 1000) / 10}%` : null;
+    // Columns with nothing to show are left out (no row of dashes).
+    const anyStake = items.some((v) => stakeText(v));
+    const anyLook = myGroupPct > 0 && items.some((v) => Number.isFinite(lakebaPct(v.entity_id)));
     return items.length > 0 && (
       <section class="mb-12">
         <h2 class="text-xl font-bold">{t(g.title)}</h2>
@@ -68,8 +71,8 @@ const updatesOf = (v: { venture_updates: unknown }) => [...(v.venture_updates as
                 <th class="py-3 pl-5 font-medium"><span class="sr-only">{t('Logo')}</span></th>
                 <th class="px-5 py-3 font-medium">{t('Company')}</th>
                 <th class="px-5 py-3 font-medium">{t('Type')}</th>
-                <th class="px-5 py-3 text-right font-medium">{t('Lakeba stake')}</th>
-                {myGroupPct > 0 && <th class="px-5 py-3 text-right font-medium">{t('Your look-through')}</th>}
+                {anyStake && <th class="px-5 py-3 text-right font-medium">{t('Lakeba stake')}</th>}
+                {anyLook && <th class="px-5 py-3 text-right font-medium">{t('Your look-through')}</th>}
                 {anyUpdates && <th class="px-5 py-3 font-medium">{t('Latest update')}</th>}              </tr>
             </thead>
             <tbody class="divide-y divide-white/5">
@@ -93,8 +96,8 @@ const updatesOf = (v: { venture_updates: unknown }) => [...(v.venture_updates as
                     </td>
                     <td class="px-5 py-4"><p class="font-semibold text-white">{v.name}</p>{v.tagline && <p class="mt-0.5 text-xs text-white/50">{v.tagline}</p>}</td>
                     <td class="whitespace-nowrap px-5 py-4 text-white/60">{v.stage}</td>
-                    <td class="px-5 py-4 text-right font-semibold text-white">{stakeText(v) ?? <span class="font-normal text-white/30">—</span>}</td>
-                    {myGroupPct > 0 && <td class="px-5 py-4 text-right">{Number.isFinite(lakebaPct(v.entity_id)) ? smallPercent.format(myGroupPct * lakebaPct(v.entity_id)) : <span class="text-white/30">—</span>}</td>}
+                    {anyStake && <td class="px-5 py-4 text-right font-semibold text-white">{stakeText(v) ?? <span class="font-normal text-white/30">—</span>}</td>}
+                    {anyLook && <td class="px-5 py-4 text-right">{Number.isFinite(lakebaPct(v.entity_id)) ? smallPercent.format(myGroupPct * lakebaPct(v.entity_id)) : <span class="text-white/30">—</span>}</td>}
                     {anyUpdates && <td class="px-5 py-4">{latest ? <><p class="text-white/85">{latest.title}</p><p class="text-xs text-white/40">{shortDate.format(new Date(latest.happened_on))}</p></> : <span class="text-white/30">—</span>}</td>}                  </tr>
                 );
               })}

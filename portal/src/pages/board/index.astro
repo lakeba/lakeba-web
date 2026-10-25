@@ -45,7 +45,9 @@ const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 
     subtitle={ownBoard
       ? t('Questions about {company}’s operations, performance or governance. We aim to reply within 7 working days.', { company: company.display_name })
       : t('Questions about the company’s operations, performance or governance. We aim to reply within 7 working days.')}
-  />
+  >
+    {company && Astro.locals.features.ask && <a href="/ask" class="text-sm text-white/55 hover:text-white">{t('Quick factual question? Ask {brand} (AI) answers straight away from the documents', { brand: company.relationship === 'group' ? 'Lakeba' : company.display_name })} →</a>}
+  </PageHeader>
 
   <div class="grid gap-8 lg:grid-cols-[1fr_24rem]">
     <section>

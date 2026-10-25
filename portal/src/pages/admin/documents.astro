@@ -12,7 +12,7 @@ import { buildKnowledgeBase, NEWS_FROM } from '../../lib/knowledge';
 import { askEnabled, askName } from '../../lib/ask';
 import { adminScope, formCompany } from '../../lib/admin-company';
 import { serviceClient } from '../../lib/admin';
-import { approvalsFor, getApproval, heldBack, requestApproval } from '../../lib/approvals';
+import { approvalHref, approvalsFor, getApproval, heldBack, requestApproval } from '../../lib/approvals';
 import ApprovalChip from '../../components/ApprovalChip.astro';
 import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import CompanySelect from '../../components/CompanySelect.astro';
@@ -205,6 +205,7 @@ const docApprovals = await approvalsFor(serviceClient(), 'document', (docs ?? []
                   <form method="post" class="flex justify-end gap-3 text-xs">
                     <input type="hidden" name="id" value={d.id} />
                     {s === 'Published' ? <button name="intent" value="unpublish" class="text-white/50 hover:text-white">Unpublish</button> : <button name="intent" value="publish" class="text-lk-blue hover:underline">Publish now</button>}
+                    {s !== 'Published' && !docApprovals.get(d.id) && <a href={approvalHref('document', d.id)} class="text-white/50 hover:text-white">Ask for approval</a>}
                     {d.category !== 'register' && (d.in_knowledge_base
                       ? <button name="intent" value="kb-off" class="text-white/50 hover:text-white">Remove from Ask</button>
                       : <button name="intent" value="kb-on" class="text-lk-blue hover:underline">Use in Ask</button>)}

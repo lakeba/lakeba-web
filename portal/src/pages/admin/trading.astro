@@ -4,7 +4,7 @@ import PageHeader from '../../components/PageHeader.astro';
 import Alert from '../../components/Alert.astro';
 import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
-import { approvalsFor, getApproval, heldBack } from '../../lib/approvals';
+import { approvalHref, approvalsFor, getApproval, heldBack } from '../../lib/approvals';
 import ApprovalChip from '../../components/ApprovalChip.astro';
 import { adminScope, withCompany } from '../../lib/admin-company';
 import { displayName } from '../../lib/admin-forms';
@@ -205,6 +205,7 @@ const statusTone: Record<string, string> = { open: 'bg-white/10 text-white/70', 
                         <label class="flex items-center gap-1.5 text-xs text-white/60"><input type="checkbox" name="record_price" class="accent-lk-blue" /> Record as reference price</label>
                         <button class="btn-primary px-3 py-1.5 text-xs">Complete transfer</button>
                       </form>
+                      {!tradeApprovals.get(m.id) && <a href={approvalHref('trade', m.id)} class="text-xs text-white/50 hover:text-white">Ask for approval (optional)</a>}
                       <form method="post" class="flex items-center gap-2" onsubmit="return confirm('Cancel this pairing?')"><input type="hidden" name="intent" value="cancel-match" /><input type="hidden" name="match_id" value={m.id} /><input name="reason" placeholder="Reason (internal)" class="field w-40 py-1.5 text-xs" /><button class="btn-ghost px-3 py-1.5 text-xs">Cancel pairing</button></form>
                     </div>
                   )}</td>

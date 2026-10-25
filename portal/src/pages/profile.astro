@@ -1,4 +1,5 @@
 ---
+import AccountNav from '../components/AccountNav.astro';
 import Portal from '../layouts/Portal.astro';
 import PageHeader from '../components/PageHeader.astro';
 import Alert from '../components/Alert.astro';
@@ -95,7 +96,7 @@ const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder
 ---
 
 <Portal title={t('Profile')}>
-  <PageHeader eyebrow={t('Profile')} title={t('Your details')} />
+  <AccountNav title={t('Your details')} />
   {!owned.length && shareError && <div class="mb-4 max-w-4xl"><Alert tone="error">{shareError}</Alert></div>}
   <div class="grid max-w-4xl gap-4 lg:grid-cols-2">
     <form method="post" class="card space-y-4">
@@ -106,7 +107,7 @@ const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder
         <div><label for="last_name" class="label">{t('Last name')}</label><input id="last_name" name="last_name" value={profile?.last_name} autocomplete="family-name" class="field" /></div>
       </div>
       <div><label for="phone" class="label">{t('Phone')}</label><input id="phone" name="phone" type="tel" value={profile?.phone ?? ''} autocomplete="tel" class="field" /></div>
-      <div><p class="label">{t('Email')}</p><p class="text-white/70">{profile?.email}</p><p class="mt-1 text-xs text-white/40">{t('To change your sign-in email, ask in Board Q&A.')}</p></div>
+      <div><p class="label">{t('Email')}</p><p class="text-white/70">{profile?.email}</p><p class="mt-1 text-xs text-white/40">{t('To change your sign-in email, write to')} <a href="mailto:info@lakeba.com" class="text-lk-blue hover:underline">info@lakeba.com</a>.</p></div>
       <p class="text-sm text-white/55">{t('Emails and browser notifications:')} <a href="/account/notifications" class="text-lk-blue hover:underline">{t('choose in Notifications')}</a>.</p>
       <button class="btn-primary">{t('Save')}</button>
     </form>

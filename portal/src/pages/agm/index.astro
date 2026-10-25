@@ -2,10 +2,11 @@
 import Portal from '../../layouts/Portal.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
+import { PHASE_LABEL, meetingOrder, meetingPhase } from '../../lib/meetings';
 
 const { company, t, fmt } = Astro.locals;
-const { data: meetings } = await Astro.locals.supabase.from('meetings').select('id, title, kind, starts_at, location, status').eq('entity_id', company?.id ?? '00000000-0000-0000-0000-000000000000').order('starts_at', { ascending: false });
-const statusLabel: Record<string, string> = { upcoming: 'Upcoming', open: 'Proxy voting open', closed: 'Voting closed', results: 'Results available' };
+const { data: rows } = await Astro.locals.supabase.from('meetings').select('id, title, kind, starts_at, location, status, proxy_deadline').eq('entity_id', company?.id ?? '00000000-0000-0000-0000-000000000000');
+const meetings = meetingOrder(rows ?? []);
 ---
 
 <Portal title={t('Meetings')}>
@@ -15,7 +16,7 @@ const statusLabel: Record<string, string> = { upcoming: 'Upcoming', open: 'Proxy
       {meetings.map((m) => (
         <li><a href={`/agm/${m.id}`} class="card flex flex-wrap items-center justify-between gap-4 p-5 transition hover:bg-white/[0.07]">
           <div><p class="font-semibold text-white">{m.title}</p><p class="text-sm text-white/45">{fmt.longDate.format(new Date(m.starts_at))}{m.location && ` · ${m.location}`}</p></div>
-          <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', m.status === 'open' ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{t(statusLabel[m.status] ?? m.status)}</span>
+          <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', meetingPhase(m) === 'voting' ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{t(PHASE_LABEL[meetingPhase(m)])}</span>
         </a></li>
       ))}
     </ul>
