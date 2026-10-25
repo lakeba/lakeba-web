@@ -8,7 +8,7 @@ const MAX = 8 * 1024 * 1024;
 
 /** Uploads an image for a press release (cover or press kit) to the newsroom's image store. */
 export const POST: APIRoute = async ({ request, locals }) => {
-  if (!pressAccess(locals)) return Response.json({ error: 'Not allowed.' }, { status: 403 });
+  if (!pressAccess(locals)?.writer) return Response.json({ error: 'Not allowed.' }, { status: 403 });
   const file = (await request.formData()).get('file');
   if (!(file instanceof File)) return Response.json({ error: 'No image.' }, { status: 400 });
   const ext = IMAGE_TYPES[file.type];

@@ -23,7 +23,7 @@ const examples = isGroup ? [
 ];
 // Texts the browser script shows.
 const i18n = clientStrings(t, ['Thanks for the feedback.', 'Could not save your feedback.', 'Sources', '+{n} more', '{name} is unavailable right now.', 'Stopped.']);
-const isAdmin = Astro.locals.profile?.role === 'admin';
+const isAdmin = Astro.locals.access.groupAdmin;
 ---
 
 <Portal title={title}>

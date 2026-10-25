@@ -11,7 +11,7 @@ import { DESIGN_RULES, EDITS_SCHEMA, checkEdits, type Edit } from '../../../lib/
  * requests use Sonnet. Claude only changes the design: it can't save or send.
  */
 export const POST: APIRoute = async ({ request, locals, url }) => {
-  if (!newsEditor(locals)) return Response.json({ error: 'Not allowed.' }, { status: 403 });
+  if (!newsEditor(locals, 'newsletters')) return Response.json({ error: 'Not allowed.' }, { status: 403 });
   if (!claude) return Response.json({ error: 'Claude needs the API key on the server.' }, { status: 503 });
   const b = await request.json().catch(() => null) as Record<string, unknown> | null;
   const instruction = String(b?.instruction ?? '').trim().slice(0, 1000);

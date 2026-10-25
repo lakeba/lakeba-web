@@ -17,11 +17,14 @@ export async function recordSignIn({ supabase, userId, method, request, origin, 
     const svc = serviceClient();
     const { data: profile } = await svc.from('profiles').select('email, first_name, last_name, role, first_signed_in_at').eq('id', userId).single();
     if (!profile) return;
+    // Staff: anyone holding a role (System → Users).
+    const { count: roles } = await svc.from('user_roles').select('id', { count: 'exact', head: true }).eq('user_id', userId);
+    const staff = (roles ?? 0) > 0;
     const name = [profile.first_name, profile.last_name].filter(Boolean).join(' ') || profile.email;
 
     if (!profile.first_signed_in_at) {
       await svc.from('profiles').update({ first_signed_in_at: new Date().toISOString() }).eq('id', userId);
-      if (profile.role !== 'admin') {
+      if (!staff) {
         await notifyAdmins({
           kind: 'admin_first_signin', origin, link: `/admin/investors/${userId}`,
           title: `${name} signed in for the first time`,
@@ -30,7 +33,7 @@ export async function recordSignIn({ supabase, userId, method, request, origin, 
       }
     }
 
-    if (profile.role === 'admin') {
+    if (staff) {
       const device = deviceName(request.headers.get('user-agent') ?? '');
       const { data: known } = await svc.from('admin_devices').select('device').eq('user_id', userId);
       const isNew = !(known ?? []).some((k) => k.device === device);

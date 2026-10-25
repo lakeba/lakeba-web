@@ -20,7 +20,7 @@ import { client as claude } from '../../../../lib/ask';
 // to the original.
 const svc = serviceClient();
 const scope = await adminScope(Astro.locals, Astro.url);
-const editor = newsEditor(Astro.locals)!;
+const editor = newsEditor(Astro.locals, 'newsletters', 'view')!;
 const me = Astro.locals.user!;
 let t = await loadTemplate(svc, Astro.params.id!);
 if (!t || !mayManageTemplate(t, editor.mayEdit, editor.group)) return Astro.redirect(withCompany(scope, '/admin/newsletters'));

@@ -17,7 +17,7 @@ const scope = await adminScope(Astro.locals, Astro.url);
 const group = scope.isGroupAdmin;
 let notice = '';
 let error = '';
-const editor = newsEditor(Astro.locals)!;
+const editor = newsEditor(Astro.locals, 'newsletters', 'view')!;
 
 const form = Astro.request.method === 'POST' ? await Astro.request.formData() : null;
 if (form && ['rename-template', 'delete-template'].includes(field(form, 'intent'))) {

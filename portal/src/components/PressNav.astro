@@ -1,7 +1,7 @@
 ---
 // Tabs across the press office pages.
 const path = Astro.url.pathname;
-const approver = Astro.locals.profile?.role === 'admin';
+const approver = Astro.locals.access.can('press.approve', null);
 const tabs = [
   { href: '/admin/press', label: 'Releases', on: path === '/admin/press' || (/^\/admin\/press\/([0-9a-f-]{36}|distribution)/.test(path) && !/\/report$/.test(path)) },
   { href: '/admin/press/media', label: 'Media database', on: path.startsWith('/admin/press/media') },

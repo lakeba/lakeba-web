@@ -40,7 +40,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   const [limits, retrieval] = await Promise.all([loadLimits(svc), loadRetrieval(svc)]);
   // Full knowledge base, or only the best-matching passages (Admin → Ask knowledge).
   // Admins may pick the mode per question, for comparing the two.
-  const admin = locals.profile?.role === 'admin' && locals.user?.aal === 'aal2';
+  const admin = locals.access.groupAdmin;
   let mode: 'full' | 'retrieval' = admin && ['full', 'retrieval'].includes(body?.mode) ? body.mode : retrieval.enabled ? 'retrieval' : 'full';
   const gate = await checkAskAllowed(svc, locals.user!.id, limits, url.origin);
   if (!gate.ok) return Response.json({ error: t(gate.error, gate.vars) }, { status: gate.status });

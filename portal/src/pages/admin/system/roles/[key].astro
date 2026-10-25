@@ -1,0 +1,90 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import SystemNav from '../../../../components/SystemNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime } from '../../../../lib/format';
+import { AREAS, LEVEL_LABEL, normalise } from '../../../../lib/permissions';
+import { loadRoles, setRolePermissions } from '../../../../lib/roles-admin';
+
+// One role: its permissions (See · Do · Approve per area) and who holds it.
+const access = Astro.locals.access;
+if (!access.can('users.view', null)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+let role = (await loadRoles(svc)).find((r) => r.key === Astro.params.key);
+if (!role) return Astro.redirect('/admin/system/roles');
+let error = '', notice = '';
+const mayChange = access.can('users.do', null);
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { role: role!.key, ...detail } });
+if (Astro.request.method === 'POST' && mayChange) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'save') {
+    const perms = normalise(form.getAll('perm').map(String));
+    error = (await setRolePermissions(svc, access, role, perms)) ?? '';
+    if (!error) {
+      await svc.from('roles').update({ description: field(form, 'description').slice(0, 300), ...(role.builtin ? {} : { name: field(form, 'name').slice(0, 60) || role.name }) }).eq('key', role.key);
+      await log('admin_changed_role_permissions', { added: perms.filter((p) => !role!.permissions.includes(p)), removed: role.permissions.filter((p) => !perms.includes(p)) });
+      notice = 'Saved. It applies to everyone with this role straight away.';
+    }
+  } else if (intent === 'delete' && !role.builtin) {
+    const { count } = await svc.from('user_roles').select('id', { count: 'exact', head: true }).eq('role_key', role.key);
+    if (count) error = 'Remove this role from everyone who holds it first.';
+    else { await svc.from('roles').delete().eq('key', role.key); await log('admin_deleted_role', {}); return Astro.redirect('/admin/system/roles', 303); }
+  }
+  role = (await loadRoles(svc)).find((r) => r.key === role!.key)!;
+}
+const { data: holders } = await svc.from('user_roles').select('id, user_id, entity_id, expires_at, profiles(email, first_name, last_name)').eq('role_key', role.key);
+const { data: entities } = await svc.from('entities').select('id, display_name');
+const locked = role.key === 'admin';
+---
+
+<Admin title={`Role: ${role.name}`}>
+  <SystemNav />
+  <a href="/admin/system/roles" class="text-sm text-white/50 hover:text-white">← Roles</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{role.name}</h1>
+  <p class="mt-1 text-sm text-white/50">{role.builtin ? 'Built-in role' : 'Custom role'}{locked && ': Admin always has every permission'}</p>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+  <form method="post" class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+    <section class="card overflow-x-auto p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Area</th>{(['view', 'do', 'approve'] as const).map((l) => <th class="px-5 py-3 text-center">{LEVEL_LABEL[l]}</th>)}</tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {AREAS.map((a) => (
+            <tr><td class="px-5 py-2.5"><span class="text-white/85">{a.label}</span><span class="block text-xs text-white/40">{a.description}{a.groupOnly && ' Group-wide roles only.'}</span></td>
+              {(['view', 'do', 'approve'] as const).map((l) => <td class="px-5 py-2.5 text-center">{a.levels.includes(l) ? <input type="checkbox" name="perm" value={`${a.key}.${l}`} checked={role!.permissions.includes(`${a.key}.${l}`)} disabled={locked || !mayChange} aria-label={`${a.label}: ${LEVEL_LABEL[l]}`} class="size-4 accent-lk-blue" data-level={l} data-area={a.key} /> : <span class="text-xs text-white/15">n/a</span>}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+      <p class="px-5 py-3 text-xs text-white/40">“Do” and “Approve” include “See”. You can only add permissions you have yourself.</p>
+    </section>
+    <aside class="space-y-4">
+      <section class="card space-y-3">
+        {!role.builtin && <div><label class="label" for="name">Name</label><input id="name" name="name" value={role.name} class="field" disabled={!mayChange} /></div>}
+        <div><label class="label" for="description">What it’s for</label><textarea id="description" name="description" rows="3" class="field text-sm" disabled={!mayChange}>{role.description}</textarea></div>
+        {mayChange && !locked && <button name="intent" value="save" class="btn-primary w-full">Save</button>}
+        {mayChange && !role.builtin && <button name="intent" value="delete" class="w-full text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Delete this role?')">Delete role</button>}
+      </section>
+      <section class="card">
+        <h2 class="font-display text-lg font-bold">Who has it</h2>
+        <ul class="mt-2 divide-y divide-white/5 text-sm">
+          {(holders ?? []).map((h) => { const p = h.profiles as unknown as { email: string; first_name: string | null; last_name: string | null } | null; return (
+            <li class="py-2"><a href={`/admin/system/users/${h.user_id}`} class="text-white/85 hover:text-lk-blue">{[p?.first_name, p?.last_name].filter(Boolean).join(' ') || p?.email}</a><span class="block text-xs text-white/45">{h.entity_id ? (entities ?? []).find((e) => e.id === h.entity_id)?.display_name : 'Whole group'}{h.expires_at && ` · until ${dateTime.format(new Date(h.expires_at))}`}</span></li>); })}
+          {!holders?.length && <li class="py-3 text-white/45">Nobody yet. Give it from a person’s page in Users.</li>}
+        </ul>
+      </section>
+    </aside>
+  </form>
+</Admin>
+
+<script>
+  // Ticking Do or Approve ticks See; unticking See unticks the others.
+  for (const box of document.querySelectorAll<HTMLInputElement>('input[name="perm"]')) {
+    box.addEventListener('change', () => {
+      const row = document.querySelectorAll<HTMLInputElement>(`input[data-area="${box.dataset.area}"]`);
+      if (box.dataset.level !== 'view' && box.checked) row.forEach((b) => { if (b.dataset.level === 'view') b.checked = true; });
+      if (box.dataset.level === 'view' && !box.checked) row.forEach((b) => { b.checked = false; });
+    });
+  }
+</script>

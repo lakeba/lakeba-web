@@ -25,8 +25,10 @@ declare namespace App {
     group: import('./lib/companies').Company | null;
     /** Companies this person administers as a company admin. */
     adminOf: string[];
-    /** On the press team: may write press releases (Admin → Press releases) without being an admin. */
-    pressTeam: boolean;
+    /** What their roles let them see, do and approve (System → Users), after two-step. */
+    access: import('./lib/access').Access;
+    /** The request sends something (not GET or HEAD): admin pages then use the companies the person may change. */
+    writing: boolean;
     /** Per-person switches set by admins (Admin → Investors). */
     features: { ask: boolean; boardQa: boolean; trading: boolean };
     /** Interface language, its translate function and date/number formats. */

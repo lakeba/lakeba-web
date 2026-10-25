@@ -16,7 +16,7 @@ import { newsEditor } from '../../../lib/news-editors';
 const supabase = Astro.locals.supabase;
 const svc = serviceClient();
 const scope = await adminScope(Astro.locals, Astro.url);
-const editor = newsEditor(Astro.locals)!;
+const editor = newsEditor(Astro.locals, 'news', 'view')!;
 const userId = Astro.locals.user!.id;
 const isNew = Astro.params.id === 'new';
 let error = '';

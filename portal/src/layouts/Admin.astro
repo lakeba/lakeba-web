@@ -1,10 +1,10 @@
 ---
 import Portal from './Portal.astro';
-import { companyAdminMayOpen } from '../lib/admin-company';
+import { mayOpenItem } from '../lib/access';
 interface Props { title: string }
 const { title } = Astro.props;
 const path = Astro.url.pathname;
-const groupAdmin = Astro.locals.profile?.role === 'admin';
+const access = Astro.locals.access;
 const groups = [
   { label: 'People', items: [
     { href: '/admin/investors', label: 'Investors' },
@@ -37,13 +37,15 @@ const groups = [
     { href: '/admin/trading', label: 'Secondary trading' },
   ] },
   { label: 'System', items: [
+    { href: '/admin/system/users', label: 'Users' },
+    { href: '/admin/system/roles', label: 'Roles' },
     { href: '/admin/audit', label: 'Audit log' },
   ] },
 ];
 const active = (href: string) => (href === '/admin' ? path === '/admin' : path === href || path.startsWith(`${href}/`));
-// Company admins see only the sections they can use; empty groups are left out.
+// Only the sections this person's roles open; empty groups are left out.
 const visible = groups
-  .map((g) => ({ ...g, items: groupAdmin ? g.items : g.items.filter((i) => (Astro.locals.adminOf.length && companyAdminMayOpen(i.href)) || (Astro.locals.pressTeam && i.href === '/admin/press')) }))
+  .map((g) => ({ ...g, items: g.items.filter((i) => mayOpenItem(access, i.href)) }))
   .filter((g) => g.items.length);
 const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.label ?? (path === '/admin' ? 'Overview' : title);
 ---
@@ -61,7 +63,7 @@ const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.lab
       </details>
       <p class="eyebrow hidden lg:block" data-admin-eyebrow>Admin</p>
       <nav class="mt-2 hidden text-sm lg:mt-4 lg:block" aria-label="Admin" data-admin-nav>
-        {(groupAdmin || Astro.locals.adminOf.length > 0) && <a href="/admin" aria-current={active('/admin') ? 'page' : undefined}
+        {mayOpenItem(access, '/admin') && <a href="/admin" aria-current={active('/admin') ? 'page' : undefined}
           class:list={['block rounded-lg px-3 py-2 transition', active('/admin') ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>Overview</a>}
         {visible.map((g) => {
           const open = g.items.some((i) => active(i.href));

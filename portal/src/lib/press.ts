@@ -35,9 +35,9 @@ export const STATUS_LABEL: Record<Release['status'], string> = {
 /** What this person may do: write (the press team and group admins) and approve (group admins). Both after two-step. */
 export function pressAccess(locals: App.Locals) {
   if (!locals.user || locals.user.aal !== 'aal2') return null;
-  const approver = locals.profile?.role === 'admin';
-  if (!approver && !locals.pressTeam) return null;
-  return { writer: true, approver };
+  const a = locals.access;
+  if (!a.can('press.view', null)) return null;
+  return { writer: a.can('press.do', null), approver: a.can('press.approve', null), viewer: true };
 }
 
 export async function pressSettings(svc: Svc): Promise<PressSettings> {

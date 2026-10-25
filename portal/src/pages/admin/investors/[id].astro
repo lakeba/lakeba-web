@@ -5,7 +5,7 @@ import Alert from '../../../components/Alert.astro';
 import { serviceClient } from '../../../lib/admin';
 import { sendPasswordReset } from '../../../lib/admin-auth';
 import { field } from '../../../lib/forms';
-import { displayName, roles } from '../../../lib/admin-forms';
+import { displayName } from '../../../lib/admin-forms';
 import { aud, audPrecise, dateTime, holderKinds, percent, shares, shortDate } from '../../../lib/format';
 import { latestPrices, loadHolderPositions, sourceLabels } from '../../../lib/holdings';
 import type { Passkey } from '../../../lib/passkeys';
@@ -28,15 +28,8 @@ if (Astro.request.method === 'POST') {
   const log = (action: string, detail: Record<string, unknown> = {}) =>
     supabase.rpc('log_event', { event_action: action, event_detail: { user_id: id, email: target.email, ...detail } });
 
-  if (self && ['role', 'disable', 'reset-mfa', 'delete-user'].includes(intent)) {
-    error = 'You cannot change your own role, access or two-step verification here.';
-  } else if (intent === 'role') {
-    const role = field(form, 'role');
-    if (roles.includes(role as never)) {
-      await svc.from('profiles').update({ role }).eq('id', id!).throwOnError();
-      await log('admin_changed_role', { role });
-      notice = 'Role updated.';
-    }
+  if (self && ['disable', 'reset-mfa', 'delete-user'].includes(intent)) {
+    error = 'You cannot change your own access or two-step verification here.';
   } else if (intent === 'link') {
     const { error: linkError } = await supabase.from('holder_members').upsert({ holder_id: field(form, 'holder_id'), user_id: id, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner' });
     if (linkError) error = linkError.message;
@@ -146,9 +139,16 @@ const valueOf = (classId: string, n: number) => { const pr = prices.get(classId)
 const pricedTotal = positions.reduce((a, p) => a + (valueOf(p.row.share_class_id, p.row.shares) ?? 0), 0);
 import ShareLink from '../../../components/ShareLink.astro';
 import HoldingNote from '../../../components/HoldingNote.astro';
+// Their roles (managed in System → Users).
+const { data: roleRows } = await svc.from('user_roles').select('role_key, entity_id, roles(name), entities(display_name)').eq('user_id', id!);
+const heldRoles = ((roleRows ?? []) as unknown as { roles: { name: string } | null; entities: { display_name: string } | null }[]).map((r) => `${r.roles?.name ?? ''}${r.entities ? ` (${r.entities.display_name})` : ''}`);
+// People who only see the register get this page without its actions.
+const readOnly = !Astro.locals.access.groupAdmin;
 ---
 
 <Admin title={displayName(profile)}>
+  {readOnly && <style is:inline>{'[data-investor-page] form[method="post"]{display:none}'}</style>}
+  <div data-investor-page>
   <a href="/admin/investors" class="text-sm text-white/50 hover:text-white">← Investors</a>
   <PageHeader title={displayName(profile)} subtitle={`${profile?.email}${profile?.phone ? ` · ${profile.phone}` : ''}`} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
@@ -166,11 +166,10 @@ import HoldingNote from '../../../components/HoldingNote.astro';
         <div><dt class="text-white/40">Last sign-in</dt><dd class="text-white/80">{auth?.last_sign_in_at ? dateTime.format(new Date(auth.last_sign_in_at)) : '—'}</dd></div>
         <div><dt class="text-white/40">Created</dt><dd class="text-white/80">{auth?.created_at ? dateTime.format(new Date(auth.created_at)) : '—'}</dd></div>
       </dl>
-      <form method="post" class="mt-6 flex flex-wrap items-end gap-3">
-        <div class="grow"><label class="label" for="role">Role</label>
-          <select class="field" id="role" name="role" disabled={self}>{roles.map((r) => <option value={r} selected={r === profile?.role}>{r}</option>)}</select></div>
-        <button name="intent" value="role" class="btn-ghost" disabled={self}>Save role</button>
-      </form>
+      <div class="mt-6 flex flex-wrap items-center justify-between gap-3 text-sm">
+        <span><span class="text-white/45">Roles:</span> {heldRoles.length ? heldRoles.join(', ') : 'none (an investor only)'}</span>
+        <a href={`/admin/system/users/${id}`} class="btn-ghost !py-1.5 text-sm">Roles and permissions</a>
+      </div>
       <form method="post" class="mt-6 flex flex-wrap gap-3 border-t border-white/5 pt-6">
         <button name="intent" value="reset-password" class="btn-ghost">Send password reset</button>
         {!self && mfaOn && <button name="intent" value="reset-mfa" class="btn-ghost">Reset two-step</button>}
@@ -299,4 +298,5 @@ import HoldingNote from '../../../components/HoldingNote.astro';
       {!events?.length && <li class="py-2.5 text-white/45">No activity yet.</li>}
     </ul>
   </section>
+  </div>
 </Admin>

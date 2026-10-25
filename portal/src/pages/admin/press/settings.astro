@@ -45,26 +45,18 @@ if (Astro.request.method === 'POST') {
       await log('press_settings_saved', {});
       notice = 'Saved. New and corrected releases use these.';
     }
-  } else if (intent === 'add-member') {
-    const email = field(form, 'email').toLowerCase();
-    const { data: p } = await svc.from('profiles').select('id, role').ilike('email', email).maybeSingle();
-    if (!p) error = 'Nobody with that email address has a portal account. Invite them first (Admin → Investors), then add them here.';
-    else if (p.role === 'admin') error = 'Group admins can already write and approve press releases.';
-    else {
-      await svc.from('press_team').upsert({ user_id: p.id, added_by: me.id });
-      await log('press_team_added', { email });
-      notice = `${email} is on the press team. They’ll need two-step sign-in, and will see Admin → Press releases.`;
-    }
-  } else if (intent === 'remove-member') {
-    await svc.from('press_team').delete().eq('user_id', field(form, 'user_id'));
-    await log('press_team_removed', { user_id: field(form, 'user_id') });
-    notice = 'Removed from the press team.';
   }
 }
 const s = await pressSettings(svc);
 const { data: sync } = await svc.from('email_sync_state').select('last_checked_at, last_error').eq('mailbox', s.reply_mailbox).maybeSingle();
-const { data: team } = await svc.from('press_team').select('user_id, added_at');
-const { data: people } = team?.length ? await svc.from('profiles').select('id, email, first_name, last_name').in('id', team.map((t) => t.user_id)) : { data: [] };
+// Who works on press releases, from their roles (System → Users).
+const { data: grants } = await svc.from('role_permissions').select('role_key, permission').in('permission', ['press.do', 'press.approve']);
+const pressRoles = [...new Set((grants ?? []).map((g) => g.role_key))];
+const { data: holders } = pressRoles.length ? await svc.from('user_roles').select('user_id, role_key, entity_id, expires_at, roles(name), profiles(id, email, first_name, last_name)').in('role_key', pressRoles).or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`) : { data: [] };
+const people = [...new Map(((holders ?? []) as unknown as { user_id: string; role_key: string; roles: { name: string } | null; profiles: { id: string; email: string; first_name: string; last_name: string } }[]).map((h) => [h.user_id, h])).values()].map((h) => ({
+  ...h.profiles, writes: (grants ?? []).some((g) => g.permission === 'press.do' && (holders ?? []).some((x) => x.user_id === h.user_id && x.role_key === g.role_key)),
+  approves: (grants ?? []).some((g) => g.permission === 'press.approve' && (holders ?? []).some((x) => x.user_id === h.user_id && x.role_key === g.role_key)),
+}));
 ---
 
 <Admin title="Press settings">
@@ -110,15 +102,14 @@ const { data: people } = team?.length ? await svc.from('profiles').select('id, e
     </form>
     <section class="card space-y-4">
       <h2 class="font-display text-lg font-bold">Press team</h2>
-      <p class="text-sm text-white/55">The marketing people who prepare releases. They can write, draft with AI, check, get quotes approved and send releases for approval, but not publish. Group admins approve.</p>
+      <p class="text-sm text-white/55">Who prepares and who approves releases comes from their roles: Marketing prepares; Admin and Legal approve. Give or remove roles in <a href="/admin/system/users" class="text-lk-blue hover:underline">System → Users</a>.</p>
       <ul class="divide-y divide-white/5 text-sm">
-        {(people ?? []).map((p) => (
+        {people.map((p) => (
           <li class="flex items-center justify-between gap-3 py-2"><span>{[p.first_name, p.last_name].filter(Boolean).join(' ') || p.email}<span class="block text-xs text-white/45">{p.email}</span></span>
-            <form method="post"><input type="hidden" name="user_id" value={p.id} /><button name="intent" value="remove-member" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Remove from the press team?')">Remove</button></form></li>
+            <span class="text-xs text-white/55">{[p.writes && 'prepares', p.approves && 'approves'].filter(Boolean).join(' and ')}</span></li>
         ))}
-        {!people?.length && <li class="py-3 text-white/45">Nobody yet.</li>}
+        {!people.length && <li class="py-3 text-white/45">Nobody yet.</li>}
       </ul>
-      <form method="post" class="flex gap-2"><input name="email" type="email" required placeholder="Their portal email" class="field" /><button name="intent" value="add-member" class="btn-ghost shrink-0">Add</button></form>
     </section>
   </div>
 </Admin>

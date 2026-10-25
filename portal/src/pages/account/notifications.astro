@@ -10,7 +10,7 @@ import { processOutbox, pushEnabled, queuePush, vapidPublicKey } from '../../lib
 const supabase = Astro.locals.supabase;
 const { t, fmt } = Astro.locals;
 const userId = Astro.locals.user!.id;
-const isAdmin = Astro.locals.profile?.role === 'admin' || Astro.locals.adminOf.length > 0;
+const isAdmin = Astro.locals.access.mayOpen('/admin');
 const categories = CATEGORIES.filter((c) => c.audience === 'investor' || isAdmin);
 const tested = Astro.url.searchParams.get('tested');
 const testedDevices = Number(Astro.url.searchParams.get('devices') ?? 0);

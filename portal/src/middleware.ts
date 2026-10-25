@@ -1,7 +1,7 @@
 import { defineMiddleware } from 'astro:middleware';
 import { createSupabase } from './lib/supabase';
 import { loadCompanyContext } from './lib/companies';
-import { companyAdminMayOpen } from './lib/admin-company';
+import { NO_ACCESS, adminMayRequest, formAction, loadAccess } from './lib/access';
 import { rememberOrigin, startNotificationWorker } from './lib/notify-jobs';
 import { serviceClient } from './lib/admin';
 import { tradingEnabled } from './lib/trading';
@@ -30,7 +30,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.company = null;
   locals.group = null;
   locals.adminOf = [];
-  locals.pressTeam = false;
+  locals.access = NO_ACCESS;
+  locals.writing = !['GET', 'HEAD'].includes(context.request.method);
   locals.features = { ask: false, boardQa: false, trading: false };
   // Language: ?lang= (remembered in a cookie), else the cookie, else the browser; the profile choice wins once signed in.
   const asked = url.searchParams.get('lang');
@@ -79,7 +80,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.company = companyContext.current;
   locals.group = companyContext.group;
   locals.adminOf = companyContext.adminOf;
-  if (profile?.role !== 'admin') locals.pressTeam = Boolean((await serviceClient().from('press_team').select('user_id').eq('user_id', locals.user.id).maybeSingle()).data);
+  // Roles (System → Users); their permissions count only after two-step, like the database's can().
+  locals.access = await loadAccess(serviceClient(), locals.user.id, locals.user.aal === 'aal2');
   const { data: flags } = await locals.supabase.rpc('my_portal_flags').maybeSingle();
   locals.features = {
     ask: (flags as { ask_enabled?: boolean } | null)?.ask_enabled ?? true,
@@ -87,19 +89,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
     trading: locals.company ? await tradingEnabled(serviceClient(), locals.company.id) : false,
   };
 
-  // Admins (and company admins) cannot use the portal until they have enrolled MFA.
-  const companyAdmin = locals.adminOf.length > 0;
-  if ((profile?.role === 'admin' || companyAdmin || locals.pressTeam) && !locals.mfaEnrolled && !matches(path, MFA_PATHS)) {
+  // Anyone with a staff role cannot use the portal until they have enrolled MFA.
+  if (locals.access.staff && !locals.mfaEnrolled && !matches(path, MFA_PATHS)) {
     return redirect('/mfa/setup?required=1');
   }
 
+  // Every admin request: "see" for the page's area, "do" (or an approval action) to send a form.
   if (matches(path, ['/admin'])) {
-    const groupAdmin = profile?.role === 'admin' && locals.user.aal === 'aal2';
-    // Company admins manage their company's content and see its register; the rest stays with group admins.
-    // The press team (marketing) writes press releases; group admins approve them.
-    const pressWriter = locals.pressTeam && locals.user.aal === 'aal2' && matches(path, ['/admin/press']);
-    const allowed = groupAdmin || pressWriter || (companyAdmin && locals.user.aal === 'aal2' && companyAdminMayOpen(path));
-    if (!allowed) return new Response('Forbidden', { status: 403 });
+    const form = locals.writing && !locals.access.groupAdmin && /form/.test(context.request.headers.get('content-type') ?? '') ? await context.request.clone().formData().catch(() => null) : null;
+    if (!adminMayRequest(locals.access, path, locals.writing, formAction(form))) return new Response('Forbidden', { status: 403 });
   }
 
   if (matches(path, ['/login', '/forgot-password'])) return redirect('/');

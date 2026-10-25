@@ -27,7 +27,7 @@ const SCHEMA = {
 } as const;
 
 export const POST: APIRoute = async ({ request, locals, url }) => {
-  const editor = newsEditor(locals);
+  const editor = newsEditor(locals, 'newsletters');
   if (!editor) return Response.json({ error: 'Not allowed.' }, { status: 403 });
   if (!claude) return Response.json({ error: 'Claude needs the API key on the server.' }, { status: 503 });
   const b = await request.json().catch(() => null) as Record<string, unknown> | null;

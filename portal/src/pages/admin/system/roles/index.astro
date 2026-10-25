@@ -1,0 +1,55 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import SystemNav from '../../../../components/SystemNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { AREAS } from '../../../../lib/permissions';
+import { loadRoles } from '../../../../lib/roles-admin';
+
+// System → Roles: every role and what it allows (See · Do · Approve per area),
+// who holds it, and new custom roles.
+const access = Astro.locals.access;
+if (!access.can('users.view', null)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+let error = '';
+if (Astro.request.method === 'POST' && access.can('users.do', null)) {
+  const form = await Astro.request.formData();
+  const name = field(form, 'name').slice(0, 60);
+  const key = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+  if (name.length < 2 || !/^[a-z]/.test(key)) error = 'Give the role a name (starting with a letter).';
+  else {
+    const { error: e } = await svc.from('roles').insert({ key, name, description: field(form, 'description').slice(0, 300), created_by: Astro.locals.user!.id });
+    if (e) error = /duplicate|unique/i.test(e.message) ? 'A role with that name already exists.' : e.message;
+    else { await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_created_role', event_detail: { key, name } }); return Astro.redirect(`/admin/system/roles/${key}`, 303); }
+  }
+}
+const roles = await loadRoles(svc);
+const { data: held } = await svc.from('user_roles').select('role_key, expires_at');
+const holders = (k: string) => (held ?? []).filter((h) => h.role_key === k && (!h.expires_at || new Date(h.expires_at) > new Date())).length;
+const mark = (perms: string[], area: string) => ['view', 'do', 'approve'].map((l) => (perms.includes(`${area}.${l}`) ? l[0].toUpperCase() : '·')).join('');
+---
+
+<Admin title="Roles">
+  <SystemNav />
+  <h1 class="font-display text-3xl font-bold">Roles</h1>
+  <p class="mt-1 max-w-3xl text-sm text-white/55">What each role can <strong>S</strong>ee, <strong>D</strong>o and <strong>A</strong>pprove in each area. A person’s permissions are those of all their roles, for the whole group or for the company each role is given for. Open a role to change it.</p>
+  {error && <div class="mt-5"><Alert tone="error">{error}</Alert></div>}
+  <section class="card mt-6 overflow-x-auto p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-4 py-3">Area</th>{roles.map((r) => <th class="px-3 py-3 text-center"><a href={`/admin/system/roles/${r.key}`} class="hover:text-white">{r.name}</a><span class="block text-[10px] font-normal normal-case text-white/35">{holders(r.key)} {holders(r.key) === 1 ? 'person' : 'people'}</span></th>)}</tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {AREAS.map((a) => (
+          <tr><td class="px-4 py-2 text-white/80">{a.label}</td>{roles.map((r) => <td class="px-3 py-2 text-center font-mono text-xs tracking-widest text-white/70">{mark(r.permissions, a.key)}</td>)}</tr>
+        ))}
+      </tbody>
+    </table>
+  </section>
+  {access.can('users.do', null) && (
+    <form method="post" class="card mt-6 grid max-w-3xl gap-3 sm:grid-cols-[14rem_1fr_auto] sm:items-end">
+      <div><label class="label" for="name">New role</label><input id="name" name="name" required maxlength="60" placeholder="e.g. Auditor" class="field" /></div>
+      <div><label class="label" for="description">What it’s for</label><input id="description" name="description" maxlength="300" placeholder="e.g. Read-only access for the external audit" class="field" /></div>
+      <button class="btn-primary">Create</button>
+    </form>
+  )}
+</Admin>

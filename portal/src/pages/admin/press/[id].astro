@@ -70,7 +70,8 @@ if (Astro.request.method === 'POST') {
   const intent = field(form, 'intent');
   const editable = !locked(r) || (r.status === 'published' && access.approver);
   try {
-    if (['save', 'draft-ai', 'check', 'submit', 'request-quote', 'approve', 'correct'].includes(intent) && editable) {
+    // The form's text is saved first, except for an approver who doesn't prepare releases: they approve what's there.
+    if (['save', 'draft-ai', 'check', 'submit', 'request-quote', 'approve', 'correct'].includes(intent) && editable && (access.writer || intent === 'correct')) {
       const fields = fromForm(form, r);
       const contentChanged = changedContent(r, fields);
       const now = new Date().toISOString();

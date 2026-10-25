@@ -76,7 +76,11 @@ if (Astro.request.method === 'POST') {
     if (inviteError || !userId) {
       error = inviteError ?? 'Could not send the invitation.';
     } else {
-      await svc.from('profiles').update({ role }).eq('id', userId).throwOnError();
+      // Staff roles live in user_roles (System → Users); an investor needs none.
+      if (role !== 'investor') {
+        const { error: e } = await svc.from('user_roles').insert({ user_id: userId, role_key: role, granted_by: Astro.locals.user!.id, note: 'given with the invitation' });
+        if (e && !/duplicate|unique/i.test(e.message)) throw e;
+      }
       if (holderId) {
         // Checked above for company admins, so the service key may write the link.
         await svc.from('holder_members').upsert({ holder_id: holderId, user_id: userId, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner' }).throwOnError();

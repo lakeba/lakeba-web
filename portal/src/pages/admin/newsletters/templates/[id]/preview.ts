@@ -12,11 +12,11 @@ import { issueFromTemplate, loadTemplate, mayManageTemplate } from '../../../../
  * editor's unsaved fields (the live preview). Nothing is saved.
  */
 async function preview(locals: App.Locals, id: string, origin: string, form: FormData | null) {
-  const editor = newsEditor(locals);
+  const editor = newsEditor(locals, 'newsletters', 'view');
   if (!editor) return new Response('Not allowed', { status: 403 });
   const svc = serviceClient();
   const t = await loadTemplate(svc, id);
-  if (!t || !mayManageTemplate(t, editor.mayEdit, editor.group)) return new Response('Not found', { status: 404 });
+  if (!t || !mayManageTemplate(t, editor.maySee, editor.seesGroup)) return new Response('Not found', { status: 404 });
   const audience = t.audience === 'public' ? 'public' : 'shareholders';
   const design = form ? await designFields(form) : null;
   const current = form ? { ...t, ...issueFields(form, audience), ...(design ? { mjml: design.mjml, design_json: null } : {}) } : t;

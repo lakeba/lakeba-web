@@ -1,0 +1,116 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import SystemNav from '../../../../components/SystemNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime } from '../../../../lib/format';
+import { AREAS, LEVEL_LABEL } from '../../../../lib/permissions';
+import { grantRole, loadRoles, removeRole } from '../../../../lib/roles-admin';
+import { sydneyToIso } from '../../../../lib/press';
+
+// One person: their roles (give, remove, until when) and, from those roles,
+// exactly what they can see, do and approve, and where.
+const access = Astro.locals.access;
+if (!access.can('users.view', null)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+const id = Astro.params.id!;
+const { data: person } = /^[0-9a-f-]{36}$/.test(id) ? await svc.from('profiles').select('id, email, first_name, last_name, first_signed_in_at').eq('id', id).maybeSingle() : { data: null };
+if (!person) return Astro.redirect('/admin/system/users');
+const { data: entities } = await svc.from('entities').select('id, display_name, relationship').eq('portal', 'full').order('sort');
+const companyName = (eid: string | null) => (eid ? (entities ?? []).find((e) => e.id === eid)?.display_name ?? 'one company' : 'the whole group');
+let roles = await loadRoles(svc);
+let error = '', notice = '';
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { user_id: person.id, email: person.email, ...detail } });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'grant') {
+    const role = roles.find((r) => r.key === field(form, 'role'));
+    const scope = field(form, 'scope');
+    const entityId = scope === 'group' ? null : (entities ?? []).some((e) => e.id === scope) ? scope : undefined;
+    const until = field(form, 'until');
+    if (!role) error = 'Choose a role.';
+    else if (entityId === undefined) error = 'Choose where the role applies.';
+    else if (person.id === me.id && !access.groupAdmin) error = 'You can’t give yourself a role.';
+    else {
+      error = (await grantRole(svc, access, me.id, { userId: person.id, role, entityId, expiresAt: until ? sydneyToIso(`${until}T23:59`) : null, note: field(form, 'note'), origin: Astro.url.origin, companyName: companyName(entityId) })) ?? '';
+      if (!error) { await log('admin_granted_role', { role: role.key, entity_id: entityId, until: until || null }); notice = `${role.name} given for ${companyName(entityId)}.`; }
+    }
+  } else if (intent === 'remove') {
+    const r = await removeRole(svc, access, me.id, { assignmentId: field(form, 'assignment'), origin: Astro.url.origin });
+    if (r.error) error = r.error;
+    else { await log('admin_removed_role', { role: r.removed!.role_key, entity_id: r.removed!.entity_id }); notice = 'Role removed.'; }
+  }
+}
+const { data: rows } = await svc.from('user_roles').select('id, role_key, entity_id, expires_at, note, granted_by, granted_at').eq('user_id', person.id).order('granted_at');
+const now = Date.now();
+const assignments = (rows ?? []).map((a) => ({ ...a, active: !a.expires_at || new Date(a.expires_at).getTime() > now }));
+const granters = [...new Set(assignments.map((a) => a.granted_by).filter(Boolean))] as string[];
+const { data: grantedBy } = granters.length ? await svc.from('profiles').select('id, email').in('id', granters) : { data: [] };
+const { count: holders } = await svc.from('holder_members').select('holder_id', { count: 'exact', head: true }).eq('user_id', person.id);
+const [{ data: authUser }, { data: factors }] = await Promise.all([svc.auth.admin.getUserById(person.id), svc.auth.admin.mfa.listFactors({ userId: person.id })]);
+const mfaOn = (factors?.factors ?? []).some((f) => f.status === 'verified');
+// What they can see, do and approve: per permission, where (the group, or which companies).
+const where = new Map<string, Set<string | null>>();
+for (const a of assignments.filter((x) => x.active)) for (const p of roles.find((r) => r.key === a.role_key)?.permissions ?? []) {
+  if (!where.has(p)) where.set(p, new Set());
+  where.get(p)!.add(a.entity_id);
+}
+const scopeText = (perm: string) => { const s = where.get(perm); if (!s) return ''; return s.has(null) ? 'Everywhere' : [...s].map((e) => companyName(e)).join(', '); };
+const mayChange = access.can('users.do', null);
+---
+
+<Admin title={[person.first_name, person.last_name].filter(Boolean).join(' ') || person.email}>
+  <SystemNav />
+  <a href="/admin/system/users" class="text-sm text-white/50 hover:text-white">← Users</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{[person.first_name, person.last_name].filter(Boolean).join(' ') || person.email}</h1>
+  <p class="mt-1 text-sm text-white/50">{person.email} · {holders ? <>Investor ({holders} holding{holders > 1 ? 's' : ''}) · <a href={`/admin/investors/${person.id}`} class="text-lk-blue hover:underline">investor page</a></> : 'Not an investor'} · two-step {mfaOn ? 'on' : 'not set up'} · last sign-in {authUser?.user?.last_sign_in_at ? dateTime.format(new Date(authUser.user.last_sign_in_at)) : 'never'}</p>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}
+    {assignments.some((a) => a.active) && !mfaOn && <Alert tone="info">They’ll be asked to set up two-step sign-in next time they sign in: roles only work after it.</Alert>}</div>
+
+  <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+    <section class="card overflow-x-auto p-0">
+      <h2 class="px-5 pt-4 font-display text-lg font-bold">What they can see, do and approve</h2>
+      <table class="mt-2 w-full text-left text-sm">
+        <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-2">Area</th>{(['view', 'do', 'approve'] as const).map((l) => <th class="px-5 py-2">{LEVEL_LABEL[l]}</th>)}</tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {AREAS.map((a) => (
+            <tr><td class="px-5 py-2"><span class="text-white/85">{a.label}</span></td>
+              {(['view', 'do', 'approve'] as const).map((l) => <td class="px-5 py-2 text-xs">{a.levels.includes(l) ? (scopeText(`${a.key}.${l}`) ? <span class="text-lk-green">{scopeText(`${a.key}.${l}`)}</span> : <span class="text-white/25">–</span>) : <span class="text-white/15">n/a</span>}</td>)}</tr>
+          ))}
+        </tbody>
+      </table>
+      <p class="px-5 py-3 text-xs text-white/40">From their roles below (roles past their end date don’t count). As an investor they also see their own holdings, documents and news, whatever their roles.</p>
+    </section>
+
+    <aside class="space-y-4">
+      <section class="card space-y-3">
+        <h2 class="font-display text-lg font-bold">Roles</h2>
+        <ul class="divide-y divide-white/5 text-sm">
+          {assignments.map((a) => (
+            <li class="flex items-start justify-between gap-3 py-2.5">
+              <span><strong class:list={[a.active ? 'text-white' : 'text-white/40 line-through']}>{roles.find((r) => r.key === a.role_key)?.name ?? a.role_key}</strong> <span class="text-white/55">· {companyName(a.entity_id)}</span>
+                <span class="block text-xs text-white/45">{a.expires_at ? `${a.active ? 'until' : 'ended'} ${dateTime.format(new Date(a.expires_at))}` : 'no end date'} · given {dateTime.format(new Date(a.granted_at))}{a.granted_by && ` by ${(grantedBy ?? []).find((g) => g.id === a.granted_by)?.email ?? 'someone'}`}{a.note && ` · ${a.note}`}</span></span>
+              {mayChange && <form method="post"><input type="hidden" name="assignment" value={a.id} /><button name="intent" value="remove" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Remove this role?')">Remove</button></form>}
+            </li>
+          ))}
+          {!assignments.length && <li class="py-3 text-white/45">No roles{holders ? ': an investor only' : ''}.</li>}
+        </ul>
+      </section>
+      {mayChange && (
+        <form method="post" class="card space-y-3">
+          <h2 class="font-display text-lg font-bold">Give a role</h2>
+          <div><label class="label" for="role">Role</label><select id="role" name="role" required class="field"><option value="">Choose…</option>{roles.map((r) => <option value={r.key}>{r.name}</option>)}</select></div>
+          <div><label class="label" for="scope">For</label><select id="scope" name="scope" class="field"><option value="group">The whole group (every company)</option>{(entities ?? []).map((e) => <option value={e.id}>{e.display_name} only</option>)}</select></div>
+          <div><label class="label" for="until">Until (optional)</label><input id="until" name="until" type="date" class="field" /></div>
+          <div><label class="label" for="note">Note (optional)</label><input id="note" name="note" maxlength="300" placeholder="e.g. covering for the CFO in November" class="field" /></div>
+          <button name="intent" value="grant" class="btn-primary w-full">Give the role</button>
+          <p class="text-xs text-white/40">They’re told by email and in their Inbox. Roles need two-step sign-in.</p>
+        </form>
+      )}
+    </aside>
+  </div>
+</Admin>

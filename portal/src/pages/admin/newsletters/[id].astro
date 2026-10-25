@@ -20,7 +20,7 @@ import { createSignInLink } from '../../../lib/sign-in-links';
 // preview live, test, schedule or send, then see the results.
 const svc = serviceClient();
 const scope = await adminScope(Astro.locals, Astro.url);
-const editor = newsEditor(Astro.locals)!;
+const editor = newsEditor(Astro.locals, 'newsletters', 'view')!;
 const me = Astro.locals.user!;
 const isNew = Astro.params.id === 'new';
 let error = '';

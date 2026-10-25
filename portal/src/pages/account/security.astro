@@ -8,7 +8,8 @@ import { notifySecurity } from '../../lib/notify';
 
 const supabase = Astro.locals.supabase;
 const { t, fmt } = Astro.locals;
-const isAdmin = Astro.locals.profile?.role === 'admin';
+// Staff (anyone with a role) can't switch two-step off.
+const isAdmin = Astro.locals.access.staff;
 // After a passkey sign-in, Supabase still wants the authenticator code to change two-step or passkeys.
 const needsCode = Astro.locals.mfaEnrolled && !Astro.locals.user?.codeVerified;
 let notice = Astro.url.searchParams.get('passkey') === 'added' ? t('Passkey added. Next time, choose “Sign in with a passkey”.') : '';

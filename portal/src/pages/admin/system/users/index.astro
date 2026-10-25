@@ -1,0 +1,70 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import SystemNav from '../../../../components/SystemNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { dateTime } from '../../../../lib/format';
+import { loadRoles } from '../../../../lib/roles-admin';
+
+// System → Users: everyone with a portal account, their roles (and for which
+// company, until when), whether they're an investor (from the register).
+const access = Astro.locals.access;
+if (!access.can('users.view', null)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const sp = Astro.url.searchParams;
+const q = (sp.get('q') ?? '').trim().toLowerCase();
+const show = sp.get('show') ?? 'staff';
+const roleFilter = sp.get('role') ?? '';
+const [roles, { data: profiles }, { data: assignments }, { data: members }, { data: entities }] = await Promise.all([
+  loadRoles(svc),
+  svc.from('profiles').select('id, email, first_name, last_name, first_signed_in_at').order('email').limit(5000),
+  svc.from('user_roles').select('id, user_id, role_key, entity_id, expires_at'),
+  svc.from('holder_members').select('user_id'),
+  svc.from('entities').select('id, display_name'),
+]);
+const now = Date.now();
+const active = (assignments ?? []).filter((a) => !a.expires_at || new Date(a.expires_at).getTime() > now);
+const byUser = new Map<string, typeof active>();
+for (const a of active) byUser.set(a.user_id, [...(byUser.get(a.user_id) ?? []), a]);
+const investors = new Set((members ?? []).map((m) => m.user_id));
+const roleName = new Map(roles.map((r) => [r.key, r.name]));
+const companyName = new Map((entities ?? []).map((e) => [e.id, e.display_name]));
+const people = (profiles ?? []).filter((p) => {
+  const mine = byUser.get(p.id) ?? [];
+  if (show === 'staff' && !mine.length) return false;
+  if (show === 'investors' && !investors.has(p.id)) return false;
+  if (roleFilter && !mine.some((a) => a.role_key === roleFilter)) return false;
+  return !q || `${p.email} ${p.first_name ?? ''} ${p.last_name ?? ''}`.toLowerCase().includes(q);
+});
+const counts = { staff: (profiles ?? []).filter((p) => byUser.has(p.id)).length, investors: (profiles ?? []).filter((p) => investors.has(p.id)).length, all: (profiles ?? []).length };
+---
+
+<Admin title="Users">
+  <SystemNav />
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div><h1 class="font-display text-3xl font-bold">Users</h1>
+      <p class="mt-1 max-w-3xl text-sm text-white/55">Everyone with a portal account. Staff roles (Admin, Board, Marketing, Legal, Compliance and your own) are given here, for the whole group or one company, optionally until a date. Investor follows the share register.</p></div>
+  </div>
+  <form method="get" class="card mt-6 grid gap-3 p-4 sm:grid-cols-[1fr_12rem_12rem_auto] sm:items-end">
+    <div><label class="label" for="q">Search</label><input id="q" name="q" value={sp.get('q') ?? ''} placeholder="Name or email" class="field py-2" /></div>
+    <div><label class="label" for="show">Show</label><select id="show" name="show" class="field py-2"><option value="staff" selected={show === 'staff'}>People with a role ({counts.staff})</option><option value="investors" selected={show === 'investors'}>Investors ({counts.investors})</option><option value="all" selected={show === 'all'}>Everyone ({counts.all})</option></select></div>
+    <div><label class="label" for="role">Role</label><select id="role" name="role" class="field py-2"><option value="">Any</option>{roles.map((r) => <option value={r.key} selected={r.key === roleFilter}>{r.name}</option>)}</select></div>
+    <button class="btn-ghost py-2">Show</button>
+  </form>
+  <section class="card mt-4 overflow-x-auto p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Person</th><th class="px-5 py-3">Roles</th><th class="px-5 py-3">Investor</th><th class="px-5 py-3">Signed in</th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {people.slice(0, 400).map((p) => (
+          <tr>
+            <td class="px-5 py-2.5"><a href={`/admin/system/users/${p.id}`} class="font-medium text-white hover:text-lk-blue">{[p.first_name, p.last_name].filter(Boolean).join(' ') || p.email}</a><span class="block text-xs text-white/45">{p.email}</span></td>
+            <td class="px-5 py-2.5"><span class="flex flex-wrap gap-1">{(byUser.get(p.id) ?? []).map((a) => <span class="rounded-full bg-white/10 px-2 py-0.5 text-xs text-white/80">{roleName.get(a.role_key) ?? a.role_key}{a.entity_id && ` · ${companyName.get(a.entity_id) ?? 'one company'}`}{a.expires_at && ` · until ${dateTime.format(new Date(a.expires_at)).split(',')[0]}`}</span>)}{!byUser.has(p.id) && <span class="text-xs text-white/35">–</span>}</span></td>
+            <td class="px-5 py-2.5 text-xs text-white/60">{investors.has(p.id) ? 'Yes' : '–'}</td>
+            <td class="px-5 py-2.5 text-xs text-white/45">{p.first_signed_in_at ? 'Yes' : 'Not yet'}</td>
+          </tr>
+        ))}
+        {!people.length && <tr><td colspan="4" class="px-5 py-8 text-center text-white/45">Nobody matches.</td></tr>}
+      </tbody>
+    </table>
+    {people.length > 400 && <p class="px-5 py-3 text-xs text-white/45">Showing 400 of {people.length}: search to narrow it down.</p>}
+  </section>
+</Admin>

@@ -15,7 +15,7 @@ const filters = readFilters(Astro.url.searchParams);
 const page = Math.max(1, Number(Astro.url.searchParams.get('page') ?? 1) || 1);
 const svc = serviceClient();
 // Deleting is for group admins with two-step only (the page itself is group-admin only too).
-const canDelete = Astro.locals.profile?.role === 'admin' && Astro.locals.user?.aal === 'aal2';
+const canDelete = Astro.locals.access.can('audit.do', null);
 let notice = '';
 let error = '';
 
