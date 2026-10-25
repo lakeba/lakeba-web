@@ -8,6 +8,7 @@ import { sendQueued, startScheduled } from './newsletter';
 import { publishDue } from './press';
 import { sendQueuedPitches } from './press-outreach';
 import { pollPressMailbox } from './press-inbox';
+import { monitorJobs } from './press-coverage';
 import { createSignInLink } from './sign-in-links';
 
 // The notification worker inside the portal process: sends queued pushes and
@@ -163,7 +164,7 @@ export function startNotificationWorker() {
   const run = async () => {
     try {
       if (pushEnabled()) await processOutbox();
-      if (ticks % 4 === 0) { await pollMailboxes(lastOrigin); await pollPressMailbox(serviceClient(), lastOrigin); await newsJobs(); } // mailboxes (shareholders@, press@) and news, every minute
+      if (ticks % 4 === 0) { await pollMailboxes(lastOrigin); await pollPressMailbox(serviceClient(), lastOrigin); await newsJobs(); await monitorJobs(serviceClient()); } // mailboxes (shareholders@, press@) and news, every minute
       await sendDueAutoReplies(lastOrigin); // automatic replies whose 5-minute undo window has passed
       await newsletterJobs();
       await sendQueuedPitches(serviceClient(), lastOrigin); // press pitches to journalists, a few at a time

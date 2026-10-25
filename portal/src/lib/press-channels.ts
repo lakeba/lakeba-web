@@ -17,6 +17,9 @@ type Svc = ReturnType<typeof serviceClient>;
 // API: the portal prepares the package they ask for (text, PDF, images),
 // downloadable or emailed to their desk, and records the cost and their link.
 
+/** A channel's name as people write it. */
+export const channelName = (c: string) => ({ linkedin: 'LinkedIn', bluesky: 'Bluesky', x: 'X', wire: 'Wire', other: 'Other' } as Record<string, string>)[c] ?? c;
+
 export const blueskyConfigured = () => Boolean(BLUESKY_HANDLE && BLUESKY_APP_PASSWORD);
 export const xConfigured = () => Boolean(X_API_KEY && X_API_SECRET && X_ACCESS_TOKEN && X_ACCESS_SECRET);
 

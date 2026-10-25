@@ -3,10 +3,12 @@
 const path = Astro.url.pathname;
 const approver = Astro.locals.profile?.role === 'admin';
 const tabs = [
-  { href: '/admin/press', label: 'Releases', on: path === '/admin/press' || /^\/admin\/press\/([0-9a-f-]{36}|distribution)/.test(path) },
+  { href: '/admin/press', label: 'Releases', on: path === '/admin/press' || (/^\/admin\/press\/([0-9a-f-]{36}|distribution)/.test(path) && !/\/report$/.test(path)) },
   { href: '/admin/press/media', label: 'Media database', on: path.startsWith('/admin/press/media') },
   { href: '/admin/press/outlets', label: 'Outlets', on: path.startsWith('/admin/press/outlets') },
   { href: '/admin/press/research', label: 'Find journalists', on: path.startsWith('/admin/press/research') },
+  { href: '/admin/press/coverage', label: 'Coverage', on: path.startsWith('/admin/press/coverage') },
+  { href: '/admin/press/report', label: 'Reports', on: path.startsWith('/admin/press/report') || /\/report$/.test(path) },
   ...(approver ? [{ href: '/admin/press/settings', label: 'Settings and team', on: path.startsWith('/admin/press/settings') }] : []),
 ];
 ---

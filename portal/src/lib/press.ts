@@ -22,7 +22,9 @@ export type Release = {
   review_note: string; submitted_by: string | null; submitted_at: string | null; approved_by: string | null; approved_at: string | null;
   published_at: string | null; created_by: string | null; updated_by: string | null; created_at: string; updated_at: string; notify_investors: boolean;
 };
-export type PressSettings = { boilerplate_html: string; about_title: string; contact_name: string; contact_email: string; contact_phone: string; dateline_city: string; reply_tracking: boolean; reply_mailbox: string; wires: Wire[] };
+export type PressSettings = { boilerplate_html: string; about_title: string; contact_name: string; contact_email: string; contact_phone: string; dateline_city: string; reply_tracking: boolean; reply_mailbox: string; wires: Wire[];
+  /** Coverage monitoring: the names to look for, the feeds to read, GDELT, and web search after each release. */
+  monitor_terms: string[]; feeds: { name: string; url: string }[]; gdelt: boolean; search_after_release: boolean };
 /** A wire service the press office uses: where its desk takes submissions by email (optional), and notes (account, price). */
 export type Wire = { name: string; email: string; notes: string };
 
@@ -41,7 +43,8 @@ export function pressAccess(locals: App.Locals) {
 export async function pressSettings(svc: Svc): Promise<PressSettings> {
   const { data } = await svc.from('portal_settings').select('value').eq('key', 'press').maybeSingle();
   const v = (data?.value ?? {}) as Partial<PressSettings>;
-  return { boilerplate_html: v.boilerplate_html ?? '', about_title: v.about_title || 'About Lakeba Group', contact_name: v.contact_name ?? 'Lakeba Media Relations', contact_email: v.contact_email || 'press@lakeba.com', contact_phone: v.contact_phone ?? '', dateline_city: v.dateline_city || 'SYDNEY', reply_tracking: v.reply_tracking === true, reply_mailbox: v.reply_mailbox || 'press@lakeba.com', wires: Array.isArray(v.wires) ? v.wires : [] };
+  return { boilerplate_html: v.boilerplate_html ?? '', about_title: v.about_title || 'About Lakeba Group', contact_name: v.contact_name ?? 'Lakeba Media Relations', contact_email: v.contact_email || 'press@lakeba.com', contact_phone: v.contact_phone ?? '', dateline_city: v.dateline_city || 'SYDNEY', reply_tracking: v.reply_tracking === true, reply_mailbox: v.reply_mailbox || 'press@lakeba.com', wires: Array.isArray(v.wires) ? v.wires : [],
+    monitor_terms: Array.isArray(v.monitor_terms) ? v.monitor_terms : ['Lakeba'], feeds: Array.isArray(v.feeds) ? v.feeds : [], gdelt: v.gdelt === true, search_after_release: v.search_after_release === true };
 }
 
 export async function loadRelease(svc: Svc, id: string) {

@@ -1,0 +1,87 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PressNav from '../../../components/PressNav.astro';
+import ReportPrint from '../../../components/ReportPrint.astro';
+import { serviceClient } from '../../../lib/admin';
+import { dateTime } from '../../../lib/format';
+import { pressAccess, sydneyTime, sydneyToIso, type Release } from '../../../lib/press';
+import { type Coverage } from '../../../lib/press-coverage';
+import { coverageCsv, pct, releaseStats } from '../../../lib/press-report';
+
+// The press office's results for a period (a quarter by default), for the
+// board: releases, coverage and its tone, top outlets, journalists, costs.
+if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const now = new Date();
+const syd = new Date(now.toLocaleString('en-US', { timeZone: 'Australia/Sydney' }));
+const qStart = new Date(syd.getFullYear(), Math.floor(syd.getMonth() / 3) * 3, 1);
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+const from = /^\d{4}-\d{2}-\d{2}$/.test(Astro.url.searchParams.get('from') ?? '') ? Astro.url.searchParams.get('from')! : ymd(qStart);
+const to = /^\d{4}-\d{2}-\d{2}$/.test(Astro.url.searchParams.get('to') ?? '') ? Astro.url.searchParams.get('to')! : ymd(syd);
+const fromIso = sydneyToIso(`${from}T00:00`)!, toIso = new Date(new Date(sydneyToIso(`${to}T00:00`)!).getTime() + 86_400_000).toISOString();
+const { data: rels } = await svc.from('press_releases').select('*').eq('status', 'published').gte('published_at', fromIso).lt('published_at', toIso).order('published_at');
+const releases = (rels ?? []) as Release[];
+const stats = await releaseStats(svc, releases.map((r) => r.id));
+// All confirmed coverage in the period (also mentions not tied to a release).
+const { data: covRows } = await svc.from('press_coverage').select('*').eq('status', 'confirmed').gte('published_at', fromIso).lt('published_at', toIso).order('published_at', { ascending: false });
+const coverage = (covRows ?? []) as Coverage[];
+const headline = new Map(releases.map((r) => [r.id, r.headline]));
+if (Astro.url.searchParams.get('format') === 'csv') {
+  return new Response(coverageCsv(coverage.map((c) => ({ ...c, release: c.release_id ? headline.get(c.release_id) ?? '' : '' }))), { headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="press-coverage-${from}-to-${to}.csv"` } });
+}
+const all = [...stats.values()];
+const sum = (f: (s: (typeof all)[number]) => number) => all.reduce((n, s) => n + f(s), 0);
+const pitched = sum((s) => s.pitches), read = sum((s) => s.read), replied = sum((s) => s.replied), opened = sum((s) => s.opened);
+const tone = Object.fromEntries(['positive', 'neutral', 'negative', 'mixed'].map((t) => [t, coverage.filter((c) => c.sentiment === t).length]));
+const outletCounts = [...coverage.reduce((m, c) => m.set(c.outlet || c.domain, (m.get(c.outlet || c.domain) ?? 0) + 1), new Map<string, number>())].sort((a, b) => b[1] - a[1]).slice(0, 10);
+const costs = new Map<string, number>();
+for (const s of all) for (const [c, v] of s.cost) costs.set(c, (costs.get(c) ?? 0) + v);
+const { data: ents } = await svc.from('entities').select('id, display_name');
+const companyOf = (id: string | null) => (ents ?? []).find((e) => e.id === id)?.display_name ?? 'Lakeba Group';
+---
+
+<Admin title="Press report">
+  <ReportPrint />
+  <div class="no-print"><PressNav /></div>
+  <div class="press-report">
+    <p class="text-xs uppercase tracking-[0.2em] text-white/45">Lakeba Group · press office report</p>
+    <h1 class="mt-1 font-display text-3xl font-bold">{new Date(fromIso).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' })} to {new Date(new Date(toIso).getTime() - 1).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' })}</h1>
+    <form method="get" class="no-print mt-4 flex flex-wrap items-end gap-2">
+      <div><label class="label" for="from">From</label><input id="from" name="from" type="date" value={from} class="field py-2" /></div>
+      <div><label class="label" for="to">To</label><input id="to" name="to" type="date" value={to} class="field py-2" /></div>
+      <button class="btn-ghost py-2">Show</button>
+      <button type="button" class="btn-ghost py-2" onclick="window.print()">Print or save as PDF</button>
+      <a href={`/admin/press/report?from=${from}&to=${to}&format=csv`} class="btn-ghost py-2">Coverage as CSV</a>
+    </form>
+
+    <section class="mt-6 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {[['Releases', String(releases.length)], ['Coverage', String(coverage.length)], ['Outlets', String(new Set(coverage.map((c) => c.outlet || c.domain)).size)], ['Journalists pitched', String(pitched)], ['Read the release', pct(read, pitched)], ['Replied', pct(replied, pitched)]].map(([k, v]) => (
+        <div class="card p-4"><p class="text-xs uppercase tracking-wider text-white/40">{k}</p><p class="mt-1 text-2xl font-bold">{v}</p></div>
+      ))}
+    </section>
+    <p class="mt-3 text-sm text-white/55">Tone: {Object.entries(tone).filter(([, n]) => n).map(([t, n]) => `${n} ${t}`).join(' · ') || 'no confirmed coverage'}. Opened: {pct(opened, pitched)} (approximate).{costs.size ? ` Spent on wires and other channels: ${[...costs].map(([c, v]) => `${c} ${v.toFixed(2)}`).join(', ')}.` : ''}</p>
+
+    <section class="card mt-6 overflow-x-auto p-0">
+      <h2 class="px-5 pt-4 font-display text-lg font-bold">Releases</h2>
+      <table class="mt-2 w-full text-left text-sm">
+        <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-2">Release</th><th class="px-5 py-2">Published</th><th class="px-5 py-2">Pitched</th><th class="px-5 py-2">Read</th><th class="px-5 py-2">Replied</th><th class="px-5 py-2">Coverage</th><th class="px-5 py-2">Social / wires</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {releases.map((r) => { const s = stats.get(r.id)!; return (
+            <tr><td class="px-5 py-2"><a href={`/admin/press/${r.id}/report`} class="text-white hover:text-lk-blue">{r.headline}</a><span class="block text-xs text-white/45">{companyOf(r.entity_id)}</span></td>
+              <td class="px-5 py-2 text-xs text-white/60">{sydneyTime(r.published_at!)}</td><td class="px-5 py-2">{s.pitches}</td><td class="px-5 py-2">{pct(s.read, s.pitches)}</td><td class="px-5 py-2">{pct(s.replied, s.pitches)}</td>
+              <td class="px-5 py-2">{s.coverage.length}</td><td class="px-5 py-2">{s.social.length} / {s.wires.length}</td></tr>); })}
+          {!releases.length && <tr><td colspan="7" class="px-5 py-6 text-center text-white/45">No releases published in this period.</td></tr>}
+        </tbody>
+      </table>
+    </section>
+    <section class="mt-6 grid gap-4 md:grid-cols-[1fr_2fr]">
+      <div class="card"><h2 class="font-display text-lg font-bold">Top outlets</h2>
+        <ol class="mt-2 space-y-1 text-sm">{outletCounts.map(([o, n]) => <li class="flex justify-between gap-2"><span class="text-white/80">{o}</span><span class="text-white/50">{n}</span></li>)}{!outletCounts.length && <li class="text-white/45">None yet.</li>}</ol></div>
+      <div class="card"><h2 class="font-display text-lg font-bold">Coverage</h2>
+        <ul class="mt-2 divide-y divide-white/5 text-sm">
+          {coverage.slice(0, 60).map((c) => <li class="py-2"><a href={c.url} target="_blank" rel="noopener noreferrer" class="text-white hover:text-lk-blue">{c.title || c.url}</a><span class="block text-xs text-white/50">{c.outlet || c.domain}{c.published_at && ` · ${dateTime.format(new Date(c.published_at))}`} · {c.sentiment}{c.release_id ? ` · ${headline.get(c.release_id) ?? 'a release'}` : ` · mention of ${companyOf(c.entity_id)}`}</span>{c.summary && <span class="block text-white/65">{c.summary}</span>}</li>)}
+          {!coverage.length && <li class="py-3 text-white/45">No confirmed coverage in this period.</li>}
+        </ul>{coverage.length > 60 && <p class="mt-2 text-xs text-white/45">Showing 60 of {coverage.length}: the CSV has all.</p>}</div>
+    </section>
+  </div>
+</Admin>

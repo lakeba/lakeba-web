@@ -237,6 +237,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
       <a href={`/admin/press/${r.id}/preview`} target="_blank" rel="noopener" class="btn-ghost text-sm">Preview ↗</a>
       {post?.slug && r.status === 'published' && <a href={`/api/public/press/${post.slug}.pdf`} target="_blank" rel="noopener" class="btn-ghost text-sm">PDF ↗</a>}
       {websiteUrl && r.status === 'published' && <a href={websiteUrl} target="_blank" rel="noopener" class="btn-ghost text-sm">On the website ↗</a>}
+      {r.status === 'published' && <a href={`/admin/press/${r.id}/report`} class="btn-ghost text-sm">Report</a>}
     </div>
   </div>
   <div class="mt-5 space-y-3">

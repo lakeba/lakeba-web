@@ -8,6 +8,7 @@ import sharp from 'sharp';
 import type { serviceClient } from './admin';
 import { MEDIA_PREFIX } from './news-cms';
 import { makeEmailSafe } from './newsletter-design';
+import { FETCH_TEST_PREFIXES } from 'astro:env/server';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -59,7 +60,11 @@ const safeLookup: LookupFunction = (host, options, cb) => {
 };
 
 /** GET a public http(s) address: at most `max` bytes, 3 redirects and 12 seconds. */
+/** Staging tests only: local stand-ins the fetcher may reach (never set in production). */
+const testAllowed = (url: string) => (FETCH_TEST_PREFIXES ?? '').split(',').map((p) => p.trim()).filter(Boolean).some((p) => url.startsWith(p));
+
 export async function safeGet(url: string, max: number, redirects = 3): Promise<{ data: Buffer; type: string; url: string }> {
+  if (testAllowed(url)) { const r = await fetch(url, { signal: AbortSignal.timeout(12_000) }); return { data: Buffer.from(await r.arrayBuffer()), type: (r.headers.get('content-type') ?? '').split(';')[0], url }; }
   const u = new URL(url);
   if (u.protocol !== 'https:' && u.protocol !== 'http:') throw new Error('Only http and https addresses can be imported.');
   if (u.username || u.password || (u.port && !['80', '443'].includes(u.port))) throw new Error('That address can’t be imported.');

@@ -7,7 +7,7 @@ import { field } from '../../../../lib/forms';
 import { dateTime } from '../../../../lib/format';
 import { sendRaw } from '../../../../lib/mail';
 import { loadRelease, pressAccess, pressSettings, sydneyTime } from '../../../../lib/press';
-import { articleUrl, blueskyConfigured, linkedinShareUrl, postBluesky, postX, socialText, wirePackage, xConfigured } from '../../../../lib/press-channels';
+import { articleUrl, blueskyConfigured, channelName, linkedinShareUrl, postBluesky, postX, socialText, wirePackage, xConfigured } from '../../../../lib/press-channels';
 import { pressFrom } from '../../../../lib/press-outreach';
 
 // A release beyond the newsroom: social networks (Bluesky and X posted by the
@@ -155,7 +155,7 @@ const bskyDefault = r.social.bluesky || r.social.x || r.summary || r.headline;
     {costs.size > 0 && <p class="mt-1 text-sm text-white/55">Spent: {[...costs].map(([c, v]) => `${c} ${v.toFixed(2)}`).join(' · ')}</p>}
     <ul class="mt-2 divide-y divide-white/5 text-sm">
       {(history ?? []).map((h) => (
-        <li class="flex flex-wrap items-center justify-between gap-3 py-2.5"><span><strong class="text-white">{h.channel === 'x' ? 'X' : h.channel === 'wire' ? h.target || 'Wire' : h.channel.charAt(0).toUpperCase() + h.channel.slice(1)}</strong>{h.channel !== 'wire' && h.target && ` · ${h.target}`} <span class:list={['text-xs', h.status === 'failed' ? 'text-lk-red' : 'text-white/45']}>· {h.status}{h.error && `: ${h.error}`}{h.cost && ` · ${h.currency} ${Number(h.cost).toFixed(2)}`} · {dateTime.format(new Date(h.posted_at))}</span>
+        <li class="flex flex-wrap items-center justify-between gap-3 py-2.5"><span><strong class="text-white">{h.channel === 'wire' ? h.target || 'Wire' : channelName(h.channel)}</strong>{h.channel !== 'wire' && h.target && ` · ${h.target}`} <span class:list={['text-xs', h.status === 'failed' ? 'text-lk-red' : 'text-white/45']}>· {h.status}{h.error && `: ${h.error}`}{h.cost && ` · ${h.currency} ${Number(h.cost).toFixed(2)}`} · {dateTime.format(new Date(h.posted_at))}</span>
           {h.url && <a href={h.url} target="_blank" rel="noopener noreferrer" class="block text-xs text-lk-blue hover:underline">{h.url}</a>}{h.text && h.channel !== 'wire' && <span class="block max-w-2xl truncate text-xs text-white/45">{h.text}</span>}</span>
           {access.approver && <form method="post"><input type="hidden" name="post" value={h.id} /><button name="intent" value="remove" class="text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Remove this record? (It doesn’t delete the post itself.)')">Remove</button></form>}</li>
       ))}

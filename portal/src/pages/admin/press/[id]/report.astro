@@ -1,0 +1,92 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PressNav from '../../../../components/PressNav.astro';
+import ReportPrint from '../../../../components/ReportPrint.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime } from '../../../../lib/format';
+import { loadRelease, pressAccess, sydneyTime } from '../../../../lib/press';
+import { articleUrl, channelName } from '../../../../lib/press-channels';
+import { searchRelease } from '../../../../lib/press-coverage';
+import { coverageCsv, pct, releaseStats } from '../../../../lib/press-report';
+import { client as claude } from '../../../../lib/ask';
+
+// One release's results: journalists reached, coverage, social and wires, cost.
+// Printable (Save as PDF) and as CSV; “Check for coverage now” searches the web.
+const access = pressAccess(Astro.locals);
+if (!access) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const r = await loadRelease(svc, Astro.params.id!);
+if (!r || r.status !== 'published') return Astro.redirect(r ? `/admin/press/${r.id}` : '/admin/press');
+const { data: company } = r.entity_id ? await svc.from('entities').select('display_name').eq('id', r.entity_id).maybeSingle() : { data: null };
+let notice = '', error = '';
+if (Astro.request.method === 'POST' && field(await Astro.request.formData(), 'intent') === 'search') {
+  if (!claude) error = 'Searching needs the Claude API key on the server.';
+  else {
+    try { const n = await searchRelease(svc, r, company?.display_name ?? 'Lakeba Group'); notice = n ? `${n} new article${n === 1 ? '' : 's'} found: review them on the Coverage page.` : 'Nothing new found.'; }
+    catch (e) { error = (e as Error).message; }
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'press_coverage_search', event_detail: { id: r.id } });
+  }
+}
+const st = (await releaseStats(svc, [r.id])).get(r.id)!;
+if (Astro.url.searchParams.get('format') === 'csv') {
+  return new Response(coverageCsv(st.coverage.map((c) => ({ ...c, release: r.headline }))), { headers: { 'content-type': 'text/csv; charset=utf-8', 'content-disposition': `attachment; filename="coverage-${r.id.slice(0, 8)}.csv"` } });
+}
+const { data: post } = r.post_id ? await svc.from('posts').select('slug').eq('id', r.post_id).maybeSingle() : { data: null };
+const contactIds = [...new Set(st.coverage.map((c) => c.contact_id).filter(Boolean))] as string[];
+const { data: contacts } = contactIds.length ? await svc.from('media_contacts').select('id, first_name, last_name').in('id', contactIds) : { data: [] };
+const who = (id: string | null) => { const c = (contacts ?? []).find((x) => x.id === id); return c ? `${c.first_name} ${c.last_name}`.trim() : ''; };
+const { count: searches } = await svc.from('press_monitor_log').select('id', { count: 'exact', head: true }).eq('kind', 'search').eq('target', r.id);
+---
+
+<Admin title={`Report: ${r.headline}`}>
+  <ReportPrint />
+  <div class="no-print"><PressNav /></div>
+  <div class="press-report">
+    <a href={`/admin/press/${r.id}`} class="no-print text-sm text-white/50 hover:text-white">← The release</a>
+    <p class="mt-2 text-xs uppercase tracking-[0.2em] text-white/45">Press release report · {company?.display_name ?? 'Lakeba Group'}</p>
+    <h1 class="mt-1 font-display text-3xl font-bold">{r.headline}</h1>
+    <p class="mt-1 text-sm text-white/55">Published {sydneyTime(r.published_at!)}{post?.slug && <> · <a href={articleUrl(post.slug)} class="text-lk-blue">{articleUrl(post.slug)}</a></>} · report of {dateTime.format(new Date())}</p>
+    <div class="no-print mt-4 flex flex-wrap gap-2">
+      <button type="button" class="btn-ghost text-sm" onclick="window.print()">Print or save as PDF</button>
+      <a href={`/admin/press/${r.id}/report?format=csv`} class="btn-ghost text-sm">Coverage as CSV</a>
+      <form method="post"><button name="intent" value="search" class="btn-ghost text-sm" onclick="this.disabled=true;this.textContent='Searching (about a minute)…';this.form.submit()">Check for coverage now</button></form>
+    </div>
+    <div class="no-print mt-4 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+
+    <section class="mt-6 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+      {[['Coverage', String(st.coverage.length)], ['Outlets', String(st.outlets.length)], ['Journalists pitched', String(st.pitches)], ['Read the release', `${st.read} (${pct(st.read, st.pitches)})`], ['Replied', `${st.replied} (${pct(st.replied, st.pitches)})`], ['Social posts', String(st.social.length)]].map(([k, v]) => (
+        <div class="card p-4"><p class="text-xs uppercase tracking-wider text-white/40">{k}</p><p class="mt-1 text-2xl font-bold">{v}</p></div>
+      ))}
+    </section>
+    <p class="mt-3 text-sm text-white/55">Tone of the coverage: {Object.entries(st.tone).filter(([, n]) => n).map(([t, n]) => `${n} ${t}`).join(' · ') || 'no confirmed coverage yet'}.{st.toReview ? ` ${st.toReview} more article${st.toReview > 1 ? 's' : ''} waiting for review.` : ''} Web searches so far: {searches ?? 0} of 4.{st.cost.size ? ` Spent: ${[...st.cost].map(([c, v]) => `${c} ${v.toFixed(2)}`).join(', ')}.` : ''}</p>
+
+    <section class="card mt-6">
+      <h2 class="font-display text-lg font-bold">Coverage</h2>
+      <ul class="mt-2 divide-y divide-white/5 text-sm">
+        {st.coverage.map((c) => (
+          <li class="py-2.5"><a href={c.url} target="_blank" rel="noopener noreferrer" class="font-medium text-white hover:text-lk-blue">{c.title || c.url}</a>
+            <span class="block text-xs text-white/50">{c.outlet || c.domain}{c.published_at && ` · ${dateTime.format(new Date(c.published_at))}`} · {c.sentiment}{c.contact_id && ` · after our pitch to ${who(c.contact_id)}`}</span>
+            {c.summary && <span class="block text-white/70">{c.summary}</span>}</li>
+        ))}
+        {!st.coverage.length && <li class="py-3 text-white/45">No confirmed coverage yet.</li>}
+      </ul>
+    </section>
+    <section class="mt-6 grid gap-4 md:grid-cols-2">
+      <div class="card">
+        <h2 class="font-display text-lg font-bold">Journalists</h2>
+        <p class="mt-2 text-sm text-white/70">{st.pitches} pitched · {st.opened} opened ({pct(st.opened, st.pitches)}) · {st.read} read the release ({pct(st.read, st.pitches)}) · {st.replied} replied ({pct(st.replied, st.pitches)}){st.bounced ? ` · ${st.bounced} bounced` : ''}{st.unsubscribed ? ` · ${st.unsubscribed} unsubscribed` : ''}</p>
+        <p class="mt-1 text-xs text-white/40">Opens are approximate (some mail apps load images for everyone, others block them).</p>
+      </div>
+      <div class="card">
+        <h2 class="font-display text-lg font-bold">Social and wires</h2>
+        <ul class="mt-2 space-y-1 text-sm">
+          {st.social.map((x) => <li><span class="text-white/80">{channelName(x.channel)}</span> {x.url && <a href={x.url} target="_blank" rel="noopener noreferrer" class="text-xs text-lk-blue">{x.url}</a>}</li>)}
+          {st.wires.map((w) => <li><span class="text-white/80">{w.target || 'Wire'}</span>{w.cost !== null && <span class="text-xs text-white/50"> · {w.currency} {w.cost.toFixed(2)}</span>} {w.url && <a href={w.url} target="_blank" rel="noopener noreferrer" class="text-xs text-lk-blue">{w.url}</a>}</li>)}
+          {!st.social.length && !st.wires.length && <li class="text-white/45">None recorded.</li>}
+        </ul>
+      </div>
+    </section>
+  </div>
+</Admin>

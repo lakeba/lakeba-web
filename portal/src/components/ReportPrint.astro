@@ -1,0 +1,14 @@
+---
+// Printing a press report: only the report, black on white (Save as PDF from the print dialog).
+---
+<style is:global>
+  @media print {
+    body * { visibility: hidden; }
+    .press-report, .press-report * { visibility: visible; }
+    .press-report { position: absolute; left: 0; top: 0; width: 100%; padding: 0 8mm; }
+    .press-report, .press-report * { color: #0b1d37 !important; background: transparent !important; box-shadow: none !important; border-color: #d5dce8 !important; }
+    .press-report a { text-decoration: none; }
+    .press-report .no-print { display: none !important; }
+    .press-report .card { break-inside: avoid; }
+  }
+</style>

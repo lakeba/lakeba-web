@@ -1,0 +1,118 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PressNav from '../../../components/PressNav.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { dateTime } from '../../../lib/format';
+import { addByHand, checkFeeds, checkGdelt, type Coverage } from '../../../lib/press-coverage';
+import { pressAccess, pressSettings } from '../../../lib/press';
+
+// Coverage: what the monitor found (or someone added), to confirm or dismiss,
+// with the release it's about and the journalist pitched, and how the monitor is doing.
+const access = pressAccess(Astro.locals);
+if (!access) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+const tab = (['new', 'confirmed', 'dismissed'] as const).find((t) => t === Astro.url.searchParams.get('tab')) ?? 'new';
+const release = Astro.url.searchParams.get('release') ?? '';
+let error = '', notice = '';
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'add') {
+    const url = field(form, 'url');
+    if (!/^https?:\/\/\S+\.\S+/.test(url)) error = 'Paste the article’s full address (https://…).';
+    else {
+      const n = await addByHand(svc, url, /^[0-9a-f-]{36}$/.test(field(form, 'release_id')) ? field(form, 'release_id') : null);
+      await log('press_coverage_added', { url });
+      notice = n ? 'Added. Confirm it below.' : 'That article is already in the list.';
+    }
+  } else if (intent === 'check') {
+    const n = (await checkFeeds(svc, true)) + (await checkGdelt(svc, true));
+    notice = `Checked: ${n} new article${n === 1 ? '' : 's'}.`;
+  } else if (['confirm', 'dismiss', 'reopen', 'save'].includes(intent)) {
+    const id = field(form, 'id');
+    const patch: Record<string, unknown> = intent === 'save'
+      ? { release_id: /^[0-9a-f-]{36}$/.test(field(form, 'release_id')) ? field(form, 'release_id') : null, sentiment: ['positive', 'neutral', 'negative', 'mixed'].includes(field(form, 'sentiment')) ? field(form, 'sentiment') : 'neutral', summary: field(form, 'summary').slice(0, 300) }
+      : { status: intent === 'confirm' ? 'confirmed' : intent === 'dismiss' ? 'dismissed' : 'new', reviewed_by: me.id, reviewed_at: new Date().toISOString() };
+    if (intent === 'save' && patch.release_id) patch.relevance = 'release';
+    await svc.from('press_coverage').update(patch).eq('id', id);
+    await log(`press_coverage_${intent}`, { id });
+    notice = intent === 'save' ? 'Saved.' : intent === 'confirm' ? 'Confirmed.' : intent === 'dismiss' ? 'Dismissed.' : 'Back in the list to review.';
+  }
+}
+let q = svc.from('press_coverage').select('*').eq('status', tab).order('published_at', { ascending: false, nullsFirst: false }).order('found_at', { ascending: false }).limit(200);
+if (release) q = q.eq('release_id', release);
+const { data: rows } = await q;
+const items = (rows ?? []) as Coverage[];
+const { data: counts } = await svc.from('press_coverage').select('status');
+const count = (s: string) => (counts ?? []).filter((c) => c.status === s).length;
+const { data: releases } = await svc.from('press_releases').select('id, headline').in('status', ['published', 'approved']).order('published_at', { ascending: false, nullsFirst: false }).limit(60);
+const contactIds = [...new Set(items.map((c) => c.contact_id).filter(Boolean))] as string[];
+const { data: contacts } = contactIds.length ? await svc.from('media_contacts').select('id, first_name, last_name').in('id', contactIds) : { data: [] };
+const s = await pressSettings(svc);
+const { data: runs } = await svc.from('press_monitor_log').select('kind, target, found, added, error, at').order('at', { ascending: false }).limit(40);
+const lastOf = (kind: string, target: string) => (runs ?? []).find((r) => r.kind === kind && r.target === target);
+const tone: Record<string, string> = { positive: 'text-lk-green', neutral: 'text-white/55', negative: 'text-lk-red', mixed: 'text-lk-orange' };
+---
+
+<Admin title="Coverage">
+  <PressNav />
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div><h1 class="font-display text-3xl font-bold">Coverage</h1>
+      <p class="mt-1 max-w-3xl text-sm text-white/55">Articles about Lakeba and the ventures, found by the monitor or added by hand. Claude sorts each one (about a release, a mention, or unrelated) and notes its tone; confirm the real coverage so it counts in the reports.</p></div>
+    <form method="post"><button name="intent" value="check" class="btn-ghost">Check the feeds now</button></form>
+  </div>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+
+  <form method="post" class="card mt-6 grid gap-3 p-4 sm:grid-cols-[1fr_18rem_auto] sm:items-end">
+    <div><label class="label" for="url">Add an article by hand</label><input id="url" name="url" type="url" placeholder="https://…" class="field py-2" /></div>
+    <div><label class="label" for="release_id">About</label><select id="release_id" name="release_id" class="field py-2 text-sm"><option value="">(let Claude decide)</option>{(releases ?? []).map((r) => <option value={r.id}>{r.headline}</option>)}</select></div>
+    <button name="intent" value="add" class="btn-primary py-2">Add</button>
+  </form>
+
+  <nav class="mt-6 flex flex-wrap items-center gap-2 text-sm">
+    {(['new', 'confirmed', 'dismissed'] as const).map((t) => <a href={`/admin/press/coverage?tab=${t}${release ? `&release=${release}` : ''}`} class:list={['rounded-full px-3 py-1', tab === t ? 'bg-white/10 text-white' : 'text-white/55']}>{t === 'new' ? 'To review' : t === 'confirmed' ? 'Confirmed' : 'Dismissed'} ({count(t)})</a>)}
+    {release && <a href={`/admin/press/coverage?tab=${tab}`} class="text-xs text-lk-blue">all releases ×</a>}
+  </nav>
+  <ul class="mt-3 space-y-3">
+    {items.map((c) => (
+      <li class="card p-4">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div class="min-w-0 flex-1">
+            <a href={c.url} target="_blank" rel="noopener noreferrer" class="font-semibold text-white hover:text-lk-blue">{c.title || c.url}</a>
+            <p class="text-xs text-white/50">{c.outlet || c.domain}{c.published_at && ` · ${dateTime.format(new Date(c.published_at))}`} · found by {c.source === 'feed' ? 'a feed' : c.source === 'search' ? 'web search' : c.source === 'gdelt' ? 'GDELT' : 'hand'}
+              · <span class:list={[tone[c.sentiment]]}>{c.sentiment}</span>{c.relevance === 'unrelated' && ' · probably unrelated'}
+              {c.contact_id && ` · pitched to ${(contacts ?? []).find((x) => x.id === c.contact_id)?.first_name ?? ''} ${(contacts ?? []).find((x) => x.id === c.contact_id)?.last_name ?? ''}`}</p>
+            {c.summary && <p class="mt-1 text-sm text-white/75">{c.summary}</p>}
+          </div>
+          <form method="post" class="flex gap-2"><input type="hidden" name="id" value={c.id} />
+            {c.status !== 'confirmed' && <button name="intent" value="confirm" class="btn-primary px-3 py-1.5 text-xs">Confirm</button>}
+            {c.status !== 'dismissed' && <button name="intent" value="dismiss" class="btn-ghost px-3 py-1.5 text-xs">Dismiss</button>}
+            {c.status !== 'new' && <button name="intent" value="reopen" class="text-xs text-white/45 hover:text-white">Back to review</button>}</form>
+        </div>
+        <form method="post" class="mt-3 grid gap-2 border-t border-white/5 pt-3 sm:grid-cols-[18rem_9rem_1fr_auto] sm:items-center"><input type="hidden" name="id" value={c.id} />
+          <select name="release_id" aria-label="About" class="field py-1.5 text-xs"><option value="">Not about a release</option>{(releases ?? []).map((r) => <option value={r.id} selected={r.id === c.release_id}>{r.headline}</option>)}</select>
+          <select name="sentiment" aria-label="Tone" class="field py-1.5 text-xs">{['positive', 'neutral', 'negative', 'mixed'].map((x) => <option value={x} selected={x === c.sentiment}>{x}</option>)}</select>
+          <input name="summary" value={c.summary} aria-label="Summary" class="field py-1.5 text-xs" />
+          <button name="intent" value="save" class="text-xs text-lk-blue">Save</button>
+        </form>
+      </li>
+    ))}
+    {!items.length && <li class="card p-6 text-center text-white/45">{tab === 'new' ? 'Nothing to review.' : 'Nothing here.'}</li>}
+  </ul>
+
+  <section class="card mt-8 space-y-2 text-sm">
+    <h2 class="font-display text-lg font-bold">The monitor</h2>
+    <p class="text-white/55">Looking for: {s.monitor_terms.join(', ') || 'nothing yet'}. {access.approver ? 'Change the names and feeds in Settings and team.' : ''}</p>
+    <ul class="divide-y divide-white/5">
+      {s.feeds.map((f) => { const r = lastOf('feed', f.url); return <li class="py-2"><span class="text-white/80">{f.name}</span><span class="block text-xs text-white/45">{r ? `${r.error ? `failed: ${r.error}` : `${r.found} items, ${r.added} new`} · ${dateTime.format(new Date(r.at))}` : 'not read yet'}</span></li>; })}
+      <li class="py-2"><span class="text-white/80">Web search after each release</span><span class="block text-xs text-white/45">{s.search_after_release ? '1, 3, 7 and 14 days after publication (or “Check for coverage” on a release’s report)' : 'off'}</span></li>
+      <li class="py-2"><span class="text-white/80">GDELT</span><span class="block text-xs text-white/45">{s.gdelt ? (lastOf('gdelt', 'gdelt') ? `${lastOf('gdelt', 'gdelt')!.error ? `failed: ${lastOf('gdelt', 'gdelt')!.error}` : `${lastOf('gdelt', 'gdelt')!.found} items, ${lastOf('gdelt', 'gdelt')!.added} new`} · ${dateTime.format(new Date(lastOf('gdelt', 'gdelt')!.at))}` : 'not read yet') : 'off'}</span></li>
+      {!s.feeds.length && <li class="py-2 text-xs text-white/45">No feeds yet. Tip: create Google Alerts for “Lakeba”, “Ezifin” and the other names, choose “Deliver to: RSS feed”, and add each feed’s address in Settings.</li>}
+    </ul>
+  </section>
+</Admin>
