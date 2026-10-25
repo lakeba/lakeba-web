@@ -1,0 +1,419 @@
+---
+import { PUBLIC_SITE_URL } from 'astro:env/server';
+import Admin from '../../../layouts/Admin.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { dateTime } from '../../../lib/format';
+import { cleanHtml } from '../../../lib/news-cms';
+import { notifyMembers, adminIds } from '../../../lib/notify';
+import {
+  isoToSydney, loadRelease, openBrackets, pressAccess, pressSettings, publishRelease, quotesNotInText, requestQuoteApproval, saveVersion,
+  STATUS_LABEL, sydneyTime, sydneyToIso, withdrawRelease, type Quote, type Release,
+} from '../../../lib/press';
+import { checkRelease, draftRelease } from '../../../lib/press-ai';
+import { client as claude } from '../../../lib/ask';
+
+// One press release: write (or draft from head points with Claude), check,
+// get quotes approved, send for approval; group admins approve and publish
+// now or at a time (Sydney), request changes, correct or withdraw.
+const access = pressAccess(Astro.locals);
+if (!access) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+let r = await loadRelease(svc, Astro.params.id!);
+if (!r) return Astro.redirect('/admin/press');
+let error = '';
+const done = Astro.url.searchParams.get('done') ?? '';
+const notice = ({ saved: 'Saved.', drafted: 'Claude drafted the release from your head points. Read it carefully: check every fact and replace the [square brackets].', checked: 'Check finished.', quote: 'The approval request was emailed.', submitted: 'Sent for approval. The approvers have been told.', approved: 'Approved and scheduled.', published: 'Published on the newsroom. The website updates in a few minutes.', changes: 'Sent back to the writer with your note.', withdrawn: 'Withdrawn from the newsroom.', restored: 'Earlier version restored.', unscheduled: 'Back to waiting for approval.', corrected: 'Correction published.' } as Record<string, string>)[done] ?? '';
+const back = (d: string) => Astro.redirect(`/admin/press/${r!.id}?done=${d}`, 303);
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { id: r!.id, ...detail } });
+const origin = Astro.url.origin;
+const { data: entityRows } = await svc.from('entities').select('id, display_name, relationship').eq('portal', 'full').order('sort');
+const companies = (entityRows ?? []) as { id: string; display_name: string; relationship: string }[];
+const companyName = (id: string | null) => companies.find((c) => c.id === id)?.display_name ?? 'Lakeba Group';
+const tell = (userIds: (string | null)[], title: string, body: string) => notifyMembers({ kind: 'admin_press', title, body, link: `/admin/press/${r!.id}`, origin, userIds: [...new Set(userIds.filter(Boolean) as string[])].filter((u) => u !== me.id) }).catch(() => 0);
+const locked = (x: Release) => x.status === 'published' || x.status === 'withdrawn';
+
+/** The editable fields from the form. Quotes whose words or speaker changed need approving again. */
+function fromForm(form: FormData, cur: Release) {
+  const keys = form.getAll('quote_key').map(String), names = form.getAll('quote_name').map(String), titles = form.getAll('quote_title').map(String), emails = form.getAll('quote_email').map(String), texts = form.getAll('quote_text').map(String);
+  const quotes: Quote[] = keys.map((key, i) => {
+    const old = cur.quotes.find((q) => q.key === key);
+    const q = { key: key || crypto.randomUUID().slice(0, 8), name: (names[i] ?? '').trim().slice(0, 120), title: (titles[i] ?? '').trim().slice(0, 160), email: (emails[i] ?? '').trim().slice(0, 200), text: (texts[i] ?? '').trim().replace(/^[“"]|[”"]$/g, '').slice(0, 1500), status: 'none' as Quote['status'] };
+    q.status = old && old.text === q.text && old.name === q.name ? old.status : 'none';
+    return q;
+  }).filter((q) => q.text || q.name);
+  const kit = form.getAll('kit_url').map(String).map((url, i) => ({ url, label: String(form.getAll('kit_label')[i] ?? '').slice(0, 120) })).filter((k) => k.url.startsWith('/news-media/'));
+  const entity = field(form, 'entity_id');
+  return {
+    entity_id: companies.some((c) => c.id === entity) ? entity : cur.entity_id,
+    head_points: field(form, 'head_points').slice(0, 8000),
+    headline: field(form, 'headline').slice(0, 200), subheadline: field(form, 'subheadline').slice(0, 400),
+    headline_options: form.getAll('headline_option').map(String).filter(Boolean).slice(0, 3),
+    dateline_city: field(form, 'dateline_city').toUpperCase().slice(0, 40) || 'SYDNEY',
+    body_html: cleanHtml(String(form.get('body_html') ?? '')).slice(0, 100_000),
+    quotes, summary: field(form, 'summary').slice(0, 600),
+    social: { linkedin: field(form, 'social_linkedin').slice(0, 3000), x: field(form, 'social_x').slice(0, 300) },
+    cover_url: field(form, 'cover_url').startsWith('/news-media/') ? field(form, 'cover_url') : null,
+    kit, embargo_until: sydneyToIso(field(form, 'embargo_until')),
+  };
+}
+// What counts as a change to the release (and so needs checking and approving again).
+// Quotes are compared field by field: the database returns their keys in its own order.
+const quoteSig = (qs: Quote[]) => qs.map((q) => [q.name, q.title, q.text].join('\u0001')).join('\u0002');
+const changedContent = (a: Release, b: Partial<Release>) => (['headline', 'subheadline', 'body_html', 'summary', 'dateline_city', 'entity_id', 'cover_url'] as const).some((k) => b[k] !== undefined && a[k] !== b[k]) || (b.quotes !== undefined && quoteSig(a.quotes) !== quoteSig(b.quotes));
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const editable = !locked(r) || (r.status === 'published' && access.approver);
+  try {
+    if (['save', 'draft-ai', 'check', 'submit', 'request-quote', 'approve', 'correct'].includes(intent) && editable) {
+      const fields = fromForm(form, r);
+      const contentChanged = changedContent(r, fields);
+      const now = new Date().toISOString();
+      const row: Record<string, unknown> = { ...fields, updated_by: me.id, ...(contentChanged ? { updated_at: now } : {}) };
+      // Changing an approved release means approving it again.
+      if (contentChanged && r.status === 'approved') Object.assign(row, { status: 'in_review', approved_by: null, approved_at: null });
+      if (contentChanged) await saveVersion(svc, r, me.id, 'save');
+      if (r.status !== 'published') await svc.from('press_releases').update(row).eq('id', r.id).throwOnError();
+      r = (await loadRelease(svc, r.id))!;
+
+      if (intent === 'save') return back('saved');
+      if (intent === 'draft-ai') {
+        if (!claude) error = 'Claude needs the API key on the server.';
+        else if (r.head_points.trim().length < 20) error = 'Write a few head points first: what happened, who, when, why it matters, and anyone to quote.';
+        else {
+          const s = await pressSettings(svc);
+          const company = companies.find((c) => c.id === r!.entity_id);
+          const d = await draftRelease({ headPoints: r.head_points, company: company?.display_name ?? 'Lakeba Group', isVenture: Boolean(company && company.relationship !== 'group'), boilerplateTitle: s.about_title, length: field(form, 'length'), spokespeople: field(form, 'spokespeople').slice(0, 400) });
+          await saveVersion(svc, r, me.id, 'before AI draft');
+          await svc.from('press_releases').update({
+            headline: d.headline_options[0] ?? r.headline, headline_options: d.headline_options, subheadline: d.subheadline, body_html: d.body_html, quotes: d.quotes,
+            summary: d.summary, social: d.social, checks: d.to_check.map((w) => ({ quote: '', why: `To verify: ${w}`, severity: 'warning' })), checks_at: null, updated_by: me.id, updated_at: new Date().toISOString(),
+          }).eq('id', r.id).throwOnError();
+          await log('press_ai_draft', { input_tokens: d.usage.input_tokens, output_tokens: d.usage.output_tokens });
+          return back('drafted');
+        }
+      }
+      if (intent === 'check') {
+        if (!claude) error = 'Claude needs the API key on the server.';
+        else if (!r.headline.trim() || !r.body_html.trim()) error = 'Write the headline and the text first.';
+        else {
+          const c = await checkRelease({ company: companyName(r.entity_id), headline: r.headline, subheadline: r.subheadline, body_html: r.body_html, summary: r.summary });
+          // The check doesn't count as a change to the release.
+          await svc.from('press_releases').update({ checks: c.issues, checks_at: new Date().toISOString() }).eq('id', r.id).throwOnError();
+          await log('press_ai_check', { issues: c.issues.length, serious: c.issues.filter((i) => i.severity === 'serious').length, input_tokens: c.usage.input_tokens, output_tokens: c.usage.output_tokens });
+          return back('checked');
+        }
+      }
+      if (intent === 'request-quote') {
+        const q = r.quotes.find((x) => x.key === field(form, 'quote'));
+        if (!q) error = 'Save the quote first.';
+        else if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(q.email)) error = `Add ${q.name || 'the person'}’s email address to the quote first.`;
+        else if (!r.headline.trim()) error = 'Write the headline first: the email shows it.';
+        else {
+          await requestQuoteApproval(svc, r, q, me.id, origin);
+          await svc.from('press_releases').update({ quotes: r.quotes.map((x) => (x.key === q.key ? { ...x, status: 'pending' } : x)) }).eq('id', r.id);
+          await log('press_quote_requested', { quote: q.key });
+          return back('quote');
+        }
+      }
+      if (intent === 'submit' && ['draft', 'changes_requested'].includes(r.status)) {
+        if (!r.headline.trim() || !r.body_html.trim()) error = 'Write the headline and the text first.';
+        else {
+          await saveVersion(svc, r, me.id, 'submitted');
+          await svc.from('press_releases').update({ status: 'in_review', submitted_by: me.id, submitted_at: new Date().toISOString(), review_note: '' }).eq('id', r.id).throwOnError();
+          await notifyMembers({ kind: 'admin_press', title: 'A press release is waiting for approval', body: r.headline, link: `/admin/press/${r.id}`, origin, userIds: (await adminIds()).filter((u) => u !== me.id) }).catch(() => 0);
+          await log('press_submitted', {});
+          return back('submitted');
+        }
+      }
+      if (intent === 'approve' && access.approver && ['draft', 'in_review', 'changes_requested'].includes(r.status)) {
+        const brackets = openBrackets(r);
+        const pending = r.quotes.filter((q) => q.status !== 'approved' && q.status !== 'changed');
+        const serious = r.checks.filter((c) => c.severity === 'serious');
+        const when = field(form, 'publish') === 'later' ? sydneyToIso(field(form, 'publish_at')) : new Date().toISOString();
+        if (!r.headline.trim() || !r.body_html.trim()) error = 'The release needs a headline and text.';
+        else if (brackets.length) error = `Fill in the [square brackets] first: ${brackets.slice(0, 4).join(', ')}.`;
+        else if (!r.checks_at || new Date(r.checks_at) < new Date(r.updated_at)) error = 'Run “Check the release” on the final text first.';
+        else if (serious.length && form.get('serious_ok') !== 'on') error = 'The check found serious points: review them and tick that you have.';
+        else if (quotesNotInText(r).length) error = `A quote isn’t in the text exactly as approved: ${quotesNotInText(r).map((q) => q.name).join(', ')}. Update the text or the quote.`;
+        else if (pending.length && form.get('quotes_ok') !== 'on') error = `Quotes not yet approved: ${pending.map((q) => q.name || 'unnamed').join(', ')}. Wait for their approval, or tick that they approved it another way.`;
+        else if (!when) error = 'Choose when to publish.';
+        else if (r.embargo_until && new Date(when) < new Date(r.embargo_until)) error = `It can’t be published before the embargo (${sydneyTime(r.embargo_until)}).`;
+        else {
+          await saveVersion(svc, r, me.id, 'approved');
+          await svc.from('press_releases').update({ status: 'approved', approved_by: me.id, approved_at: new Date().toISOString(), publish_at: when }).eq('id', r.id).throwOnError();
+          await log('press_approved', { publish_at: when, quotes_overridden: pending.length > 0, serious_acknowledged: serious.length });
+          const now = new Date(when) <= new Date();
+          if (now) await publishRelease(svc, (await loadRelease(svc, r.id))!, me.id);
+          await tell([r.created_by, r.submitted_by], now ? 'Your press release was published' : 'Your press release was approved', r.headline);
+          return back(now ? 'published' : 'approved');
+        }
+      }
+      if (intent === 'correct' && access.approver && r.status === 'published') {
+        // A correction to a published release: saved and republished (same address and date).
+        const next = { ...r, ...fields } as Release;
+        if (openBrackets(next).length) error = 'Fill in the [square brackets] first.';
+        else {
+          await saveVersion(svc, r, me.id, 'before correction');
+          await svc.from('press_releases').update({ ...fields, updated_by: me.id, updated_at: new Date().toISOString() }).eq('id', r.id).throwOnError();
+          await publishRelease(svc, (await loadRelease(svc, r.id))!, me.id);
+          await log('press_corrected', {});
+          return back('corrected');
+        }
+      }
+    } else if (intent === 'request-changes' && access.approver && ['in_review', 'approved'].includes(r.status)) {
+      await svc.from('press_releases').update({ status: 'changes_requested', review_note: field(form, 'review_note').slice(0, 2000), approved_by: null, approved_at: null }).eq('id', r.id).throwOnError();
+      await tell([r.created_by, r.submitted_by], 'Changes requested on your press release', field(form, 'review_note').slice(0, 200) || r.headline);
+      await log('press_changes_requested', {});
+      return back('changes');
+    } else if (intent === 'unschedule' && access.approver && r.status === 'approved') {
+      await svc.from('press_releases').update({ status: 'in_review', approved_by: null, approved_at: null }).eq('id', r.id);
+      await log('press_unscheduled', {});
+      return back('unscheduled');
+    } else if (intent === 'withdraw' && access.approver && r.status === 'published') {
+      await withdrawRelease(svc, r, me.id);
+      await log('press_withdrawn', {});
+      return back('withdrawn');
+    } else if (intent === 'restore-version' && !locked(r)) {
+      const { data: v } = await svc.from('press_release_versions').select('snapshot').eq('id', Number(field(form, 'version_id'))).eq('release_id', r.id).maybeSingle();
+      if (!v) error = 'That version was not found.';
+      else {
+        const s = v.snapshot as Partial<Release>;
+        await saveVersion(svc, r, me.id, 'before restore');
+        await svc.from('press_releases').update({ head_points: s.head_points, headline: s.headline, headline_options: s.headline_options ?? [], subheadline: s.subheadline, dateline_city: s.dateline_city, body_html: s.body_html, quotes: s.quotes ?? [], summary: s.summary, social: s.social ?? {}, cover_url: s.cover_url ?? null, kit: s.kit ?? [], updated_by: me.id, updated_at: new Date().toISOString(), ...(r.status === 'approved' ? { status: 'in_review', approved_by: null, approved_at: null } : {}) }).eq('id', r.id).throwOnError();
+        return back('restored');
+      }
+    } else if (intent === 'delete' && ['draft', 'changes_requested', 'withdrawn'].includes(r.status) && (access.approver || r.created_by === me.id)) {
+      await svc.from('press_releases').delete().eq('id', r.id);
+      await log('press_deleted', { headline: r.headline });
+      return Astro.redirect('/admin/press', 303);
+    } else if (!error) error = 'That isn’t possible for this release now.';
+  } catch (e) {
+    console.error('press release', intent, (e as Error).message);
+    error = /Claude|API/.test((e as Error).message) ? 'Claude couldn’t help just now. Please try again.' : 'Something went wrong. Please try again.';
+  }
+  r = (await loadRelease(svc, r.id))!;
+}
+
+const settings = await pressSettings(svc);
+const { data: versions } = await svc.from('press_release_versions').select('id, saved_at, reason, saved_by').eq('release_id', r.id).order('saved_at', { ascending: false }).limit(30);
+const { data: approvals } = await svc.from('press_quote_approvals').select('quote_key, status, comment, responded_at, sent_at').eq('release_id', r.id).neq('status', 'cancelled').order('sent_at', { ascending: false });
+const people = [...new Set([...(versions ?? []).map((v) => v.saved_by), r.created_by, r.submitted_by, r.approved_by].filter(Boolean))] as string[];
+const { data: profiles } = people.length ? await svc.from('profiles').select('id, email, first_name, last_name').in('id', people) : { data: [] };
+const who = (id: string | null) => { const p = (profiles ?? []).find((x) => x.id === id); return p ? [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email : 'someone'; };
+const { data: post } = r.post_id ? await svc.from('posts').select('slug, published_at').eq('id', r.post_id).maybeSingle() : { data: null };
+const brackets = openBrackets(r);
+const checkedFresh = Boolean(r.checks_at && new Date(r.checks_at) >= new Date(r.updated_at));
+const pendingQuotes = r.quotes.filter((q) => q.status !== 'approved' && q.status !== 'changed');
+const misplaced = quotesNotInText(r);
+const editable = !locked(r) || (r.status === 'published' && access.approver);
+const canSubmit = ['draft', 'changes_requested'].includes(r.status);
+const canApprove = access.approver && ['draft', 'in_review', 'changes_requested'].includes(r.status);
+const quoteTone: Record<string, string> = { none: 'text-white/45', pending: 'text-lk-orange', approved: 'text-lk-green', changed: 'text-lk-green' };
+const quoteLabel: Record<string, string> = { none: 'Not sent for approval', pending: 'Waiting for their approval', approved: 'Approved', changed: 'Approved with changes' };
+const words = r.body_html.replace(/<[^>]+>/g, ' ').split(/\s+/).filter(Boolean).length;
+const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${post.slug}/` : '';
+---
+
+<Admin title={r.headline || 'Press release'}>
+  <a href="/admin/press" class="text-sm text-white/50 hover:text-white">← All press releases</a>
+  <div class="mt-2 flex flex-wrap items-end justify-between gap-3">
+    <div>
+      <h1 class="font-display text-3xl font-bold">{r.headline || 'New press release'}</h1>
+      <p class="mt-1 text-sm text-white/45">{STATUS_LABEL[r.status]}{r.status === 'approved' && r.publish_at && ` · publishes ${sydneyTime(r.publish_at)}`}{r.status === 'published' && r.published_at && ` · ${sydneyTime(r.published_at)}`} · {companyName(r.entity_id)} · by {who(r.created_by)}{r.approved_by && ` · approved by ${who(r.approved_by)}`}</p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href={`/admin/press/${r.id}/preview`} target="_blank" rel="noopener" class="btn-ghost text-sm">Preview ↗</a>
+      {post?.slug && r.status === 'published' && <a href={`/api/public/press/${post.slug}.pdf`} target="_blank" rel="noopener" class="btn-ghost text-sm">PDF ↗</a>}
+      {websiteUrl && r.status === 'published' && <a href={websiteUrl} target="_blank" rel="noopener" class="btn-ghost text-sm">On the website ↗</a>}
+    </div>
+  </div>
+  <div class="mt-5 space-y-3">
+    {notice && <Alert tone="success">{notice}</Alert>}
+    {error && <Alert tone="error">{error}</Alert>}
+    {r.status === 'changes_requested' && r.review_note && <Alert tone="error"><strong>Changes requested:</strong> {r.review_note}</Alert>}
+    {r.status === 'published' && <Alert tone="info">Published. {access.approver ? 'Edits here are published as a correction (same address and date); earlier versions are kept.' : 'Only an approver can correct it now.'}</Alert>}
+  </div>
+
+  <form method="post" class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_23rem]" data-press-form>
+    <fieldset disabled={!editable} class="min-w-0 space-y-6">
+      <section class="card space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="font-display text-lg font-bold">Head points</h2>
+          <span class="text-xs text-white/40">What to announce, in a few lines</span>
+        </div>
+        <textarea name="head_points" rows="6" class="field text-sm" placeholder={"- What: Ezifin launches invoice finance for SMEs in Australia\n- When: from 3 November 2026\n- Why it matters: SMEs wait 60+ days to be paid; funding within 24 hours\n- Numbers: [pilot with 40 businesses, $2m funded]\n- Quote: [name], CEO of Lakeba Group, on the SME cash-flow gap\n- Partners: (only names we have permission to use)"}>{r.head_points}</textarea>
+        <div class="grid gap-3 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
+          <div><label class="label" for="spokespeople">Who may be quoted (optional)</label><input id="spokespeople" name="spokespeople" class="field text-sm" placeholder="e.g. Jane Smith, CEO, Lakeba Group" /></div>
+          <div><label class="label" for="length">Length</label><select id="length" name="length" class="field text-sm"><option value="short">Short (~250 words)</option><option value="standard" selected>Standard (~450)</option><option value="long">Long (~700)</option></select></div>
+          <button name="intent" value="draft-ai" class="btn-primary" onclick={r.body_html.trim() ? "return confirm('Replace the headline, text, quotes and summary with a new draft? The current version is kept.')" : undefined} data-busy="Claude is writing…">✨ Draft with AI</button>
+        </div>
+      </section>
+
+      <section class="card space-y-4">
+        <div class="grid gap-4 sm:grid-cols-[1fr_12rem]">
+          <div><label class="label" for="entity_id">About</label>
+            <select id="entity_id" name="entity_id" class="field">{companies.map((c) => <option value={c.id} selected={c.id === r!.entity_id}>{c.display_name}</option>)}</select></div>
+          <div><label class="label" for="dateline_city">Dateline city</label><input id="dateline_city" name="dateline_city" value={r.dateline_city} class="field uppercase" /></div>
+        </div>
+        <div><label class="label" for="headline">Headline</label><input id="headline" name="headline" value={r.headline} maxlength="200" class="field text-lg font-semibold" />
+          {r.headline_options.length > 1 && (
+            <div class="mt-2 flex flex-wrap gap-2 text-xs">{r.headline_options.map((h) => <button type="button" class="rounded-full border border-white/12 px-3 py-1 text-left text-white/70 hover:text-white" data-headline={h}>{h}</button>)}</div>
+          )}
+          {r.headline_options.map((h) => <input type="hidden" name="headline_option" value={h} />)}
+        </div>
+        <div><label class="label" for="subheadline">Sub-headline</label><input id="subheadline" name="subheadline" value={r.subheadline} maxlength="400" class="field" /></div>
+        <div>
+          <div class="flex items-center justify-between"><span class="label">Text</span><span class="text-xs text-white/40">{words} word{words === 1 ? '' : 's'} · the dateline ({(r.dateline_city || settings.dateline_city).toUpperCase()}, date) is added to the first paragraph</span></div>
+          <div class="rounded-xl border border-white/10" data-rich="body_html" data-placeholder="The lead paragraph: who, what, when, where and why…" set:html={r.body_html}></div><input type="hidden" name="body_html" />
+          <p class="mt-2 text-xs text-white/40">After the text: “{settings.about_title}”, the media contact ({settings.contact_email}) and ###, added automatically.</p>
+        </div>
+      </section>
+
+      <section class="card space-y-4">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <h2 class="font-display text-lg font-bold">Quotes</h2>
+          <button type="button" class="btn-ghost px-3 py-1.5 text-xs" data-add-quote>Add a quote</button>
+        </div>
+        <p class="text-sm text-white/55">Each quote must also be in the text exactly as written here. The person quoted gets a link to approve or change their words; changes update the text automatically.</p>
+        <div class="space-y-4" data-quotes>
+          {r.quotes.map((q) => {
+            const a = (approvals ?? []).find((x) => x.quote_key === q.key);
+            return (
+              <div class="space-y-2 rounded-xl border border-white/10 p-4" data-quote>
+                <input type="hidden" name="quote_key" value={q.key} />
+                <div class="grid gap-2 sm:grid-cols-3">
+                  <input name="quote_name" value={q.name} placeholder="Name" class="field text-sm" />
+                  <input name="quote_title" value={q.title} placeholder="Title, company" class="field text-sm" />
+                  <input name="quote_email" type="email" value={q.email} placeholder="Email (for approval)" class="field text-sm" />
+                </div>
+                <textarea name="quote_text" rows="3" class="field text-sm">{q.text}</textarea>
+                <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
+                  <span class={quoteTone[q.status]}>{quoteLabel[q.status]}{a?.responded_at && ` · ${dateTime.format(new Date(a.responded_at))}`}{a?.comment && ` · “${a.comment}”`}{misplaced.some((m) => m.key === q.key) && <strong class="ml-1 text-lk-red">Not in the text exactly</strong>}</span>
+                  <span class="flex gap-2">
+                    <button name="intent" value="request-quote" class="rounded-full border border-white/12 px-3 py-1 hover:bg-white/5" onclick={`this.form.quote.value='${q.key}'`}>{q.status === 'pending' ? 'Send again' : 'Send for approval'}</button>
+                    <button type="button" class="rounded-full px-3 py-1 text-white/45 hover:text-lk-red" data-remove-quote>Remove</button>
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+        <input type="hidden" name="quote" />
+        <template data-quote-template>
+          <div class="space-y-2 rounded-xl border border-white/10 p-4" data-quote>
+            <input type="hidden" name="quote_key" value="" />
+            <div class="grid gap-2 sm:grid-cols-3"><input name="quote_name" placeholder="Name" class="field text-sm" /><input name="quote_title" placeholder="Title, company" class="field text-sm" /><input name="quote_email" type="email" placeholder="Email (for approval)" class="field text-sm" /></div>
+            <textarea name="quote_text" rows="3" class="field text-sm" placeholder="The quote’s words, without quotation marks"></textarea>
+            <p class="text-xs text-white/45">Save, then send it for approval. Remember to put it in the text too.</p>
+          </div>
+        </template>
+      </section>
+
+      <section class="card space-y-4">
+        <h2 class="font-display text-lg font-bold">For newsrooms, search and social</h2>
+        <div><label class="label" for="summary">Summary (at most 60 words: newsrooms, wires and search engines)</label><textarea id="summary" name="summary" rows="3" maxlength="600" class="field text-sm">{r.summary}</textarea></div>
+        <div class="grid gap-4 md:grid-cols-2">
+          <div><label class="label" for="social_linkedin">LinkedIn post</label><textarea id="social_linkedin" name="social_linkedin" rows="5" class="field text-sm">{r.social.linkedin ?? ''}</textarea></div>
+          <div><label class="label" for="social_x">X / Bluesky post</label><textarea id="social_x" name="social_x" rows="5" maxlength="300" class="field text-sm">{r.social.x ?? ''}</textarea></div>
+        </div>
+      </section>
+
+      <section class="card space-y-4">
+        <h2 class="font-display text-lg font-bold">Picture and press kit</h2>
+        <div class="grid gap-4 md:grid-cols-[14rem_1fr]">
+          <div>
+            <span class="label">Main picture</span>
+            <div class="overflow-hidden rounded-xl border border-white/10 bg-white/5" data-cover-box>{r.cover_url ? <img src={r.cover_url} alt="" class="aspect-video w-full object-cover" /> : <p class="p-4 text-xs text-white/40">None yet</p>}</div>
+            <input type="hidden" name="cover_url" value={r.cover_url ?? ''} />
+            <label class="btn-ghost mt-2 w-full cursor-pointer text-xs">Upload<input type="file" accept="image/png,image/jpeg,image/webp" hidden data-upload="cover" /></label>
+          </div>
+          <div>
+            <span class="label">Press kit (photos, logos, charts journalists may use)</span>
+            <ul class="space-y-2" data-kit>
+              {r.kit.map((k) => <li class="flex items-center gap-2"><img src={k.url} alt="" class="size-10 rounded object-cover" /><input type="hidden" name="kit_url" value={k.url} /><input name="kit_label" value={k.label} placeholder="Caption / credit" class="field py-1.5 text-sm" /><button type="button" class="text-xs text-white/45 hover:text-lk-red" data-remove-kit>Remove</button></li>)}
+            </ul>
+            <label class="btn-ghost mt-2 cursor-pointer text-xs">Add images<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden data-upload="kit" /></label>
+            <p class="mt-2 text-xs text-white/40">A PDF of the release is added to the press kit automatically.</p>
+          </div>
+        </div>
+      </section>
+    </fieldset>
+
+    <aside class="space-y-4 xl:sticky xl:top-28 xl:self-start">
+      <section class="card space-y-3">
+        <h2 class="font-display text-lg font-bold">Release</h2>
+        <div><label class="label" for="embargo_until">Embargoed until (Sydney time, optional)</label><input id="embargo_until" name="embargo_until" type="datetime-local" value={isoToSydney(r.embargo_until)} class="field" disabled={!editable} /></div>
+        {editable && r.status !== 'published' && <button name="intent" value="save" class="btn-ghost w-full">Save</button>}
+        {editable && r.status === 'published' && access.approver && <button name="intent" value="correct" class="btn-primary w-full" onclick="return confirm('Publish these changes as a correction to the release?')">Publish the correction</button>}
+        {canSubmit && <button name="intent" value="submit" class="btn-primary w-full">Send for approval</button>}
+        {r.status === 'in_review' && !access.approver && <p class="text-sm text-lk-orange">Waiting for an approver. You can keep improving it; they see the latest version.</p>}
+      </section>
+
+      <section class="card space-y-3">
+        <div class="flex items-center justify-between"><h2 class="font-display text-lg font-bold">Checks</h2>
+          {editable && <button name="intent" value="check" class="btn-ghost px-3 py-1.5 text-xs" data-busy="Checking…">Check the release</button>}</div>
+        <ul class="space-y-2 text-sm">
+          <li class:list={[brackets.length ? 'text-lk-orange' : 'text-lk-green']}>{brackets.length ? `To fill in: ${brackets.slice(0, 6).join(', ')}` : '✓ No [square brackets] left'}</li>
+          <li class:list={[pendingQuotes.length ? 'text-lk-orange' : 'text-lk-green']}>{r.quotes.length === 0 ? '✓ No quotes' : pendingQuotes.length ? `Quotes waiting: ${pendingQuotes.map((q) => q.name || 'unnamed').join(', ')}` : '✓ All quotes approved'}</li>
+          {misplaced.length > 0 && <li class="text-lk-red">Quote not in the text exactly: {misplaced.map((q) => q.name).join(', ')}</li>}
+          <li class:list={[checkedFresh ? 'text-lk-green' : 'text-white/55']}>{checkedFresh ? `✓ Checked ${dateTime.format(new Date(r.checks_at!))}` : r.checks_at ? 'Changed since the last check: check again' : 'Not checked yet'}</li>
+        </ul>
+        {r.checks.length > 0 && (
+          <ul class="space-y-2 border-t border-white/5 pt-3 text-sm">
+            {r.checks.map((c) => <li class:list={['rounded-lg px-3 py-2', c.severity === 'serious' ? 'bg-lk-red/10 text-lk-red' : 'bg-white/5 text-white/70']}>{c.quote && <strong class="block">“{c.quote}”</strong>}{c.why}</li>)}
+          </ul>
+        )}
+      </section>
+
+      {canApprove && (
+        <section class="card space-y-3 border border-lk-blue/30">
+          <h2 class="font-display text-lg font-bold">Approve</h2>
+          <label class="flex items-center gap-2 text-sm"><input type="radio" name="publish" value="now" checked class="accent-lk-blue" /> Publish now</label>
+          <label class="flex items-center gap-2 text-sm"><input type="radio" name="publish" value="later" class="accent-lk-blue" /> Publish at (Sydney time)</label>
+          <input name="publish_at" type="datetime-local" value={isoToSydney(r.embargo_until)} class="field" />
+          {pendingQuotes.length > 0 && <label class="flex gap-2 text-sm text-white/70"><input type="checkbox" name="quotes_ok" class="mt-1 accent-lk-blue" /> The people quoted approved their words another way</label>}
+          {r.checks.some((c) => c.severity === 'serious') && <label class="flex gap-2 text-sm text-lk-red"><input type="checkbox" name="serious_ok" class="mt-1 accent-lk-blue" /> I reviewed the serious points</label>}
+          <button name="intent" value="approve" class="btn-primary w-full" onclick="return confirm('Approve this press release for publication on the newsroom?')">Approve</button>
+          {r.status === 'in_review' && (
+            <details class="border-t border-white/5 pt-3"><summary class="cursor-pointer text-sm text-lk-orange">Request changes</summary>
+              <textarea name="review_note" rows="3" class="field mt-2 text-sm" placeholder="What should change?"></textarea>
+              <button name="intent" value="request-changes" class="btn-ghost mt-2 w-full text-sm">Send back to the writer</button></details>
+          )}
+        </section>
+      )}
+      {access.approver && r.status === 'approved' && <section class="card space-y-2"><p class="text-sm text-white/70">Publishes automatically at {r.publish_at && sydneyTime(r.publish_at)}.</p><button name="intent" value="unschedule" class="btn-ghost w-full text-sm">Cancel the schedule</button></section>}
+      {access.approver && r.status === 'published' && <button name="intent" value="withdraw" class="btn-ghost w-full text-sm text-lk-red" onclick="return confirm('Take this release off the newsroom and the website?')">Withdraw from the newsroom</button>}
+
+      <section class="card">
+        <h2 class="font-display text-lg font-bold">Versions</h2>
+        <ul class="mt-2 divide-y divide-white/5 text-sm">
+          {(versions ?? []).map((v) => (
+            <li class="flex items-center justify-between gap-3 py-2"><span><span class="text-white/80">{dateTime.format(new Date(v.saved_at))}</span><span class="block text-xs text-white/40">{v.reason} · {who(v.saved_by)}</span></span>
+              {!locked(r!) && <button name="intent" value="restore-version" class="btn-ghost px-3 py-1 text-xs" onclick={`this.form.version_id.value='${v.id}';return confirm('Go back to this version? The current one is kept.')`}>Restore</button>}</li>
+          ))}
+          {!versions?.length && <li class="py-3 text-white/45">Every change keeps the version before it.</li>}
+        </ul>
+        <input type="hidden" name="version_id" />
+      </section>
+      {['draft', 'changes_requested', 'withdrawn'].includes(r.status) && (access.approver || r.created_by === me.id) && <button name="intent" value="delete" class="w-full text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Delete this press release?')">Delete</button>}
+    </aside>
+  </form>
+</Admin>
+
+<style is:global>
+  .rich-area .ProseMirror { outline: none; min-height: 14rem; color: color-mix(in oklab, var(--color-white) 85%, transparent); line-height: 1.7; }
+  .rich-area .ProseMirror p { margin: 0 0 0.7rem; } .rich-area .ProseMirror ul { list-style: disc; margin-left: 1.3rem; }
+  .rich-area .ProseMirror h3 { margin: 0.8rem 0 0.4rem; font-weight: 700; color: var(--color-white); }
+  .rich-area .ProseMirror a { color: #5b8ff0; text-decoration: underline; }
+  .rich-area .ProseMirror p.is-editor-empty:first-child::before { content: attr(data-placeholder); color: color-mix(in oklab, var(--color-white) 30%, transparent); float: left; height: 0; pointer-events: none; }
+</style>
+
+<script>
+  import { initPressEditor } from '../../../scripts/press-editor';
+  initPressEditor();
+</script>

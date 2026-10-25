@@ -14,18 +14,29 @@ export async function getStaticPaths() {
 
 interface Props { entry: NewsEntry; news: NewsEntry[] }
 const { entry, news } = Astro.props;
-const { title, date, excerpt, description, venture, cover, shareImage, source, external } = entry.data;
+const { title, date, updated, excerpt, description, venture, cover, shareImage, source, external, press } = entry.data;
 const { Content } = await render(entry);
 const related = news.filter((n) => n.id !== entry.id && n.data.venture === venture).slice(0, 3);
 const sourceHref = source?.url.startsWith('../') ? href(`/news/${source.url.slice(3)}`) : source?.url;
+// Search engines and news aggregators: what this article is, who published it and when.
+const pageUrl = Astro.site ? new URL(Astro.url.pathname, Astro.site).href : undefined;
+const ld = {
+  '@context': 'https://schema.org', '@type': 'NewsArticle', headline: title.slice(0, 110), description: description || excerpt,
+  datePublished: date.toISOString(), dateModified: (updated ?? date).toISOString(), image: [shareImage ?? cover].filter(Boolean),
+  mainEntityOfPage: pageUrl, articleSection: press ? 'Press release' : 'News',
+  author: { '@type': 'Organization', name: venture === 'Lakeba Group' ? 'Lakeba Group' : `${venture} (Lakeba Group)`, url: 'https://lakeba.com' },
+  publisher: { '@type': 'Organization', name: 'Lakeba Group', url: 'https://lakeba.com' },
+};
 ---
 
-<Layout title={`${title} — Lakeba News`} description={description || excerpt} image={shareImage ?? cover ?? undefined}>
+<Layout title={`${title} — Lakeba ${press ? 'Press release' : 'News'}`} description={description || excerpt} image={shareImage ?? cover ?? undefined}>
+  {!external && <script type="application/ld+json" slot="head" set:html={JSON.stringify(ld).replace(/</g, '\\u003c')} />}
   <Nav />
   <main class="pt-32 pb-24">
     <article class="container-x max-w-3xl">
-      <a href={href('/news/')} class="text-sm text-white/50 hover:text-white">← News & Media</a>
+      <a href={href(press ? '/press/' : '/news/')} class="text-sm text-white/50 hover:text-white">← {press ? 'Press room' : 'News & Media'}</a>
       <div class="mt-8 flex flex-wrap items-center gap-2 text-sm">
+        {press && <span class="rounded-full bg-white px-3 py-1 text-xs font-semibold uppercase tracking-wider text-ink">Press release</span>}
         <span class:list={['rounded-full px-3 py-1 font-semibold', ventureClass(venture)]}>{venture}</span>
         <time datetime={date.toISOString()} class="text-white/50">{newsDate.format(date)}</time>
       </div>
@@ -35,10 +46,33 @@ const sourceHref = source?.url.startsWith('../') ? href(`/news/${source.url.slic
 
       {!external && <div class="news-prose mt-10"><Content /></div>}
 
+      {press && (
+        <aside class="mt-12 space-y-6" aria-label="For journalists">
+          <div class="glass flex flex-wrap items-center justify-between gap-4 rounded-2xl p-5">
+            <div>
+              <p class="text-sm font-semibold">Media contact</p>
+              <p class="text-sm text-white/60">{press.contact.name} · <a href={`mailto:${press.contact.email}`} class="text-lk-blue hover:underline">{press.contact.email}</a>{press.contact.phone && ` · ${press.contact.phone}`}</p>
+            </div>
+            <a href={press.pdf} target="_blank" rel="noopener" class="rounded-xl bg-lk-blue px-4 py-2 text-sm font-semibold text-[#fff]">Download PDF ↓</a>
+          </div>
+          {press.kit.length > 0 && (
+            <div>
+              <h2 class="text-lg font-bold">Press kit</h2>
+              <p class="mt-1 text-sm text-white/50">Images for editorial use with this release. Click to open the full-size file.</p>
+              <ul class="mt-4 grid grid-cols-2 gap-4 sm:grid-cols-3">
+                {press.kit.map((k) => (
+                  <li><a href={k.url} target="_blank" rel="noopener" download class="block overflow-hidden rounded-xl border border-white/10 hover:border-white/30"><img src={k.url} alt={k.label} loading="lazy" class="aspect-[4/3] w-full object-cover" /></a><p class="mt-1.5 text-xs text-white/50">{k.label}</p></li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </aside>
+      )}
+
       {source && (
         <div class="glass mt-10 flex flex-wrap items-center justify-between gap-4 rounded-2xl p-5">
           <p class="text-sm text-white/60">{external ? 'This story was published on' : 'Originally published on'} <span class="font-semibold text-white">{source.name}</span></p>
-          <a href={sourceHref} target="_blank" rel="noopener" class="rounded-xl bg-lk-blue px-4 py-2 text-sm font-semibold text-white">{external ? 'Read the story' : 'View original'} ↗</a>
+          <a href={sourceHref} target="_blank" rel="noopener" class="rounded-xl bg-lk-blue px-4 py-2 text-sm font-semibold text-[#fff]">{external ? 'Read the story' : 'View original'} ↗</a>
         </div>
       )}
     </article>

@@ -44,3 +44,17 @@ jobs:
     steps:
       - id: deployment
         uses: actions/deploy-pages@v4
+      # Tell Bing, Yandex and the other IndexNow search engines about new and
+      # changed news right away (Google reads the news sitemap). Best effort.
+      - name: Notify search engines (IndexNow)
+        continue-on-error: true
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          base="${PAGE_URL%/}"
+          key=129781b8f81c50b09b72e52e52fb3519  # public/<key>.txt (an IndexNow key is public by design)
+          urls=$(curl -fsS "$base/news-sitemap.xml" | grep -o '<loc>[^<]*</loc>' | sed 's/<\/*loc>//g' | head -100)
+          list=$(printf '%s\n' "$base/news/" "$base/press/" $urls | jq -R . | jq -s .)
+          host=$(echo "$base" | sed -E 's#https?://([^/]+).*#\1#')
+          jq -n --arg host "$host" --arg key "$key" --arg loc "$base/$key.txt" --argjson urls "$list" '{host:$host,key:$key,keyLocation:$loc,urlList:$urls}' \
+            | curl -sS -X POST -H 'content-type: application/json; charset=utf-8' --data @- https://api.indexnow.org/indexnow -w ' IndexNow answered %{http_code}\n'

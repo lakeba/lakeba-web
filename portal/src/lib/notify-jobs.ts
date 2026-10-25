@@ -5,6 +5,7 @@ import { processOutbox, pushEnabled } from './push';
 import { pollMailboxes, sendDueAutoReplies } from './shareholder-email';
 import { requestWebsiteDeploy } from './news-cms';
 import { sendQueued, startScheduled } from './newsletter';
+import { publishDue } from './press';
 import { createSignInLink } from './sign-in-links';
 
 // The notification worker inside the portal process: sends queued pushes and
@@ -111,6 +112,7 @@ export async function weeklyDigest(now = new Date(), { force = false } = {}) {
  */
 export async function newsJobs(now = new Date()) {
   const svc = serviceClient();
+  await publishDue(svc); // approved press releases whose time has come
   const { data: due } = await svc.from('posts').select('id, entity_id, title, excerpt, slug').eq('notify_on_publish', true).is('notified_at', null).lte('published_at', now.toISOString());
   for (const p of due ?? []) {
     const { data: claimed } = await svc.from('posts').update({ notified_at: now.toISOString() }).eq('id', p.id).is('notified_at', null).select('id');

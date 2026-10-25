@@ -1,0 +1,95 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { cleanHtml } from '../../../lib/news-cms';
+import { pressAccess, pressSettings } from '../../../lib/press';
+
+// The press office's settings (approvers only): the boilerplate and media
+// contact under every release, and who is on the press team (the marketing
+// people who write releases without being admins).
+const access = pressAccess(Astro.locals);
+if (!access?.approver) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+let notice = '', error = '';
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'save') {
+    const email = field(form, 'contact_email');
+    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email)) error = 'Enter the media contact’s email address.';
+    else {
+      const value = {
+        boilerplate_html: cleanHtml(String(form.get('boilerplate_html') ?? '')).slice(0, 5000), about_title: field(form, 'about_title').slice(0, 80) || 'About Lakeba Group',
+        contact_name: field(form, 'contact_name').slice(0, 120), contact_email: email.slice(0, 200), contact_phone: field(form, 'contact_phone').slice(0, 60), dateline_city: field(form, 'dateline_city').toUpperCase().slice(0, 40) || 'SYDNEY',
+      };
+      await svc.from('portal_settings').upsert({ key: 'press', value, updated_at: new Date().toISOString() }).throwOnError();
+      await log('press_settings_saved', {});
+      notice = 'Saved. New and corrected releases use these.';
+    }
+  } else if (intent === 'add-member') {
+    const email = field(form, 'email').toLowerCase();
+    const { data: p } = await svc.from('profiles').select('id, role').ilike('email', email).maybeSingle();
+    if (!p) error = 'Nobody with that email address has a portal account. Invite them first (Admin → Investors), then add them here.';
+    else if (p.role === 'admin') error = 'Group admins can already write and approve press releases.';
+    else {
+      await svc.from('press_team').upsert({ user_id: p.id, added_by: me.id });
+      await log('press_team_added', { email });
+      notice = `${email} is on the press team. They’ll need two-step sign-in, and will see Admin → Press releases.`;
+    }
+  } else if (intent === 'remove-member') {
+    await svc.from('press_team').delete().eq('user_id', field(form, 'user_id'));
+    await log('press_team_removed', { user_id: field(form, 'user_id') });
+    notice = 'Removed from the press team.';
+  }
+}
+const s = await pressSettings(svc);
+const { data: team } = await svc.from('press_team').select('user_id, added_at');
+const { data: people } = team?.length ? await svc.from('profiles').select('id, email, first_name, last_name').in('id', team.map((t) => t.user_id)) : { data: [] };
+---
+
+<Admin title="Press settings">
+  <a href="/admin/press" class="text-sm text-white/50 hover:text-white">← Press releases</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">Press settings and team</h1>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+  <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+    <form method="post" class="card space-y-4">
+      <h2 class="font-display text-lg font-bold">Under every release</h2>
+      <div><label class="label" for="about_title">Boilerplate heading</label><input id="about_title" name="about_title" value={s.about_title} class="field" /></div>
+      <div><span class="label">Boilerplate (who Lakeba is, in a paragraph; used for the group and the ventures)</span>
+        <div class="rounded-xl border border-white/10" data-rich="boilerplate_html" set:html={s.boilerplate_html}></div><input type="hidden" name="boilerplate_html" /></div>
+      <div class="grid gap-4 sm:grid-cols-2">
+        <div><label class="label" for="contact_name">Media contact</label><input id="contact_name" name="contact_name" value={s.contact_name} class="field" /></div>
+        <div><label class="label" for="contact_email">Email</label><input id="contact_email" name="contact_email" type="email" value={s.contact_email} class="field" /></div>
+        <div><label class="label" for="contact_phone">Phone (optional)</label><input id="contact_phone" name="contact_phone" value={s.contact_phone} class="field" /></div>
+        <div><label class="label" for="dateline_city">Usual dateline city</label><input id="dateline_city" name="dateline_city" value={s.dateline_city} class="field uppercase" /></div>
+      </div>
+      <button name="intent" value="save" class="btn-primary">Save</button>
+    </form>
+    <section class="card space-y-4">
+      <h2 class="font-display text-lg font-bold">Press team</h2>
+      <p class="text-sm text-white/55">The marketing people who prepare releases. They can write, draft with AI, check, get quotes approved and send releases for approval, but not publish. Group admins approve.</p>
+      <ul class="divide-y divide-white/5 text-sm">
+        {(people ?? []).map((p) => (
+          <li class="flex items-center justify-between gap-3 py-2"><span>{[p.first_name, p.last_name].filter(Boolean).join(' ') || p.email}<span class="block text-xs text-white/45">{p.email}</span></span>
+            <form method="post"><input type="hidden" name="user_id" value={p.id} /><button name="intent" value="remove-member" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Remove from the press team?')">Remove</button></form></li>
+        ))}
+        {!people?.length && <li class="py-3 text-white/45">Nobody yet.</li>}
+      </ul>
+      <form method="post" class="flex gap-2"><input name="email" type="email" required placeholder="Their portal email" class="field" /><button name="intent" value="add-member" class="btn-ghost shrink-0">Add</button></form>
+    </section>
+  </div>
+</Admin>
+
+<style is:global>
+  .rich-area .ProseMirror { outline: none; min-height: 6rem; color: color-mix(in oklab, var(--color-white) 85%, transparent); line-height: 1.7; }
+  .rich-area .ProseMirror p { margin: 0 0 0.7rem; }
+</style>
+<script>
+  import { initRichFields } from '../../../scripts/rich-fields';
+  initRichFields();
+</script>

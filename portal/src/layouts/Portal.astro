@@ -11,7 +11,7 @@ interface Props { title: string }
 const { title } = Astro.props;
 const { profile, supabase, user, company, companies, adminOf, features, t, locale } = Astro.locals;
 const path = Astro.url.pathname;
-const canAdmin = profile?.role === 'admin' || adminOf.length > 0;
+const canAdmin = profile?.role === 'admin' || adminOf.length > 0 || Astro.locals.pressTeam;
 const isGroup = company?.relationship === 'group';
 const brand = brandName(company);
 
@@ -24,7 +24,7 @@ const nav = [
   ...(company && features.ask ? [{ href: '/ask', label: t('Ask {brand}', { brand }) }] : []),
   ...(features.boardQa ? [{ href: '/board', label: t('Board Q&A') }] : []),
   ...(features.trading ? [{ href: '/trading', label: t('Trading') }] : []),
-  ...(canAdmin ? [{ href: '/admin', label: t('Admin') }] : []),
+  ...(canAdmin ? [{ href: profile?.role === 'admin' || adminOf.length ? '/admin' : '/admin/press', label: t('Admin') }] : []),
 ];
 const switchHref = (code: string) => `/company/${code}?next=${encodeURIComponent(path)}`;
 const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));

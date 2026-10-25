@@ -1,0 +1,67 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import { serviceClient } from '../../../lib/admin';
+import { dateTime } from '../../../lib/format';
+import { pressAccess, STATUS_LABEL, sydneyTime, type Release } from '../../../lib/press';
+
+// The press office: every release with its status, and a new one.
+const access = pressAccess(Astro.locals);
+if (!access) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+if (Astro.request.method === 'POST') {
+  const { data: group } = await svc.from('entities').select('id').eq('relationship', 'group').limit(1).maybeSingle();
+  const { data } = await svc.from('press_releases').insert({ entity_id: group?.id ?? null, created_by: me.id, updated_by: me.id }).select('id').single().throwOnError();
+  await Astro.locals.supabase.rpc('log_event', { event_action: 'press_created_release', event_detail: { id: data!.id } });
+  return Astro.redirect(`/admin/press/${data!.id}`, 303);
+}
+const filter = Astro.url.searchParams.get('status') ?? '';
+let query = svc.from('press_releases').select('id, headline, status, entity_id, publish_at, published_at, updated_at, created_by, quotes').order('updated_at', { ascending: false }).limit(200);
+if (filter) query = query.eq('status', filter);
+const { data: rows } = await query;
+const releases = (rows ?? []) as Pick<Release, 'id' | 'headline' | 'status' | 'entity_id' | 'publish_at' | 'published_at' | 'updated_at' | 'created_by' | 'quotes'>[];
+const { data: entities } = await svc.from('entities').select('id, display_name');
+const nameOf = new Map((entities ?? []).map((e) => [e.id, e.display_name]));
+const waiting = releases.filter((r) => r.status === 'in_review').length;
+const tone: Record<string, string> = { draft: 'bg-white/10 text-white/70', in_review: 'bg-lk-orange/15 text-lk-orange', changes_requested: 'bg-lk-red/15 text-lk-red', approved: 'bg-lk-blue/15 text-lk-blue', published: 'bg-lk-green/15 text-lk-green', withdrawn: 'bg-white/10 text-white/45' };
+---
+
+<Admin title="Press releases">
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="font-display text-3xl font-bold">Press releases</h1>
+      <p class="mt-1 max-w-2xl text-sm text-white/55">Write a release from a few head points, check it, have the people quoted approve their words, and publish it on the newsroom with its press kit. The marketing team prepares; group admins approve.</p>
+    </div>
+    <div class="flex gap-2">
+      {access.approver && <a href="/admin/press/settings" class="btn-ghost">Settings and team</a>}
+      <form method="post"><button class="btn-primary">New press release</button></form>
+    </div>
+  </div>
+  {access.approver && waiting > 0 && <p class="mt-5 rounded-xl border border-lk-orange/30 bg-lk-orange/10 px-4 py-3 text-sm text-lk-orange">{waiting} release{waiting > 1 ? 's are' : ' is'} waiting for your approval.</p>}
+  <nav class="mt-6 flex flex-wrap gap-2 text-sm">
+    <a href="/admin/press" class:list={['rounded-full px-3 py-1', !filter ? 'bg-white/10 text-white' : 'text-white/55']}>All</a>
+    {Object.entries(STATUS_LABEL).map(([k, label]) => <a href={`/admin/press?status=${k}`} class:list={['rounded-full px-3 py-1', filter === k ? 'bg-white/10 text-white' : 'text-white/55']}>{label}</a>)}
+  </nav>
+  <section class="card mt-4 overflow-x-auto p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Headline</th><th class="px-5 py-3">Company</th><th class="px-5 py-3">Status</th><th class="px-5 py-3">Quotes</th><th class="px-5 py-3">Changed</th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {releases.map((r) => {
+          const approved = r.quotes.filter((q) => q.status === 'approved' || q.status === 'changed').length;
+          return (
+            <tr>
+              <td class="px-5 py-3"><a href={`/admin/press/${r.id}`} class="font-medium text-white hover:text-lk-blue">{r.headline || 'Untitled draft'}</a></td>
+              <td class="px-5 py-3 text-white/65">{r.entity_id ? nameOf.get(r.entity_id) : 'Lakeba Group'}</td>
+              <td class="px-5 py-3"><span class:list={['rounded-full px-2.5 py-0.5 text-xs', tone[r.status]]}>{STATUS_LABEL[r.status]}</span>
+                {r.status === 'approved' && r.publish_at && <span class="block text-xs text-white/45">{sydneyTime(r.publish_at)}</span>}
+                {r.status === 'published' && r.published_at && <span class="block text-xs text-white/45">{sydneyTime(r.published_at)}</span>}</td>
+              <td class="px-5 py-3 text-white/65">{r.quotes.length ? `${approved} of ${r.quotes.length} approved` : '–'}</td>
+              <td class="px-5 py-3 text-white/45">{dateTime.format(new Date(r.updated_at))}</td>
+            </tr>
+          );
+        })}
+        {!releases.length && <tr><td colspan="5" class="px-5 py-8 text-center text-white/45">No press releases {filter ? 'with this status' : 'yet'}.</td></tr>}
+      </tbody>
+    </table>
+  </section>
+</Admin>

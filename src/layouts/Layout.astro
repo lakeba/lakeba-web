@@ -24,6 +24,10 @@ const {
     {image && <meta property="og:image" content={image} />}
     {image && <meta name="twitter:card" content="summary_large_image" />}
     {image && <meta name="twitter:image" content={image} />}
+    <link rel="alternate" type="application/rss+xml" title="Lakeba News" href={`${import.meta.env.BASE_URL.replace(/\/$/, "")}/news/rss.xml`} />
+    <link rel="alternate" type="application/rss+xml" title="Lakeba Press releases" href={`${import.meta.env.BASE_URL.replace(/\/$/, "")}/press/rss.xml`} />
+    {Astro.site && <link rel="canonical" href={new URL(Astro.url.pathname, Astro.site).href} />}
+    <slot name="head" />
     <ThemeInit />
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />

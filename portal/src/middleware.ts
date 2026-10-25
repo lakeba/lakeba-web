@@ -12,7 +12,7 @@ import { formats } from './lib/format';
 startNotificationWorker();
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login', '/e', '/room', '/news-media', '/api/public', '/n', '/favicon.ico'];
+const PUBLIC_PATHS = ['/press/quote', '/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login', '/e', '/room', '/news-media', '/api/public', '/n', '/favicon.ico'];
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 
@@ -30,6 +30,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.company = null;
   locals.group = null;
   locals.adminOf = [];
+  locals.pressTeam = false;
   locals.features = { ask: false, boardQa: false, trading: false };
   // Language: ?lang= (remembered in a cookie), else the cookie, else the browser; the profile choice wins once signed in.
   const asked = url.searchParams.get('lang');
@@ -78,6 +79,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.company = companyContext.current;
   locals.group = companyContext.group;
   locals.adminOf = companyContext.adminOf;
+  if (profile?.role !== 'admin') locals.pressTeam = Boolean((await serviceClient().from('press_team').select('user_id').eq('user_id', locals.user.id).maybeSingle()).data);
   const { data: flags } = await locals.supabase.rpc('my_portal_flags').maybeSingle();
   locals.features = {
     ask: (flags as { ask_enabled?: boolean } | null)?.ask_enabled ?? true,
@@ -87,14 +89,16 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   // Admins (and company admins) cannot use the portal until they have enrolled MFA.
   const companyAdmin = locals.adminOf.length > 0;
-  if ((profile?.role === 'admin' || companyAdmin) && !locals.mfaEnrolled && !matches(path, MFA_PATHS)) {
+  if ((profile?.role === 'admin' || companyAdmin || locals.pressTeam) && !locals.mfaEnrolled && !matches(path, MFA_PATHS)) {
     return redirect('/mfa/setup?required=1');
   }
 
   if (matches(path, ['/admin'])) {
     const groupAdmin = profile?.role === 'admin' && locals.user.aal === 'aal2';
     // Company admins manage their company's content and see its register; the rest stays with group admins.
-    const allowed = groupAdmin || (companyAdmin && locals.user.aal === 'aal2' && companyAdminMayOpen(path));
+    // The press team (marketing) writes press releases; group admins approve them.
+    const pressWriter = locals.pressTeam && locals.user.aal === 'aal2' && matches(path, ['/admin/press']);
+    const allowed = groupAdmin || pressWriter || (companyAdmin && locals.user.aal === 'aal2' && companyAdminMayOpen(path));
     if (!allowed) return new Response('Forbidden', { status: 403 });
   }
 

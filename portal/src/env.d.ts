@@ -25,6 +25,8 @@ declare namespace App {
     group: import('./lib/companies').Company | null;
     /** Companies this person administers as a company admin. */
     adminOf: string[];
+    /** On the press team: may write press releases (Admin → Press releases) without being an admin. */
+    pressTeam: boolean;
     /** Per-person switches set by admins (Admin → Investors). */
     features: { ask: boolean; boardQa: boolean; trading: boolean };
     /** Interface language, its translate function and date/number formats. */

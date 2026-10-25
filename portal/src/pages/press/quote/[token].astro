@@ -1,0 +1,54 @@
+---
+import Auth from '../../../layouts/Auth.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { notifyMembers } from '../../../lib/notify';
+import { answerQuote, loadRelease, quoteApprovalByToken } from '../../../lib/press';
+
+// A person quoted in a press release approves their quote, or changes it,
+// from the link emailed to them (no portal account needed). The press team
+// is told; a change updates the release's text.
+const svc = serviceClient();
+const a = await quoteApprovalByToken(svc, Astro.params.token ?? '');
+const expired = a && new Date(a.expires_at) < new Date();
+const release = a ? await loadRelease(svc, a.release_id) : null;
+const tooLate = release && ['published', 'withdrawn'].includes(release.status);
+let answered = a && a.status !== 'pending' ? a.status : '';
+let error = '';
+if (a && release && !expired && !tooLate && a.status === 'pending' && Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const choice = String(form.get('choice') ?? '');
+  const text = String(form.get('text') ?? '').trim().replace(/^[“"]|[”"]$/g, '').slice(0, 1500);
+  const comment = String(form.get('comment') ?? '').trim();
+  if (choice === 'change' && text.length < 5) error = 'Please write your quote.';
+  else {
+    await answerQuote(svc, a, choice === 'change' ? text : null, comment);
+    await svc.from('audit_log').insert({ action: 'press_quote_answered', detail: { release_id: a.release_id, quote: a.quote_key, changed: choice === 'change' && text !== a.original } });
+    await notifyMembers({ kind: 'admin_press', title: `${a.name} answered about their quote`, body: choice === 'change' && text !== a.original ? 'They changed the quote; the text was updated.' : 'They approved the quote.', link: `/admin/press/${a.release_id}`, origin: Astro.url.origin, userIds: [...new Set([release.created_by, release.submitted_by].filter(Boolean) as string[])] }).catch(() => 0);
+    answered = choice === 'change' && text !== a.original ? 'changed' : 'approved';
+  }
+}
+Astro.response.headers.set('Cache-Control', 'no-store');
+---
+
+<Auth title="Your quote" subtitle={release?.headline}>
+  {!a || !release ? <Alert tone="error">This link isn’t valid. Please ask the person who sent it for a new one.</Alert>
+  : answered ? <Alert tone="success">{answered === 'changed' ? 'Thank you: your changes were sent to the Lakeba press team.' : 'Thank you: you approved your quote.'} Questions: press@lakeba.com.</Alert>
+  : expired ? <Alert tone="error">This link has expired. Please ask the Lakeba press team for a new one.</Alert>
+  : tooLate ? <Alert tone="error">This press release has already been published. Please contact press@lakeba.com about any change.</Alert>
+  : (
+    <form method="post" class="space-y-4">
+      {error && <Alert tone="error">{error}</Alert>}
+      <p class="text-sm text-white/65">Hello {a.name.split(' ')[0]}. Lakeba’s press release <strong class="text-white">“{release.headline}”</strong> quotes you as follows. Please approve it, or change the wording.</p>
+      <blockquote class="rounded-xl border-l-4 border-lk-blue bg-white/5 px-4 py-3 text-white/85">“{a.original}”</blockquote>
+      <p class="text-xs text-white/45">The press release isn’t public yet: please keep it confidential until it’s published.</p>
+      <button name="choice" value="approve" class="btn-primary w-full">Approve as written</button>
+      <details class="rounded-xl border border-white/10 p-4">
+        <summary class="cursor-pointer text-sm text-lk-blue">Change the wording</summary>
+        <textarea name="text" rows="5" class="field mt-3 text-sm">{a.original}</textarea>
+        <textarea name="comment" rows="2" class="field mt-2 text-sm" placeholder="A note for the press team (optional)"></textarea>
+        <button name="choice" value="change" class="btn-ghost mt-3 w-full">Approve with my changes</button>
+      </details>
+    </form>
+  )}
+</Auth>

@@ -55,6 +55,13 @@ const news = defineCollection({
     external: z.boolean().default(false),
     // A url starting with "../" is another article on this site.
     source: z.object({ url: z.string(), name: z.string() }).nullable().optional(),
+    // Press releases: the press kit (images), PDF and media contact.
+    press: z.object({
+      pdf: z.string().url(),
+      kit: z.array(z.object({ url: z.string().url(), label: z.string() })).default([]),
+      contact: z.object({ name: z.string(), email: z.string(), phone: z.string().default('') }),
+      summary: z.string().default(''),
+    }).nullable().optional(),
   }),
 });
 
