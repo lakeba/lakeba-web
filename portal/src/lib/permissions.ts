@@ -13,7 +13,7 @@ export type Level = 'view' | 'do' | 'approve';
 export type Area = { key: string; label: string; description: string; levels: Level[]; menu: string[]; groupOnly?: boolean };
 
 export const AREAS: Area[] = [
-  { key: 'investors', label: 'Investors and the register', description: 'Investors, holders and holdings, engagement, data import.', levels: ['view', 'do'], menu: ['/admin/investors', '/admin/holdings', '/admin/engagement', '/admin/import'] },
+  { key: 'investors', label: 'Investors and the register', description: 'Investors, companies and share classes, holders and holdings, boards, engagement, data import.', levels: ['view', 'do'], menu: ['/admin/investors', '/admin/holdings', '/admin/holders', '/admin/companies', '/admin/engagement', '/admin/import'] },
   { key: 'documents', label: 'Documents and data rooms', description: 'Documents for investors and the board, data rooms.', levels: ['view', 'do', 'approve'], menu: ['/admin/documents', '/admin/data-rooms'] },
   { key: 'news', label: 'News, announcements and LinkedIn', description: 'News posts (portal and website), dashboard announcements, the LinkedIn campaign.', levels: ['view', 'do', 'approve'], menu: ['/admin/news', '/admin/content', '/admin/linkedin'] },
   { key: 'press', label: 'Press releases and media', description: 'Press releases, the media database, distribution, coverage and reports.', levels: ['view', 'do', 'approve'], menu: ['/admin/press'], groupOnly: true },

@@ -145,7 +145,7 @@ const statusTone: Record<string, string> = { open: 'bg-white/10 text-white/70', 
 ---
 
 <Admin title="Secondary trading">
-  <PageHeader eyebrow="Admin" title="Secondary trading" subtitle="Shareholders register non-binding interests to buy or sell. You pair a seller with a buyer once any pre-emptive rights and approvals are dealt with, then complete the transfer, which updates the register." />
+  <PageHeader title="Secondary trading" subtitle="Shareholders register non-binding interests to buy or sell. You pair a seller with a buyer once any pre-emptive rights and approvals are dealt with, then complete the transfer, which updates the register." />
   <AdminCompanyFilter scope={scope} allowAll={false} />
   {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}

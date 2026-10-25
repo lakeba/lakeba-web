@@ -12,7 +12,7 @@ import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 const supabase = Astro.locals.supabase;
 const scope = await adminScope(Astro.locals, Astro.url);
 let error = '';
-let notice = '';
+let notice = Astro.url.searchParams.get('deleted') ? `${Astro.url.searchParams.get('deleted')} was deleted.` : '';
 let preview: Preview | null = null;
 let csvText = '';
 
@@ -80,7 +80,7 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
 ---
 
 <Admin title="Holders & holdings">
-  <PageHeader title="Holders & holdings" subtitle="Holding entities, their latest positions, and imports from the share registry." />
+  <PageHeader title="Holders & holdings" subtitle="Holding entities and their latest positions. Open a holder to change its details, holdings, access and notes; share classes are on each company’s page (Companies)." />
   <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
@@ -173,7 +173,7 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
       <tbody class="divide-y divide-white/5">
         {(holders ?? []).map((h) => (
           <tr>
-            <td class="px-5 py-3"><span class="font-medium text-white">{h.name}</span><span class="block text-xs text-white/40">{h.registry_ref ?? 'No registry ref'}</span></td>
+            <td class="px-5 py-3"><a href={`/admin/holders/${h.id}`} class="font-medium text-white hover:text-lk-blue">{h.name}</a><span class="block text-xs text-white/40">{h.registry_ref ?? 'No registry ref'}</span></td>
             <td class="px-5 py-3 text-white/60">{holderKinds[h.kind]}</td>
             <td class="px-5 py-3 text-white/70">
               {latestOf(h.holdings as unknown as H[]).filter((r) => classCompany.has(r.share_class_id)).map((r) => <span class="block">{shares.format(r.shares)} {classCode(r.share_class_id, r.share_classes?.code)} <span class="text-xs text-white/40">as at {shortDate.format(new Date(r.as_at))}</span></span>)}

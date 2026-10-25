@@ -274,7 +274,7 @@ import ShareLink from '../../../components/ShareLink.astro';
               <td class="px-5 py-3 text-white/60">
                 {hs.length ? hs.map((h) => (
                   <div class="py-0.5">
-                    <span class="text-white/80">{h.name}</span>{h.access === 'viewer' && <span class="ml-1 text-[11px] text-white/40">viewer</span>}
+                    <a href={`/admin/holders/${h.id}`} class="text-white/80 hover:text-lk-blue">{h.name}</a>{h.access === 'viewer' && <span class="ml-1 text-[11px] text-white/40">viewer</span>}
                     {h.positions.length ? h.positions.map((pos) => (
                       <span class="block text-xs text-white/45"><HoldingNote note={pos.note} class="mr-1" />{shares.format(pos.row.shares)} {pos.row.share_classes?.code}{pos.total > 0 && ` · ${percent.format(pos.row.shares / pos.total)}`} · as at {shortDate.format(new Date(pos.row.as_at))}</span>
                     )) : <span class="block text-xs text-white/35">No holdings recorded</span>}

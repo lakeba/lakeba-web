@@ -1,0 +1,86 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import Alert from '../../../components/Alert.astro';
+import ReviewChange from '../../../components/ReviewChange.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { PORTAL_ACCESS, RELATIONSHIPS } from '../../../lib/register';
+
+// Admin → Companies: Lakeba Group and every company on the register, with
+// their share classes and holders. Opening one edits its details, classes and
+// board. New companies are added by people who manage the whole register.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const mayAdd = access.can('investors.do', null);
+let error = '';
+let review: { title: string; lines: string[]; fields: [string, string][] } | null = null;
+
+if (Astro.request.method === 'POST' && mayAdd) {
+  const form = await Astro.request.formData();
+  const v = { code: field(form, 'code').toUpperCase(), display_name: field(form, 'display_name').slice(0, 80), legal_name: field(form, 'legal_name').slice(0, 160) || null, relationship: field(form, 'relationship'), portal: field(form, 'portal') };
+  if (!/^[A-Z0-9]{2,8}$/.test(v.code)) error = 'The code is 2–8 capital letters or digits, e.g. EZF.';
+  else if (!v.display_name) error = 'Enter the name shown in the portal.';
+  else if (!(v.relationship in RELATIONSHIPS) || v.relationship === 'group') error = 'Choose a controlled venture or a non-controlling investment.';
+  else if (!(v.portal in PORTAL_ACCESS)) error = 'Choose the portal access.';
+  else if ((await svc.from('entities').select('id').eq('code', v.code).maybeSingle()).data) error = `${v.code} is already used.`;
+  else if (field(form, 'intent') === 'review') {
+    review = { title: 'Add this company?', lines: [`${v.code} · ${v.display_name}${v.legal_name ? ` (${v.legal_name})` : ''}`, `${RELATIONSHIPS[v.relationship as keyof typeof RELATIONSHIPS]} · ${PORTAL_ACCESS[v.portal as keyof typeof PORTAL_ACCESS]}`, 'Add its share classes and board on its page next.'], fields: [...form.entries()].filter(([k]) => k !== 'intent').map(([k, x]) => [k, String(x)]) };
+  } else if (field(form, 'intent') === 'apply') {
+    const { data: max } = await svc.from('entities').select('sort').order('sort', { ascending: false }).limit(1).maybeSingle();
+    await svc.from('entities').insert({ ...v, country: 'Australia', sort: (max?.sort ?? 0) + 1 }).throwOnError();
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'register_company_added', event_detail: v });
+    return Astro.redirect(`/admin/companies/${v.code}?added=1`, 303);
+  }
+}
+
+const [{ data: entities }, { data: classes }, { data: holdings }] = await Promise.all([
+  svc.from('entities').select('id, code, display_name, legal_name, relationship, portal, company_number').order('sort'),
+  svc.from('share_classes').select('id, entity_id'),
+  svc.from('holdings').select('holder_id, share_class_id, shares, as_at').range(0, 199999),
+]);
+const visible = (entities ?? []).filter((e) => access.can('investors.view', e.id));
+const classEntity = new Map((classes ?? []).map((c) => [c.id, c.entity_id]));
+// Holders with a current balance above 0, per company.
+const latest = new Map<string, { as_at: string; shares: number; holder: string; entity: string }>();
+for (const h of holdings ?? []) { const k = `${h.holder_id}|${h.share_class_id}`; if (!latest.has(k) || latest.get(k)!.as_at < h.as_at) latest.set(k, { as_at: h.as_at, shares: Number(h.shares), holder: h.holder_id, entity: classEntity.get(h.share_class_id) ?? '' }); }
+const holdersOf = (eid: string) => new Set([...latest.values()].filter((x) => x.entity === eid && x.shares > 0).map((x) => x.holder)).size;
+const classesOf = (eid: string) => (classes ?? []).filter((c) => c.entity_id === eid).length;
+---
+
+<Admin title="Companies">
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div><h1 class="font-display text-3xl font-bold">Companies</h1>
+      <p class="mt-1 max-w-3xl text-sm text-white/55">Lakeba Group and the companies on the register. Open one to change its details, share classes and board. Holders are changed on their own page (Holders &amp; holdings).</p></div>
+    {mayAdd && <a href="#new-company" class="btn-primary">Add a company</a>}
+  </div>
+  {error && <div class="mt-5"><Alert tone="error">{error}</Alert></div>}
+  {review && <div class="mt-5"><ReviewChange {...review} cancel="/admin/companies" /></div>}
+  <section class="card mt-6 overflow-x-auto p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Company</th><th class="px-5 py-3">Relationship</th><th class="px-5 py-3">Portal</th><th class="px-5 py-3 text-right">Classes</th><th class="px-5 py-3 text-right">Holders</th><th class="px-5 py-3"></th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {visible.map((e) => (
+          <tr>
+            <td class="px-5 py-3"><a href={`/admin/companies/${e.code}`} class="font-medium text-white hover:text-lk-blue">{e.display_name}</a><span class="block text-xs text-white/40">{e.code}{e.legal_name && ` · ${e.legal_name}`}{e.company_number && ` · ${e.company_number}`}</span></td>
+            <td class="px-5 py-3 text-white/65">{RELATIONSHIPS[e.relationship as keyof typeof RELATIONSHIPS]}</td>
+            <td class="px-5 py-3 text-white/65">{PORTAL_ACCESS[e.portal as keyof typeof PORTAL_ACCESS]}</td>
+            <td class="px-5 py-3 text-right tabular-nums">{classesOf(e.id)}</td>
+            <td class="px-5 py-3 text-right tabular-nums">{holdersOf(e.id)}</td>
+            <td class="px-5 py-3 text-right"><a href={`/admin/companies/${e.code}`} class="btn-ghost !px-3 !py-1.5 text-xs">{access.can('investors.do', e.id) ? 'Edit' : 'View'}</a></td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </section>
+  {mayAdd && (
+    <form method="post" id="new-company" class="card mt-6 grid max-w-4xl scroll-mt-32 gap-3 sm:grid-cols-2">
+      <h2 class="font-display text-lg font-bold sm:col-span-2">Add a company</h2>
+      <div><label class="label" for="code">Code</label><input id="code" name="code" required maxlength="8" placeholder="e.g. EZF" class="field uppercase" /></div>
+      <div><label class="label" for="display_name">Name shown in the portal</label><input id="display_name" name="display_name" required class="field" /></div>
+      <div class="sm:col-span-2"><label class="label" for="legal_name">Legal name</label><input id="legal_name" name="legal_name" placeholder="e.g. Ezifin Pty Ltd" class="field" /></div>
+      <div><label class="label" for="relationship">Relationship</label><select id="relationship" name="relationship" class="field"><option value="controlled">Controlled venture</option><option value="portfolio">Non-controlling investment</option></select></div>
+      <div><label class="label" for="portal">Portal access</label><select id="portal" name="portal" class="field">{Object.entries(PORTAL_ACCESS).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
+      <div class="sm:col-span-2"><button name="intent" value="review" class="btn-primary">Check and add</button></div>
+    </form>
+  )}
+</Admin>

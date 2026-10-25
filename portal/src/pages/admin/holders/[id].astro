@@ -1,0 +1,314 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import Alert from '../../../components/Alert.astro';
+import ReviewChange from '../../../components/ReviewChange.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { displayName } from '../../../lib/admin-forms';
+import { shortDate } from '../../../lib/format';
+import { notifyMembers } from '../../../lib/notify';
+import { HOLDER_KINDS, amount, changes, companiesOfHolder, fmt, holderBlocker, holderRights, isDate, tellStatementsReady, wholeShares } from '../../../lib/register';
+
+// One holder (the legal owner on the register): its details, its holdings
+// history per class (add, correct or delete a dated row), who can see it, and
+// the notes next to its holdings. Every change is checked first (old → new),
+// then saved and recorded in the audit log.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const me = Astro.locals.user!.id;
+const id = Astro.params.id!;
+const load = async () => (/^[0-9a-f-]{36}$/.test(id) ? (await svc.from('holders').select('*').eq('id', id).maybeSingle()).data : null);
+let holder = await load();
+if (!holder) return new Response('Not found', { status: 404 });
+const companies = await companiesOfHolder(svc, id);
+const rights = holderRights(access, companies);
+if (!rights.sees) return new Response('Not found', { status: 404 });
+
+type Row = { id: string; share_class_id: string; shares: number; as_at: string; exercise_price: number | null; expires_on: string | null };
+type Cls = { id: string; code: string; name: string; entity_id: string; entities: { code: string; display_name: string } | null };
+const { data: allClasses } = await svc.from('share_classes').select('id, code, name, entity_id, entities(code, display_name)').order('code');
+const classes = (allClasses ?? []) as unknown as Cls[];
+const classById = new Map(classes.map((c) => [c.id, c]));
+const classLabel = (cid: string) => { const c = classById.get(cid); return c ? `${c.entities?.code}-${c.code} ${c.name}` : 'unknown class'; };
+const mayEditClass = (cid: string) => { const c = classById.get(cid); return Boolean(c && rights.company(c.entity_id)); };
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { holder_id: id, holder: holder!.name, ...detail } });
+
+let error = '', notice = '';
+let review: { title: string; lines: string[]; fields: [string, string][]; danger?: boolean } | null = null;
+let changedHoldings = false;
+let tellAsAt: string | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const action = field(form, 'op');
+  const fields = [...form.entries()].filter(([k]) => k !== 'intent').map(([k, v]) => [k, String(v)] as [string, string]);
+  /** Checks an action; returns what it changes and how to apply it, or an error. */
+  const plan = async (): Promise<{ title: string; lines: string[]; danger?: boolean; apply: () => Promise<string> } | string> => {
+    if (action === 'details') {
+      if (!rights.group) return 'Only people who manage the whole register can change a holder’s details.';
+      const next = { name: field(form, 'name').slice(0, 200), kind: field(form, 'kind'), registry_ref: field(form, 'registry_ref').slice(0, 40) || null };
+      if (!next.name) return 'Enter the holder’s name as on the register.';
+      if (!(next.kind in HOLDER_KINDS)) return 'Choose the kind of holder.';
+      if (next.registry_ref && next.registry_ref !== holder!.registry_ref && (await svc.from('holders').select('id').eq('registry_ref', next.registry_ref).maybeSingle()).data) return `Holder ID ${next.registry_ref} is already used by another holder.`;
+      const lines = changes(holder!, next, { name: 'Name', kind: 'Kind', registry_ref: 'Holder ID' }, (k, v) => (k === 'kind' ? HOLDER_KINDS[v as keyof typeof HOLDER_KINDS] ?? fmt(v) : fmt(v)));
+      if (!lines.length) return 'Nothing changed.';
+      return { title: 'Save these details?', lines, apply: async () => {
+        await svc.from('holders').update(next).eq('id', id).throwOnError();
+        await log('register_holder_updated', { changes: lines });
+        return 'Details saved.';
+      } };
+    }
+    if (action === 'add-row' || action === 'edit-row') {
+      const old = action === 'edit-row' ? ((await svc.from('holdings').select('*').eq('id', field(form, 'row')).eq('holder_id', id).maybeSingle()).data as Row | null) : null;
+      if (action === 'edit-row' && !old) return 'That holding row was not found.';
+      const classId = old?.share_class_id ?? field(form, 'class_id');
+      if (!classById.has(classId)) return 'Choose the share class.';
+      if (!mayEditClass(classId)) return 'You can’t change holdings in that company.';
+      const next = { as_at: field(form, 'as_at'), shares: wholeShares(field(form, 'shares')), exercise_price: amount(field(form, 'exercise_price')), expires_on: field(form, 'expires_on') || null };
+      if (!isDate(next.as_at)) return 'Enter the date of this balance.';
+      if (next.shares == null) return 'Enter a whole number of shares (0 when they sold out).';
+      if (Number.isNaN(next.exercise_price)) return 'The exercise price must be a number.';
+      if (next.expires_on && !isDate(next.expires_on)) return 'The expiry must be a date.';
+      const clash = (await svc.from('holdings').select('id').eq('holder_id', id).eq('share_class_id', classId).eq('as_at', next.as_at).maybeSingle()).data;
+      if (clash && clash.id !== old?.id) return `There’s already a row for ${classLabel(classId)} as at ${shortDate.format(new Date(next.as_at))}: edit that one.`;
+      const labels = { as_at: 'As at', shares: 'Shares', exercise_price: 'Exercise price', expires_on: 'Expires on' };
+      const lines = old ? changes(old, next, labels) : [`${classLabel(classId)}: ${fmt(next.shares)} shares as at ${shortDate.format(new Date(next.as_at))}`, ...(next.exercise_price != null ? [`Exercise price ${fmt(next.exercise_price)}`] : []), ...(next.expires_on ? [`Expires ${shortDate.format(new Date(next.expires_on))}`] : [])];
+      if (!lines.length) return 'Nothing changed.';
+      return { title: old ? `Correct this ${classLabel(classId)} row?` : 'Add this holding row?', lines, apply: async () => {
+        if (old) await svc.from('holdings').update(next).eq('id', old.id).throwOnError();
+        else await svc.from('holdings').insert({ holder_id: id, share_class_id: classId, ...next }).throwOnError();
+        await log(old ? 'register_holding_corrected' : 'register_holding_added', { class: classLabel(classId), changes: lines });
+        changedHoldings = true; tellAsAt = next.as_at;
+        return old ? 'Holding row corrected.' : 'Holding row added.';
+      } };
+    }
+    if (action === 'delete-row') {
+      const old = (await svc.from('holdings').select('*').eq('id', field(form, 'row')).eq('holder_id', id).maybeSingle()).data as Row | null;
+      if (!old) return 'That holding row was not found.';
+      if (!mayEditClass(old.share_class_id)) return 'You can’t change holdings in that company.';
+      return { title: 'Delete this holding row?', danger: true, lines: [`${classLabel(old.share_class_id)}: ${fmt(Number(old.shares))} shares as at ${shortDate.format(new Date(old.as_at))}`, 'The holder’s balance becomes the latest row left for this class. Use a row with 0 shares instead if they sold out (it keeps the history).'], apply: async () => {
+        await svc.from('holdings').delete().eq('id', old.id).throwOnError();
+        await log('register_holding_deleted', { class: classLabel(old.share_class_id), shares: old.shares, as_at: old.as_at });
+        changedHoldings = true;
+        return 'Holding row deleted.';
+      } };
+    }
+    if (action === 'access-add' || action === 'access-change' || action === 'access-remove') {
+      if (!rights.group) return 'Only people who manage the whole register can change who sees a holder.';
+      const level = field(form, 'access') === 'viewer' ? 'viewer' : 'owner';
+      if (action === 'access-add') {
+        const email = field(form, 'email').toLowerCase();
+        const { data: p } = await svc.from('profiles').select('id, email, first_name, last_name').ilike('email', email).maybeSingle();
+        if (!p) return `Nobody with ${email || 'that address'} has an account. Invite them first (Admin → Investors or System → Users).`;
+        if ((await svc.from('holder_members').select('user_id').eq('holder_id', id).eq('user_id', p.id).maybeSingle()).data) return `${p.email} can already see this holder.`;
+        return { title: 'Give this person access?', lines: [`${displayName(p)} (${p.email}) will see this holder as ${level === 'owner' ? 'an owner (can vote and ask)' : 'a viewer (read only)'}.`], apply: async () => {
+          await svc.from('holder_members').insert({ holder_id: id, user_id: p.id, access: level }).throwOnError();
+          await log('register_access_added', { user_id: p.id, email: p.email, access: level });
+          return `${p.email} now sees this holder.`;
+        } };
+      }
+      const { data: m } = await svc.from('holder_members').select('access, profiles(email, first_name, last_name)').eq('holder_id', id).eq('user_id', field(form, 'user_id')).maybeSingle();
+      if (!m) return 'That person doesn’t see this holder.';
+      const who = (m.profiles as unknown as { email: string }).email;
+      if (action === 'access-change') {
+        if (m.access === level) return 'Nothing changed.';
+        return { title: 'Change their access?', lines: [`${who}: ${m.access} → ${level}`], apply: async () => {
+          await svc.from('holder_members').update({ access: level }).eq('holder_id', id).eq('user_id', field(form, 'user_id')).throwOnError();
+          await log('register_access_changed', { email: who, from: m.access, to: level });
+          return 'Access changed.';
+        } };
+      }
+      return { title: 'Remove their access?', danger: true, lines: [`${who} will no longer see this holder (their account stays).`], apply: async () => {
+        await svc.from('holder_members').delete().eq('holder_id', id).eq('user_id', field(form, 'user_id')).throwOnError();
+        await log('register_access_removed', { email: who });
+        return `${who} no longer sees this holder.`;
+      } };
+    }
+    if (action === 'note') {
+      const classId = field(form, 'class_id');
+      if (!mayEditClass(classId)) return 'You can’t change notes in that company.';
+      const note = String(form.get('note') ?? '').trim();
+      if (note.length > 1000) return 'Notes can be at most 1,000 characters.';
+      const { data: old } = await svc.from('holding_notes').select('note').eq('holder_id', id).eq('share_class_id', classId).maybeSingle();
+      if ((old?.note ?? '') === note) return 'Nothing changed.';
+      return { title: note ? 'Save this note?' : 'Remove this note?', danger: !note, lines: [`${classLabel(classId)}: ${old?.note ? `“${old.note}”` : '—'} → ${note ? `“${note}”` : '—'}`, ...(note ? ['The holder’s people see it next to these shares and are told there’s a new note.'] : [])], apply: async () => {
+        if (note) await svc.from('holding_notes').upsert({ holder_id: id, share_class_id: classId, note, updated_by: me, updated_at: new Date().toISOString() }).throwOnError();
+        else await svc.from('holding_notes').delete().eq('holder_id', id).eq('share_class_id', classId).throwOnError();
+        await log(note ? 'admin_saved_holding_note' : 'admin_removed_holding_note', { class: classLabel(classId) });
+        if (note) {
+          const { data: people } = await svc.from('holder_members').select('user_id').eq('holder_id', id);
+          if (people?.length) await notifyMembers({ kind: 'holding_note', userIds: people.map((p) => p.user_id), entityId: classById.get(classId)?.entity_id, title: 'A note was added to one of your holdings', body: 'There’s a new note next to one of your holdings. Open your dashboard to read it.', link: '/', origin: Astro.url.origin });
+        }
+        return note ? 'Note saved.' : 'Note removed.';
+      } };
+    }
+    if (action === 'delete-holder') {
+      if (!rights.group) return 'Only people who manage the whole register can delete a holder.';
+      const why = await holderBlocker(svc, id);
+      if (why) return `This holder can’t be deleted: ${why}.`;
+      const [{ count: rows }, { count: people }] = await Promise.all([
+        svc.from('holdings').select('id', { count: 'exact', head: true }).eq('holder_id', id),
+        svc.from('holder_members').select('user_id', { count: 'exact', head: true }).eq('holder_id', id),
+      ]);
+      return { title: `Delete ${holder!.name}?`, danger: true, lines: [`Its ${rows ?? 0} holding row${rows === 1 ? '' : 's'}, notes and ${people ?? 0} access link${people === 1 ? '' : 's'} go too. The people keep their accounts.`, 'This can’t be undone (a backup is taken every night).'], apply: async () => {
+        await svc.from('holders').delete().eq('id', id).throwOnError();
+        await log('register_holder_deleted', { registry_ref: holder!.registry_ref });
+        return 'deleted';
+      } };
+    }
+    return 'Unknown action.';
+  };
+
+  if (intent === 'tell') {
+    const n = await tellStatementsReady(svc, [id], field(form, 'as_at') || null, Astro.url.origin);
+    await log('admin_notified_statements', { people: n });
+    notice = n ? `Told ${n} ${n === 1 ? 'person' : 'people'} their holding statement is ready.` : 'Nobody signs in for this holder yet.';
+  } else {
+    const p = await plan();
+    if (typeof p === 'string') error = p;
+    else if (intent === 'review') review = { title: p.title, lines: p.lines, fields, danger: p.danger };
+    else if (intent === 'apply') {
+      const done = await p.apply();
+      if (done === 'deleted') return Astro.redirect(`/admin/holdings?deleted=${encodeURIComponent(holder.name)}`, 303);
+      notice = done;
+      holder = await load();
+    }
+  }
+}
+
+const [{ data: rowData }, { data: members }, { data: notes }, blocker] = await Promise.all([
+  svc.from('holdings').select('id, share_class_id, shares, as_at, exercise_price, expires_on').eq('holder_id', id).order('as_at'),
+  svc.from('holder_members').select('user_id, access, profiles(id, email, first_name, last_name)').eq('holder_id', id),
+  svc.from('holding_notes').select('share_class_id, note').eq('holder_id', id),
+  rights.group ? holderBlocker(svc, id) : Promise.resolve(null),
+]);
+const rows = (rowData ?? []) as Row[];
+const byClass = [...Map.groupBy(rows, (r) => r.share_class_id)].sort((a, b) => classLabel(a[0]).localeCompare(classLabel(b[0])));
+const noteOf = new Map((notes ?? []).map((n) => [n.share_class_id, n.note]));
+const editableClasses = classes.filter((c) => rights.company(c.entity_id));
+const companyNames = [...new Set(rows.map((r) => classById.get(r.share_class_id)?.entities?.display_name).filter(Boolean))];
+const self = Astro.url.pathname;
+const btn = 'text-xs text-white/55 hover:text-white';
+---
+
+<Admin title={holder.name}>
+  <a href="/admin/holdings" class="text-sm text-white/50 hover:text-white">← Holders &amp; holdings</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{holder.name}</h1>
+  <p class="mt-1 text-sm text-white/50">{HOLDER_KINDS[holder.kind as keyof typeof HOLDER_KINDS] ?? holder.kind} · Holder ID {holder.registry_ref ?? '—'}{companyNames.length > 0 && ` · ${companyNames.join(', ')}`}</p>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+  {review && <div class="mt-5"><ReviewChange {...review} cancel={self} /></div>}
+  {changedHoldings && (
+    <form method="post" class="card mt-5 flex flex-wrap items-center justify-between gap-3">
+      <input type="hidden" name="as_at" value={tellAsAt ?? ''} />
+      <p class="text-sm text-white/75">Holdings changed. Tell the people who see this holder that their holding statement is ready?</p>
+      <button name="intent" value="tell" class="btn-ghost text-sm" onclick="return confirm('Send “your holding statement is ready” now?')">Tell them</button>
+    </form>
+  )}
+
+  <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+    <section class="space-y-4">
+      <h2 class="font-display text-xl font-bold">Holdings</h2>
+      <p class="-mt-2 text-sm text-white/50">One row per date: the latest row in each class is the current balance. To record a change, add a row with the new date; correct a row only if it was wrong.</p>
+      {byClass.map(([cid, list]) => (
+        <div class="card overflow-x-auto p-0">
+          <div class="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-4"><h3 class="font-semibold">{classLabel(cid)}</h3>{noteOf.get(cid) && <span class="text-xs text-lk-orange">Note: {noteOf.get(cid)}</span>}</div>
+          <div class="mt-2 text-sm">
+            <div class="hidden grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem] gap-2 px-5 pb-1 text-xs uppercase tracking-wider text-white/40 sm:grid"><span>As at</span><span class="text-right">Shares</span><span class="text-right">Exercise price</span><span>Expires</span><span></span></div>
+            <div class="divide-y divide-white/5">
+              {[...list].reverse().map((r, i) => mayEditClass(cid) ? (
+                <form method="post" class="grid grid-cols-2 items-center gap-2 px-5 py-2 sm:grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem]">
+                  <input type="hidden" name="intent" value="review" /><input type="hidden" name="row" value={r.id} />
+                  <input type="date" name="as_at" value={r.as_at} class="field !py-1.5 text-sm" aria-label="As at" />
+                  <input name="shares" value={Number(r.shares).toLocaleString('en-AU')} inputmode="numeric" class="field !py-1.5 text-right text-sm tabular-nums" aria-label="Shares" />
+                  <input name="exercise_price" value={r.exercise_price ?? ''} inputmode="decimal" placeholder="—" class="field !py-1.5 text-right text-sm" aria-label="Exercise price" />
+                  <input type="date" name="expires_on" value={r.expires_on ?? ''} class="field !py-1.5 text-sm" aria-label="Expires on" />
+                  <span class="flex items-center gap-3 whitespace-nowrap text-xs">{i === 0 && <span class="text-lk-green" title="The current balance">●</span>}<button name="op" value="edit-row" class={btn}>Save</button><button name="op" value="delete-row" class="text-white/40 hover:text-lk-red">Delete</button></span>
+                </form>
+              ) : (
+                <div class="grid grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem] gap-2 px-5 py-2"><span>{shortDate.format(new Date(r.as_at))}{i === 0 && <span class="ml-2 text-[11px] text-lk-green">current</span>}</span><span class="text-right tabular-nums">{fmt(Number(r.shares))}</span><span class="text-right">{fmt(r.exercise_price)}</span><span>{r.expires_on ? shortDate.format(new Date(r.expires_on)) : '—'}</span><span></span></div>
+              ))}
+            </div>
+            <p class="px-5 pt-1 text-[11px] text-white/35"><span class="text-lk-green">●</span> current balance</p>
+          </div>
+          {mayEditClass(cid) && (
+            <form method="post" class="flex flex-wrap items-end gap-2 border-t border-white/5 px-5 py-3">
+              <input type="hidden" name="op" value="note" /><input type="hidden" name="class_id" value={cid} />
+              <div class="grow"><label class="label" for={`note-${cid}`}>Note the holder sees next to these shares</label><input id={`note-${cid}`} name="note" value={noteOf.get(cid) ?? ''} maxlength="1000" placeholder="e.g. held in escrow until 30 June 2027" class="field !py-1.5 text-sm" /></div>
+              <button name="intent" value="review" class="btn-ghost !py-1.5 text-sm">Save note</button>
+            </form>
+          )}
+        </div>
+      ))}
+      {!rows.length && <p class="card text-sm text-white/50">No holdings yet.</p>}
+      {editableClasses.length > 0 && (
+        <form method="post" class="card grid gap-3 sm:grid-cols-[1fr_9rem_9rem] sm:items-end">
+          <h3 class="font-semibold sm:col-span-3">Add a holding row</h3>
+          <input type="hidden" name="op" value="add-row" />
+          <div class="sm:col-span-3"><label class="label" for="class_id">Share class</label><select id="class_id" name="class_id" required class="field"><option value="">Choose…</option>{editableClasses.map((c) => <option value={c.id}>{c.entities?.code}-{c.code} {c.name} ({c.entities?.display_name})</option>)}</select></div>
+          <div><label class="label" for="shares">Shares</label><input id="shares" name="shares" inputmode="numeric" required class="field" /></div>
+          <div><label class="label" for="as_at">As at</label><input id="as_at" name="as_at" type="date" required class="field" /></div>
+          <div class="sm:col-span-1"><label class="label" for="exercise_price">Exercise price (options)</label><input id="exercise_price" name="exercise_price" inputmode="decimal" class="field" /></div>
+          <div><label class="label" for="expires_on">Expires (options)</label><input id="expires_on" name="expires_on" type="date" class="field" /></div>
+          <div class="sm:col-span-2"><button name="intent" value="review" class="btn-primary">Check and add</button></div>
+        </form>
+      )}
+    </section>
+
+    <aside class="space-y-4">
+      <section class="card space-y-3">
+        <h2 class="font-display text-lg font-bold">Details</h2>
+        {rights.group ? (
+          <form method="post" class="space-y-3">
+            <input type="hidden" name="op" value="details" />
+            <div><label class="label" for="name">Name (as on the register)</label><input id="name" name="name" value={holder.name} required class="field" /></div>
+            <div class="grid grid-cols-2 gap-2">
+              <div><label class="label" for="kind">Kind</label><select id="kind" name="kind" class="field">{Object.entries(HOLDER_KINDS).map(([k, l]) => <option value={k} selected={k === holder!.kind}>{l}</option>)}</select></div>
+              <div><label class="label" for="registry_ref">Holder ID</label><input id="registry_ref" name="registry_ref" value={holder.registry_ref ?? ''} class="field" /></div>
+            </div>
+            <button name="intent" value="review" class="btn-ghost text-sm">Check and save</button>
+          </form>
+        ) : <p class="text-sm text-white/55">Changed by people who manage the whole register.</p>}
+      </section>
+
+      <section class="card space-y-3">
+        <h2 class="font-display text-lg font-bold">Who sees it</h2>
+        <ul class="divide-y divide-white/5 text-sm">
+          {(members ?? []).map((m) => { const p = m.profiles as unknown as { id: string; email: string; first_name: string | null; last_name: string | null }; return (
+            <li class="py-2.5">
+              <a href={`/admin/investors/${p.id}`} class="text-white/85 hover:text-lk-blue">{displayName(p)}</a><span class="block text-xs text-white/45">{p.email}</span>
+              {rights.group ? (
+                <form method="post" class="mt-1.5 flex items-center gap-2">
+                  <input type="hidden" name="user_id" value={p.id} />
+                  <select name="access" class="field !w-auto !py-1 text-xs" aria-label="Access"><option value="owner" selected={m.access === 'owner'}>Owner (votes, asks)</option><option value="viewer" selected={m.access === 'viewer'}>Viewer (read only)</option></select>
+                  <input type="hidden" name="intent" value="review" />
+                  <button name="op" value="access-change" class={btn}>Save</button>
+                  <button name="op" value="access-remove" class="text-xs text-white/40 hover:text-lk-red">Remove</button>
+                </form>
+              ) : <span class="text-xs text-white/50">{m.access}</span>}
+            </li>); })}
+          {!members?.length && <li class="py-2 text-white/45">Nobody signs in for this holder.</li>}
+        </ul>
+        {rights.group && (
+          <form method="post" class="space-y-2 border-t border-white/5 pt-3">
+            <input type="hidden" name="op" value="access-add" />
+            <label class="label" for="email">Give someone access</label>
+            <input id="email" name="email" type="email" required placeholder="Their portal email" class="field" />
+            <div class="flex gap-2"><select name="access" class="field !py-1.5 text-sm" aria-label="Access"><option value="owner">Owner (votes, asks)</option><option value="viewer">Viewer (read only)</option></select><button name="intent" value="review" class="btn-ghost text-sm">Add</button></div>
+          </form>
+        )}
+      </section>
+
+      {rights.group && (
+        <details class="card">
+          <summary class="cursor-pointer text-sm font-medium text-lk-red">Delete this holder</summary>
+          {blocker ? <p class="mt-3 text-sm text-white/55">It can’t be deleted: {blocker}.</p> : (
+            <form method="post" class="mt-3 space-y-2"><input type="hidden" name="op" value="delete-holder" />
+              <p class="text-sm text-white/55">Deletes the holder, its holding rows, notes and access links. The people keep their accounts.</p>
+              <button name="intent" value="review" class="btn-ghost w-full text-lk-red">Delete…</button></form>
+          )}
+        </details>
+      )}
+    </aside>
+  </div>
+</Admin>

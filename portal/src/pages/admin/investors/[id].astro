@@ -235,7 +235,7 @@ const readOnly = !Astro.locals.access.groupAdmin;
       <ul class="mt-4 divide-y divide-white/5 text-sm">
         {(links ?? []).map((l) => (
           <li class="flex items-center justify-between gap-4 py-3">
-            <span><span class="text-white/85">{(l.holders as { name: string } | null)?.name}</span> <span class="text-xs capitalize text-white/40">{l.access}</span>
+            <span><a href={`/admin/holders/${l.holder_id}`} class="text-white/85 hover:text-lk-blue">{(l.holders as { name: string } | null)?.name}</a> <span class="text-xs capitalize text-white/40">{l.access}</span>
               <span class="block text-xs text-white/45">{shares.format((positionsByHolder.get(l.holder_id) ?? []).reduce((a, p) => a + p.row.shares, 0))} shares {(positionsByHolder.get(l.holder_id) ?? []).some((p) => p.note) && <HoldingNote note={(positionsByHolder.get(l.holder_id) ?? []).filter((p) => p.note).map((p) => `${p.row.share_classes?.name}: ${p.note}`).join('\n')} />}</span></span>
             <form method="post"><input type="hidden" name="holder_id" value={l.holder_id} /><button name="intent" value="unlink" class="text-xs text-white/50 hover:text-white">Unlink</button></form>
           </li>

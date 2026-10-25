@@ -1,0 +1,16 @@
+---
+// "Check, then save": the change a form is about to make (old → new, or what a
+// deletion takes with it), with Confirm (re-sends the same fields) and Cancel.
+interface Props { title: string; lines: string[]; fields: [string, string][]; danger?: boolean; cancel: string }
+const { title, lines, fields, danger = false, cancel } = Astro.props;
+---
+<section id="review" class:list={['card mb-6 space-y-3 border', danger ? 'border-lk-red/40' : 'border-lk-blue/40']} aria-live="polite">
+  <h2 class="font-display text-lg font-bold">{title}</h2>
+  <ul class="space-y-1 text-sm text-white/80">{lines.map((l) => <li>{l}</li>)}</ul>
+  <form method="post" class="flex flex-wrap items-center gap-3">
+    {fields.map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+    <button name="intent" value="apply" class:list={[danger ? 'btn-ghost text-lk-red' : 'btn-primary']}>{danger ? 'Yes, delete' : 'Confirm and save'}</button>
+    <a href={cancel} class="text-sm text-white/55 hover:text-white">Cancel</a>
+  </form>
+</section>
+<script>document.getElementById('review')?.scrollIntoView({ block: 'center' });</script>

@@ -129,7 +129,7 @@ const status = (g: (typeof guests)[number]) => g.revoked_at ? 'Revoked' : new Da
 ---
 
 <Admin title="Data rooms">
-  <PageHeader eyebrow="Admin" title="Data rooms" subtitle="Share chosen PDFs with prospective investors. Guests agree to confidentiality terms, every page is marked with their name, and each view is recorded." />
+  <PageHeader title="Data rooms" subtitle="Share chosen PDFs with prospective investors. Guests agree to confidentiality terms, every page is marked with their name, and each view is recorded." />
   <AdminCompanyFilter scope={scope} />
   {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}

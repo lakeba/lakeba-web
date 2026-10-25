@@ -1,0 +1,267 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import Alert from '../../../components/Alert.astro';
+import ReviewChange from '../../../components/ReviewChange.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { displayName } from '../../../lib/admin-forms';
+import { shortDate } from '../../../lib/format';
+import { CLASS_KINDS, PORTAL_ACCESS, POSITIONS, RELATIONSHIPS, amount, changes, classBlocker, fmt, isDate, wholeShares } from '../../../lib/register';
+
+// One company: its details, its share classes (add, edit, remove when
+// nothing uses them) and its board positions. Changes are checked first
+// (old → new), then saved and recorded in the audit log. The relationship and
+// portal access are for people who manage the whole register.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const code = (Astro.params.code ?? '').toUpperCase();
+const load = async () => (await svc.from('entities').select('*').eq('code', code).maybeSingle()).data;
+let company = await load();
+if (!company || !access.can('investors.view', company.id)) return new Response('Not found', { status: 404 });
+const mayEdit = access.can('investors.do', company.id);
+const mayGroup = access.can('investors.do', null);
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { company: code, ...detail } });
+
+let error = '', notice = Astro.url.searchParams.get('added') ? 'Company added. Add its share classes below.' : '';
+let review: { title: string; lines: string[]; fields: [string, string][]; danger?: boolean } | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const op = field(form, 'op');
+  const fields = [...form.entries()].filter(([k]) => k !== 'intent').map(([k, v]) => [k, String(v)] as [string, string]);
+  const plan = async (): Promise<{ title: string; lines: string[]; danger?: boolean; apply: () => Promise<string> } | string> => {
+    if (!mayEdit) return 'You can’t change this company.';
+    const c = company!;
+    if (op === 'details') {
+      const stake = amount(field(form, 'lakeba_stake'));
+      const next: Record<string, unknown> = {
+        display_name: field(form, 'display_name').slice(0, 80), legal_name: field(form, 'legal_name').slice(0, 160) || null,
+        company_number: field(form, 'company_number').slice(0, 40) || null, country: field(form, 'country').slice(0, 60) || null,
+        website: field(form, 'website').slice(0, 200) || null, lakeba_stake: stake, stake_as_at: field(form, 'stake_as_at') || null,
+      };
+      if (mayGroup && c.relationship !== 'group') Object.assign(next, { relationship: field(form, 'relationship'), portal: field(form, 'portal') });
+      if (!next.display_name) return 'Enter the name shown in the portal.';
+      if (Number.isNaN(stake) || (stake != null && (stake < 0 || stake > 100))) return 'Lakeba’s stake is a percentage between 0 and 100.';
+      if (next.stake_as_at && !isDate(String(next.stake_as_at))) return 'The stake date must be a date.';
+      if (next.website && !/^https?:\/\//.test(String(next.website))) return 'The website must start with https://';
+      if ('relationship' in next && (!(String(next.relationship) in RELATIONSHIPS) || next.relationship === 'group' || !(String(next.portal) in PORTAL_ACCESS))) return 'Choose the relationship and portal access.';
+      const lines = changes(c, next, { display_name: 'Name shown', legal_name: 'Legal name', company_number: 'ACN / ABN', country: 'Country', website: 'Website', lakeba_stake: 'Lakeba stake %', stake_as_at: 'Stake as at', relationship: 'Relationship', portal: 'Portal access' },
+        (k, v) => (k === 'relationship' ? RELATIONSHIPS[v as keyof typeof RELATIONSHIPS] ?? fmt(v) : k === 'portal' ? PORTAL_ACCESS[v as keyof typeof PORTAL_ACCESS] ?? fmt(v) : fmt(v)));
+      if (!lines.length) return 'Nothing changed.';
+      return { title: 'Save these details?', lines, apply: async () => {
+        await svc.from('entities').update(next).eq('id', c.id).throwOnError();
+        await log('register_company_updated', { changes: lines });
+        return 'Details saved.';
+      } };
+    }
+    if (op === 'add-class' || op === 'edit-class') {
+      const old = op === 'edit-class' ? (await svc.from('share_classes').select('*').eq('id', field(form, 'class_id')).eq('entity_id', c.id).maybeSingle()).data : null;
+      if (op === 'edit-class' && !old) return 'That share class was not found.';
+      const official = field(form, 'official_on_issue') === '' ? null : wholeShares(field(form, 'official_on_issue'));
+      const next = {
+        code: old?.code ?? field(form, 'code').toUpperCase(), name: field(form, 'name').slice(0, 80), kind: field(form, 'kind'),
+        voting: field(form, 'voting') === 'yes', counts_toward_pct: field(form, 'counts') === 'yes', currency: (field(form, 'currency') || 'AUD').toUpperCase().slice(0, 3),
+        official_on_issue: official, official_as_at: field(form, 'official_as_at') || null,
+      };
+      if (!/^[A-Z0-9]{1,12}$/.test(next.code)) return 'The class code is up to 12 capital letters or digits, e.g. ORD.';
+      if (!next.name) return 'Enter the class name, e.g. Ordinary shares.';
+      if (!(next.kind in CLASS_KINDS)) return 'Choose the type.';
+      if (field(form, 'official_on_issue') !== '' && official == null) return 'The official number on issue is a whole number.';
+      if ((next.official_on_issue == null) !== (next.official_as_at == null)) return 'The official number on issue and its date go together.';
+      if (!old && (await svc.from('share_classes').select('id').eq('entity_id', c.id).eq('code', next.code).maybeSingle()).data) return `${c.code}-${next.code} already exists.`;
+      const labels = { name: 'Name', kind: 'Type', voting: 'Voting', counts_toward_pct: 'Counts toward %', currency: 'Currency', official_on_issue: 'Official on issue', official_as_at: 'Official as at' };
+      const lines = old ? changes(old, next, labels, (k, v) => (k === 'kind' ? CLASS_KINDS[v as keyof typeof CLASS_KINDS] ?? fmt(v) : fmt(v)))
+        : [`${c.code}-${next.code} ${next.name}`, `${CLASS_KINDS[next.kind as keyof typeof CLASS_KINDS]}, ${next.voting ? 'voting' : 'non-voting'}, ${next.counts_toward_pct ? 'counts toward %' : 'not in percentages'}, ${next.currency}`];
+      if (!lines.length) return 'Nothing changed.';
+      return { title: old ? `Change ${c.code}-${old.code}?` : 'Add this share class?', lines, apply: async () => {
+        if (old) await svc.from('share_classes').update(next).eq('id', old.id).throwOnError();
+        else await svc.from('share_classes').insert({ ...next, entity_id: c.id }).throwOnError();
+        await log(old ? 'register_class_updated' : 'register_class_added', { class: `${c.code}-${next.code}`, changes: lines });
+        return old ? 'Share class saved.' : 'Share class added.';
+      } };
+    }
+    if (op === 'delete-class') {
+      const old = (await svc.from('share_classes').select('*').eq('id', field(form, 'class_id')).eq('entity_id', c.id).maybeSingle()).data;
+      if (!old) return 'That share class was not found.';
+      const why = await classBlocker(svc, old.id);
+      if (why) return `${c.code}-${old.code} can’t be removed: ${why}.`;
+      return { title: `Remove ${c.code}-${old.code}?`, danger: true, lines: [`${old.name}: nothing uses it. Its holding notes go too.`], apply: async () => {
+        await svc.from('share_classes').delete().eq('id', old.id).throwOnError();
+        await log('register_class_deleted', { class: `${c.code}-${old.code}` });
+        return 'Share class removed.';
+      } };
+    }
+    if (op === 'add-board' || op === 'edit-board' || op === 'remove-board') {
+      const position = field(form, 'position');
+      if (!(position in POSITIONS)) return 'Choose the position.';
+      const next = { starts_on: field(form, 'starts_on') || null, ends_on: field(form, 'ends_on') || null };
+      if ((next.starts_on && !isDate(next.starts_on)) || (next.ends_on && !isDate(next.ends_on))) return 'The dates must be dates.';
+      if (op === 'add-board') {
+        const email = field(form, 'email').toLowerCase();
+        const { data: p } = await svc.from('profiles').select('id, email, first_name, last_name').ilike('email', email).maybeSingle();
+        if (!p) return `Nobody with ${email || 'that address'} has an account. Add them first (System → Users → Add person).`;
+        if ((await svc.from('entity_board').select('user_id').eq('entity_id', c.id).eq('user_id', p.id).eq('position', position).maybeSingle()).data) return `${p.email} is already ${POSITIONS[position as keyof typeof POSITIONS]}.`;
+        return { title: 'Add this board position?', lines: [`${displayName(p)} (${p.email}): ${POSITIONS[position as keyof typeof POSITIONS]}${next.starts_on ? ` from ${next.starts_on}` : ''}${next.ends_on ? ` to ${next.ends_on}` : ''}`, `They see ${c.display_name}’s board documents.`], apply: async () => {
+          await svc.from('entity_board').insert({ entity_id: c.id, user_id: p.id, position, ...next }).throwOnError();
+          await log('register_board_added', { email: p.email, position });
+          return 'Board position added.';
+        } };
+      }
+      const userId = field(form, 'user_id');
+      const { data: old } = await svc.from('entity_board').select('*, profiles(email)').eq('entity_id', c.id).eq('user_id', userId).eq('position', position).maybeSingle();
+      if (!old) return 'That board position was not found.';
+      const who = (old.profiles as unknown as { email: string }).email;
+      if (op === 'remove-board') return { title: 'Remove this board position?', danger: true, lines: [`${who}: ${POSITIONS[position as keyof typeof POSITIONS]}`, 'To keep the history, set an end date instead.'], apply: async () => {
+        await svc.from('entity_board').delete().eq('entity_id', c.id).eq('user_id', userId).eq('position', position).throwOnError();
+        await log('register_board_removed', { email: who, position });
+        return 'Board position removed.';
+      } };
+      const lines = changes(old, next, { starts_on: 'From', ends_on: 'To' }).map((l) => `${who}: ${l}`);
+      if (!lines.length) return 'Nothing changed.';
+      return { title: 'Save these dates?', lines, apply: async () => {
+        await svc.from('entity_board').update(next).eq('entity_id', c.id).eq('user_id', userId).eq('position', position).throwOnError();
+        await log('register_board_updated', { email: who, position, changes: lines });
+        return 'Board position saved.';
+      } };
+    }
+    return 'Unknown action.';
+  };
+  const p = await plan();
+  if (typeof p === 'string') error = p;
+  else if (intent === 'review') review = { title: p.title, lines: p.lines, fields, danger: p.danger };
+  else if (intent === 'apply') { notice = await p.apply(); company = await load(); }
+}
+
+const c = company!;
+const [{ data: classes }, { data: board }, { data: admins }, { data: holdings }] = await Promise.all([
+  svc.from('share_classes').select('*').eq('entity_id', c.id).order('code'),
+  svc.from('entity_board').select('user_id, position, starts_on, ends_on, profiles(id, email, first_name, last_name)').eq('entity_id', c.id),
+  svc.from('user_roles').select('user_id, expires_at, profiles(id, email, first_name, last_name)').eq('role_key', 'admin').eq('entity_id', c.id),
+  svc.from('holdings').select('holder_id, share_class_id, shares, as_at').in('share_class_id', [...new Set(((await svc.from('share_classes').select('id').eq('entity_id', c.id)).data ?? []).map((x) => x.id)), '00000000-0000-0000-0000-000000000000']).range(0, 199999),
+]);
+// Current shares per class (each holder's latest row), against the official number.
+const latest = new Map<string, { as_at: string; shares: number; cls: string }>();
+for (const h of holdings ?? []) { const k = `${h.holder_id}|${h.share_class_id}`; if (!latest.has(k) || latest.get(k)!.as_at < h.as_at) latest.set(k, { as_at: h.as_at, shares: Number(h.shares), cls: h.share_class_id }); }
+const heldIn = (cid: string) => [...latest.values()].filter((x) => x.cls === cid).reduce((a, x) => a + x.shares, 0);
+const self = Astro.url.pathname;
+const sel = 'field !py-1.5 text-sm';
+---
+
+<Admin title={c.display_name}>
+  <a href="/admin/companies" class="text-sm text-white/50 hover:text-white">← Companies</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{c.display_name}</h1>
+  <p class="mt-1 text-sm text-white/50">{c.code} · {RELATIONSHIPS[c.relationship as keyof typeof RELATIONSHIPS]} · {PORTAL_ACCESS[c.portal as keyof typeof PORTAL_ACCESS]}{!mayEdit && ' · read only'}</p>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+  {review && <div class="mt-5"><ReviewChange {...review} cancel={self} /></div>}
+
+  <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+    <section class="space-y-6">
+      <div class="card overflow-x-auto p-0">
+        <h2 class="px-5 pt-4 font-display text-lg font-bold">Share classes</h2>
+        <p class="px-5 text-xs text-white/45">Held = the sum of each holder’s latest balance. Official on issue comes from the share register; percentages use it when set.</p>
+        <div class="mt-2 divide-y divide-white/5">
+          {(classes ?? []).map((k) => (
+            <form method="post" class="space-y-2 px-5 py-4">
+              <input type="hidden" name="intent" value="review" /><input type="hidden" name="class_id" value={k.id} />
+              <div class="grid items-end gap-2 sm:grid-cols-[8rem_1fr_11rem]">
+                <div><span class="label">Code</span><p class="py-1.5 font-mono text-sm text-white/80">{c.code}-{k.code}</p></div>
+                <div><label class="label">Name</label><input name="name" value={k.name} class={sel} disabled={!mayEdit} /></div>
+                <div><label class="label">Type</label><select name="kind" class={sel} disabled={!mayEdit}>{Object.entries(CLASS_KINDS).map(([v, l]) => <option value={v} selected={v === k.kind}>{l}</option>)}</select></div>
+              </div>
+              <div class="grid grid-cols-2 items-end gap-2 sm:grid-cols-[5.5rem_6.5rem_5rem_minmax(7rem,1fr)_minmax(8.5rem,9.5rem)]">
+                <div><label class="label">Voting</label><select name="voting" class={sel} disabled={!mayEdit}><option value="yes" selected={k.voting}>Yes</option><option value="no" selected={!k.voting}>No</option></select></div>
+                <div><label class="label">Counts to %</label><select name="counts" class={sel} disabled={!mayEdit}><option value="yes" selected={k.counts_toward_pct}>Yes</option><option value="no" selected={!k.counts_toward_pct}>No</option></select></div>
+                <div><label class="label">Currency</label><input name="currency" value={k.currency} maxlength="3" class={sel} disabled={!mayEdit} /></div>
+                <div><label class="label">Official on issue</label><input name="official_on_issue" value={k.official_on_issue == null ? '' : Number(k.official_on_issue).toLocaleString('en-AU')} inputmode="numeric" class={`${sel} text-right`} disabled={!mayEdit} /></div>
+                <div><label class="label">Official as at</label><input type="date" name="official_as_at" value={k.official_as_at ?? ''} class={sel} disabled={!mayEdit} /></div>
+              </div>
+              <div class="flex flex-wrap items-center justify-between gap-3 text-xs">
+                <span class="text-white/45">Held now: {fmt(heldIn(k.id))}{k.official_on_issue != null && heldIn(k.id) !== Number(k.official_on_issue) && ` (official ${fmt(Number(k.official_on_issue))})`}</span>
+                {mayEdit && <span class="flex gap-4"><button name="op" value="edit-class" class="btn-ghost !px-3 !py-1 text-xs">Check and save</button><button name="op" value="delete-class" class="text-white/40 hover:text-lk-red">Remove</button></span>}
+              </div>
+            </form>
+          ))}
+          {!classes?.length && <p class="px-5 py-4 text-sm text-white/45">No share classes yet.</p>}
+        </div>
+        {mayEdit && (
+          <form method="post" class="space-y-2 border-t border-white/10 px-5 py-4">
+            <input type="hidden" name="op" value="add-class" />
+            <p class="text-sm font-semibold">Add a share class</p>
+            <div class="grid items-end gap-2 sm:grid-cols-[8rem_1fr_11rem]">
+              <div><label class="label" for="nc-code">Class code</label><input id="nc-code" name="code" required maxlength="12" placeholder="ORD" class={`${sel} uppercase`} /></div>
+              <div><label class="label" for="nc-name">Name</label><input id="nc-name" name="name" required placeholder="Ordinary shares" class={sel} /></div>
+              <div><label class="label" for="nc-kind">Type</label><select id="nc-kind" name="kind" class={sel}>{Object.entries(CLASS_KINDS).map(([v, l]) => <option value={v}>{l}</option>)}</select></div>
+            </div>
+            <div class="grid grid-cols-2 items-end gap-2 sm:grid-cols-[6rem_7rem_5.5rem_auto]">
+              <div><label class="label" for="nc-voting">Voting</label><select id="nc-voting" name="voting" class={sel}><option value="yes">Yes</option><option value="no">No</option></select></div>
+              <div><label class="label" for="nc-counts">Counts to %</label><select id="nc-counts" name="counts" class={sel}><option value="yes">Yes</option><option value="no">No</option></select></div>
+              <div><label class="label" for="nc-cur">Currency</label><input id="nc-cur" name="currency" value="AUD" maxlength="3" class={sel} /></div>
+              <div><button name="intent" value="review" class="btn-ghost !py-1.5 text-sm">Check and add</button></div>
+            </div>
+          </form>
+        )}
+      </div>
+
+      <div class="card">
+        <h2 class="font-display text-lg font-bold">Board</h2>
+        <p class="mt-1 text-xs text-white/45">Directors and officers see {c.display_name}’s board documents. To end a position and keep the history, set the “To” date.</p>
+        <div class="mt-3 divide-y divide-white/5">
+          {(board ?? []).map((b) => { const p = b.profiles as unknown as { id: string; email: string; first_name: string | null; last_name: string | null }; return (
+            <form method="post" class="grid items-end gap-2 py-2.5 sm:grid-cols-[1fr_10rem_10rem_auto]">
+              <input type="hidden" name="intent" value="review" /><input type="hidden" name="user_id" value={b.user_id} /><input type="hidden" name="position" value={b.position} />
+              <div><a href={`/admin/system/users/${p.id}`} class="text-sm text-white/85 hover:text-lk-blue">{displayName(p)}</a><span class="block text-xs text-white/45">{POSITIONS[b.position as keyof typeof POSITIONS]} · {p.email}</span></div>
+              <div><label class="label">From</label><input type="date" name="starts_on" value={b.starts_on ?? ''} class={sel} disabled={!mayEdit} /></div>
+              <div><label class="label">To</label><input type="date" name="ends_on" value={b.ends_on ?? ''} class={sel} disabled={!mayEdit} /></div>
+              {mayEdit && <div class="flex gap-3 pb-2 text-xs"><button name="op" value="edit-board" class="text-white/60 hover:text-white">Save</button><button name="op" value="remove-board" class="text-white/40 hover:text-lk-red">Remove</button></div>}
+            </form>); })}
+          {!board?.length && <p class="py-3 text-sm text-white/45">No board positions recorded.</p>}
+        </div>
+        {mayEdit && (
+          <form method="post" class="mt-3 space-y-2 border-t border-white/10 pt-3">
+            <input type="hidden" name="op" value="add-board" />
+            <p class="text-sm font-semibold">Add a board position</p>
+            <div class="grid items-end gap-2 sm:grid-cols-[1fr_11rem]">
+              <div><label class="label" for="nb-email">Person (their portal email)</label><input id="nb-email" name="email" type="email" required class={sel} /></div>
+              <div><label class="label" for="nb-pos">Position</label><select id="nb-pos" name="position" class={sel}>{Object.entries(POSITIONS).map(([v, l]) => <option value={v}>{l}</option>)}</select></div>
+            </div>
+            <div class="grid grid-cols-2 items-end gap-2 sm:grid-cols-[10rem_10rem_auto]">
+              <div><label class="label" for="nb-from">From</label><input id="nb-from" type="date" name="starts_on" class={sel} /></div>
+              <div><label class="label" for="nb-to">To</label><input id="nb-to" type="date" name="ends_on" class={sel} /></div>
+              <div><button name="intent" value="review" class="btn-ghost !py-1.5 text-sm">Check and add</button></div>
+            </div>
+          </form>
+        )}
+        <p class="mt-4 text-xs text-white/45">Company admins (they manage {c.display_name} in the portal): {(admins ?? []).length ? (admins ?? []).map((a) => (a.profiles as unknown as { email: string }).email).join(', ') : 'none'}. Give or remove them in <a href="/admin/system/users" class="text-lk-blue hover:underline">System → Users</a>.</p>
+      </div>
+    </section>
+
+    <aside>
+      <form method="post" class="card space-y-3">
+        <h2 class="font-display text-lg font-bold">Details</h2>
+        <input type="hidden" name="op" value="details" />
+        <div><label class="label" for="display_name">Name shown in the portal</label><input id="display_name" name="display_name" value={c.display_name} required class="field" disabled={!mayEdit} /></div>
+        <div><label class="label" for="legal_name">Legal name</label><input id="legal_name" name="legal_name" value={c.legal_name ?? ''} class="field" disabled={!mayEdit} /><p class="mt-1 text-xs text-white/40">On holding statements, tax packs and the dashboard.</p></div>
+        <div class="grid grid-cols-2 gap-2">
+          <div><label class="label" for="company_number">ACN / ABN</label><input id="company_number" name="company_number" value={c.company_number ?? ''} class="field" disabled={!mayEdit} /></div>
+          <div><label class="label" for="country">Country</label><input id="country" name="country" value={c.country ?? ''} class="field" disabled={!mayEdit} /></div>
+        </div>
+        <div><label class="label" for="website">Website</label><input id="website" name="website" value={c.website ?? ''} placeholder="https://" class="field" disabled={!mayEdit} /></div>
+        {c.relationship !== 'group' && (
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="label" for="lakeba_stake">Lakeba stake %</label><input id="lakeba_stake" name="lakeba_stake" value={c.lakeba_stake ?? ''} inputmode="decimal" class="field" disabled={!mayEdit} /></div>
+            <div><label class="label" for="stake_as_at">Stake as at</label><input id="stake_as_at" name="stake_as_at" type="date" value={c.stake_as_at ?? ''} class="field" disabled={!mayEdit} /></div>
+          </div>
+        )}
+        {c.relationship !== 'group' && mayGroup && (
+          <div class="grid grid-cols-2 gap-2">
+            <div><label class="label" for="relationship">Relationship</label><select id="relationship" name="relationship" class="field"><option value="controlled" selected={c.relationship === 'controlled'}>Controlled venture</option><option value="portfolio" selected={c.relationship === 'portfolio'}>Non-controlling</option></select></div>
+            <div><label class="label" for="portal">Portal access</label><select id="portal" name="portal" class="field">{Object.entries(PORTAL_ACCESS).map(([k, l]) => <option value={k} selected={k === c.portal}>{l}</option>)}</select></div>
+          </div>
+        )}
+        {mayEdit && <button name="intent" value="review" class="btn-ghost w-full">Check and save</button>}
+        <p class="text-xs text-white/40">Logo, colour, tagline and portfolio entry: <a href="/admin/ventures" class="text-lk-blue hover:underline">Ventures &amp; prices</a>.</p>
+      </form>
+    </aside>
+  </div>
+</Admin>

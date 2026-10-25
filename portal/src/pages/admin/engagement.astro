@@ -84,7 +84,7 @@ const quietHref = (on: boolean) => `${Astro.url.pathname}?${new URLSearchParams(
 ---
 
 <Admin title="Engagement">
-  <PageHeader eyebrow="Admin" title="Engagement" subtitle="Who is using the portal, and which documents are being read. Activity counts cover the last 90 days." />
+  <PageHeader title="Engagement" subtitle="Who is using the portal, and which documents are being read. Activity counts cover the last 90 days." />
   <AdminCompanyFilter scope={scope} allowAll={false} />
   {!company ? <p class="text-white/55">No company to show.</p> : (
     <>
