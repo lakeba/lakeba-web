@@ -1,6 +1,7 @@
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { audPrecise, aud, longDate, shares as fmtShares } from './format';
+import { companyIdentity } from './companies';
 
 // Tax-time pack: one PDF per holder and financial year (1 July – 30 June) with,
 // per share class, the shares at the start and end of the year, the changes
@@ -15,7 +16,7 @@ export const fyBounds = (fy: number) => ({ start: `${fy - 1}-07-01`, end: `${fy}
 /** The financial year a date falls in (FY2026 ends 30 June 2026). */
 export const fyOf = (date: string) => (Number(date.slice(5, 7)) >= 7 ? Number(date.slice(0, 4)) + 1 : Number(date.slice(0, 4)));
 
-type Row = { shares: number; as_at: string; share_class_id: string; share_classes: { code: string; name: string; kind: string; entity_id: string; entities: { display_name: string; legal_name: string | null } | null } | null };
+type Row = { shares: number; as_at: string; share_class_id: string; share_classes: { code: string; name: string; kind: string; entity_id: string; entities: { display_name: string; legal_name: string | null; company_number: string | null; country: string | null } | null } | null };
 
 /** Financial years in which this holder had shares (up to the current one). */
 export async function taxYears(supabase: SupabaseClient, holderId: string) {
@@ -28,7 +29,7 @@ export async function taxYears(supabase: SupabaseClient, holderId: string) {
 
 export async function taxPackPdf(supabase: SupabaseClient, holder: { id: string; name: string; registry_ref: string | null }, fy: number, recipient: string) {
   const { start, end } = fyBounds(fy);
-  const { data } = await supabase.from('holdings').select('shares, as_at, share_class_id, share_classes(code, name, kind, entity_id, entities(display_name, legal_name))').eq('holder_id', holder.id).lte('as_at', end).order('as_at');
+  const { data } = await supabase.from('holdings').select('shares, as_at, share_class_id, share_classes(code, name, kind, entity_id, entities(display_name, legal_name, company_number, country))').eq('holder_id', holder.id).lte('as_at', end).order('as_at');
   const rows = ((data ?? []) as unknown as Row[]).filter((r) => r.share_classes);
   const byClass = Map.groupBy(rows, (r) => r.share_class_id);
   const classIds = [...byClass.keys()];
@@ -69,7 +70,9 @@ export async function taxPackPdf(supabase: SupabaseClient, holder: { id: string;
 
     need(110 + moves.length * 14);
     page.drawRectangle({ x: left, y: y - 6, width: right - left, height: 22, color: rgb(0.94, 0.96, 1) });
+    const identity = companyIdentity(cls.entities);
     text(`${cls.entities?.legal_name || cls.entities?.display_name || ''} · ${cls.name}`, left + 8, { font: bold });
+    if (identity) text(identity, right - 8, { alignRight: true, size: 9, color: MUTED });
     y -= 26;
     const line = (label: string, val: string) => { text(label, left + 8, { color: MUTED }); text(val, right - 8, { alignRight: true, font: bold }); y -= 15; };
     line(`Held at 1 July ${fy - 1}`, fmtShares.format(opening));

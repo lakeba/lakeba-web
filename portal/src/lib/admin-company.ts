@@ -22,7 +22,7 @@ export type AdminScope = {
   defaultCompany: Company | null;
 };
 
-const COLUMNS = 'id, code, display_name, legal_name, relationship, portal, brand_color, tagline, logo_url, website';
+const COLUMNS = 'id, code, display_name, legal_name, relationship, portal, brand_color, tagline, logo_url, website, company_number, country';
 
 /** Companies covered by this area and level ('all' for the whole group); the overview counts every area. */
 function covered(access: Access, path: string, level: 'view' | 'do'): 'all' | string[] {

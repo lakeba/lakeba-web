@@ -8,8 +8,8 @@ const INK = rgb(0.043, 0.114, 0.216);
 const MUTED = rgb(0.42, 0.48, 0.56);
 
 /** A personal holding statement for one holder and share class. */
-/** issuer: the company whose shares these are (legal name for the heading, short name in the notes). */
-export async function holdingStatementPdf(position: Position, price: Price | undefined, recipient: string, issuer = { legal: 'Lakeba Group Limited', short: 'Lakeba' }) {
+/** issuer: the company whose shares these are (legal name for the heading, its ACN/ABN under it, short name in the notes). */
+export async function holdingStatementPdf(position: Position, price: Price | undefined, recipient: string, issuer: { legal: string; short: string; identity?: string } = { legal: 'Lakeba Group Limited', short: 'Lakeba' }) {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Holding statement – ${position.holder.name}`);
   pdf.setAuthor(issuer.legal);
@@ -42,6 +42,7 @@ export async function holdingStatementPdf(position: Position, price: Price | und
 
   text(issuer.legal, left, y, { font: bold, size: 11 });
   text(`Statement date: ${longDate.format(new Date())}`, width - left - 170, y, { color: MUTED });
+  if (issuer.identity) { y -= 14; text(issuer.identity, left, y, { size: 9, color: MUTED }); }
   y -= 34;
 
   const field = (label: string, value: string, x: number) => {

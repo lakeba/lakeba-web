@@ -9,6 +9,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 export type Company = {
   id: string; code: string; display_name: string; legal_name: string | null; relationship: 'group' | 'controlled' | 'portfolio';
   portal: 'full' | 'portfolio' | 'none'; brand_color: string | null; tagline: string; logo_url: string | null; website: string | null;
+  company_number: string | null; country: string | null;
 };
 export type CompanyContext = {
   /** Companies with a full portal that this person belongs to (all of them for admins). */
@@ -22,7 +23,7 @@ export type CompanyContext = {
 };
 
 export const COMPANY_COOKIE = 'lakeba-company';
-const COLUMNS = 'id, code, display_name, legal_name, relationship, portal, brand_color, tagline, logo_url, website';
+const COLUMNS = 'id, code, display_name, legal_name, relationship, portal, brand_color, tagline, logo_url, website, company_number, country';
 
 export async function loadCompanyContext(supabase: SupabaseClient, cookies: AstroCookies): Promise<CompanyContext> {
   const [{ data: memberIds }, { data: visible }, { data: admins }] = await Promise.all([
@@ -41,3 +42,18 @@ export async function loadCompanyContext(supabase: SupabaseClient, cookies: Astr
 /** Brand name for headings: "Lakeba" for the group, otherwise the company's name. */
 export const brandName = (c: Company | null) => (!c || c.relationship === 'group' ? 'Lakeba' : c.display_name);
 export const legalName = (c: Company | null) => c?.legal_name || c?.display_name || 'Lakeba Group Limited';
+/**
+ * The company's registration line for documents: "ACN 123 456 789" (9 digits)
+ * or "ABN 12 345 678 901" (11 digits), as entered otherwise, plus the country
+ * when it isn't Australia. Empty when neither is known.
+ */
+export function companyIdentity(c: { company_number?: string | null; country?: string | null } | null) {
+  const raw = (c?.company_number ?? '').trim();
+  const digits = raw.replace(/\D/g, '');
+  const number = !raw ? '' : /^(ACN|ABN|ARBN|NZBN)\b/i.test(raw) ? raw
+    : digits.length === 9 && digits.length === raw.replace(/\s/g, '').length ? `ACN ${digits.replace(/(\d{3})(\d{3})(\d{3})/, '$1 $2 $3')}`
+    : digits.length === 11 && digits.length === raw.replace(/\s/g, '').length ? `ABN ${digits.replace(/(\d{2})(\d{3})(\d{3})(\d{3})/, '$1 $2 $3 $4')}`
+    : raw;
+  const country = (c?.country ?? '').trim();
+  return [number, country && !/^(australia|au)$/i.test(country) ? country : ''].filter(Boolean).join(' · ');
+}
