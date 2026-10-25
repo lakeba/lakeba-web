@@ -211,22 +211,22 @@ const btn = 'text-xs text-white/55 hover:text-white';
       <h2 class="font-display text-xl font-bold">Holdings</h2>
       <p class="-mt-2 text-sm text-white/50">One row per date: the latest row in each class is the current balance. To record a change, add a row with the new date; correct a row only if it was wrong.</p>
       {byClass.map(([cid, list]) => (
-        <div class="card overflow-x-auto p-0">
+        <div class="card @container p-0">
           <div class="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-4"><h3 class="font-semibold">{classLabel(cid)}</h3>{noteOf.get(cid) && <span class="text-xs text-lk-orange">Note: {noteOf.get(cid)}</span>}</div>
           <div class="mt-2 text-sm">
-            <div class="hidden grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem] gap-2 px-5 pb-1 text-xs uppercase tracking-wider text-white/40 sm:grid"><span>As at</span><span class="text-right">Shares</span><span class="text-right">Exercise price</span><span>Expires</span><span></span></div>
+            <div class="hidden grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem] gap-2 px-5 pb-1 text-xs uppercase tracking-wider text-white/40 @3xl:grid"><span>As at</span><span class="text-right">Shares</span><span class="text-right">Exercise price</span><span>Expires</span><span></span></div>
             <div class="divide-y divide-white/5">
               {[...list].reverse().map((r, i) => mayEditClass(cid) ? (
-                <form method="post" class="grid grid-cols-2 items-center gap-2 px-5 py-2 sm:grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem]">
+                <form method="post" class="grid grid-cols-2 items-end gap-2 px-5 py-2.5 @3xl:grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem] @3xl:items-center">
                   <input type="hidden" name="intent" value="review" /><input type="hidden" name="row" value={r.id} />
-                  <input type="date" name="as_at" value={r.as_at} class="field !py-1.5 text-sm" aria-label="As at" />
-                  <input name="shares" value={Number(r.shares).toLocaleString('en-AU')} inputmode="numeric" class="field !py-1.5 text-right text-sm tabular-nums" aria-label="Shares" />
-                  <input name="exercise_price" value={r.exercise_price ?? ''} inputmode="decimal" placeholder="—" class="field !py-1.5 text-right text-sm" aria-label="Exercise price" />
-                  <input type="date" name="expires_on" value={r.expires_on ?? ''} class="field !py-1.5 text-sm" aria-label="Expires on" />
+                  <label class="block"><span class="label @3xl:sr-only">As at</span><input type="date" name="as_at" value={r.as_at} class="field !py-1.5 text-sm" aria-label="As at" /></label>
+                  <label class="block"><span class="label @3xl:sr-only">Shares</span><input name="shares" value={Number(r.shares).toLocaleString('en-AU')} inputmode="numeric" class="field !py-1.5 text-right text-sm tabular-nums" aria-label="Shares" /></label>
+                  <label class="block"><span class="label @3xl:sr-only">Exercise price</span><input name="exercise_price" value={r.exercise_price ?? ''} inputmode="decimal" placeholder="—" class="field !py-1.5 text-right text-sm" aria-label="Exercise price" /></label>
+                  <label class="block"><span class="label @3xl:sr-only">Expires</span><input type="date" name="expires_on" value={r.expires_on ?? ''} class="field !py-1.5 text-sm" aria-label="Expires on" /></label>
                   <span class="flex items-center gap-3 whitespace-nowrap text-xs">{i === 0 && <span class="text-lk-green" title="The current balance">●</span>}<button name="op" value="edit-row" class={btn}>Save</button><button name="op" value="delete-row" class="text-white/40 hover:text-lk-red">Delete</button></span>
                 </form>
               ) : (
-                <div class="grid grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem] gap-2 px-5 py-2"><span>{shortDate.format(new Date(r.as_at))}{i === 0 && <span class="ml-2 text-[11px] text-lk-green">current</span>}</span><span class="text-right tabular-nums">{fmt(Number(r.shares))}</span><span class="text-right">{fmt(r.exercise_price)}</span><span>{r.expires_on ? shortDate.format(new Date(r.expires_on)) : '—'}</span><span></span></div>
+                <div class="grid grid-cols-2 gap-2 px-5 py-2 @3xl:grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem]"><span>{shortDate.format(new Date(r.as_at))}{i === 0 && <span class="ml-2 text-[11px] text-lk-green">current</span>}</span><span class="text-right tabular-nums">{fmt(Number(r.shares))}</span><span class="text-right">{fmt(r.exercise_price)}</span><span>{r.expires_on ? shortDate.format(new Date(r.expires_on)) : '—'}</span><span></span></div>
               ))}
             </div>
             <p class="px-5 pt-1 text-[11px] text-white/35"><span class="text-lk-green">●</span> current balance</p>
@@ -242,15 +242,15 @@ const btn = 'text-xs text-white/55 hover:text-white';
       ))}
       {!rows.length && <p class="card text-sm text-white/50">No holdings yet.</p>}
       {editableClasses.length > 0 && (
-        <form method="post" class="card grid gap-3 sm:grid-cols-[1fr_9rem_9rem] sm:items-end">
-          <h3 class="font-semibold sm:col-span-3">Add a holding row</h3>
+        <form method="post" class="card @container grid gap-3 @xl:grid-cols-[1fr_9rem_9rem] @xl:items-end">
+          <h3 class="font-semibold @xl:col-span-3">Add a holding row</h3>
           <input type="hidden" name="op" value="add-row" />
-          <div class="sm:col-span-3"><label class="label" for="class_id">Share class</label><select id="class_id" name="class_id" required class="field"><option value="">Choose…</option>{editableClasses.map((c) => <option value={c.id}>{c.entities?.code}-{c.code} {c.name} ({c.entities?.display_name})</option>)}</select></div>
+          <div class="@xl:col-span-3"><label class="label" for="class_id">Share class</label><select id="class_id" name="class_id" required class="field"><option value="">Choose…</option>{editableClasses.map((c) => <option value={c.id}>{c.entities?.code}-{c.code} {c.name} ({c.entities?.display_name})</option>)}</select></div>
           <div><label class="label" for="shares">Shares</label><input id="shares" name="shares" inputmode="numeric" required class="field" /></div>
           <div><label class="label" for="as_at">As at</label><input id="as_at" name="as_at" type="date" required class="field" /></div>
-          <div class="sm:col-span-1"><label class="label" for="exercise_price">Exercise price (options)</label><input id="exercise_price" name="exercise_price" inputmode="decimal" class="field" /></div>
+          <div class="@xl:col-span-1"><label class="label" for="exercise_price">Exercise price (options)</label><input id="exercise_price" name="exercise_price" inputmode="decimal" class="field" /></div>
           <div><label class="label" for="expires_on">Expires (options)</label><input id="expires_on" name="expires_on" type="date" class="field" /></div>
-          <div class="sm:col-span-2"><button name="intent" value="review" class="btn-primary">Check and add</button></div>
+          <div class="@xl:col-span-2"><button name="intent" value="review" class="btn-primary">Check and add</button></div>
         </form>
       )}
     </section>
@@ -294,7 +294,7 @@ const btn = 'text-xs text-white/55 hover:text-white';
             <input type="hidden" name="op" value="access-add" />
             <label class="label" for="email">Give someone access</label>
             <input id="email" name="email" type="email" required placeholder="Their portal email" class="field" />
-            <div class="flex gap-2"><select name="access" class="field !py-1.5 text-sm" aria-label="Access"><option value="owner">Owner (votes, asks)</option><option value="viewer">Viewer (read only)</option></select><button name="intent" value="review" class="btn-ghost text-sm">Add</button></div>
+            <div class="flex gap-2"><select name="access" class="field" aria-label="Access"><option value="owner">Owner (votes, asks)</option><option value="viewer">Viewer (read only)</option></select><button name="intent" value="review" class="btn-ghost">Add</button></div>
           </form>
         )}
       </section>

@@ -121,7 +121,7 @@ const running = run?.status === 'running';
     <form method="post" class="flex flex-wrap items-end gap-3" onsubmit={`return confirm('Run ${active.length} tests? Estimated cost about ${usd.format(estimate)}.')`}>
       <div class="min-w-60 flex-1">
         <label class="label" for="label">What changed? (optional)</label>
-        <input id="label" name="label" class="field !py-2" placeholder="e.g. added FY25 accounts" />
+        <input id="label" name="label" class="field" placeholder="e.g. added FY25 accounts" />
       </div>
       <button name="intent" value="run" class="btn-primary !py-2" disabled={!askEnabled || running || !active.length}>Run {active.length} tests</button>
     </form>
@@ -198,11 +198,11 @@ const running = run?.status === 'running';
         <input name="question" maxlength="1000" placeholder="Question" class="field" />
         <textarea name="expected_answer" rows="4" maxlength="8000" placeholder="Expected answer (optional; Claude grades the answer against it)" class="field"></textarea>
         <div class="grid gap-3 sm:grid-cols-2">
-          <input name="must_include" placeholder="Must mention (comma-separated)" class="field !py-2 text-sm" />
-          <input name="must_not_include" placeholder="Must not mention (comma-separated)" class="field !py-2 text-sm" />
+          <input name="must_include" placeholder="Must mention (comma-separated)" class="field" />
+          <input name="must_not_include" placeholder="Must not mention (comma-separated)" class="field" />
         </div>
         <label class="flex items-center gap-2 text-sm text-white/65"><input type="checkbox" name="expect_decline" class="size-4 accent-lk-blue" /> Should be declined as off-topic</label>
-        <input name="notes" placeholder="Notes (optional)" class="field !py-2 text-sm" />
+        <input name="notes" placeholder="Notes (optional)" class="field" />
         <button name="intent" value="add" class="btn-primary !py-2">Add test</button>
       </form>
     </details>

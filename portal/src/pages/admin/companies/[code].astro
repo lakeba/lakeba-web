@@ -157,19 +157,19 @@ const sel = 'field !py-1.5 text-sm';
 
   <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
     <section class="space-y-6">
-      <div class="card overflow-x-auto p-0">
+      <div class="card @container p-0">
         <h2 class="px-5 pt-4 font-display text-lg font-bold">Share classes</h2>
         <p class="px-5 text-xs text-white/45">Held = the sum of each holder’s latest balance. Official on issue comes from the share register; percentages use it when set.</p>
         <div class="mt-2 divide-y divide-white/5">
           {(classes ?? []).map((k) => (
             <form method="post" class="space-y-2 px-5 py-4">
               <input type="hidden" name="intent" value="review" /><input type="hidden" name="class_id" value={k.id} />
-              <div class="grid items-end gap-2 sm:grid-cols-[8rem_1fr_11rem]">
+              <div class="grid items-end gap-2 @xl:grid-cols-[7rem_1fr_10rem]">
                 <div><span class="label">Code</span><p class="py-1.5 font-mono text-sm text-white/80">{c.code}-{k.code}</p></div>
                 <div><label class="label">Name</label><input name="name" value={k.name} class={sel} disabled={!mayEdit} /></div>
                 <div><label class="label">Type</label><select name="kind" class={sel} disabled={!mayEdit}>{Object.entries(CLASS_KINDS).map(([v, l]) => <option value={v} selected={v === k.kind}>{l}</option>)}</select></div>
               </div>
-              <div class="grid grid-cols-2 items-end gap-2 sm:grid-cols-[5.5rem_6.5rem_5rem_minmax(7rem,1fr)_minmax(8.5rem,9.5rem)]">
+              <div class="grid grid-cols-2 items-end gap-2 @lg:grid-cols-3 @4xl:grid-cols-[5.5rem_6.5rem_5rem_minmax(7rem,1fr)_minmax(8.5rem,9.5rem)]">
                 <div><label class="label">Voting</label><select name="voting" class={sel} disabled={!mayEdit}><option value="yes" selected={k.voting}>Yes</option><option value="no" selected={!k.voting}>No</option></select></div>
                 <div><label class="label">Counts to %</label><select name="counts" class={sel} disabled={!mayEdit}><option value="yes" selected={k.counts_toward_pct}>Yes</option><option value="no" selected={!k.counts_toward_pct}>No</option></select></div>
                 <div><label class="label">Currency</label><input name="currency" value={k.currency} maxlength="3" class={sel} disabled={!mayEdit} /></div>
@@ -188,32 +188,32 @@ const sel = 'field !py-1.5 text-sm';
           <form method="post" class="space-y-2 border-t border-white/10 px-5 py-4">
             <input type="hidden" name="op" value="add-class" />
             <p class="text-sm font-semibold">Add a share class</p>
-            <div class="grid items-end gap-2 sm:grid-cols-[8rem_1fr_11rem]">
-              <div><label class="label" for="nc-code">Class code</label><input id="nc-code" name="code" required maxlength="12" placeholder="ORD" class={`${sel} uppercase`} /></div>
-              <div><label class="label" for="nc-name">Name</label><input id="nc-name" name="name" required placeholder="Ordinary shares" class={sel} /></div>
-              <div><label class="label" for="nc-kind">Type</label><select id="nc-kind" name="kind" class={sel}>{Object.entries(CLASS_KINDS).map(([v, l]) => <option value={v}>{l}</option>)}</select></div>
+            <div class="grid items-end gap-2 @xl:grid-cols-[7rem_1fr_10rem]">
+              <div><label class="label" for="nc-code">Class code</label><input id="nc-code" name="code" required maxlength="12" placeholder="ORD" class="field uppercase" /></div>
+              <div><label class="label" for="nc-name">Name</label><input id="nc-name" name="name" required placeholder="Ordinary shares" class="field" /></div>
+              <div><label class="label" for="nc-kind">Type</label><select id="nc-kind" name="kind" class="field">{Object.entries(CLASS_KINDS).map(([v, l]) => <option value={v}>{l}</option>)}</select></div>
             </div>
-            <div class="grid grid-cols-2 items-end gap-2 sm:grid-cols-[6rem_7rem_5.5rem_auto]">
-              <div><label class="label" for="nc-voting">Voting</label><select id="nc-voting" name="voting" class={sel}><option value="yes">Yes</option><option value="no">No</option></select></div>
-              <div><label class="label" for="nc-counts">Counts to %</label><select id="nc-counts" name="counts" class={sel}><option value="yes">Yes</option><option value="no">No</option></select></div>
-              <div><label class="label" for="nc-cur">Currency</label><input id="nc-cur" name="currency" value="AUD" maxlength="3" class={sel} /></div>
-              <div><button name="intent" value="review" class="btn-ghost !py-1.5 text-sm">Check and add</button></div>
+            <div class="grid grid-cols-2 items-end gap-2 @xl:grid-cols-[6rem_7rem_5.5rem_auto]">
+              <div><label class="label" for="nc-voting">Voting</label><select id="nc-voting" name="voting" class="field"><option value="yes">Yes</option><option value="no">No</option></select></div>
+              <div><label class="label" for="nc-counts">Counts to %</label><select id="nc-counts" name="counts" class="field"><option value="yes">Yes</option><option value="no">No</option></select></div>
+              <div><label class="label" for="nc-cur">Currency</label><input id="nc-cur" name="currency" value="AUD" maxlength="3" class="field" /></div>
+              <div><button name="intent" value="review" class="btn-ghost">Check and add</button></div>
             </div>
           </form>
         )}
       </div>
 
-      <div class="card">
+      <div class="card @container">
         <h2 class="font-display text-lg font-bold">Board</h2>
         <p class="mt-1 text-xs text-white/45">Directors and officers see {c.display_name}’s board documents. To end a position and keep the history, set the “To” date.</p>
         <div class="mt-3 divide-y divide-white/5">
           {(board ?? []).map((b) => { const p = b.profiles as unknown as { id: string; email: string; first_name: string | null; last_name: string | null }; return (
-            <form method="post" class="grid items-end gap-2 py-2.5 sm:grid-cols-[1fr_10rem_10rem_auto]">
+            <form method="post" class="grid grid-cols-2 items-end gap-2 py-3 @3xl:grid-cols-[1fr_9.5rem_9.5rem_auto]">
               <input type="hidden" name="intent" value="review" /><input type="hidden" name="user_id" value={b.user_id} /><input type="hidden" name="position" value={b.position} />
-              <div><a href={`/admin/system/users/${p.id}`} class="text-sm text-white/85 hover:text-lk-blue">{displayName(p)}</a><span class="block text-xs text-white/45">{POSITIONS[b.position as keyof typeof POSITIONS]} · {p.email}</span></div>
+              <div class="col-span-2 @3xl:col-span-1"><a href={`/admin/system/users/${p.id}`} class="text-sm text-white/85 hover:text-lk-blue">{displayName(p)}</a><span class="block text-xs text-white/45">{POSITIONS[b.position as keyof typeof POSITIONS]} · {p.email}</span></div>
               <div><label class="label">From</label><input type="date" name="starts_on" value={b.starts_on ?? ''} class={sel} disabled={!mayEdit} /></div>
               <div><label class="label">To</label><input type="date" name="ends_on" value={b.ends_on ?? ''} class={sel} disabled={!mayEdit} /></div>
-              {mayEdit && <div class="flex gap-3 pb-2 text-xs"><button name="op" value="edit-board" class="text-white/60 hover:text-white">Save</button><button name="op" value="remove-board" class="text-white/40 hover:text-lk-red">Remove</button></div>}
+              {mayEdit && <div class="col-span-2 flex gap-4 pb-2 text-xs @3xl:col-span-1"><button name="op" value="edit-board" class="text-white/60 hover:text-white">Save</button><button name="op" value="remove-board" class="text-white/40 hover:text-lk-red">Remove</button></div>}
             </form>); })}
           {!board?.length && <p class="py-3 text-sm text-white/45">No board positions recorded.</p>}
         </div>
@@ -221,14 +221,14 @@ const sel = 'field !py-1.5 text-sm';
           <form method="post" class="mt-3 space-y-2 border-t border-white/10 pt-3">
             <input type="hidden" name="op" value="add-board" />
             <p class="text-sm font-semibold">Add a board position</p>
-            <div class="grid items-end gap-2 sm:grid-cols-[1fr_11rem]">
-              <div><label class="label" for="nb-email">Person (their portal email)</label><input id="nb-email" name="email" type="email" required class={sel} /></div>
-              <div><label class="label" for="nb-pos">Position</label><select id="nb-pos" name="position" class={sel}>{Object.entries(POSITIONS).map(([v, l]) => <option value={v}>{l}</option>)}</select></div>
+            <div class="grid items-end gap-2 @xl:grid-cols-[1fr_10rem]">
+              <div><label class="label" for="nb-email">Person (their portal email)</label><input id="nb-email" name="email" type="email" required class="field" /></div>
+              <div><label class="label" for="nb-pos">Position</label><select id="nb-pos" name="position" class="field">{Object.entries(POSITIONS).map(([v, l]) => <option value={v}>{l}</option>)}</select></div>
             </div>
-            <div class="grid grid-cols-2 items-end gap-2 sm:grid-cols-[10rem_10rem_auto]">
-              <div><label class="label" for="nb-from">From</label><input id="nb-from" type="date" name="starts_on" class={sel} /></div>
-              <div><label class="label" for="nb-to">To</label><input id="nb-to" type="date" name="ends_on" class={sel} /></div>
-              <div><button name="intent" value="review" class="btn-ghost !py-1.5 text-sm">Check and add</button></div>
+            <div class="grid grid-cols-2 items-end gap-2 @xl:grid-cols-[9.5rem_9.5rem_auto]">
+              <div><label class="label" for="nb-from">From</label><input id="nb-from" type="date" name="starts_on" class="field" /></div>
+              <div><label class="label" for="nb-to">To</label><input id="nb-to" type="date" name="ends_on" class="field" /></div>
+              <div><button name="intent" value="review" class="btn-ghost">Check and add</button></div>
             </div>
           </form>
         )}

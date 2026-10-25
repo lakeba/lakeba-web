@@ -141,11 +141,11 @@ const bskyDefault = r.social.bluesky || r.social.x || r.summary || r.headline;
       {!s.wires.length && <li class="py-2.5 text-white/45">No wires listed yet{access.approver ? ': add them in Settings and team' : ''}.</li>}
     </ul>
     <form method="post" class="grid gap-3 border-t border-white/5 pt-4 sm:grid-cols-[10rem_1fr_1fr_7rem_6rem_auto] sm:items-end">
-      <div><label class="label" for="channel">Record</label><select id="channel" name="channel" class="field py-2 text-sm"><option value="wire">Wire</option><option value="linkedin">LinkedIn post</option><option value="other">Other</option></select></div>
-      <div><label class="label" for="target">Where</label><input id="target" name="target" list="wires" placeholder="e.g. EIN Presswire" class="field py-2 text-sm" /><datalist id="wires">{s.wires.map((w) => <option value={w.name} />)}</datalist></div>
-      <div><label class="label" for="url">Link</label><input id="url" name="url" placeholder="https://…" class="field py-2 text-sm" /></div>
-      <div><label class="label" for="cost">Cost</label><input id="cost" name="cost" inputmode="decimal" class="field py-2 text-sm" /></div>
-      <div><label class="label" for="currency">Currency</label><select id="currency" name="currency" class="field py-2 text-sm"><option>AUD</option><option>USD</option><option>EUR</option><option>GBP</option></select></div>
+      <div><label class="label" for="channel">Record</label><select id="channel" name="channel" class="field"><option value="wire">Wire</option><option value="linkedin">LinkedIn post</option><option value="other">Other</option></select></div>
+      <div><label class="label" for="target">Where</label><input id="target" name="target" list="wires" placeholder="e.g. EIN Presswire" class="field" /><datalist id="wires">{s.wires.map((w) => <option value={w.name} />)}</datalist></div>
+      <div><label class="label" for="url">Link</label><input id="url" name="url" placeholder="https://…" class="field" /></div>
+      <div><label class="label" for="cost">Cost</label><input id="cost" name="cost" inputmode="decimal" class="field" /></div>
+      <div><label class="label" for="currency">Currency</label><select id="currency" name="currency" class="field"><option>AUD</option><option>USD</option><option>EUR</option><option>GBP</option></select></div>
       {access.approver ? <button name="intent" value="record" class="btn-primary py-2">Record</button> : <span class="text-xs text-white/45">Approvers record</span>}
     </form>
   </section>

@@ -67,7 +67,7 @@ const encoded = table ? Buffer.from(JSON.stringify(table)).toString('base64') : 
   {!table && !result && (
     <form method="post" enctype="multipart/form-data" class="card mt-6 max-w-xl space-y-4">
       <input type="hidden" name="step" value="upload" />
-      <div><label class="label" for="file">The list (.csv or .xlsx, up to 5,000 rows)</label><input id="file" name="file" type="file" accept=".csv,.xlsx,.tsv,.txt" required class="field py-2 text-sm" /></div>
+      <div><label class="label" for="file">The list (.csv or .xlsx, up to 5,000 rows)</label><input id="file" name="file" type="file" accept=".csv,.xlsx,.tsv,.txt" required class="field" /></div>
       <button class="btn-primary">Next: check the columns</button>
     </form>
   )}

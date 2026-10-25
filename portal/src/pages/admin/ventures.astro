@@ -165,7 +165,7 @@ const today = new Date().toISOString().slice(0, 10);
               </div>
               <form method="post" enctype="multipart/form-data" class="flex flex-wrap items-end gap-3">
                 <input type="hidden" name="id" value={v.id} />
-                <div><label class="label" for="logo">{companyOf(v)!.logo_url ? 'Replace logo' : 'Upload a logo'}</label><input class="field !py-2" id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" required /></div>
+                <div><label class="label" for="logo">{companyOf(v)!.logo_url ? 'Replace logo' : 'Upload a logo'}</label><input class="field" id="logo" name="logo" type="file" accept="image/png,image/jpeg,image/webp,image/svg+xml" required /></div>
                 <button name="intent" value="upload-logo" class="btn-ghost">Save logo</button>
               </form>
               {companyOf(v)!.logo_url && (

@@ -99,7 +99,7 @@ if (Astro.request.method === 'POST') {
         <p class="mt-1 text-xs text-white/40">In most email programs: open the newsletter, choose “View source” or “Show original”, and copy the HTML part.</p></div>
       <div class="grid gap-4 md:grid-cols-2">
         <div><label class="label" for="file">…or choose a file</label>
-          <input id="file" name="file" type="file" accept=".html,.htm,.mjml,.eml,.zip,.png,.jpg,.jpeg,.webp" class="field py-2 text-sm" />
+          <input id="file" name="file" type="file" accept=".html,.htm,.mjml,.eml,.zip,.png,.jpg,.jpeg,.webp" class="field" />
           <p class="mt-1 text-xs text-white/40">.html, .mjml, a saved email (.eml), a .zip with its images, or a screenshot (PNG/JPEG).</p></div>
         <div><label class="label" for="url">…or a web address</label>
           <input id="url" name="url" type="url" value={v.url} placeholder="https://… (a newsletter’s “View in browser” link)" class="field" />

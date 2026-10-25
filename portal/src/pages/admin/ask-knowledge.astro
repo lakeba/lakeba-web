@@ -178,10 +178,10 @@ const expired = (d: string) => d < today;
     </div>
     <div class="mt-3 h-2 overflow-hidden rounded-full bg-white/10"><div class:list={['h-full rounded-full', budgetPct >= 100 ? 'bg-lk-red' : budgetPct >= 80 ? 'bg-lk-orange' : 'bg-lk-green']} style={`width:${budgetPct}%`}></div></div>
     <form method="post" class="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-      <label><span class="label">Questions per hour, per account</span><input type="number" name="perHour" min="1" max="100" value={limits.perHour} class="field !py-2" /></label>
-      <label><span class="label">Questions per day, per account</span><input type="number" name="perDay" min="1" max="500" value={limits.perDay} class="field !py-2" /></label>
-      <label><span class="label">Daily budget, all accounts (USD)</span><input type="number" name="dailyBudgetUsd" min="1" max="10000" step="1" value={limits.dailyBudgetUsd} class="field !py-2" /></label>
-      <label><span class="label">Longest answer (tokens)</span><input type="number" name="maxAnswerTokens" min="1000" max="16000" step="500" value={limits.maxAnswerTokens} class="field !py-2" /></label>
+      <label><span class="label">Questions per hour, per account</span><input type="number" name="perHour" min="1" max="100" value={limits.perHour} class="field" /></label>
+      <label><span class="label">Questions per day, per account</span><input type="number" name="perDay" min="1" max="500" value={limits.perDay} class="field" /></label>
+      <label><span class="label">Daily budget, all accounts (USD)</span><input type="number" name="dailyBudgetUsd" min="1" max="10000" step="1" value={limits.dailyBudgetUsd} class="field" /></label>
+      <label><span class="label">Longest answer (tokens)</span><input type="number" name="maxAnswerTokens" min="1000" max="16000" step="500" value={limits.maxAnswerTokens} class="field" /></label>
       <label class="flex items-center gap-2 text-sm text-white/70 sm:col-span-2 lg:col-span-3"><input type="checkbox" name="precheck" checked={limits.precheck} class="size-4 accent-lk-blue" /> Screen out clearly off-topic questions with Claude Haiku 5.5 before the knowledge base is sent (costs a fraction of a cent)</label>
       <button name="intent" value="limits" class="btn-primary !py-2">Save limits</button>
     </form>
@@ -257,7 +257,7 @@ const expired = (d: string) => d < today;
         <input name="question" maxlength="1000" placeholder="Question, as a shareholder would ask it" class="field" />
         <textarea name="answer" rows="5" maxlength="8000" placeholder="The approved answer (Markdown allowed). Include the date or period of any figures." class="field"></textarea>
         <div class="flex flex-wrap items-end gap-3">
-          <label class="text-sm"><span class="label">Review by</span><input type="date" name="review_by" value={plusMonths(6)} class="field !py-2" /></label>
+          <label class="text-sm"><span class="label">Review by</span><input type="date" name="review_by" value={plusMonths(6)} class="field" /></label>
           <button name="intent" value="add" class="btn-primary !py-2">Add</button>
         </div>
       </form>

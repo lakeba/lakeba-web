@@ -69,8 +69,8 @@ const tone: Record<string, string> = { positive: 'text-lk-green', neutral: 'text
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
 
   <form method="post" class="card mt-6 grid gap-3 p-4 sm:grid-cols-[1fr_18rem_auto] sm:items-end">
-    <div><label class="label" for="url">Add an article by hand</label><input id="url" name="url" type="url" placeholder="https://…" class="field py-2" /></div>
-    <div><label class="label" for="release_id">About</label><select id="release_id" name="release_id" class="field py-2 text-sm"><option value="">(let Claude decide)</option>{(releases ?? []).map((r) => <option value={r.id}>{r.headline}</option>)}</select></div>
+    <div><label class="label" for="url">Add an article by hand</label><input id="url" name="url" type="url" placeholder="https://…" class="field" /></div>
+    <div><label class="label" for="release_id">About</label><select id="release_id" name="release_id" class="field"><option value="">(let Claude decide)</option>{(releases ?? []).map((r) => <option value={r.id}>{r.headline}</option>)}</select></div>
     <button name="intent" value="add" class="btn-primary py-2">Add</button>
   </form>
 
