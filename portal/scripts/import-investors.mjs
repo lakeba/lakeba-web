@@ -1,7 +1,8 @@
 // Imports the investor data workbook from the command line.
 //
 //   node --env-file=.env scripts/import-investors.mjs <file.xlsx>           dry run + report
-//   node --env-file=.env scripts/import-investors.mjs <file.xlsx> --apply   write changes
+//   node --env-file=.env scripts/import-investors.mjs <file.xlsx> --apply   write changes (add and update)
+//   node --env-file=.env scripts/import-investors.mjs <file.xlsx> --apply --remove   also remove what the file doesn't have
 //
 // Writes a reconciliation report next to the file (<file>.import-report.md).
 // The same import runs in the portal at Admin → Import data.
@@ -12,6 +13,7 @@ import { runImport } from '../src/lib/investor-import.mjs';
 const args = process.argv.slice(2);
 const file = args.find((a) => !a.startsWith('--'));
 const apply = args.includes('--apply');
+const remove = args.includes('--remove');
 if (!file) { console.error('Usage: import-investors.mjs <file.xlsx> [--apply]'); process.exit(2); }
 const url = process.env.SUPABASE_URL ?? '';
 if (!/^http:\/\/(127\.0\.0\.1|localhost):/.test(url) && !args.includes('--allow-remote')) {
@@ -19,7 +21,7 @@ if (!/^http:\/\/(127\.0\.0\.1|localhost):/.test(url) && !args.includes('--allow-
 }
 const svc = createClient(url, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 
-const { lines, problems } = await runImport({ data: readFileSync(file), name: file.split('/').pop(), svc, apply, target: url });
+const { lines, problems } = await runImport({ data: readFileSync(file), name: file.split('/').pop(), svc, apply, remove, target: url });
 const reportPath = `${file.replace(/\.xlsx$/i, '')}.import-report.md`;
 writeFileSync(reportPath, lines.join('\n') + '\n', { mode: 0o600 });
 console.log(lines.slice(0, 40).join('\n'));

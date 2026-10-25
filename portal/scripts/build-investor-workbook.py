@@ -37,7 +37,7 @@ RED = PatternFill('solid', fgColor='FDE2E2')
 REDF = Font(name=F, size=10, color='B91C1C', bold=True)
 
 FIRST = 4      # first data row (row 2 headers, row 3 example)
-ROWS = {'Companies': 60, 'Share classes': 200, 'Holders': 1000, 'People': 1000, 'Access': 1500, 'Holdings': 2500, 'Boards': 300, 'Prices': 500}
+ROWS = {'Companies': 60, 'Share classes': 200, 'Holders': 1000, 'People': 1000, 'Access': 1500, 'Holdings': 2500, 'Boards': 300, 'Prices': 500, 'Holding notes': 500}
 import os
 if os.environ.get('SMALL'): ROWS = {k: min(v, 130) for k, v in ROWS.items()}
 def last(sheet): return FIRST + ROWS[sheet] - 1
@@ -53,7 +53,7 @@ LISTS = {
     'Class type': ['Ordinary', 'Ordinary (non-voting)', 'Preference', 'Options', 'Convertible note', 'SAFE', 'Other'],
     'YesNo': ['Yes', 'No'],
     'Holder kind': ['Individual', 'Company', 'Trust', 'Super fund'],
-    'Role': ['Investor', 'Board', 'Admin'],
+    'Role': ['Board', 'Marketing', 'Legal', 'Compliance', 'Admin'],
     'Access level': ['Owner', 'Viewer'],
     'Position': ['Director', 'Chair', 'Company secretary', 'Observer', 'Company admin'],
     'Price source': ['Capital raise', 'Secondary trade', 'Directors’ valuation'],
@@ -120,7 +120,7 @@ H = 'Holdings'
 # ---------------------------------------------------------------- Companies
 co = sheet('Companies', 'Companies', 'Lakeba Group and every company whose shareholders the portal could serve. One row per company.', [
     ('Company code *', 12, 'in', 'Short unique code, capitals, e.g. LKB, EZF. Used on every other sheet.'),
-    ('Legal name *', 30, 'in', 'As registered, e.g. Ezifin Pty Ltd'),
+    ('Legal name', 30, 'in', 'As registered, e.g. Ezifin Pty Ltd. A legal or a display name is required.'),
     ('Display name', 18, 'in', 'Name shown in the portal, e.g. Ezifin'),
     ('ACN / ABN', 16, 'in', ''),
     ('Country', 12, 'in', ''),
@@ -129,15 +129,15 @@ co = sheet('Companies', 'Companies', 'Lakeba Group and every company whose share
     ('Lakeba stake (stated)', 12, 'in', 'Lakeba’s ownership as reported, e.g. 65% (type the % sign).'),
     ('Stake as at', 12, 'in', 'Date of the stated stake'),
     ('Website', 24, 'in', ''),
-    ('Portal admin email(s)', 28, 'in', 'Who manages this company in the portal (comma separated).'),
+    ('Portal admin email(s)', 28, 'in', 'For information: who manages this company in the portal. Not imported: give company admins on the Boards sheet (Position: Company admin) or in System → Users.'),
     ('Notes', 28, 'in', ''),
     ('Lakeba % per register', 14, 'calc', 'Calculated: latest Holdings of holder LKB-GROUP ÷ all latest holdings in this company’s classes that count toward %. Should match the stated stake.'),
     ('Check', 26, 'calc', ''),
 ], ['EZF', 'Ezifin Pty Ltd', 'Ezifin', '123 456 789', 'Australia', 'Controlled venture', 'Full portal', 0.65, date(2026, 6, 30), 'https://ezifin.com', 'cfo@ezifin.com', ''])
 validate(co, 'F', 'Relationship', True); validate(co, 'G', 'Portal access', True)
 fmt(co, 'H', '0.00%'); fmt(co, 'I', D); fmt(co, 'M', '0.00%')
-formula(co, 'M', f'=IF(OR(A{{r}}="",F{{r}}="Group"),"",IFERROR(SUMIFS({rng(H,"C")},{rng(H,"H")},A{{r}},{rng(H,"A")},"LKB-GROUP",{rng(H,"J")},"Yes",{rng(H,"K")},"Yes")/SUMIFS({rng(H,"C")},{rng(H,"H")},A{{r}},{rng(H,"J")},"Yes",{rng(H,"K")},"Yes"),""))')
-formula(co, 'N', f'=IF(A{{r}}="","",IF(COUNTIF($A${FIRST}:$A${last("Companies")},A{{r}})>1,"Duplicate code",IF(OR(B{{r}}="",F{{r}}="",G{{r}}=""),"Missing required field",IF(AND(F{{r}}="Controlled venture",H{{r}}<>"",M{{r}}<>""),IF(ABS(H{{r}}-M{{r}})>0.0005,"Stake differs from register","OK"),"OK"))))')
+formula(co, 'M', f'=IF(OR(A{{r}}="",F{{r}}="Group"),"",IFERROR(SUMIFS({rng(H,"C")},{rng(H,"J")},A{{r}},{rng(H,"A")},"LKB-GROUP",{rng(H,"L")},"Yes",{rng(H,"M")},"Yes")/SUMIFS({rng(H,"C")},{rng(H,"J")},A{{r}},{rng(H,"L")},"Yes",{rng(H,"M")},"Yes"),""))')
+formula(co, 'N', f'=IF(A{{r}}="","",IF(COUNTIF($A${FIRST}:$A${last("Companies")},A{{r}})>1,"Duplicate code",IF(OR(AND(B{{r}}="",C{{r}}=""),F{{r}}="",G{{r}}=""),"Missing required field",IF(AND(F{{r}}="Controlled venture",H{{r}}<>"",M{{r}}<>""),IF(ABS(H{{r}}-M{{r}})>0.0005,"Stake differs from register","OK"),"OK"))))')
 flag_not_ok(co, 'N')
 
 # ---------------------------------------------------------------- Share classes
@@ -158,7 +158,7 @@ sc = sheet('Share classes', 'Share classes', 'Every class of shares (or notes/op
 ], ['EZF', 'EZF-ORD', 'Ordinary shares', 'Ordinary', 'Yes', 'Yes', 10_000_000, date(2026, 6, 30), 'AUD', ''])
 validate(sc, 'D', 'Class type', True); validate(sc, 'E', 'YesNo', True); validate(sc, 'F', 'YesNo', True)
 fmt(sc, 'G', '#,##0'); fmt(sc, 'H', D); fmt(sc, 'K', '#,##0'); fmt(sc, 'L', '#,##0;[Red]-#,##0;"-"')
-formula(sc, 'K', f'=IF(B{{r}}="","",SUMIFS({rng(H,"C")},{rng(H,"B")},B{{r}},{rng(H,"J")},"Yes"))')
+formula(sc, 'K', f'=IF(B{{r}}="","",SUMIFS({rng(H,"C")},{rng(H,"B")},B{{r}},{rng(H,"L")},"Yes"))')
 formula(sc, 'L', '=IF(OR(B{r}="",G{r}=""),"",G{r}-K{r})')
 formula(sc, 'M', f'=IF(B{{r}}="","",IF(COUNTIF($B${FIRST}:$B${last("Share classes")},B{{r}})>1,"Duplicate class code",IF(COUNTIF({rng("Companies","A")},A{{r}})=0,"Unknown company",IF(OR(C{{r}}="",D{{r}}="",E{{r}}="",F{{r}}=""),"Missing required field",IF(AND(G{{r}}<>"",H{{r}}=""),"Add the official as-at date",IF(AND(L{{r}}<>"",L{{r}}<>0),"Doesn’t add up to official","OK"))))))')
 flag_not_ok(sc, 'M')
@@ -187,17 +187,17 @@ pe = sheet('People', 'People (portal logins)', 'Everyone who signs in. One row p
     ('First name', 14, 'in', ''),
     ('Last name', 16, 'in', ''),
     ('Phone', 16, 'in', ''),
-    ('Portal role *', 11, 'in', 'Investor for shareholders. Board for directors of Lakeba Group (venture directors go on the Boards sheet). Admin for Lakeba staff who manage the portal.'),
+    ('Roles', 22, 'in', 'Empty for investors. For staff: their roles, comma separated, e.g. Board or Marketing, Legal (the names in System → Roles). Given for the whole group; never removed by an import. Admin is never given from a file.'),
     ('Email notifications', 12, 'in', 'Yes: they get emails about new documents, meetings and news.'),
     ('Notes', 28, 'in', ''),
     ('Holders they see', 10, 'calc', 'Calculated: rows on the Access sheet'),
     ('Companies they see', 30, 'calc', 'Calculated from Access + Holdings (needs Excel 2019 or later).'),
     ('Check', 24, 'calc', ''),
-], ['jane@example.com', 'Jane', 'Citizen', '+61 400 000 000', 'Investor', 'Yes', ''])
-validate(pe, 'E', 'Role', True); validate(pe, 'F', 'YesNo')
+], ['jane@example.com', 'Jane', 'Citizen', '+61 400 000 000', '', 'Yes', ''])
+validate(pe, 'F', 'YesNo')
 formula(pe, 'H', f'=IF(A{{r}}="","",COUNTIF({rng("Access","A")},A{{r}}))')
 formula(pe, 'I', f'=IF(A{{r}}="","",_xlfn.TEXTJOIN(", ",TRUE,IF(({rng("Companies","A")}<>"")*(COUNTIFS({rng("Access","A")},A{{r}},{rng("Access","F")},"*"&{rng("Companies","A")}&"*")>0),{rng("Companies","A")},"")))', array=True)
-formula(pe, 'J', f'=IF(A{{r}}="","",IF(COUNTIF($A${FIRST}:$A${last("People")},A{{r}})>1,"Duplicate email",IF(ISERROR(FIND("@",A{{r}})),"Not an email address",IF(E{{r}}="","Missing role",IF(AND(H{{r}}=0,E{{r}}="Investor"),"Investor without holders","OK")))))')
+formula(pe, 'J', f'=IF(A{{r}}="","",IF(COUNTIF($A${FIRST}:$A${last("People")},A{{r}})>1,"Duplicate email",IF(ISERROR(FIND("@",A{{r}})),"Not an email address",IF(AND(H{{r}}=0,E{{r}}=""),"Investor without holders","OK"))))')
 flag_not_ok(pe, 'J')
 
 # ---------------------------------------------------------------- Access
@@ -212,7 +212,7 @@ ac = sheet('Access', 'Access (who sees which holder)', 'Links a login to the hol
 ], ['jane@example.com', 'H-0001', 'Owner', ''])
 validate(ac, 'C', 'Access level', True)
 formula(ac, 'E', f'=IF(B{{r}}="","",IFERROR(INDEX({rng("Holders","B")},MATCH(B{{r}},{rng("Holders","A")},0)),""))')
-formula(ac, 'F', f'=IF(B{{r}}="","",_xlfn.TEXTJOIN(", ",TRUE,IF(({rng("Companies","A")}<>"")*(COUNTIFS({rng(H,"A")},B{{r}},{rng(H,"H")},{rng("Companies","A")},{rng(H,"J")},"Yes",{rng(H,"C")},">0")>0),{rng("Companies","A")},"")))', array=True)
+formula(ac, 'F', f'=IF(B{{r}}="","",_xlfn.TEXTJOIN(", ",TRUE,IF(({rng("Companies","A")}<>"")*(COUNTIFS({rng(H,"A")},B{{r}},{rng(H,"J")},{rng("Companies","A")},{rng(H,"L")},"Yes",{rng(H,"C")},">0")>0),{rng("Companies","A")},"")))', array=True)
 formula(ac, 'G', f'=IF(A{{r}}="","",IF(COUNTIF({rng("People","A")},A{{r}})=0,"Email not on People",IF(COUNTIF({rng("Holders","A")},B{{r}})=0,"Unknown holder ID",IF(COUNTIFS($A${FIRST}:$A${last("Access")},A{{r}},$B${FIRST}:$B${last("Access")},B{{r}})>1,"Duplicate link",IF(C{{r}}="","Missing access","OK")))))')
 flag_not_ok(ac, 'G')
 
@@ -225,26 +225,28 @@ hd = sheet('Holdings', 'Holdings', 'Shares held, per holder, class and date. Add
     ('Register ref', 14, 'in', 'Holder number on that company’s register, if any'),
     ('Source', 18, 'in', ''),
     ('Notes', 24, 'in', ''),
+    ('Exercise price', 12, 'in', 'Options and convertible notes: the price per share to exercise or convert. Leave empty for shares.'),
+    ('Expires on', 12, 'in', 'Options and notes: the expiry date. Leave empty for shares.'),
     ('Company', 10, 'calc', 'Calculated from the class'),
     ('Holder name', 32, 'calc', 'Calculated'),
     ('Latest?', 8, 'calc', 'Calculated: Yes when this is the most recent row for this holder and class'),
     ('Counts toward %', 9, 'calc', 'Calculated from the class'),
     ('Check', 24, 'calc', ''),
-], ['H-0001', 'EZF-ORD', 25_000, date(2026, 6, 30), '', 'Share register', ''])
+], ['H-0001', 'EZF-ORD', 25_000, date(2026, 6, 30), '', 'Share register', '', None, None])
 validate(hd, 'F', 'Holding source')
-fmt(hd, 'C', '#,##0'); fmt(hd, 'D', D)
-formula(hd, 'H', f'=IF(B{{r}}="","",IFERROR(INDEX({rng("Share classes","A")},MATCH(B{{r}},{rng("Share classes","B")},0)),""))')
-formula(hd, 'I', f'=IF(A{{r}}="","",IFERROR(INDEX({rng("Holders","B")},MATCH(A{{r}},{rng("Holders","A")},0)),""))')
-formula(hd, 'J', f'=IF(OR(A{{r}}="",B{{r}}="",D{{r}}=""),"",IF(D{{r}}=_xlfn.MAXIFS($D${FIRST}:$D${last(H)},$A${FIRST}:$A${last(H)},A{{r}},$B${FIRST}:$B${last(H)},B{{r}}),"Yes","No"))')
-formula(hd, 'K', f'=IF(B{{r}}="","",IFERROR(INDEX({rng("Share classes","F")},MATCH(B{{r}},{rng("Share classes","B")},0)),""))')
-formula(hd, 'L', f'=IF(A{{r}}="","",IF(I{{r}}="","Unknown holder ID",IF(H{{r}}="","Unknown class code",IF(OR(C{{r}}="",D{{r}}=""),"Missing shares or date",IF(OR(C{{r}}<0,C{{r}}<>INT(C{{r}})),"Shares must be a whole number",IF(COUNTIFS($A${FIRST}:$A${last(H)},A{{r}},$B${FIRST}:$B${last(H)},B{{r}},$D${FIRST}:$D${last(H)},D{{r}})>1,"Duplicate row (same date)","OK"))))))')
-flag_not_ok(hd, 'L')
+fmt(hd, 'C', '#,##0'); fmt(hd, 'D', D); fmt(hd, 'H', '$#,##0.0000'); fmt(hd, 'I', D)
+formula(hd, 'J', f'=IF(B{{r}}="","",IFERROR(INDEX({rng("Share classes","A")},MATCH(B{{r}},{rng("Share classes","B")},0)),""))')
+formula(hd, 'K', f'=IF(A{{r}}="","",IFERROR(INDEX({rng("Holders","B")},MATCH(A{{r}},{rng("Holders","A")},0)),""))')
+formula(hd, 'L', f'=IF(OR(A{{r}}="",B{{r}}="",D{{r}}=""),"",IF(D{{r}}=_xlfn.MAXIFS($D${FIRST}:$D${last(H)},$A${FIRST}:$A${last(H)},A{{r}},$B${FIRST}:$B${last(H)},B{{r}}),"Yes","No"))')
+formula(hd, 'M', f'=IF(B{{r}}="","",IFERROR(INDEX({rng("Share classes","F")},MATCH(B{{r}},{rng("Share classes","B")},0)),""))')
+formula(hd, 'N', f'=IF(A{{r}}="","",IF(K{{r}}="","Unknown holder ID",IF(J{{r}}="","Unknown class code",IF(OR(C{{r}}="",D{{r}}=""),"Missing shares or date",IF(OR(C{{r}}<0,C{{r}}<>INT(C{{r}})),"Shares must be a whole number",IF(COUNTIFS($A${FIRST}:$A${last(H)},A{{r}},$B${FIRST}:$B${last(H)},B{{r}},$D${FIRST}:$D${last(H)},D{{r}})>1,"Duplicate row (same date)","OK"))))))')
+flag_not_ok(hd, 'N')
 
 # ---------------------------------------------------------------- Boards
 bo = sheet('Boards', 'Boards and company admins', 'Directors and officers per company (including Lakeba Group). Gives board access to that company only.', [
     ('Company code *', 12, 'in', ''),
     ('Email *', 32, 'in', 'Must also be on the People sheet'),
-    ('Position *', 18, 'in', 'Company admin: manages this company in the portal (not other companies).'),
+    ('Position *', 18, 'in', 'Directors and officers see that company’s board documents. Company admin: gets the Admin role for this company only (System → Users).'),
     ('From', 12, 'in', ''),
     ('To', 12, 'in', 'Leave empty while current'),
     ('Notes', 26, 'in', ''),
@@ -268,6 +270,16 @@ validate(pr, 'E', 'Price source', True); fmt(pr, 'B', '$#,##0.0000'); fmt(pr, 'D
 formula(pr, 'G', f'=IF(A{{r}}="","",IF(COUNTIF({rng("Share classes","B")},A{{r}})=0,"Unknown class code",IF(OR(B{{r}}="",D{{r}}="",E{{r}}=""),"Missing required field",IF(COUNTIFS($A${FIRST}:$A${last("Prices")},A{{r}},$D${FIRST}:$D${last("Prices")},D{{r}},$E${FIRST}:$E${last("Prices")},E{{r}})>1,"Duplicate price","OK"))))')
 flag_not_ok(pr, 'G')
 
+# ---------------------------------------------------------------- Holding notes
+hn = sheet('Holding notes', 'Holding notes', 'A note the holder sees next to one of their holdings, e.g. shares held in escrow until a date. One row per holder and class.', [
+    ('Holder ID *', 13, 'in', 'From the Holders sheet'),
+    ('Class code *', 13, 'in', 'From the Share classes sheet'),
+    ('Note *', 60, 'in', 'Shown to the holder next to that holding'),
+    ('Check', 24, 'calc', ''),
+], ['H-0001', 'EZF-ORD', 'Held in escrow until 30 June 2027'])
+formula(hn, 'D', f'=IF(A{{r}}="","",IF(COUNTIF({rng("Holders","A")},A{{r}})=0,"Unknown holder ID",IF(COUNTIF({rng("Share classes","B")},B{{r}})=0,"Unknown class code",IF(C{{r}}="","Missing note",IF(COUNTIFS($A${FIRST}:$A${last("Holding notes")},A{{r}},$B${FIRST}:$B${last("Holding notes")},B{{r}})>1,"Duplicate note","OK")))))')
+flag_not_ok(hn, 'D')
+
 # ---------------------------------------------------------------- Checks
 ch = wb.create_sheet('Checks', 1)
 ch['A1'] = 'Checks'; ch['A1'].font = TITLE
@@ -281,9 +293,10 @@ checks = [
     ('Holders', 'A', 'H', 'Unique ID, required fields, has holdings (“No login” is a warning, counted here too)'),
     ('People', 'A', 'J', 'Unique email, valid address, investors linked to at least one holder'),
     ('Access', 'A', 'G', 'Email and holder exist, no duplicate links'),
-    ('Holdings', 'A', 'L', 'Holder and class exist, whole shares, no duplicate rows'),
+    ('Holdings', 'A', 'N', 'Holder and class exist, whole shares, no duplicate rows'),
     ('Boards', 'A', 'G', 'Company and email exist'),
     ('Prices', 'A', 'G', 'Class exists, no duplicates'),
+    ('Holding notes', 'A', 'D', 'Holder and class exist, one note per holding'),
 ]
 for i, (s, key, chk, what) in enumerate(checks, 5):
     ch.cell(row=i, column=1, value=s).font = Font(name=F, size=10, bold=True)
@@ -291,16 +304,16 @@ for i, (s, key, chk, what) in enumerate(checks, 5):
     c = ch.cell(row=i, column=3, value=f'=SUMPRODUCT(({rng(s, chk)}<>"")*({rng(s, chk)}<>"OK"))'); c.font = CALC
     ch.cell(row=i, column=4, value=what).font = Font(name=F, size=10)
     for col in range(1, 5): ch.cell(row=i, column=col).border = BOX
-ch.conditional_formatting.add('C5:C12', FormulaRule(formula=['C5>0'], fill=RED, font=REDF))
-r = 14
+ch.conditional_formatting.add('C5:C13', FormulaRule(formula=['C5>0'], fill=RED, font=REDF))
+r = 15
 ch.cell(row=r, column=1, value='Ownership by company').font = Font(name=F, size=12, bold=True)
 for i, h in enumerate(['Company', 'Holders (latest > 0)', 'Shares (count toward %)', 'Lakeba % per register'], 1):
     c = ch.cell(row=r + 1, column=i, value=h); c.font = HEAD; c.fill = HEAD_CALC; c.border = BOX
 for k in range(12):
     rr = r + 2 + k
     ch.cell(row=rr, column=1, value=f"=IF('Companies'!A{FIRST + k}=\"\",\"\",'Companies'!A{FIRST + k})")
-    ch.cell(row=rr, column=2, value=f'=IF(A{rr}="","",SUMPRODUCT(({rng(H,"H")}=A{rr})*({rng(H,"J")}="Yes")*({rng(H,"C")}>0)))')
-    ch.cell(row=rr, column=3, value=f'=IF(A{rr}="","",SUMIFS({rng(H,"C")},{rng(H,"H")},A{rr},{rng(H,"J")},"Yes",{rng(H,"K")},"Yes"))').number_format = '#,##0'
+    ch.cell(row=rr, column=2, value=f'=IF(A{rr}="","",SUMPRODUCT(({rng(H,"J")}=A{rr})*({rng(H,"L")}="Yes")*({rng(H,"C")}>0)))')
+    ch.cell(row=rr, column=3, value=f'=IF(A{rr}="","",SUMIFS({rng(H,"C")},{rng(H,"J")},A{rr},{rng(H,"L")},"Yes",{rng(H,"M")},"Yes"))').number_format = '#,##0'
     ch.cell(row=rr, column=4, value=f"=IF(A{rr}=\"\",\"\",'Companies'!M{FIRST + k})").number_format = '0.00%'
     for col in range(1, 5): ch.cell(row=rr, column=col).font = CALC; ch.cell(row=rr, column=col).border = BOX
 
@@ -316,11 +329,12 @@ lines = [
     ('2. Share classes', 'Each class per company. Class codes start with the company code (EZF-ORD). Add the official number on issue from the register.'),
     ('3. Holders', 'Every legal owner on any register, once, even if they hold in several companies. LKB-GROUP is Lakeba Group Limited (it holds the ventures).'),
     ('4. Holdings', 'One row per holder, class and date. To record a change, add a row with the new date; don’t overwrite.'),
-    ('5. People', 'Everyone who will sign in, one row per email.'),
+    ('5. People', 'Everyone who will sign in, one row per email. Staff roles (Board, Marketing…) can be listed here; investors have none.'),
     ('6. Access', 'Which holders each person sees. What they see follows from the holdings: an Ezifin-only shareholder sees only Ezifin.'),
     ('7. Boards', 'Directors and company admins per company.'),
     ('8. Prices', 'Reference prices per class (optional).'),
-    ('9. Checks', 'Every “Problems” figure should be 0. Red cells on each sheet show which rows.'),
+    ('9. Holding notes', 'Notes the holder sees next to a holding (optional).'),
+    ('10. Checks', 'Every “Problems” figure should be 0. Red cells on each sheet show which rows.'),
     ('', ''),
     ('Legend', ''),
     ('Yellow cells, blue text', 'Fill these in. Columns marked * are required.'),
@@ -375,7 +389,7 @@ if data and mode == 'current':
     emails = {p['email'] for p in people}
     for i, p in enumerate(people, FIRST):
         pe[f'A{i}'], pe[f'B{i}'], pe[f'C{i}'], pe[f'D{i}'] = p['email'], p['first_name'] or None, p['last_name'] or None, p['phone']
-        pe[f'E{i}'] = p['role'].capitalize(); pe[f'F{i}'] = 'Yes' if p['notify_email'] else 'No'
+        pe[f'E{i}'] = None if p['role'] == 'investor' else p['role'].capitalize(); pe[f'F{i}'] = 'Yes' if p['notify_email'] else 'No'
     acc = [a for a in data['access'] if a['email'] in emails]
     for i, a in enumerate(sorted(acc, key=lambda a: (a['email'], ref[a['holder_id']])), FIRST):
         ac[f'A{i}'], ac[f'B{i}'], ac[f'C{i}'] = a['email'], ref[a['holder_id']], a['access'].capitalize()
@@ -395,7 +409,7 @@ if mode == 'rows':
     import re
     def val(v):
         return date.fromisoformat(v) if isinstance(v, str) and re.fullmatch(r'\d{4}-\d{2}-\d{2}', v) else v
-    for name in ['Companies', 'Share classes', 'Holders', 'People', 'Access', 'Holdings', 'Boards', 'Prices']:
+    for name in ['Companies', 'Share classes', 'Holders', 'People', 'Access', 'Holdings', 'Boards', 'Prices', 'Holding notes']:
         ws = wb[name]
         for r in range(FIRST, last(name) + 1):           # replace the defaults
             for c in range(1, ws.max_column + 1):
