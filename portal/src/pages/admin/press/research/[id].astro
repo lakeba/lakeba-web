@@ -1,0 +1,83 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PressNav from '../../../../components/PressNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { ROLES, validEmail } from '../../../../lib/media';
+import type { Brief, Candidate } from '../../../../lib/media-research';
+import { pressAccess } from '../../../../lib/press';
+
+// A research run: progress, then the candidates with their sources; the ticked ones are added.
+if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+const id = Astro.params.id!;
+const load = async () => (/^[0-9a-f-]{36}$/.test(id) ? (await svc.from('media_research_runs').select('*').eq('id', id).maybeSingle()).data : null) as null | { id: string; brief: Brief; status: string; candidates: (Candidate & { added?: boolean })[]; note: string; searches: number; created_at: string };
+let run = await load();
+if (!run) return Astro.redirect('/admin/press/research');
+let notice = '';
+if (Astro.request.method === 'POST' && run.status === 'done') {
+  const form = await Astro.request.formData();
+  const picked = new Set(form.getAll('pick').map(Number));
+  const { data: optouts } = await svc.from('media_optouts').select('email');
+  const out = new Set((optouts ?? []).map((o) => o.email));
+  let added = 0, skipped = 0;
+  const candidates = [...run.candidates];
+  for (const [i, c] of candidates.entries()) {
+    if (!picked.has(i) || c.added) continue;
+    const email = validEmail(c.email) && !out.has(c.email) ? c.email.toLowerCase() : null;
+    let outlet_id: string | null = null;
+    if (c.outlet) {
+      const { data: o } = await svc.from('media_outlets').select('id').ilike('name', c.outlet.replace(/[%_]/g, '\\$&')).maybeSingle();
+      outlet_id = o?.id ?? (await svc.from('media_outlets').insert({ name: c.outlet, created_by: me.id }).select('id').single()).data?.id ?? null;
+    }
+    const [first, ...rest] = c.name.split(/\s+/);
+    const { error } = await svc.from('media_contacts').insert({
+      first_name: first, last_name: rest.join(' '), email, outlet_id, role: (ROLES as readonly string[]).includes(c.role) ? c.role : 'journalist', title: c.title.slice(0, 160),
+      beats: c.beats, regions: c.region ? [c.region] : [], recent_work: c.recent_title ? `${c.recent_title}${c.recent_url ? ` (${c.recent_url})` : ''}`.slice(0, 1000) : '',
+      notes: c.why, source: 'research', source_url: c.email_source || c.sources[0] || '', consent_basis: 'published_work_address', created_by: me.id,
+    });
+    if (error) skipped++; else { added++; candidates[i] = { ...c, added: true }; }
+  }
+  await svc.from('media_research_runs').update({ candidates }).eq('id', run.id);
+  await Astro.locals.supabase.rpc('log_event', { event_action: 'press_research_added', event_detail: { run_id: run.id, added, skipped } });
+  notice = `${added} added to the media database${skipped ? ` (${skipped} already there)` : ''}.`;
+  run = await load();
+}
+const stale = run!.status === 'running' && Date.now() - new Date(run!.created_at).getTime() > 8 * 60_000;
+---
+
+<Admin title="Find journalists">
+  <PressNav />
+  <a href="/admin/press/research" class="text-sm text-white/50 hover:text-white">← Find journalists</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{run!.brief.beats}</h1>
+  <p class="mt-1 text-sm text-white/45">{run!.brief.region || 'Australia'}{run!.brief.kinds && ` · ${run!.brief.kinds}`}{run!.searches ? ` · ${run!.searches} web searches` : ''}</p>
+  <div class="mt-5 space-y-3">
+    {notice && <Alert tone="success">{notice}</Alert>}
+    {run!.status === 'running' && !stale && <Alert tone="info">Claude is searching the web (usually one to two minutes). This page updates by itself.</Alert>}
+    {(run!.status === 'failed' || stale) && <Alert tone="error">The search didn’t finish{run!.note ? `: ${run!.note}` : '.'} Please try again.</Alert>}
+    {run!.status === 'done' && run!.note && <Alert tone="info">{run!.note}</Alert>}
+  </div>
+  {run!.status === 'running' && !stale && <script>setTimeout(() => location.reload(), 6000);</script>}
+  {run!.status === 'done' && (
+    <form method="post" class="mt-6 space-y-3">
+      <p class="text-sm text-white/55">Check each person before adding them: open the sources, and make sure they still cover this. Without a published email they’re added without one (fill it in later, from their outlet’s site or by asking).</p>
+      {run!.candidates.map((c, i) => (
+        <label class:list={['card flex gap-4 p-4', c.added && 'opacity-50']}>
+          <input type="checkbox" name="pick" value={i} disabled={c.added} class="mt-1 accent-lk-blue" />
+          <span class="min-w-0 flex-1 text-sm">
+            <span class="font-semibold text-white">{c.name}</span> <span class="text-white/60">· {c.title || c.role} · {c.outlet}</span>{c.added && <span class="ml-2 text-xs text-lk-green">added</span>}
+            <span class="block text-xs text-white/50">{c.beats.join(', ')}{c.region && ` · ${c.region}`}</span>
+            {c.why && <span class="mt-1 block text-white/70">{c.why}</span>}
+            {c.recent_title && <span class="mt-1 block text-xs text-white/55">Recent: {c.recent_url ? <a href={c.recent_url} target="_blank" rel="noopener noreferrer" class="text-lk-blue hover:underline">{c.recent_title} ↗</a> : c.recent_title}</span>}
+            <span class="mt-1 block text-xs">{c.email ? <span class="text-lk-green">{c.email} <a href={c.email_source} target="_blank" rel="noopener noreferrer" class="text-white/45 hover:underline">(where it’s published ↗)</a></span> : <span class="text-white/40">No published email found</span>}</span>
+            <span class="mt-1 flex flex-wrap gap-x-3 text-xs">{c.sources.map((s, n) => <a href={s} target="_blank" rel="noopener noreferrer" class="text-lk-blue hover:underline">source {n + 1} ↗</a>)}</span>
+          </span>
+        </label>
+      ))}
+      {!run!.candidates.length && <p class="text-white/50">Nobody new with a verifiable source was found. Try broader topics or another region.</p>}
+      {run!.candidates.some((c) => !c.added) && <button class="btn-primary">Add the ticked people</button>}
+    </form>
+  )}
+</Admin>

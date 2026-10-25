@@ -22,7 +22,7 @@ export type Release = {
   review_note: string; submitted_by: string | null; submitted_at: string | null; approved_by: string | null; approved_at: string | null;
   published_at: string | null; created_by: string | null; updated_by: string | null; created_at: string; updated_at: string;
 };
-export type PressSettings = { boilerplate_html: string; about_title: string; contact_name: string; contact_email: string; contact_phone: string; dateline_city: string };
+export type PressSettings = { boilerplate_html: string; about_title: string; contact_name: string; contact_email: string; contact_phone: string; dateline_city: string; reply_tracking: boolean; reply_mailbox: string };
 
 export const STATUS_LABEL: Record<Release['status'], string> = {
   draft: 'Draft', in_review: 'Waiting for approval', changes_requested: 'Changes requested', approved: 'Approved, scheduled', published: 'Published', withdrawn: 'Withdrawn',
@@ -39,7 +39,7 @@ export function pressAccess(locals: App.Locals) {
 export async function pressSettings(svc: Svc): Promise<PressSettings> {
   const { data } = await svc.from('portal_settings').select('value').eq('key', 'press').maybeSingle();
   const v = (data?.value ?? {}) as Partial<PressSettings>;
-  return { boilerplate_html: v.boilerplate_html ?? '', about_title: v.about_title || 'About Lakeba Group', contact_name: v.contact_name ?? 'Lakeba Media Relations', contact_email: v.contact_email || 'press@lakeba.com', contact_phone: v.contact_phone ?? '', dateline_city: v.dateline_city || 'SYDNEY' };
+  return { boilerplate_html: v.boilerplate_html ?? '', about_title: v.about_title || 'About Lakeba Group', contact_name: v.contact_name ?? 'Lakeba Media Relations', contact_email: v.contact_email || 'press@lakeba.com', contact_phone: v.contact_phone ?? '', dateline_city: v.dateline_city || 'SYDNEY', reply_tracking: v.reply_tracking === true, reply_mailbox: v.reply_mailbox || 'press@lakeba.com' };
 }
 
 export async function loadRelease(svc: Svc, id: string) {

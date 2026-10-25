@@ -1,10 +1,14 @@
 ---
 import Admin from '../../../layouts/Admin.astro';
+import PressNav from '../../../components/PressNav.astro';
 import Alert from '../../../components/Alert.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { cleanHtml } from '../../../lib/news-cms';
 import { pressAccess, pressSettings } from '../../../lib/press';
+import { graphConfigured } from '../../../lib/graph';
+import { pressFrom } from '../../../lib/press-outreach';
+import { dateTime } from '../../../lib/format';
 
 // The press office's settings (approvers only): the boilerplate and media
 // contact under every release, and who is on the press team (the marketing
@@ -23,7 +27,9 @@ if (Astro.request.method === 'POST') {
     const email = field(form, 'contact_email');
     if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email)) error = 'Enter the media contact’s email address.';
     else {
+      const mailbox = field(form, 'reply_mailbox').toLowerCase() || 'press@lakeba.com';
       const value = {
+        reply_tracking: form.get('reply_tracking') === 'on', reply_mailbox: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(mailbox) ? mailbox.slice(0, 200) : 'press@lakeba.com',
         boilerplate_html: cleanHtml(String(form.get('boilerplate_html') ?? '')).slice(0, 5000), about_title: field(form, 'about_title').slice(0, 80) || 'About Lakeba Group',
         contact_name: field(form, 'contact_name').slice(0, 120), contact_email: email.slice(0, 200), contact_phone: field(form, 'contact_phone').slice(0, 60), dateline_city: field(form, 'dateline_city').toUpperCase().slice(0, 40) || 'SYDNEY',
       };
@@ -48,11 +54,13 @@ if (Astro.request.method === 'POST') {
   }
 }
 const s = await pressSettings(svc);
+const { data: sync } = await svc.from('email_sync_state').select('last_checked_at, last_error').eq('mailbox', s.reply_mailbox).maybeSingle();
 const { data: team } = await svc.from('press_team').select('user_id, added_at');
 const { data: people } = team?.length ? await svc.from('profiles').select('id, email, first_name, last_name').in('id', team.map((t) => t.user_id)) : { data: [] };
 ---
 
 <Admin title="Press settings">
+  <PressNav />
   <a href="/admin/press" class="text-sm text-white/50 hover:text-white">← Press releases</a>
   <h1 class="mt-2 font-display text-3xl font-bold">Press settings and team</h1>
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
@@ -67,6 +75,13 @@ const { data: people } = team?.length ? await svc.from('profiles').select('id, e
         <div><label class="label" for="contact_email">Email</label><input id="contact_email" name="contact_email" type="email" value={s.contact_email} class="field" /></div>
         <div><label class="label" for="contact_phone">Phone (optional)</label><input id="contact_phone" name="contact_phone" value={s.contact_phone} class="field" /></div>
         <div><label class="label" for="dateline_city">Usual dateline city</label><input id="dateline_city" name="dateline_city" value={s.dateline_city} class="field uppercase" /></div>
+      </div>
+      <div class="space-y-3 border-t border-white/5 pt-4">
+        <h2 class="font-display text-lg font-bold">Pitches and replies</h2>
+        <p class="text-sm text-white/60">Pitches to journalists are sent from <strong class="text-white">{pressFrom()}</strong>; replies go to {s.contact_email}.</p>
+        <label class="flex gap-2 text-sm text-white/75"><input type="checkbox" name="reply_tracking" checked={s.reply_tracking} class="mt-1 accent-lk-blue" /> <span>Read the press mailbox for replies to pitches, bounces, automatic replies and requests to stop (replies are marked, the writer is told, and requests to stop are honoured straight away). The portal only reads and adds an Outlook category; you answer in Outlook.</span></label>
+        <div class="max-w-sm"><label class="label" for="reply_mailbox">Press mailbox</label><input id="reply_mailbox" name="reply_mailbox" type="email" value={s.reply_mailbox} class="field" /></div>
+        <p class="text-xs text-white/45">{!graphConfigured() ? 'Microsoft 365 isn’t connected on this server, so the mailbox isn’t read.' : sync?.last_error ? `Last check failed: ${sync.last_error}` : sync?.last_checked_at ? `Last checked ${dateTime.format(new Date(sync.last_checked_at))}.` : s.reply_tracking ? 'Not checked yet: the first check happens within a minute (it starts from new messages; older ones are left alone).' : 'Off.'}</p>
       </div>
       <button name="intent" value="save" class="btn-primary">Save</button>
     </form>

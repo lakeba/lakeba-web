@@ -1,0 +1,116 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PressNav from '../../../../components/PressNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime } from '../../../../lib/format';
+import { CONSENT, fullName, listOf, optOut, ROLES, STATUS, validEmail, type Contact } from '../../../../lib/media';
+import { pressAccess } from '../../../../lib/press';
+
+// One media contact: add or edit, why we may email them, and their pitches.
+if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+const isNew = Astro.params.id === 'new';
+let c: Contact | null = isNew ? null : /^[0-9a-f-]{36}$/.test(Astro.params.id!) ? (await svc.from('media_contacts').select('*').eq('id', Astro.params.id!).maybeSingle()).data as Contact | null : null;
+if (!isNew && !c) return Astro.redirect('/admin/press/media');
+let error = '';
+const notice = Astro.url.searchParams.get('done') === 'saved' ? 'Saved.' : '';
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'delete' && c) {
+    await svc.from('media_contacts').delete().eq('id', c.id);
+    await log('press_contact_deleted', { email: c.email });
+    return Astro.redirect('/admin/press/media', 303);
+  }
+  const email = field(form, 'email').toLowerCase().replace(/^mailto:/, '');
+  let outlet_id: string | null = field(form, 'outlet_id') || null;
+  const newOutlet = field(form, 'new_outlet').slice(0, 120);
+  const { data: optedOut } = email ? await svc.from('media_optouts').select('email').eq('email', email).maybeSingle() : { data: null };
+  const status = field(form, 'status') as Contact['status'];
+  if (email && !validEmail(email)) error = 'That email address doesn’t look right.';
+  else if (!field(form, 'first_name') && !field(form, 'last_name') && !email) error = 'Give at least a name or an email address.';
+  else if (optedOut && status === 'active') error = 'This address opted out of our press emails: it can’t be made active again. (They can contact us to opt back in.)';
+  else {
+    if (newOutlet) {
+      const { data: existing } = await svc.from('media_outlets').select('id').ilike('name', newOutlet.replace(/[%_]/g, '\\$&')).maybeSingle();
+      outlet_id = existing?.id ?? (await svc.from('media_outlets').insert({ name: newOutlet, created_by: me.id }).select('id').single()).data?.id ?? null;
+    }
+    const row = {
+      first_name: field(form, 'first_name').slice(0, 80), last_name: field(form, 'last_name').slice(0, 80), email: email || null, outlet_id,
+      role: (ROLES as readonly string[]).includes(field(form, 'role')) ? field(form, 'role') : 'journalist', title: field(form, 'title').slice(0, 160),
+      beats: listOf(field(form, 'beats')), regions: listOf(field(form, 'regions')), tags: listOf(field(form, 'tags')), phone: field(form, 'phone').slice(0, 60),
+      social_url: field(form, 'social_url').slice(0, 300), notes: field(form, 'notes').slice(0, 4000), recent_work: field(form, 'recent_work').slice(0, 1000),
+      consent_basis: (field(form, 'consent_basis') in CONSENT ? field(form, 'consent_basis') : 'published_work_address'), status: status in STATUS ? status : 'active',
+      source_url: field(form, 'source_url').slice(0, 500), updated_at: new Date().toISOString(),
+    };
+    if (isNew) {
+      const { data, error: e } = await svc.from('media_contacts').insert({ ...row, source: 'manual', created_by: me.id }).select('id').single();
+      if (e) error = /duplicate|unique/i.test(e.message) ? 'A contact with that email address is already in the database.' : e.message;
+      else { await log('press_contact_added', { email }); return Astro.redirect(`/admin/press/media/${data.id}?done=saved`, 303); }
+    } else {
+      const { error: e } = await svc.from('media_contacts').update(row).eq('id', c!.id);
+      if (e) error = /duplicate|unique/i.test(e.message) ? 'Another contact already has that email address.' : e.message;
+      else {
+        if (row.status === 'opted_out' && email) await optOut(svc, email, 'marked by the press office');
+        await log('press_contact_saved', { id: c!.id });
+        return Astro.redirect(`/admin/press/media/${c!.id}?done=saved`, 303);
+      }
+    }
+  }
+}
+const { data: outlets } = await svc.from('media_outlets').select('id, name').order('name');
+const { data: pitches } = c ? await svc.from('press_pitches').select('id, distribution_id, status, sent_at, opened_at, clicked_at, previewed_at, replied_at, press_distributions(release_id, press_releases(headline))').eq('contact_id', c.id).neq('status', 'draft').order('sent_at', { ascending: false }).limit(50) : { data: [] };
+const v = c ?? ({ first_name: '', last_name: '', email: '', outlet_id: null, role: 'journalist', title: '', beats: [], regions: [], tags: [], phone: '', social_url: '', notes: '', recent_work: '', consent_basis: 'published_work_address', status: 'active', source: 'manual', source_url: '' } as unknown as Contact);
+---
+
+<Admin title={isNew ? 'New contact' : fullName(v) || v.email || 'Contact'}>
+  <PressNav />
+  <a href="/admin/press/media" class="text-sm text-white/50 hover:text-white">← Media database</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{isNew ? 'New contact' : fullName(v) || v.email}</h1>
+  {!isNew && <p class="mt-1 text-sm text-white/45">Added by {v.source}{v.source_url && <> · <a href={v.source_url} target="_blank" rel="noopener noreferrer" class="text-lk-blue hover:underline">source ↗</a></>} · {STATUS[v.status]}</p>}
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+  <form method="post" class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
+    <section class="card grid gap-4 sm:grid-cols-2">
+      <div><label class="label" for="first_name">First name</label><input id="first_name" name="first_name" value={v.first_name} class="field" /></div>
+      <div><label class="label" for="last_name">Last name</label><input id="last_name" name="last_name" value={v.last_name} class="field" /></div>
+      <div><label class="label" for="email">Email</label><input id="email" name="email" type="email" value={v.email ?? ''} class="field" /></div>
+      <div><label class="label" for="phone">Phone</label><input id="phone" name="phone" value={v.phone} class="field" /></div>
+      <div><label class="label" for="outlet_id">Outlet</label><select id="outlet_id" name="outlet_id" class="field"><option value="">None / freelance</option>{(outlets ?? []).map((o) => <option value={o.id} selected={o.id === v.outlet_id}>{o.name}</option>)}</select>
+        <input name="new_outlet" placeholder="…or a new outlet’s name" class="field mt-2 text-sm" /></div>
+      <div class="grid grid-cols-2 gap-3"><div><label class="label" for="role">Role</label><select id="role" name="role" class="field">{ROLES.map((r) => <option value={r} selected={r === v.role}>{r}</option>)}</select></div>
+        <div><label class="label" for="title">Title</label><input id="title" name="title" value={v.title} class="field" /></div></div>
+      <div><label class="label" for="beats">Beats (comma-separated)</label><input id="beats" name="beats" value={v.beats.join(', ')} placeholder="fintech, startups, property" class="field" /></div>
+      <div><label class="label" for="regions">Regions</label><input id="regions" name="regions" value={v.regions.join(', ')} placeholder="NSW, national" class="field" /></div>
+      <div><label class="label" for="social_url">LinkedIn / X / profile</label><input id="social_url" name="social_url" value={v.social_url} class="field" /></div>
+      <div><label class="label" for="tags">Tags</label><input id="tags" name="tags" value={v.tags.join(', ')} placeholder="tier 1, AFR list" class="field" /></div>
+      <div class="sm:col-span-2"><label class="label" for="recent_work">Recent relevant work (helps personalise pitches)</label><input id="recent_work" name="recent_work" value={v.recent_work} placeholder="e.g. Oct 2026: piece on SME lending rates" class="field" /></div>
+      <div class="sm:col-span-2"><label class="label" for="notes">Notes</label><textarea id="notes" name="notes" rows="3" class="field text-sm">{v.notes}</textarea></div>
+    </section>
+    <aside class="space-y-4">
+      <section class="card space-y-3">
+        <div><label class="label" for="consent_basis">Why we may email them</label><select id="consent_basis" name="consent_basis" class="field text-sm">{Object.entries(CONSENT).map(([k, l]) => <option value={k} selected={k === v.consent_basis}>{l}</option>)}</select></div>
+        <div><label class="label" for="source_url">Where we found them (link)</label><input id="source_url" name="source_url" value={v.source_url} class="field text-sm" /></div>
+        <div><label class="label" for="status">Status</label><select id="status" name="status" class="field">{Object.entries(STATUS).map(([k, l]) => <option value={k} selected={k === v.status}>{l}</option>)}</select></div>
+        <button name="intent" value="save" class="btn-primary w-full">{isNew ? 'Add contact' : 'Save'}</button>
+        {!isNew && <button name="intent" value="delete" class="w-full text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Delete this contact? Their opt-out (if any) is kept.')">Delete</button>}
+      </section>
+      {!isNew && (
+        <section class="card">
+          <h2 class="font-display text-lg font-bold">Pitches</h2>
+          <ul class="mt-2 divide-y divide-white/5 text-sm">
+            {(pitches ?? []).map((p) => {
+              const d = p.press_distributions as unknown as { release_id: string; press_releases: { headline: string } } | null;
+              return <li class="py-2"><a href={`/admin/press/distribution/${p.distribution_id}`} class="text-white/80 hover:text-lk-blue">{d?.press_releases?.headline ?? 'Release'}</a><span class="block text-xs text-white/45">{p.sent_at ? dateTime.format(new Date(p.sent_at)) : p.status}{p.opened_at && ' · opened'}{p.previewed_at && ' · read the release'}{p.clicked_at && ' · clicked'}{p.replied_at && ' · replied'}</span></li>;
+            })}
+            {!pitches?.length && <li class="py-3 text-white/45">Not pitched yet.</li>}
+          </ul>
+        </section>
+      )}
+    </aside>
+  </form>
+</Admin>

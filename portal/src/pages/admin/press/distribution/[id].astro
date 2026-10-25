@@ -1,0 +1,221 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PressNav from '../../../../components/PressNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime } from '../../../../lib/format';
+import { audience, listOf, ROLES, type Filters } from '../../../../lib/media';
+import { loadRelease, pressAccess, pressSettings, sydneyTime } from '../../../../lib/press';
+import { embargoOf, loadDistribution, prepareInBackground, pressFrom, renderPitch, sendDistribution, type Pitch } from '../../../../lib/press-outreach';
+
+// Sending a release to journalists: 1. who (filters) and the shared words,
+// 2. prepare (Claude writes each a personal opening), 3. review and edit,
+// 4. an approver sends; then opens, reads, clicks, replies, and one follow-up.
+const access = pressAccess(Astro.locals);
+if (!access) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+let d = await loadDistribution(svc, Astro.params.id!);
+if (!d) return Astro.redirect('/admin/press');
+let r = (await loadRelease(svc, d.release_id))!;
+let error = '';
+const done = Astro.url.searchParams.get('done') ?? '';
+const notice = ({ saved: 'Saved.', preparing: 'Preparing the pitches…', sent: 'Sending: a few pitches a minute. This page shows their progress.', reviewed: 'Changes saved.', marked: 'Updated.', followup: 'Follow-up created: it goes only to people who didn’t open, read or reply.' } as Record<string, string>)[done] ?? '';
+const back = (x: string, id = d!.id) => Astro.redirect(`/admin/press/distribution/${id}?done=${x}`, 303);
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { distribution_id: d!.id, ...detail } });
+const releaseOk = ['approved', 'published'].includes(r.status);
+
+const filtersFrom = (form: FormData): Filters => ({
+  beats: listOf(field(form, 'beats')), regions: listOf(field(form, 'regions')), tags: listOf(field(form, 'tags')), q: field(form, 'q').slice(0, 100),
+  outlets: form.getAll('outlets').map(String).filter((x) => /^[0-9a-f-]{36}$/.test(x)), roles: form.getAll('roles').map(String).filter((x) => (ROLES as readonly string[]).includes(x)),
+  tiplines: form.get('tiplines') === 'on',
+});
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if ((intent === 'save' || intent === 'prepare') && d.status === 'draft') {
+    if (!releaseOk) error = 'The release must be approved first.';
+    else {
+      await svc.from('press_distributions').update({ filters: d.follow_up_of ? d.filters : filtersFrom(form), subject: field(form, 'subject').slice(0, 200), intro: field(form, 'intro').slice(0, 800), availability: field(form, 'availability').slice(0, 500), personalise: form.get('personalise') === 'on' }).eq('id', d.id);
+      if (intent === 'save') return back('saved');
+      d = (await loadDistribution(svc, d.id))!;
+      prepareInBackground(svc, d, r);
+      await log('press_distribution_prepare', { personalise: d.personalise });
+      return back('preparing');
+    }
+  } else if (intent === 'review' && d.status === 'ready') {
+    const ids = form.getAll('pitch_id').map(String), intros = form.getAll('pitch_intro').map(String);
+    const remove = new Set(form.getAll('remove').map(String));
+    for (const [i, id] of ids.entries()) {
+      if (remove.has(id)) await svc.from('press_pitches').delete().eq('id', id).eq('distribution_id', d.id).eq('status', 'draft');
+      else await svc.from('press_pitches').update({ intro: (intros[i] ?? '').slice(0, 800) }).eq('id', id).eq('distribution_id', d.id).eq('status', 'draft');
+    }
+    if (field(form, 'then') === 'send') {
+      if (!access.approver) error = 'Only an approver can send.';
+      else if (!releaseOk) error = 'The release isn’t approved any more.';
+      else {
+        const n = await sendDistribution(svc, d, r, Astro.url.origin, me.id);
+        await log('press_distribution_sent', { pitches: n, embargoed: Boolean(embargoOf(r)) });
+        return back('sent');
+      }
+    } else return back('reviewed');
+  } else if (intent === 'edit' && ['ready', 'draft'].includes(d.status)) {
+    await svc.from('press_pitches').delete().eq('distribution_id', d.id).eq('status', 'draft');
+    await svc.from('press_distributions').update({ status: 'draft' }).eq('id', d.id);
+    return back('saved');
+  } else if (intent === 'cancel' && ['draft', 'ready', 'preparing'].includes(d.status)) {
+    await svc.from('press_distributions').delete().eq('id', d.id);
+    await log('press_distribution_cancelled', {});
+    return Astro.redirect(`/admin/press/${r.id}`, 303);
+  } else if (['mark-replied', 'mark-bounced'].includes(intent)) {
+    const p = (await svc.from('press_pitches').select('id, contact_id, email').eq('id', field(form, 'pitch')).eq('distribution_id', d.id).maybeSingle()).data;
+    if (p) {
+      if (intent === 'mark-replied') await svc.from('press_pitches').update({ replied_at: new Date().toISOString() }).eq('id', p.id);
+      else { await svc.from('press_pitches').update({ bounced_at: new Date().toISOString() }).eq('id', p.id); if (p.contact_id) await svc.from('media_contacts').update({ status: 'bounced' }).eq('id', p.contact_id); }
+      await log(`press_pitch_${intent.slice(5)}`, { pitch_id: p.id });
+      return back('marked');
+    }
+  } else if (intent === 'follow-up' && d.status === 'sent' && !d.follow_up_of) {
+    const { data: existing } = await svc.from('press_distributions').select('id').eq('follow_up_of', d.id).maybeSingle();
+    if (existing) return Astro.redirect(`/admin/press/distribution/${existing.id}`, 303);
+    const { data: f } = await svc.from('press_distributions').insert({
+      release_id: r.id, follow_up_of: d.id, filters: d.filters, personalise: false, availability: d.availability, created_by: me.id,
+      subject: `Following up: ${r.headline}`.slice(0, 200), intro: 'Just following up on my note below, in case it’s useful for your coverage.',
+    }).select('id').single().throwOnError();
+    await log('press_followup_created', { follow_up: f!.id });
+    return back('followup', f!.id);
+  } else error = 'That isn’t possible for this distribution now.';
+  d = (await loadDistribution(svc, d.id))!;
+  r = (await loadRelease(svc, d.release_id))!;
+}
+
+const { data: pitchRows } = await svc.from('press_pitches').select('*').eq('distribution_id', d.id).order('name');
+const pitches = (pitchRows ?? []) as Pitch[];
+const embargo = embargoOf(r);
+const count = d.status === 'draft' && releaseOk ? (await audience(svc, d.filters)).length : 0;
+const { data: outlets } = await svc.from('media_outlets').select('id, name').order('name');
+const s = await pressSettings(svc);
+const sample = pitches[0] ?? null;
+const preview = sample || d.status === 'draft' ? renderPitch({ r, s, d, intro: sample?.intro ?? d.intro, firstName: sample?.name.split(' ')[0] ?? 'Alex', token: 'preview-only-link-not-real-000', origin: Astro.url.origin, slug: null, beats: ['your beat'] }) : null;
+const sent = pitches.filter((p) => p.status === 'sent');
+const stat = (n: number) => (sent.length ? `${n} (${Math.round((100 * n) / sent.length)}%)` : '0');
+const f = d.filters;
+const stale = d.status === 'preparing';
+---
+
+<Admin title={`Distribution: ${r.headline}`}>
+  <PressNav />
+  <a href={`/admin/press/${r.id}`} class="text-sm text-white/50 hover:text-white">← {r.headline}</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{d.follow_up_of ? 'Follow-up to journalists' : 'Send to journalists'}</h1>
+  <p class="mt-1 text-sm text-white/45">{d.status}{d.sent_at && ` · finished ${dateTime.format(new Date(d.sent_at))}`} · from {pressFrom()}{embargo && ` · embargoed until ${sydneyTime(embargo)}`}</p>
+  <div class="mt-5 space-y-3">
+    {notice && <Alert tone="success">{notice}</Alert>}
+    {error && <Alert tone="error">{error}</Alert>}
+    {d.note && d.status !== 'preparing' && <Alert tone="info">{d.note}</Alert>}
+    {!releaseOk && <Alert tone="error">The release is {r.status}: it can’t be sent to journalists until it’s approved again.</Alert>}
+    {stale && <Alert tone="info">Preparing the pitches: finding the journalists and writing each a personal opening (about a second each). This page updates by itself.</Alert>}
+  </div>
+  {(stale || d.status === 'sending') && <script>setTimeout(() => location.reload(), 5000);</script>}
+
+  {d.status === 'draft' && (
+    <form method="post" class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+      <div class="space-y-6">
+        {!d.follow_up_of ? (
+          <section class="card grid gap-4 sm:grid-cols-2">
+            <h2 class="font-display text-lg font-bold sm:col-span-2">Who</h2>
+            <div><label class="label" for="beats">Beats (any of)</label><input id="beats" name="beats" value={(f.beats ?? []).join(', ')} placeholder="fintech, startups" class="field" /></div>
+            <div><label class="label" for="regions">Regions (any of)</label><input id="regions" name="regions" value={(f.regions ?? []).join(', ')} placeholder="NSW, national" class="field" /></div>
+            <div><label class="label" for="tags">Tags (any of)</label><input id="tags" name="tags" value={(f.tags ?? []).join(', ')} class="field" /></div>
+            <div><label class="label" for="q">Containing</label><input id="q" name="q" value={f.q ?? ''} placeholder="name, outlet or notes" class="field" /></div>
+            <div><span class="label">Roles (any)</span><div class="flex flex-wrap gap-x-3 gap-y-1 text-sm">{ROLES.map((x) => <label class="flex items-center gap-1.5 text-white/70"><input type="checkbox" name="roles" value={x} checked={(f.roles ?? []).includes(x)} class="accent-lk-blue" />{x}</label>)}</div></div>
+            <div><label class="label" for="outlets">Outlets (any; none = all)</label><select id="outlets" name="outlets" multiple size="5" class="field text-sm">{(outlets ?? []).map((o) => <option value={o.id} selected={(f.outlets ?? []).includes(o.id)}>{o.name}</option>)}</select></div>
+            <label class="flex items-center gap-2 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="tiplines" checked={Boolean(f.tiplines)} class="accent-lk-blue" /> Include matching outlets’ newsroom tip-lines</label>
+            <p class="text-sm sm:col-span-2"><strong class="text-white">{count}</strong> <span class="text-white/55">people match (active, with an email address, not opted out). Anyone who already received this release is left out.</span></p>
+          </section>
+        ) : <section class="card text-sm text-white/65">This follow-up goes only to the people who received the first pitch and haven’t opened it, read the release, clicked or replied.</section>}
+        <section class="card space-y-4">
+          <h2 class="font-display text-lg font-bold">The email</h2>
+          <div><label class="label" for="subject">Subject (empty: the headline{embargo ? ', marked EMBARGOED' : ''})</label><input id="subject" name="subject" value={d.subject} class="field" /></div>
+          <div><label class="label" for="intro">Opening line{!d.follow_up_of && ' (used when there’s nothing to personalise from)'}</label><textarea id="intro" name="intro" rows="2" class="field text-sm">{d.intro}</textarea></div>
+          {!d.follow_up_of && <label class="flex gap-2 text-sm text-white/70"><input type="checkbox" name="personalise" checked={d.personalise} class="mt-1 accent-lk-blue" /> Personalise the opening for each journalist with AI, from their beats and recent work (you review every one before sending)</label>}
+          <div><label class="label" for="availability">Interviews or extras (optional)</label><input id="availability" name="availability" value={d.availability} placeholder="e.g. Our CEO is available for interviews this week." class="field" /></div>
+          <div class="flex flex-wrap gap-2"><button name="intent" value="save" class="btn-ghost">Save and count</button><button name="intent" value="prepare" class="btn-primary" disabled={!releaseOk}>Prepare the pitches</button>
+            <button name="intent" value="cancel" class="text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Discard this distribution?')">Discard</button></div>
+        </section>
+      </div>
+      {preview && <section class="card p-0"><p class="px-5 py-3 text-xs text-white/45">Example (links are inactive here). Subject: <strong class="text-white/75">{preview.subject}</strong></p><iframe sandbox="" title="Pitch example" srcdoc={preview.html} class="h-[40rem] w-full rounded-b-2xl bg-white"></iframe></section>}
+    </form>
+  )}
+
+  {d.status === 'ready' && (
+    <form method="post" class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
+      <section class="card space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2"><h2 class="font-display text-lg font-bold">{pitches.length} pitches to review</h2>
+          <button form="edit-form" class="text-xs text-white/50 hover:text-white" onclick="return confirm('Go back and change who it goes to? The openings will be written again.')">Change who it goes to</button></div>
+        <p class="text-sm text-white/55">Read each opening: it’s about a real person. Edit or tick “leave out” as needed.</p>
+        <input type="hidden" name="intent" value="review" />
+        <ul class="divide-y divide-white/5">
+          {pitches.map((p) => (
+            <li class="space-y-1.5 py-3">
+              <div class="flex flex-wrap items-center justify-between gap-2 text-sm"><span><strong class="text-white">{p.name || p.email}</strong> <span class="text-white/50">· {p.outlet} · {p.email}</span></span>
+                <label class="flex items-center gap-1.5 text-xs text-white/50"><input type="checkbox" name="remove" value={p.id} class="accent-lk-red" /> leave out</label></div>
+              <input type="hidden" name="pitch_id" value={p.id} />
+              <textarea name="pitch_intro" rows="2" class="field text-sm">{p.intro}</textarea>
+            </li>
+          ))}
+        </ul>
+        <div class="flex flex-wrap gap-2 border-t border-white/5 pt-3">
+          <button name="then" value="save" class="btn-ghost">Save changes</button>
+          {access.approver ? <button name="then" value="send" class="btn-primary" disabled={!releaseOk || !pitches.length} onclick={`return confirm('Send this release to ${pitches.length} journalists now${embargo ? ', under embargo' : ''}? It can’t be undone.')`}>Send to {pitches.length}</button>
+            : <p class="text-sm text-lk-orange">An approver sends it: they’ll see it here.</p>}
+          <button form="cancel-form" class="text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Discard this distribution?')">Discard</button>
+        </div>
+      </section>
+      {preview && <section class="card self-start p-0"><p class="px-5 py-3 text-xs text-white/45">The first pitch (links inactive here). Subject: <strong class="text-white/75">{preview.subject}</strong></p><iframe sandbox="" title="Pitch example" srcdoc={preview.html} class="h-[40rem] w-full rounded-b-2xl bg-white"></iframe></section>}
+    </form>
+  )}
+
+  {['ready', 'preparing'].includes(d.status) && (
+    <>
+      <form method="post" id="edit-form" hidden><input type="hidden" name="intent" value="edit" /></form>
+      <form method="post" id="cancel-form" class:list={[d.status !== 'preparing' && 'hidden']}><input type="hidden" name="intent" value="cancel" /><button class="mt-4 text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Discard this distribution?')">Discard</button></form>
+    </>
+  )}
+
+  {['sending', 'sent'].includes(d.status) && (
+    <div class="mt-6 space-y-6">
+      <section class="grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
+        {[['Sent', `${sent.length} of ${pitches.length}`], ['Opened', stat(sent.filter((p) => p.opened_at).length)], ['Read the release', stat(sent.filter((p) => p.previewed_at || p.clicked_at).length)], ['Replied', stat(sent.filter((p) => p.replied_at).length)], ['Unsubscribed', String(sent.filter((p) => p.unsubscribed_at).length)], ['Failed / bounced', String(pitches.filter((p) => p.status === 'failed' || p.bounced_at).length)]].map(([k, v]) => (
+          <div class="card p-4"><p class="text-xs uppercase tracking-wider text-white/40">{k}</p><p class="mt-1 text-xl font-bold">{v}</p></div>
+        ))}
+      </section>
+      <p class="text-xs text-white/40">Opens are approximate: some mail apps load images for everyone, others block them. {s.reply_tracking ? `Replies, bounces and automatic replies reaching ${s.reply_mailbox} are recorded here within a minute; answer them in Outlook.` : `Mark replies and bounces here when they reach ${s.contact_email} (or switch on reading the press mailbox in Settings).`}</p>
+      <section class="card overflow-x-auto p-0">
+        <table class="w-full text-left text-sm">
+          <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Journalist</th><th class="px-5 py-3">Status</th><th class="px-5 py-3">Activity</th><th class="px-5 py-3"></th></tr></thead>
+          <tbody class="divide-y divide-white/5">
+            {pitches.map((p) => (
+              <tr><td class="px-5 py-2.5"><span class="text-white/85">{p.name || p.email}</span><span class="block text-xs text-white/45">{p.outlet} · {p.email}</span></td>
+                <td class="px-5 py-2.5 text-xs">{p.status}{p.error && <span class="block text-lk-red">{p.error}</span>}</td>
+                <td class="px-5 py-2.5 text-xs text-white/60">{[p.opened_at && 'opened', (p.previewed_at || p.clicked_at) && 'read the release', p.replied_at && 'replied', p.auto_replied_at && 'automatic reply', p.unsubscribed_at && 'unsubscribed', p.bounced_at && 'bounced'].filter(Boolean).join(' · ') || '–'}
+                  {p.reply_preview && <span class="mt-1 block max-w-md whitespace-pre-line rounded-lg bg-white/5 px-2.5 py-1.5 text-white/75">“{p.reply_preview.slice(0, 280)}{p.reply_preview.length > 280 ? '…' : ''}”</span>}</td>
+                <td class="px-5 py-2.5 text-right">{p.status === 'sent' && (
+                  <form method="post" class="flex justify-end gap-2"><input type="hidden" name="pitch" value={p.id} />
+                    {!p.replied_at && <button name="intent" value="mark-replied" class="rounded-full border border-white/12 px-2.5 py-0.5 text-xs">Replied</button>}
+                    {!p.bounced_at && <button name="intent" value="mark-bounced" class="rounded-full px-2.5 py-0.5 text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Mark as bounced? The contact won’t be pitched again until fixed.')">Bounced</button>}</form>
+                )}</td></tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+      {d.status === 'sent' && !d.follow_up_of && (
+        <form method="post" class="card flex flex-wrap items-center justify-between gap-3">
+          <p class="text-sm text-white/65">One follow-up, a few days later, to people who didn’t open, read or reply. (Never more than one: journalists dislike chasers.)</p>
+          <button name="intent" value="follow-up" class="btn-ghost">Prepare a follow-up</button>
+        </form>
+      )}
+    </div>
+  )}
+</Admin>

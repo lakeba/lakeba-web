@@ -86,3 +86,22 @@ send it a few test emails.
 - To cut access at any time: remove the role assignments
   (`Get-ManagementRoleAssignment -RoleAssignee <client ID> | Remove-ManagementRoleAssignment`)
   or delete the certificate from the app.
+
+## The press office mailbox (press@lakeba.com)
+
+Pitches to journalists are sent from the shared mailbox `press@lakeba.com`
+(the portal's SMTP account needs **Send As** on it, in the Microsoft 365 admin
+centre → the shared mailbox → Send as). To have the portal record replies,
+bounces, automatic replies and requests to stop, let the same app read it:
+
+```powershell
+Connect-ExchangeOnline
+Set-Mailbox press@lakeba.com -CustomAttribute15 LakebaPortal
+Test-ServicePrincipalAuthorization -Identity <Application (client) ID> -Resource press@lakeba.com   # InScope: True (allow up to an hour)
+```
+
+Then switch it on in the portal: Admin → Press releases → Settings and team →
+“Read the press mailbox…”. Only in production: staging must not read the real
+press mailbox. The portal only reads and adds an Outlook category (“Portal: Pitch
+reply”, “Portal: Bounce”, “Portal: Automatic reply”, “Portal: Unsubscribed”);
+the press team answers in Outlook.

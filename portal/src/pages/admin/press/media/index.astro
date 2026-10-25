@@ -1,0 +1,65 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PressNav from '../../../../components/PressNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { dateTime } from '../../../../lib/format';
+import { fullName, ROLES, STATUS, type Contact, type Outlet } from '../../../../lib/media';
+import { pressAccess } from '../../../../lib/press';
+
+// The media database: journalists and other media contacts, with filters.
+if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const sp = Astro.url.searchParams;
+const f = { q: (sp.get('q') ?? '').trim().toLowerCase(), beat: (sp.get('beat') ?? '').trim().toLowerCase(), outlet: sp.get('outlet') ?? '', role: sp.get('role') ?? '', status: sp.get('status') ?? 'active' };
+const { data: rows } = await svc.from('media_contacts').select('*').order('updated_at', { ascending: false }).limit(5000);
+const { data: outletRows } = await svc.from('media_outlets').select('id, name, beats').order('name');
+const outlets = (outletRows ?? []) as Pick<Outlet, 'id' | 'name' | 'beats'>[];
+const outletName = new Map(outlets.map((o) => [o.id, o.name]));
+const all = (rows ?? []) as Contact[];
+const contacts = all.filter((c) => (f.status === 'all' || c.status === f.status) && (!f.role || c.role === f.role) && (!f.outlet || c.outlet_id === f.outlet)
+  && (!f.beat || c.beats.some((b) => b.toLowerCase().includes(f.beat)))
+  && (!f.q || `${fullName(c)} ${c.email ?? ''} ${c.title} ${c.notes} ${c.outlet_id ? outletName.get(c.outlet_id) : ''}`.toLowerCase().includes(f.q)));
+const beats = [...new Set(all.flatMap((c) => c.beats.map((b) => b.toLowerCase())))].sort();
+const counts = { all: all.length, active: all.filter((c) => c.status === 'active').length, noEmail: all.filter((c) => !c.email).length };
+---
+
+<Admin title="Media database">
+  <PressNav />
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <h1 class="font-display text-3xl font-bold">Media database</h1>
+      <p class="mt-1 text-sm text-white/55">{counts.all} contacts · {counts.active} active{counts.noEmail ? ` · ${counts.noEmail} without an email address` : ''}. Opted-out addresses are never contacted again, even if imported later.</p>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href="/admin/press/media/import" class="btn-ghost">Import a list</a>
+      <a href="/admin/press/research" class="btn-ghost">Find journalists with AI</a>
+      <a href="/admin/press/media/new" class="btn-primary">Add a contact</a>
+    </div>
+  </div>
+  <form method="get" class="card mt-6 grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-[1fr_12rem_12rem_10rem_10rem_auto] lg:items-end">
+    <div><label class="label" for="q">Search</label><input id="q" name="q" value={sp.get('q') ?? ''} placeholder="Name, email, outlet, notes" class="field py-2" /></div>
+    <div><label class="label" for="beat">Beat</label><input id="beat" name="beat" list="beats" value={sp.get('beat') ?? ''} class="field py-2" /><datalist id="beats">{beats.map((b) => <option value={b} />)}</datalist></div>
+    <div><label class="label" for="outlet">Outlet</label><select id="outlet" name="outlet" class="field py-2"><option value="">Any</option>{outlets.map((o) => <option value={o.id} selected={o.id === f.outlet}>{o.name}</option>)}</select></div>
+    <div><label class="label" for="role">Role</label><select id="role" name="role" class="field py-2"><option value="">Any</option>{ROLES.map((r) => <option value={r} selected={r === f.role}>{r}</option>)}</select></div>
+    <div><label class="label" for="status">Status</label><select id="status" name="status" class="field py-2">{[['active', 'Active'], ['all', 'All'], ...Object.entries(STATUS).filter(([k]) => k !== 'active')].map(([k, l]) => <option value={k} selected={k === f.status}>{l}</option>)}</select></div>
+    <button class="btn-ghost py-2">Filter</button>
+  </form>
+  <section class="card mt-4 overflow-x-auto p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Name</th><th class="px-5 py-3">Outlet</th><th class="px-5 py-3">Beats</th><th class="px-5 py-3">Status</th><th class="px-5 py-3">Last pitched</th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {contacts.slice(0, 300).map((c) => (
+          <tr>
+            <td class="px-5 py-2.5"><a href={`/admin/press/media/${c.id}`} class="font-medium text-white hover:text-lk-blue">{fullName(c) || c.email || 'Unnamed'}</a><span class="block text-xs text-white/45">{c.email ?? 'no email'}{c.title && ` · ${c.title}`}</span></td>
+            <td class="px-5 py-2.5 text-white/70">{c.outlet_id ? outletName.get(c.outlet_id) : '–'}<span class="block text-xs text-white/40">{c.role}</span></td>
+            <td class="px-5 py-2.5 text-xs text-white/60">{c.beats.slice(0, 4).join(', ')}</td>
+            <td class="px-5 py-2.5"><span class:list={['rounded-full px-2 py-0.5 text-xs', c.status === 'active' ? 'bg-lk-green/15 text-lk-green' : 'bg-lk-red/15 text-lk-red']}>{STATUS[c.status]}</span><span class="block text-xs text-white/35">{c.source}</span></td>
+            <td class="px-5 py-2.5 text-xs text-white/45">{c.last_pitched_at ? dateTime.format(new Date(c.last_pitched_at)) : 'never'}</td>
+          </tr>
+        ))}
+        {!contacts.length && <tr><td colspan="5" class="px-5 py-8 text-center text-white/45">No contacts{all.length ? ' match' : ' yet: import your list or find journalists with AI'}.</td></tr>}
+      </tbody>
+    </table>
+    {contacts.length > 300 && <p class="px-5 py-3 text-xs text-white/45">Showing 300 of {contacts.length}. Narrow the filters to see others.</p>}
+  </section>
+</Admin>

@@ -32,6 +32,8 @@ export default defineConfig({
       SMTP_URL: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Sender for portal emails; read at runtime. With Microsoft 365 it must be the signed-in mailbox (or one it may send as).
       MAIL_FROM: envField.string({ context: 'server', access: 'secret', default: 'Lakeba Investor Relations <no-reply@lakeba.com>' }),
+      // Press pitches to journalists come from the press office's shared mailbox (the SMTP account has Send As on it).
+      PRESS_MAIL_FROM: envField.string({ context: 'server', access: 'secret', default: 'Lakeba Media Relations <press@lakeba.com>' }),
       ANTHROPIC_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Browser notifications (Web Push). Without the keys, push is simply off.
       VAPID_PUBLIC_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),

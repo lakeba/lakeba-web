@@ -1,5 +1,6 @@
 ---
 import Admin from '../../../layouts/Admin.astro';
+import PressNav from '../../../components/PressNav.astro';
 import { serviceClient } from '../../../lib/admin';
 import { dateTime } from '../../../lib/format';
 import { pressAccess, STATUS_LABEL, sydneyTime, type Release } from '../../../lib/press';
@@ -27,13 +28,13 @@ const tone: Record<string, string> = { draft: 'bg-white/10 text-white/70', in_re
 ---
 
 <Admin title="Press releases">
+  <PressNav />
   <div class="flex flex-wrap items-end justify-between gap-4">
     <div>
       <h1 class="font-display text-3xl font-bold">Press releases</h1>
       <p class="mt-1 max-w-2xl text-sm text-white/55">Write a release from a few head points, check it, have the people quoted approve their words, and publish it on the newsroom with its press kit. The marketing team prepares; group admins approve.</p>
     </div>
     <div class="flex gap-2">
-      {access.approver && <a href="/admin/press/settings" class="btn-ghost">Settings and team</a>}
       <form method="post"><button class="btn-primary">New press release</button></form>
     </div>
   </div>

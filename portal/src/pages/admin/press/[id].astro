@@ -1,6 +1,7 @@
 ---
 import { PUBLIC_SITE_URL } from 'astro:env/server';
 import Admin from '../../../layouts/Admin.astro';
+import PressNav from '../../../components/PressNav.astro';
 import Alert from '../../../components/Alert.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
@@ -131,7 +132,8 @@ if (Astro.request.method === 'POST') {
         }
       }
       if (intent === 'approve' && access.approver && ['draft', 'in_review', 'changes_requested'].includes(r.status)) {
-        const brackets = openBrackets(r);
+        const { data: distributions } = await svc.from('press_distributions').select('id, status, follow_up_of, created_at').eq('release_id', r.id).order('created_at', { ascending: false });
+const brackets = openBrackets(r);
         const pending = r.quotes.filter((q) => q.status !== 'approved' && q.status !== 'changed');
         const serious = r.checks.filter((c) => c.severity === 'serious');
         const when = field(form, 'publish') === 'later' ? sydneyToIso(field(form, 'publish_at')) : new Date().toISOString();
@@ -165,6 +167,10 @@ if (Astro.request.method === 'POST') {
           return back('corrected');
         }
       }
+    } else if (intent === 'new-distribution' && ['approved', 'published'].includes(r.status)) {
+      const { data: d } = await svc.from('press_distributions').insert({ release_id: r.id, intro: 'I thought this might be of interest for your coverage.', created_by: me.id }).select('id').single().throwOnError();
+      await log('press_distribution_created', { distribution_id: d!.id });
+      return Astro.redirect(`/admin/press/distribution/${d!.id}`, 303);
     } else if (intent === 'request-changes' && access.approver && ['in_review', 'approved'].includes(r.status)) {
       await svc.from('press_releases').update({ status: 'changes_requested', review_note: field(form, 'review_note').slice(0, 2000), approved_by: null, approved_at: null }).eq('id', r.id).throwOnError();
       await tell([r.created_by, r.submitted_by], 'Changes requested on your press release', field(form, 'review_note').slice(0, 200) || r.headline);
@@ -220,6 +226,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
 ---
 
 <Admin title={r.headline || 'Press release'}>
+  <PressNav />
   <a href="/admin/press" class="text-sm text-white/50 hover:text-white">← All press releases</a>
   <div class="mt-2 flex flex-wrap items-end justify-between gap-3">
     <div>
@@ -388,6 +395,17 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
       )}
       {access.approver && r.status === 'approved' && <section class="card space-y-2"><p class="text-sm text-white/70">Publishes automatically at {r.publish_at && sydneyTime(r.publish_at)}.</p><button name="intent" value="unschedule" class="btn-ghost w-full text-sm">Cancel the schedule</button></section>}
       {access.approver && r.status === 'published' && <button name="intent" value="withdraw" class="btn-ghost w-full text-sm text-lk-red" onclick="return confirm('Take this release off the newsroom and the website?')">Withdraw from the newsroom</button>}
+
+      {['approved', 'published'].includes(r.status) && (
+        <section class="card space-y-3">
+          <h2 class="font-display text-lg font-bold">Send to journalists</h2>
+          <ul class="divide-y divide-white/5 text-sm">
+            {(distributions ?? []).map((d) => <li class="py-2"><a href={`/admin/press/distribution/${d.id}`} class="text-white/80 hover:text-lk-blue">{d.follow_up_of ? 'Follow-up' : 'Distribution'} · {d.status}</a><span class="block text-xs text-white/45">{dateTime.format(new Date(d.created_at))}</span></li>)}
+            {!distributions?.length && <li class="py-2 text-white/45">Not sent to journalists yet.{r.status === 'approved' && ' Pitches before publication go out under embargo, with a private link to the release.'}</li>}
+          </ul>
+          <button name="intent" value="new-distribution" class="btn-ghost w-full text-sm">New distribution</button>
+        </section>
+      )}
 
       <section class="card">
         <h2 class="font-display text-lg font-bold">Versions</h2>

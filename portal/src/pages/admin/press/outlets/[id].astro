@@ -1,0 +1,60 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PressNav from '../../../../components/PressNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { listOf, OUTLET_KINDS, validEmail, type Outlet } from '../../../../lib/media';
+import { pressAccess } from '../../../../lib/press';
+
+// One outlet: add or edit.
+if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const isNew = Astro.params.id === 'new';
+const o = isNew ? null : /^[0-9a-f-]{36}$/.test(Astro.params.id!) ? (await svc.from('media_outlets').select('*').eq('id', Astro.params.id!).maybeSingle()).data as Outlet | null : null;
+if (!isNew && !o) return Astro.redirect('/admin/press/outlets');
+let error = '';
+const REACH = ['', 'national', 'metro', 'regional', 'trade', 'niche', 'international'];
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  if (field(form, 'intent') === 'delete' && o) {
+    await svc.from('media_outlets').delete().eq('id', o.id);
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'press_outlet_deleted', event_detail: { name: o.name } });
+    return Astro.redirect('/admin/press/outlets', 303);
+  }
+  const tip = field(form, 'tipline_email').toLowerCase();
+  const row = {
+    name: field(form, 'name').slice(0, 120), kind: (OUTLET_KINDS as readonly string[]).includes(field(form, 'kind')) ? field(form, 'kind') : 'online', country: field(form, 'country').slice(0, 2).toUpperCase() || 'AU',
+    region: field(form, 'region').slice(0, 80), website: field(form, 'website').slice(0, 300), tipline_email: tip, beats: listOf(field(form, 'beats')),
+    reach: REACH.includes(field(form, 'reach')) ? field(form, 'reach') : '', notes: field(form, 'notes').slice(0, 2000), updated_at: new Date().toISOString(),
+  };
+  if (row.name.length < 2) error = 'Give the outlet a name.';
+  else if (tip && !validEmail(tip)) error = 'The tip-line address doesn’t look right.';
+  else {
+    const res = isNew ? await svc.from('media_outlets').insert(row).select('id').single() : await svc.from('media_outlets').update(row).eq('id', o!.id).select('id').single();
+    if (res.error) error = /duplicate|unique/i.test(res.error.message) ? 'An outlet with that name already exists.' : res.error.message;
+    else { await Astro.locals.supabase.rpc('log_event', { event_action: 'press_outlet_saved', event_detail: { name: row.name } }); return Astro.redirect('/admin/press/outlets', 303); }
+  }
+}
+const v = o ?? ({ name: '', kind: 'online', country: 'AU', region: '', website: '', tipline_email: '', beats: [], reach: '', notes: '' } as unknown as Outlet);
+---
+
+<Admin title={isNew ? 'New outlet' : v.name}>
+  <PressNav />
+  <a href="/admin/press/outlets" class="text-sm text-white/50 hover:text-white">← Outlets</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{isNew ? 'New outlet' : v.name}</h1>
+  {error && <div class="mt-5"><Alert tone="error">{error}</Alert></div>}
+  <form method="post" class="card mt-6 grid max-w-3xl gap-4 sm:grid-cols-2">
+    <div class="sm:col-span-2"><label class="label" for="name">Name</label><input id="name" name="name" value={v.name} required class="field" /></div>
+    <div><label class="label" for="kind">Type</label><select id="kind" name="kind" class="field">{OUTLET_KINDS.map((k) => <option value={k} selected={k === v.kind}>{k}</option>)}</select></div>
+    <div><label class="label" for="reach">Reach</label><select id="reach" name="reach" class="field">{REACH.map((k) => <option value={k} selected={k === v.reach}>{k || '–'}</option>)}</select></div>
+    <div><label class="label" for="country">Country (2 letters)</label><input id="country" name="country" value={v.country} maxlength="2" class="field uppercase" /></div>
+    <div><label class="label" for="region">Region / city</label><input id="region" name="region" value={v.region} class="field" /></div>
+    <div><label class="label" for="website">Website</label><input id="website" name="website" value={v.website} class="field" /></div>
+    <div><label class="label" for="tipline_email">Newsroom tip-line email</label><input id="tipline_email" name="tipline_email" type="email" value={v.tipline_email} class="field" /></div>
+    <div class="sm:col-span-2"><label class="label" for="beats">Beats (comma-separated)</label><input id="beats" name="beats" value={v.beats.join(', ')} class="field" /></div>
+    <div class="sm:col-span-2"><label class="label" for="notes">Notes</label><textarea id="notes" name="notes" rows="3" class="field text-sm">{v.notes}</textarea></div>
+    <div class="flex items-center justify-between sm:col-span-2"><button name="intent" value="save" class="btn-primary">{isNew ? 'Add outlet' : 'Save'}</button>
+      {!isNew && <button name="intent" value="delete" class="text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Delete this outlet? Its contacts are kept, without an outlet.')">Delete</button>}</div>
+  </form>
+</Admin>

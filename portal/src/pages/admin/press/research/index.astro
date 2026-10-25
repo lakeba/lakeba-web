@@ -1,0 +1,57 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PressNav from '../../../../components/PressNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime } from '../../../../lib/format';
+import { researchInBackground, type Brief } from '../../../../lib/media-research';
+import { pressAccess } from '../../../../lib/press';
+import { client as claude } from '../../../../lib/ask';
+
+// Finding journalists with Claude and web search (in the background). Each
+// candidate shows where it was found; a person approves who is added.
+if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+let error = '';
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const brief: Brief = { beats: field(form, 'beats').slice(0, 300), region: field(form, 'region').slice(0, 100), kinds: field(form, 'kinds').slice(0, 200), count: Math.min(20, Math.max(3, Number(field(form, 'count')) || 10)), notes: field(form, 'notes').slice(0, 1000) };
+  if (!claude) error = 'Research needs the Claude API key on the server.';
+  else if (brief.beats.length < 3) error = 'Say which beats or topics the journalists should cover.';
+  else {
+    const { data: running } = await svc.from('media_research_runs').select('id').eq('status', 'running').gte('created_at', new Date(Date.now() - 10 * 60_000).toISOString());
+    if ((running ?? []).length >= 2) error = 'Two searches are already running. Please wait for them to finish.';
+    else {
+      const { data: run } = await svc.from('media_research_runs').insert({ brief, created_by: me.id }).select('id').single().throwOnError();
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'press_research_started', event_detail: { id: run!.id, beats: brief.beats } });
+      researchInBackground(svc, run!.id, brief, (detail) => Astro.locals.supabase.rpc('log_event', { event_action: 'press_research_finished', event_detail: detail }));
+      return Astro.redirect(`/admin/press/research/${run!.id}`, 303);
+    }
+  }
+}
+const { data: runs } = await svc.from('media_research_runs').select('id, brief, status, candidates, created_at').order('created_at', { ascending: false }).limit(30);
+---
+
+<Admin title="Find journalists">
+  <PressNav />
+  <h1 class="font-display text-3xl font-bold">Find journalists with AI</h1>
+  <p class="mt-1 max-w-3xl text-sm text-white/55">Claude searches the web for journalists who currently cover your topics, with a recent article and the pages that show it. Emails are included only when published (it never guesses them). You review each candidate before anything is added. A search takes a minute or two; its web searches and usage are recorded in the audit log.</p>
+  {error && <div class="mt-5"><Alert tone="error">{error}</Alert></div>}
+  <form method="post" class="card mt-6 grid max-w-4xl gap-4 sm:grid-cols-2">
+    <div class="sm:col-span-2"><label class="label" for="beats">Beats or topics</label><input id="beats" name="beats" required placeholder="e.g. fintech and SME lending; proptech and fractional property investment" class="field" /></div>
+    <div><label class="label" for="region">Where</label><input id="region" name="region" value="Australia" class="field" /></div>
+    <div><label class="label" for="kinds">Kinds of outlet (optional)</label><input id="kinds" name="kinds" placeholder="e.g. national business press, trade press, newsletters" class="field" /></div>
+    <div><label class="label" for="count">How many (up to 20)</label><input id="count" name="count" type="number" min="3" max="20" value="10" class="field" /></div>
+    <div><label class="label" for="notes">Anything else (optional)</label><input id="notes" name="notes" placeholder="e.g. people who covered Ezifin or Bricklet before" class="field" /></div>
+    <div class="sm:col-span-2"><button class="btn-primary">Search</button></div>
+  </form>
+  <section class="card mt-6">
+    <h2 class="font-display text-lg font-bold">Earlier searches</h2>
+    <ul class="mt-2 divide-y divide-white/5 text-sm">
+      {(runs ?? []).map((r) => <li class="flex items-center justify-between gap-3 py-2"><a href={`/admin/press/research/${r.id}`} class="text-white/80 hover:text-lk-blue">{(r.brief as { beats: string }).beats}</a><span class="text-xs text-white/45">{r.status === 'running' ? 'searching…' : r.status === 'failed' ? 'failed' : `${(r.candidates as unknown[]).length} found`} · {dateTime.format(new Date(r.created_at))}</span></li>)}
+      {!runs?.length && <li class="py-3 text-white/45">No searches yet.</li>}
+    </ul>
+  </section>
+</Admin>

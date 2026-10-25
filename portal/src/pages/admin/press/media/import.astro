@@ -1,0 +1,96 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PressNav from '../../../../components/PressNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { CONSENT, FIELDS, guessColumns, importContacts, listOf, readTable, type Contact, type Field } from '../../../../lib/media';
+import { pressAccess } from '../../../../lib/press';
+
+// Importing a media list (CSV or Excel): 1. upload, 2. confirm which column
+// is which (guessed from the headings) and why we may email these people,
+// 3. import: outlets by name, contacts once per email, opt-outs skipped.
+if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+let error = '';
+let table: { header: string[]; rows: string[][] } | null = null;
+let guess: (Field | '')[] = [];
+let result: Awaited<ReturnType<typeof importContacts>> | null = null;
+let fileName = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const step = field(form, 'step');
+  if (step === 'upload') {
+    const file = form.get('file');
+    if (!(file instanceof File) || !file.size) error = 'Choose a .csv or .xlsx file.';
+    else {
+      const t = await readTable(file);
+      if ('error' in t) error = t.error;
+      else { table = t; guess = guessColumns(t.header); fileName = file.name; }
+    }
+  } else if (step === 'import') {
+    try {
+      table = JSON.parse(Buffer.from(field(form, 'table'), 'base64').toString('utf8'));
+      const map = table!.header.map((_h, i) => { const f = field(form, `col_${i}`); return (f in FIELDS ? f : '') as Field | ''; });
+      if (!map.includes('email')) error = 'Choose which column holds the email address.';
+      else {
+        const consent = (field(form, 'consent') in CONSENT ? field(form, 'consent') : 'published_work_address') as Contact['consent_basis'];
+        result = await importContacts(svc, table!.rows, map, { consent, tags: listOf(field(form, 'tags')), by: me.id });
+        await Astro.locals.supabase.rpc('log_event', { event_action: 'press_contacts_imported', event_detail: { file: field(form, 'file_name'), rows: table!.rows.length, ...result, problems: undefined } });
+        table = null;
+      }
+      if (error) guess = map;
+    } catch { error = 'The upload expired. Please choose the file again.'; table = null; }
+  }
+}
+const encoded = table ? Buffer.from(JSON.stringify(table)).toString('base64') : '';
+---
+
+<Admin title="Import a media list">
+  <PressNav />
+  <a href="/admin/press/media" class="text-sm text-white/50 hover:text-white">← Media database</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">Import a media list</h1>
+  <p class="mt-1 max-w-3xl text-sm text-white/55">A spreadsheet of journalists and outlets in any layout: you confirm which column is which. Contacts are kept once per email address (new details fill in what’s missing, without overwriting), outlets are created by name, and addresses that opted out are skipped.</p>
+  <div class="mt-5 space-y-3">{error && <Alert tone="error">{error}</Alert>}</div>
+
+  {result && (
+    <section class="card mt-6 space-y-2">
+      <h2 class="font-display text-lg font-bold">Imported</h2>
+      <p class="text-sm text-white/75">{result.added} added · {result.updated} updated · {result.outlets} new outlets · {result.skipped} skipped{result.optedOut ? ` · ${result.optedOut} opted out (not added)` : ''}</p>
+      {result.problems.length > 0 && <ul class="list-disc pl-5 text-xs text-lk-orange">{result.problems.map((p) => <li>{p}</li>)}</ul>}
+      <a href="/admin/press/media" class="btn-primary inline-flex">Open the media database</a>
+    </section>
+  )}
+
+  {!table && !result && (
+    <form method="post" enctype="multipart/form-data" class="card mt-6 max-w-xl space-y-4">
+      <input type="hidden" name="step" value="upload" />
+      <div><label class="label" for="file">The list (.csv or .xlsx, up to 5,000 rows)</label><input id="file" name="file" type="file" accept=".csv,.xlsx,.tsv,.txt" required class="field py-2 text-sm" /></div>
+      <button class="btn-primary">Next: check the columns</button>
+    </form>
+  )}
+
+  {table && (
+    <form method="post" class="mt-6 space-y-4">
+      <input type="hidden" name="step" value="import" /><input type="hidden" name="table" value={encoded} /><input type="hidden" name="file_name" value={fileName} />
+      <section class="card overflow-x-auto p-0">
+        <p class="px-5 pt-4 text-sm text-white/65">{table.rows.length} rows. Check what each column holds (guessed from its heading):</p>
+        <table class="mt-3 w-full text-left text-xs">
+          <thead><tr>{table.header.map((h, i) => (
+            <th class="min-w-40 px-3 py-2 align-bottom"><span class="block font-semibold text-white/80">{h}</span>
+              <select name={`col_${i}`} class="field mt-1 py-1 text-xs"><option value="">Ignore</option>{Object.entries(FIELDS).map(([k, l]) => <option value={k} selected={guess[i] === k}>{l}</option>)}</select></th>
+          ))}</tr></thead>
+          <tbody class="divide-y divide-white/5">{table.rows.slice(0, 6).map((r) => <tr>{r.map((c) => <td class="max-w-56 truncate px-3 py-1.5 text-white/60">{c}</td>)}</tr>)}</tbody>
+        </table>
+      </section>
+      <section class="card grid gap-4 sm:grid-cols-2">
+        <div><label class="label" for="consent">Why we may email these people</label><select id="consent" name="consent" class="field text-sm">{Object.entries(CONSENT).map(([k, l]) => <option value={k}>{l}</option>)}</select>
+          <p class="mt-1 text-xs text-white/40">Australia’s Spam Act allows emails to an address someone publishes for their work, about their work (and every email has an unsubscribe link).</p></div>
+        <div><label class="label" for="tags">Tag everyone in this list (optional)</label><input id="tags" name="tags" placeholder="e.g. 2026 list, tier 1" class="field" /></div>
+      </section>
+      <div class="flex gap-2"><button class="btn-primary">Import {table.rows.length} rows</button><a href="/admin/press/media/import" class="btn-ghost">Start again</a></div>
+    </form>
+  )}
+</Admin>

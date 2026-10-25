@@ -1,0 +1,40 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PressNav from '../../../../components/PressNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { type Outlet } from '../../../../lib/media';
+import { pressAccess } from '../../../../lib/press';
+
+// Media outlets: newspapers, sites, trade press, broadcasters, with their newsroom tip-line.
+if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const q = (Astro.url.searchParams.get('q') ?? '').toLowerCase();
+const { data } = await svc.from('media_outlets').select('*').order('name');
+const outlets = ((data ?? []) as Outlet[]).filter((o) => !q || `${o.name} ${o.beats.join(' ')} ${o.region}`.toLowerCase().includes(q));
+const { data: counts } = await svc.from('media_contacts').select('outlet_id').not('outlet_id', 'is', null);
+const people = new Map<string, number>();
+for (const c of counts ?? []) people.set(c.outlet_id!, (people.get(c.outlet_id!) ?? 0) + 1);
+---
+
+<Admin title="Media outlets">
+  <PressNav />
+  <div class="flex flex-wrap items-end justify-between gap-4">
+    <div><h1 class="font-display text-3xl font-bold">Outlets</h1>
+      <p class="mt-1 text-sm text-white/55">{outlets.length} outlets. A newsroom tip-line address can receive releases too, when you choose “include newsroom tip-lines”.</p></div>
+    <a href="/admin/press/outlets/new" class="btn-primary">Add an outlet</a>
+  </div>
+  <form method="get" class="mt-6 flex gap-2"><input name="q" value={q} placeholder="Search name, beat, region" class="field max-w-sm py-2" /><button class="btn-ghost py-2">Search</button></form>
+  <section class="card mt-4 overflow-x-auto p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Outlet</th><th class="px-5 py-3">Type</th><th class="px-5 py-3">Beats</th><th class="px-5 py-3">Tip-line</th><th class="px-5 py-3">Contacts</th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {outlets.map((o) => (
+          <tr><td class="px-5 py-2.5"><a href={`/admin/press/outlets/${o.id}`} class="font-medium text-white hover:text-lk-blue">{o.name}</a><span class="block text-xs text-white/40">{[o.reach, o.region, o.country].filter(Boolean).join(' · ')}</span></td>
+            <td class="px-5 py-2.5 text-white/65">{o.kind}</td><td class="px-5 py-2.5 text-xs text-white/60">{o.beats.slice(0, 4).join(', ')}</td>
+            <td class="px-5 py-2.5 text-xs text-white/60">{o.tipline_email || '–'}</td><td class="px-5 py-2.5 text-white/60"><a href={`/admin/press/media?outlet=${o.id}&status=all`} class="hover:text-lk-blue">{people.get(o.id) ?? 0}</a></td></tr>
+        ))}
+        {!outlets.length && <tr><td colspan="5" class="px-5 py-8 text-center text-white/45">No outlets yet. They’re also created when you import a list.</td></tr>}
+      </tbody>
+    </table>
+  </section>
+</Admin>
