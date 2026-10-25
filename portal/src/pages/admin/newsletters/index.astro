@@ -110,12 +110,15 @@ const statusTone: Record<string, string> = { draft: 'bg-white/10 text-white/60',
   <p class="mt-2 text-xs text-white/35">Opens are approximate: some mail apps load images for everyone (counted as opened), others block them.</p>
 
   <section class="card mt-8">
-    <h2 class="font-display text-lg font-bold">Templates</h2>
-    <p class="mt-1 text-sm text-white/55">New issues start from one of these. Save any issue as a template from its editor.</p>
+    <div class="flex flex-wrap items-end justify-between gap-3">
+      <div><h2 class="font-display text-lg font-bold">Templates</h2>
+        <p class="mt-1 text-sm text-white/55">New issues start from one of these. Save any issue as a template from its editor, or import one you like.</p></div>
+      <a href={withCompany(scope, '/admin/newsletters/templates/import')} class="btn-ghost text-sm">Import a template</a>
+    </div>
     <ul class="mt-4 divide-y divide-white/5 text-sm">
       {templates.map((t) => (
         <li class="flex flex-wrap items-center justify-between gap-3 py-2.5">
-          <span><span class="text-white/85">{t.name}</span> <span class="text-xs text-white/40">· {t.builtin_key ? 'built-in' : 'saved'} · {t.mode === 'design' ? 'designed' : t.mode === 'html' ? 'HTML' : 'composed'} · {t.audience === 'public' ? 'public' : t.entity_id ? companyName(t.entity_id) : 'all companies'}</span><span class="block text-xs text-white/45">{t.description}</span></span>
+          <span><span class="text-white/85">{t.name}</span> <span class="text-xs text-white/40">· {t.builtin_key ? 'built-in' : t.source_label ? 'imported' : 'saved'}{t.import_status === 'converting' ? ' (converting…)' : ''} · {t.mode === 'design' ? 'designed' : t.mode === 'html' ? 'HTML' : 'composed'} · {t.audience === 'public' ? 'public' : t.entity_id ? companyName(t.entity_id) : 'all companies'}</span><span class="block text-xs text-white/45">{t.description}</span></span>
           <a href={withCompany(scope, `/admin/newsletters/templates/${t.id}`)} class="btn-ghost px-3 py-1.5 text-xs">Edit</a>
         </li>
       ))}

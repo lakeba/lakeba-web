@@ -1,0 +1,146 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { adminScope, formCompany, withCompany } from '../../../../lib/admin-company';
+import { field } from '../../../../lib/forms';
+import { newsEditor } from '../../../../lib/news-editors';
+import { isFullDocument } from '../../../../lib/newsletter';
+import { compileMjml } from '../../../../lib/newsletter-design';
+import { readSource, rehostImages, screenshotForClaude, storeScreenshot, stripSender } from '../../../../lib/newsletter-import';
+import { cleanMjmlDocument, convertInBackground } from '../../../../lib/newsletter-import-ai';
+import { client as claude } from '../../../../lib/ask';
+
+// Import a newsletter template from elsewhere (see lib/newsletter-import.ts):
+// it's cleaned, its images are copied into the portal, and it becomes a
+// template, kept as HTML or turned into a design (with Claude, in the
+// background), optionally personalised for the company.
+const svc = serviceClient();
+const scope = await adminScope(Astro.locals, Astro.url);
+const editor = newsEditor(Astro.locals)!;
+const me = Astro.locals.user!;
+let error = '';
+const v = { name: '', how: 'designer', personalise: true, instructions: '', audience: 'shareholders', scope: editor.group ? 'all' : 'company', url: '' };
+
+const logoOf = (url: string | null | undefined) => (url && /^\/logos\/[\w.-]+\.(png|jpe?g|gif|webp)$/i.test(url) ? `${Astro.url.origin}${url}` : '');
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  Object.assign(v, {
+    name: field(form, 'name').slice(0, 80), how: field(form, 'how') === 'html' ? 'html' : 'designer', personalise: form.get('personalise') === 'on',
+    instructions: field(form, 'instructions').slice(0, 1500), audience: field(form, 'audience') === 'public' && editor.group ? 'public' : 'shareholders',
+    scope: field(form, 'scope') === 'all' && editor.group ? 'all' : 'company', url: field(form, 'url'),
+  });
+  const company = v.audience === 'public' ? scope.companies.find((c) => c.relationship === 'group') : v.scope === 'all' ? null : formCompany(scope, field(form, 'entity_id'));
+  const src = await readSource({ paste: String(form.get('paste') ?? ''), file: form.get('file') as File | null, url: v.url });
+  if (v.name.length < 2) error = 'Give the template a name.';
+  else if (v.audience === 'shareholders' && v.scope === 'company' && !company) error = 'Choose the company.';
+  else if ('error' in src) error = src.error;
+  else {
+    const origin = Astro.url.origin;
+    let mode: 'html' | 'design' = 'html', html_body = '', mjml = '', design_html = '', source_html = '', note = '';
+    let ai: null | { from: 'html' | 'mjml' | 'image'; source: string; screenshot?: string } = null;
+    let copied = 0, failed = 0;
+    try {
+      if (src.kind === 'image') {
+        const shot = await storeScreenshot(svc, src.image!, origin);
+        source_html = `<!doctype html><html><body style="margin:0;background:#eef2f8"><img src="${shot}" alt="The screenshot this template was made from" style="display:block;max-width:100%;margin:0 auto"></body></html>`;
+        ai = { from: 'image', source: '', screenshot: await screenshotForClaude(src.image!) };
+      } else {
+        const r = await rehostImages(svc, stripSender(src.text), origin, src.files, src.base);
+        copied = r.copied; failed = r.failed;
+        note = r.failed ? `${r.failed} image${r.failed > 1 ? 's' : ''} couldn’t be copied and were left out.` : '';
+        if (src.kind === 'mjml') {
+          mjml = cleanMjmlDocument(r.html, origin);
+          const compiled = await compileMjml(mjml);
+          if (!compiled.html) throw new Error(`That MJML couldn’t be compiled: ${compiled.errors[0] ?? 'unknown error'}`);
+          mode = 'design'; design_html = compiled.html; source_html = compiled.html;
+          if (v.personalise) ai = { from: 'mjml', source: mjml };
+        } else {
+          source_html = isFullDocument(r.html) ? r.html : `<!doctype html><html><head><meta charset="utf-8"></head><body>${r.html}</body></html>`;
+          html_body = source_html;
+          if (v.how === 'designer') ai = { from: 'html', source: source_html };
+        }
+      }
+      if (ai && !claude) throw new Error('Converting with Claude needs the API key on the server. Choose “Keep it as HTML”, or import MJML.');
+      const holdingOn = v.audience === 'shareholders';
+      const { data: t, error: e } = await svc.from('newsletter_templates').insert({
+        name: v.name, description: `Imported: ${src.label}`.slice(0, 300), audience: v.audience, entity_id: v.audience === 'public' ? null : company?.id ?? null,
+        subject: '{{company}} newsletter – {{quarter}}', preheader: '', content: { intro_html: '', sections: [], closing_html: '', post_ids: [], document_ids: [], holding: holdingOn, meetings: holdingOn },
+        mode, html_body, mjml, design_json: null, design_html, source_html, source_label: src.label.slice(0, 300),
+        import_status: ai ? 'converting' : null, import_note: note, import_started_at: ai ? new Date().toISOString() : null, created_by: me.id, updated_by: me.id,
+      }).select('id').single();
+      if (e) throw new Error(e.message);
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_imported_newsletter_template', event_detail: { id: t.id, kind: src.kind, how: ai ? 'designer' : mode, personalise: Boolean(ai && v.personalise), images_copied: copied, images_failed: failed } });
+      if (ai) {
+        const entity = company ? scope.companies.find((c) => c.id === company.id) : null;
+        convertInBackground(svc, t.id, {
+          ...ai, personalise: v.personalise, instructions: v.instructions, audience: v.audience as 'shareholders' | 'public', origin,
+          company: { name: entity && v.audience === 'shareholders' ? entity.display_name : v.audience === 'public' ? 'Lakeba Group' : '{{company}}', color: entity?.brand_color ?? '#276ae7', logo: logoOf(entity?.logo_url) },
+        }, (detail) => Astro.locals.supabase.rpc('log_event', { event_action: 'admin_converted_newsletter_template', event_detail: detail }));
+      }
+      return Astro.redirect(withCompany(scope, `/admin/newsletters/templates/${t.id}?done=imported`), 303);
+    } catch (e2) { error = (e2 as Error).message || 'That couldn’t be imported.'; }
+  }
+}
+---
+
+<Admin title="Import a newsletter template">
+  <a href={withCompany(scope, '/admin/newsletters')} class="text-sm text-white/50 hover:text-white">← All newsletters and templates</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">Import a template</h1>
+  <p class="mt-1 max-w-3xl text-sm text-white/55">Start from an email design you like: another newsletter, a template from a gallery, or a screenshot. It's cleaned up (no scripts, none of the sender's tracking or links), its images are copied into the portal, and it becomes a template you can edit. Keep only the layout of someone else's newsletter: their logo, photos and words belong to them, which is what <strong>Personalise</strong> replaces.</p>
+  {error && <div class="mt-5"><Alert tone="error">{error}</Alert></div>}
+
+  <form method="post" enctype="multipart/form-data" class="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem]" data-import-form>
+    <section class="card space-y-5">
+      <h2 class="font-display text-lg font-bold">1. The template</h2>
+      <div><label class="label" for="paste">Paste HTML or MJML</label>
+        <textarea id="paste" name="paste" rows="8" class="field font-mono text-xs" placeholder="<!doctype html>… or <mjml>…"></textarea>
+        <p class="mt-1 text-xs text-white/40">In most email programs: open the newsletter, choose “View source” or “Show original”, and copy the HTML part.</p></div>
+      <div class="grid gap-4 md:grid-cols-2">
+        <div><label class="label" for="file">…or choose a file</label>
+          <input id="file" name="file" type="file" accept=".html,.htm,.mjml,.eml,.zip,.png,.jpg,.jpeg,.webp" class="field py-2 text-sm" />
+          <p class="mt-1 text-xs text-white/40">.html, .mjml, a saved email (.eml), a .zip with its images, or a screenshot (PNG/JPEG).</p></div>
+        <div><label class="label" for="url">…or a web address</label>
+          <input id="url" name="url" type="url" value={v.url} placeholder="https://… (a newsletter’s “View in browser” link)" class="field" />
+          <p class="mt-1 text-xs text-white/40">The page is read once by the portal; nothing is shared with the sender.</p></div>
+      </div>
+
+      <h2 class="border-t border-white/5 pt-5 font-display text-lg font-bold">2. How to import it</h2>
+      <div class="space-y-2 text-sm">
+        <label class="flex gap-3"><input type="radio" name="how" value="designer" checked={v.how === 'designer'} class="mt-1 accent-lk-blue" /><span><strong class="text-white">Convert to the designer</strong> (recommended)<span class="block text-white/55">Claude rebuilds it for drag-and-drop editing. Usually looks very close to the original; check the details. Screenshots are always converted. Takes a minute or two and costs a few cents.</span></span></label>
+        <label class="flex gap-3"><input type="radio" name="how" value="html" checked={v.how === 'html'} class="mt-1 accent-lk-blue" /><span><strong class="text-white">Keep it exactly as it is</strong> (HTML)<span class="block text-white/55">Looks the same as the original; you edit it as code. No AI. (MJML always opens in the designer.)</span></span></label>
+      </div>
+      <label class="flex gap-3 text-sm"><input type="checkbox" name="personalise" checked={v.personalise} class="mt-1 accent-lk-blue" /><span><strong class="text-white">Personalise for us</strong><span class="block text-white/55">With the designer: their logo and colours become the company's, their words become [prompts] to fill in, photos become placeholders, and the portal's blocks (greeting, holding, news, documents, meetings, sign-in) are added.</span></span></label>
+      <div><label class="label" for="instructions">Anything else for Claude? (optional)</label>
+        <textarea id="instructions" name="instructions" rows="2" maxlength="1500" class="field text-sm" placeholder="e.g. keep their three-column product section for our ventures; make the header dark navy">{v.instructions}</textarea></div>
+    </section>
+
+    <aside class="space-y-4">
+      <section class="card space-y-4">
+        <h2 class="font-display text-lg font-bold">3. The new template</h2>
+        <div><label class="label" for="name">Name</label><input id="name" name="name" required minlength="2" maxlength="80" value={v.name} class="field" placeholder="e.g. Clean two-column update" /></div>
+        {editor.group && (
+          <div><label class="label" for="audience">For</label>
+            <select id="audience" name="audience" class="field"><option value="shareholders" selected={v.audience === 'shareholders'}>Shareholder newsletters</option><option value="public" selected={v.audience === 'public'}>The public newsletter</option></select></div>
+        )}
+        <div><label class="label" for="scope">Available to</label>
+          <select id="scope" name="scope" class="field">
+            {editor.group && <option value="all" selected={v.scope === 'all'}>All companies</option>}
+            <option value="company" selected={v.scope === 'company'}>One company</option>
+          </select>
+          <select name="entity_id" class="field mt-2" aria-label="Company" data-import-company>{scope.companies.filter((c) => editor.mayEdit(c.id)).map((c) => <option value={c.id} selected={c.id === scope.defaultCompany?.id}>{c.display_name}</option>)}</select></div>
+        <button class="btn-primary w-full" data-import-submit>Import</button>
+        <p class="text-xs text-white/40" data-import-wait hidden>Copying images… this can take a few seconds.</p>
+      </section>
+    </aside>
+  </form>
+  <script>
+    const f = document.querySelector<HTMLFormElement>('[data-import-form]');
+    // The company list matters only for one company's template.
+    const scopeSel = f?.querySelector<HTMLSelectElement>('#scope'), companySel = f?.querySelector<HTMLSelectElement>('[data-import-company]');
+    const showCompany = () => { if (scopeSel && companySel) companySel.hidden = scopeSel.value === 'all'; };
+    scopeSel?.addEventListener('change', showCompany); showCompany();
+    f?.addEventListener('submit', () => { const b = f.querySelector<HTMLButtonElement>('[data-import-submit]')!; b.disabled = true; b.textContent = 'Importing…'; f.querySelector<HTMLElement>('[data-import-wait]')!.hidden = false; });
+  </script>
+</Admin>

@@ -11,6 +11,9 @@ import { composeToHtml, type Company, type Issue } from '../../../../lib/newslet
 import { compileMjml, composeToMjml } from '../../../../lib/newsletter-design';
 import { designFields, issueFields } from '../../../../lib/newsletter-form';
 import { loadTemplate, mayManageTemplate, originalOf, saveTemplateVersion, type TemplateRow } from '../../../../lib/newsletter-template-store';
+import { convertInBackground } from '../../../../lib/newsletter-import-ai';
+import { screenshotForClaude } from '../../../../lib/newsletter-import';
+import { client as claude } from '../../../../lib/ask';
 
 // Editing a newsletter template with the same editor as an issue. Every save
 // keeps the previous version (the last 20); built-in templates can be restored
@@ -23,7 +26,7 @@ let t = await loadTemplate(svc, Astro.params.id!);
 if (!t || !mayManageTemplate(t, editor.mayEdit, editor.group)) return Astro.redirect(withCompany(scope, '/admin/newsletters'));
 let error = '';
 let designErrors: string[] = [];
-const notice = ({ saved: 'Template saved. New issues use it from now on; existing issues don’t change.', restored: 'Restored.', original: 'Back to the original built-in version.', copy: 'Saved as a new template.', html: 'Now in HTML mode.', compose: 'Back in compose mode.', design: 'Now in the designer.' } as Record<string, string>)[Astro.url.searchParams.get('done') ?? ''] ?? '';
+const notice = ({ saved: 'Template saved. New issues use it from now on; existing issues don’t change.', restored: 'Restored.', original: 'Back to the original built-in version.', copy: 'Saved as a new template.', converting: 'Converting again with Claude.', html: 'Now in HTML mode.', compose: 'Back in compose mode.', design: 'Now in the designer.' } as Record<string, string>)[Astro.url.searchParams.get('done') ?? ''] ?? '';
 const back = (id: string, done: string) => Astro.redirect(withCompany(scope, `/admin/newsletters/templates/${id}?done=${done}`), 303);
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
 const audience = t.audience === 'public' ? 'public' : 'shareholders';
@@ -41,7 +44,7 @@ if (Astro.request.method === 'POST') {
     const scopeChoice = field(form, 'template_scope');
     const entity_id = editor.group ? (scopeChoice === 'all' ? null : formCompany(scope, field(form, 'entity_id'))?.id ?? t.entity_id) : t.entity_id;
     const { segment: _s, ...rest } = fields;
-    const row: Record<string, unknown> = { ...rest, ...(design ? { mjml: design.mjml, design_json: design.design_json, design_html: design.design_html } : {}), name: name.slice(0, 80), description: field(form, 'template_description').slice(0, 300), entity_id, updated_by: me.id, updated_at: new Date().toISOString() };
+    const row: Record<string, unknown> = { ...rest, ...(design ? { mjml: design.mjml, design_json: design.design_json, design_html: design.design_html } : {}), name: name.slice(0, 80), description: field(form, 'template_description').slice(0, 300), entity_id, updated_by: me.id, updated_at: new Date().toISOString(), ...(t.import_status === 'converting' ? {} : { import_status: null, import_note: '' }) };
     const merged = { ...t, ...row } as TemplateRow;
     if (intent === 'to-html') {
       row.mode = 'html';
@@ -70,6 +73,26 @@ if (Astro.request.method === 'POST') {
       await log('admin_saved_newsletter_template', { id: t.id, name });
       return back(t.id, intent === 'save' ? 'saved' : intent.slice(3));
     }
+  } else if (intent === 'ai-convert' && t.source_html && t.import_status !== 'converting') {
+    // Convert (again) from the original kept at import, as a design, optionally personalised.
+    if (!claude) error = 'Converting with Claude needs the API key on the server.';
+    else {
+      const shot = /alt="The screenshot this template was made from"/.test(t.source_html) ? /src="[^"]*?\/news-media\/([^"]+)"/.exec(t.source_html)?.[1] : null;
+      let screenshot: string | undefined;
+      if (shot) { const { data } = await svc.storage.from('news-media').download(shot); if (data) screenshot = await screenshotForClaude({ data: Buffer.from(await data.arrayBuffer()) }); }
+      if (shot && !screenshot) error = 'The screenshot couldn’t be found.';
+      else {
+        await saveTemplateVersion(svc, t, me.id);
+        await svc.from('newsletter_templates').update({ import_status: 'converting', import_note: '', import_started_at: new Date().toISOString() }).eq('id', t.id);
+        const entity = scope.companies.find((c) => c.id === t!.entity_id);
+        const logo = entity?.logo_url && /^\/logos\/[\w.-]+\.(png|jpe?g|gif|webp)$/i.test(entity.logo_url) ? `${Astro.url.origin}${entity.logo_url}` : '';
+        convertInBackground(svc, t.id, {
+          from: screenshot ? 'image' : 'html', source: t.source_html, screenshot, personalise: form.get('import_personalise') === 'on', instructions: field(form, 'import_instructions').slice(0, 1500),
+          audience, origin: Astro.url.origin, company: { name: entity ? entity.display_name : audience === 'public' ? 'Lakeba Group' : '{{company}}', color: entity?.brand_color ?? '#276ae7', logo },
+        }, (detail) => Astro.locals.supabase.rpc('log_event', { event_action: 'admin_converted_newsletter_template', event_detail: detail }));
+        return back(t.id, 'converting');
+      }
+    }
   } else if (intent === 'restore-version') {
     const { data: rev } = await svc.from('newsletter_template_revisions').select('snapshot').eq('id', Number(field(form, 'revision_id'))).eq('template_id', t.id).maybeSingle();
     if (!rev) error = 'That version was not found.';
@@ -96,6 +119,9 @@ if (Astro.request.method === 'POST') {
   t = (await loadTemplate(svc, t.id))!;
 }
 
+// An import being converted: the page refreshes until it's done (a run that went quiet for 6 minutes has stopped).
+const converting = t.import_status === 'converting' && Date.now() - new Date(t.import_started_at ?? 0).getTime() < 6 * 60_000;
+const convertFailed = t.import_status === 'failed' || (t.import_status === 'converting' && !converting);
 const { data: revisions } = await svc.from('newsletter_template_revisions').select('id, saved_at, saved_by, snapshot->>name').eq('template_id', t.id).order('saved_at', { ascending: false }).limit(20);
 const authorIds = [...new Set((revisions ?? []).map((r) => r.saved_by).filter(Boolean))] as string[];
 const { data: authors } = authorIds.length ? await svc.from('profiles').select('id, email').in('id', authorIds) : { data: [] };
@@ -111,7 +137,11 @@ const record = { id: t.id, audience, entity_id: t.entity_id, subject: t.subject,
   <div class="mt-5 space-y-3">
     {notice && <Alert tone="success">{notice}</Alert>}
     {error && <Alert tone="error">{error}</Alert>}
+    {converting && <Alert tone="info">Claude is turning this template into a design (usually one to two minutes). This page updates by itself; meanwhile the preview shows {t.mode === 'html' && t.html_body ? 'the imported HTML' : 'the original'}.</Alert>}
+    {convertFailed && <Alert tone="error">The conversion didn’t finish{t.import_note ? `: ${t.import_note}` : '.'} You can try again from “Imported template” on the right{t.mode === 'html' && t.html_body ? ', or keep editing it as HTML' : ''}.</Alert>}
+    {!t.import_status && t.import_note && <Alert tone="info"><strong>Imported. Worth checking:</strong>{t.import_note.split('\n').map((n) => <span class="mt-1 block">• {n}</span>)}</Alert>}
   </div>
+  {converting && <script>setTimeout(() => location.reload(), 6000);</script>}
   <div class="mt-6">
     <NewsletterEditor kind="template" record={record} scope={scope} postOptions={[]} docOptions={[]} previewUrl={`/admin/newsletters/templates/${t.id}/preview`} brand={brand} showCompany={false} designErrors={designErrors}>
       <div slot="side" class="space-y-4">
@@ -132,6 +162,22 @@ const record = { id: t.id, audience, entity_id: t.entity_id, subject: t.subject,
           {t.builtin_key && <button name="intent" value="restore-original" class="btn-ghost w-full text-sm" onclick="return confirm('Replace this template with the original built-in version? The current one is kept in the version list.')">Restore original</button>}
           {!t.builtin_key && <button name="intent" value="delete" class="w-full text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Delete this template? Issues made from it are not affected.')">Delete template</button>}
         </section>
+        {t.source_html && (
+          <section class="card space-y-3">
+            <h2 class="font-display text-lg font-bold">Imported template</h2>
+            <p class="text-sm text-white/55">{t.source_label}</p>
+            <a href={`/admin/newsletters/templates/${t.id}/original`} target="_blank" rel="noopener" class="btn-ghost w-full text-sm">View the original ↗</a>
+            <details class="border-t border-white/5 pt-3">
+              <summary class="cursor-pointer text-sm text-lk-blue">Convert again with Claude</summary>
+              <div class="mt-3 space-y-3">
+                <p class="text-xs text-white/50">Rebuilds the design from the original. The current version is kept in “Earlier versions”.</p>
+                <label class="flex gap-2 text-sm text-white/75"><input type="checkbox" name="import_personalise" checked class="accent-lk-blue" /> Personalise for us</label>
+                <textarea name="import_instructions" rows="2" maxlength="1500" class="field text-sm" placeholder="Anything else for Claude (optional)"></textarea>
+                <button name="intent" value="ai-convert" class="btn-ghost w-full text-sm" disabled={converting} onclick="return confirm('Rebuild this template from the original with Claude? The current version is kept in Earlier versions.')">Convert again</button>
+              </div>
+            </details>
+          </section>
+        )}
         <section class="card">
           <h2 class="font-display text-lg font-bold">Earlier versions</h2>
           <ul class="mt-2 divide-y divide-white/5 text-sm">

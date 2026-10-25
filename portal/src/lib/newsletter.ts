@@ -6,7 +6,7 @@ import sanitize from 'sanitize-html';
 import { cleanHtml } from './news-cms';
 import { latestPrices } from './holdings';
 import { sendRaw } from './mail';
-import { wrapDesigned } from './newsletter-design';
+import { makeEmailSafe, wrapDesigned } from './newsletter-design';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -70,7 +70,12 @@ export const PLACEHOLDERS = ['greeting', 'first_name', 'holding', 'news', 'docum
  * HTML written by an admin for an email: layout tags and inline styles are
  * kept (emails need them); scripts, forms, frames and event handlers are not.
  */
+/** A whole email document (an imported template), rather than the body the portal frames. */
+export const isFullDocument = (html: string) => /<!doctype\s+html|<html[\s>]/i.test(html.slice(0, 2000));
+
 export function cleanEmailHtml(html: string) {
+  // A whole document keeps its <head> styles and Outlook comments, made safe the way designs are.
+  if (isFullDocument(html)) return makeEmailSafe(html);
   return sanitize(html, {
     allowedTags: ['p', 'br', 'h1', 'h2', 'h3', 'h4', 'strong', 'b', 'em', 'i', 'u', 's', 'a', 'ul', 'ol', 'li', 'blockquote', 'hr', 'span', 'div',
       'img', 'table', 'thead', 'tbody', 'tfoot', 'tr', 'th', 'td', 'center', 'small', 'sup', 'sub'],
@@ -108,14 +113,15 @@ export function renderIssue(issue: Issue, company: Company, parts: Parts, me: Pe
     meetings: blocks.meetings, portal_button: blocks.portal, company: esc(company.display_name),
   };
   const track = (doc: string) => (me.token ? doc.replace(/href="(https?:\/\/[^"]+)"/g, (_m, href) => `href="${origin}/n/c/${me.token}?u=${encodeURIComponent(href.replace(/&amp;|&#38;/g, '&')).replace(/'/g, '&#39;')}"`) : doc);
-  if (issue.mode === 'design') {
-    // A designed email is a whole document with its own header and layout (compiled, already made safe):
+  const whole = issue.mode === 'design' ? issue.design_html ?? '' : issue.mode === 'html' && isFullDocument(issue.html_body ?? '') ? cleanEmailHtml(issue.html_body ?? '') : null;
+  if (whole !== null) {
+    // A designed (or imported) email is a whole document with its own header and layout (made safe):
     // the portal fills in the placeholders, tracks links, and adds the preview text and the compulsory footer.
     const webUrl = me.token ? `${origin}/n/v/${me.token}` : null;
     const unsubUrl = me.token ? `${origin}/n/u/${me.token}` : null;
     const why = issue.audience === 'public' ? `You receive this because you subscribed to the ${brand} newsletter.` : `You receive this as a ${company.display_name} shareholder.`;
     const footer = `${esc(company.legal_name || company.display_name)}<br>${esc(why)}${unsubUrl ? ` <a href="${esc(unsubUrl)}" style="color:#6b7a90">Unsubscribe</a>.` : ''}${issue.audience === 'shareholders' ? ' Formal notices of meetings are still sent to you.' : ''}${webUrl ? ` <a href="${esc(webUrl)}" style="color:#6b7a90">View in your browser</a>.` : ''}${me.token ? `<img src="${origin}/n/o/${me.token}.gif" width="1" height="1" alt="" style="display:block;border:0">` : ''}`;
-    const html = wrapDesigned(track(fill(issue.design_html ?? '', values)), { preheader: issue.preheader, footer });
+    const html = wrapDesigned(track(fill(whole, values)), { preheader: issue.preheader, footer });
     return { html, text: textOf(html) };
   }
   let body = issue.mode === 'html'

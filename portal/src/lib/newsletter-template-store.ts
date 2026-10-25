@@ -10,8 +10,9 @@ type Svc = ReturnType<typeof serviceClient>;
 // (builtin_key), can then be edited like any other, and "Restore original"
 // puts the code's version back. Every save keeps a version (the last 20).
 
-export type TemplateRow = Template & { id: string; builtin_key: string | null; entity_id: string | null; design_json: unknown; design_html: string; mjml: string; updated_at: string; created_at: string };
-const COLS = 'id, builtin_key, name, description, audience, entity_id, subject, preheader, content, mode, html_body, mjml, design_json, design_html, created_at, updated_at';
+export type TemplateRow = Template & { id: string; builtin_key: string | null; entity_id: string | null; design_json: unknown; design_html: string; mjml: string; updated_at: string; created_at: string;
+  source_html: string; source_label: string; import_status: 'converting' | 'failed' | null; import_note: string; import_started_at: string | null };
+const COLS = 'id, builtin_key, name, description, audience, entity_id, subject, preheader, content, mode, html_body, mjml, design_json, design_html, source_html, source_label, import_status, import_note, import_started_at, created_at, updated_at';
 
 async function fromCode(t: Template) {
   return {
@@ -46,7 +47,7 @@ export const mayManageTemplate = (t: { entity_id: string | null; audience: strin
   (t.audience === 'public' || !t.entity_id ? group : mayEdit(t.entity_id));
 
 export async function saveTemplateVersion(svc: Svc, t: TemplateRow, by: string) {
-  const { builtin_key: _k, created_at: _c, ...snapshot } = t;
+  const { builtin_key: _k, created_at: _c, source_html: _s, source_label: _l, import_status: _i, import_note: _n, import_started_at: _a, ...snapshot } = t;
   await svc.from('newsletter_template_revisions').insert({ template_id: t.id, snapshot, saved_by: by });
   const { data: old } = await svc.from('newsletter_template_revisions').select('id').eq('template_id', t.id).order('saved_at', { ascending: false }).range(20, 200);
   if (old?.length) await svc.from('newsletter_template_revisions').delete().in('id', old.map((o) => o.id));
