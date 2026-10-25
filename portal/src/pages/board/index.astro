@@ -68,10 +68,11 @@ const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 
     </section>
 
     {Astro.locals.features.boardQa ? (
-    <section class="card h-fit">
-      <h2 class="text-lg font-bold">{t('New question')}</h2>
-      {error && <div class="mt-4"><Alert tone="error">{error}</Alert></div>}
-      <form method="post" class="mt-5 space-y-4">
+    <section>
+      <h2 class="mb-4 text-lg font-bold">{t('New question')}</h2>
+      <div class="card h-fit">
+      {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+      <form method="post" class="space-y-4">
         <div><label for="subject" class="label">{t('Subject')}</label><input id="subject" name="subject" maxlength="200" required class="field" /></div>
         <div><label for="body" class="label">{t('Your question')}</label><textarea id="body" name="body" rows="6" maxlength="10000" required class="field"></textarea></div>
         <label class="flex gap-3 text-sm text-white/60">
@@ -82,12 +83,13 @@ const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 
         </label>
         <button class="btn-primary w-full">{ownBoard ? t('Send to the {company} board', { company: company.display_name }) : t('Send to the board')}</button>
       </form>
+      </div>
     </section>
     ) : (
-      <section class="card h-fit">
-        <h2 class="text-lg font-bold">{t('New questions')}</h2>
-        <p class="mt-2 text-sm text-white/60">{t('Sending questions to the board isn’t available for your account.')} {t('For help, email')} <a href="mailto:info@lakeba.com" class="text-lk-blue hover:underline">info@lakeba.com</a>.</p>
-      </section>
+      <section>
+        <h2 class="mb-4 text-lg font-bold">{t('New questions')}</h2>
+        <div class="card h-fit"><p class="text-sm text-white/60">{t('Sending questions to the board isn’t available for your account.')} {t('For help, email')} <a href="mailto:info@lakeba.com" class="text-lk-blue hover:underline">info@lakeba.com</a>.</p>
+      </div></section>
     )}
   </div>
 </Portal>
