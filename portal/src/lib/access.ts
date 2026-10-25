@@ -1,5 +1,5 @@
 import type { serviceClient } from './admin';
-import { AREAS, areaOf } from './permissions';
+import { ALL_PERMISSIONS, AREAS, areaOf } from './permissions';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -76,6 +76,8 @@ export function adminMayRequest(a: Access, path: string, writing: boolean, actio
   if (a.groupAdmin) return true;
   if (GROUP_ADMIN_ONLY.some((p) => under(path, p))) return false;
   if (path.startsWith('/admin/investors/')) return !writing && a.can('investors.view', null);
+  // Approvals: for anyone who prepares or approves something; each item checks its own area.
+  if (under(path, '/admin/approvals')) return ALL_PERMISSIONS.some((p) => !p.endsWith('.view') && a.canAny(p));
   if (!a.mayOpen(path)) return false;
   if (!writing) return true;
   const area = areaOf(path);

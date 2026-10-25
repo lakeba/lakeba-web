@@ -1,0 +1,53 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import { serviceClient } from '../../../lib/admin';
+import { dateTime } from '../../../lib/format';
+import { ITEMS, STATUS_TEXT, approvalHref, mayDecide, type Approval } from '../../../lib/approvals';
+
+// Admin → Approvals: what's waiting for this person's approval, what they
+// asked to have approved, and recent decisions in the areas they can see.
+const access = Astro.locals.access;
+const me = Astro.locals.user!.id;
+const svc = serviceClient();
+const { data } = await svc.from('approvals').select('*').order('requested_at', { ascending: false }).limit(300);
+const all = ((data ?? []) as Approval[]).filter((a) => access.can(`${a.area}.view`, a.entity_id));
+const waiting = all.filter((a) => a.status === 'pending' && mayDecide(access, me, a)).reverse();
+const mine = all.filter((a) => a.requested_by === me && a.status !== 'approved');
+const others = all.filter((a) => !waiting.includes(a) && !mine.includes(a)).slice(0, 50);
+const ids = [...new Set(all.flatMap((a) => [a.requested_by, a.decided_by]).filter(Boolean))] as string[];
+const { data: people } = ids.length ? await svc.from('profiles').select('id, email').in('id', ids) : { data: [] };
+const { data: companies } = await svc.from('entities').select('id, display_name');
+const email = (id: string | null) => (people ?? []).find((p) => p.id === id)?.email ?? '—';
+const company = (id: string | null) => (companies ?? []).find((c) => c.id === id)?.display_name ?? '';
+const tone = { pending: 'text-lk-orange', approved: 'text-lk-green', changes_requested: 'text-lk-red' } as const;
+const lists = [
+  { title: 'Waiting for your approval', items: waiting, empty: 'Nothing is waiting for you.' },
+  { title: 'Asked by you', items: mine, empty: 'You have no open requests.' },
+  { title: 'Others', items: others, empty: 'Nothing yet.' },
+];
+---
+
+<Admin title="Approvals">
+  <PageHeader title="Approvals" subtitle="Approval is optional for each item. When someone asks for it, the item waits until a person with “approve” for that area says yes, and the person who asked can’t approve it themselves." />
+  <div class="space-y-6">
+    {lists.map((l) => (
+      <section class="card overflow-x-auto p-0">
+        <h2 class="px-5 pt-4 font-display text-lg font-bold">{l.title}{l.items.length > 0 && <span class="ml-2 text-sm text-white/45">{l.items.length}</span>}</h2>
+        <table class="mt-2 w-full text-left text-sm">
+          <tbody class="divide-y divide-white/5">
+            {l.items.map((a) => (
+              <tr>
+                <td class="px-5 py-2.5"><a href={approvalHref(a.item_type, a.item_id)} class="font-medium text-white hover:underline">{a.title || 'Untitled'}</a>
+                  <span class="block text-xs text-white/45">{ITEMS[a.item_type].label}{company(a.entity_id) && ` · ${company(a.entity_id)}`}</span></td>
+                <td class="px-5 py-2.5 text-xs text-white/55">asked by {email(a.requested_by)}<span class="block">{dateTime.format(new Date(a.requested_at))}</span></td>
+                <td class:list={['px-5 py-2.5 text-xs', tone[a.status]]}>{STATUS_TEXT[a.status]}{a.decided_by && <span class="block text-white/45">by {email(a.decided_by)}</span>}</td>
+              </tr>
+            ))}
+            {!l.items.length && <tr><td class="px-5 py-3 text-white/45">{l.empty}</td></tr>}
+          </tbody>
+        </table>
+      </section>
+    ))}
+  </div>
+</Admin>

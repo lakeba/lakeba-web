@@ -1,6 +1,8 @@
 ---
 import Portal from './Portal.astro';
 import { mayOpenItem } from '../lib/access';
+import { serviceClient } from '../lib/admin';
+import { waitingFor } from '../lib/approvals';
 interface Props { title: string }
 const { title } = Astro.props;
 const path = Astro.url.pathname;
@@ -42,12 +44,15 @@ const groups = [
     { href: '/admin/audit', label: 'Audit log' },
   ] },
 ];
+// Approvals: for anyone who prepares or approves; the count is what waits for them.
+const approvalsOpen = mayOpenItem(access, '/admin/approvals');
+const waitingCount = approvalsOpen ? (await waitingFor(serviceClient(), access, Astro.locals.user!.id)).length : 0;
 const active = (href: string) => (href === '/admin' ? path === '/admin' : path === href || path.startsWith(`${href}/`));
 // Only the sections this person's roles open; empty groups are left out.
 const visible = groups
   .map((g) => ({ ...g, items: g.items.filter((i) => mayOpenItem(access, i.href)) }))
   .filter((g) => g.items.length);
-const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.label ?? (path === '/admin' ? 'Overview' : title);
+const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.label ?? (path === '/admin' ? 'Overview' : active('/admin/approvals') ? 'Approvals' : title);
 ---
 
 <Portal title={`${title} · Admin`}>
@@ -65,6 +70,8 @@ const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.lab
       <nav class="mt-2 hidden text-sm lg:mt-4 lg:block" aria-label="Admin" data-admin-nav>
         {mayOpenItem(access, '/admin') && <a href="/admin" aria-current={active('/admin') ? 'page' : undefined}
           class:list={['block rounded-lg px-3 py-2 transition', active('/admin') ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>Overview</a>}
+        {approvalsOpen && <a href="/admin/approvals" aria-current={active('/admin/approvals') ? 'page' : undefined}
+          class:list={['flex items-center justify-between rounded-lg px-3 py-2 transition', active('/admin/approvals') ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>Approvals{waitingCount > 0 && <span class="rounded-full bg-lk-orange/20 px-2 text-xs text-lk-orange" aria-label={`${waitingCount} waiting`}>{waitingCount}</span>}</a>}
         {visible.map((g) => {
           const open = g.items.some((i) => active(i.href));
           return (

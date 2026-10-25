@@ -9,6 +9,8 @@ import { field } from '../../../lib/forms';
 import { dateTime } from '../../../lib/format';
 import { notifyMembers } from '../../../lib/notify';
 import { cleanHtml, markdownToHtml, markWebsiteChanged, saveRevision } from '../../../lib/news-cms';
+import { changedAfterApproval, getApproval, heldBack } from '../../../lib/approvals';
+import ApprovalChip from '../../../components/ApprovalChip.astro';
 import { newsEditor } from '../../../lib/news-editors';
 
 // The news editor: one post, public (website and every investor) or for one
@@ -20,7 +22,7 @@ const editor = newsEditor(Astro.locals, 'news', 'view')!;
 const userId = Astro.locals.user!.id;
 const isNew = Astro.params.id === 'new';
 let error = '';
-let notice = Astro.url.searchParams.get('saved') ? 'Saved.' : '';
+let notice = Astro.url.searchParams.get('reapprove') ? 'Saved. It was changed after approval, so it’s back to draft until it’s approved again.' : Astro.url.searchParams.get('saved') ? 'Saved.' : '';
 const COLUMNS = 'id, slug, title, excerpt, body_html, body_md, cover_url, share_image_url, published_at, entity_id, visibility, venture, categories, external, source_url, source_name, seo_description, notify_on_publish, notified_at, updated_at, autosave, autosave_at';
 type Post = { id: string; slug: string; title: string; excerpt: string; body_html: string; body_md: string; cover_url: string | null; share_image_url: string | null; published_at: string | null; entity_id: string; visibility: string; venture: string; categories: string[]; external: boolean; source_url: string | null; source_name: string | null; seo_description: string; notify_on_publish: boolean; notified_at: string | null; updated_at: string; autosave: Record<string, string> | null; autosave_at: string | null };
 const load = async (id: string) => (await supabase.from('posts').select(COLUMNS).eq('id', id).maybeSingle()).data as Post | null;
@@ -66,6 +68,14 @@ if (Astro.request.method === 'POST' && !locked) {
           published_at: publishedAt, notify_on_publish: notify && Boolean(publishedAt), updated_at: new Date().toISOString(), updated_by: userId,
           autosave: null, autosave_at: null,
         };
+        // Optional approval: nothing goes live until it's approved; changing an approved post asks again (and takes it back to draft).
+        const approval = post ? await getApproval(svc, 'post', post.id) : null;
+        const reapprove = Boolean(post && approval?.status === 'approved' && JSON.stringify(contentOf(row)) !== JSON.stringify(contentOf(post))
+          && (await changedAfterApproval(svc, 'post', post.id, userId, Astro.url.origin, title)));
+        if (reapprove) Object.assign(row, { published_at: null, notify_on_publish: false });
+        const held = reapprove ? null : heldBack(approval, 'post');
+        if (held && row.published_at) error = `${held} Save it as a draft for now.`;
+        else {
         const res = post
           ? await supabase.from('posts').update(row).eq('id', post.id).select('id').single()
           : await supabase.from('posts').insert({ ...row, created_by: userId }).select('id').single();
@@ -82,7 +92,8 @@ if (Astro.request.method === 'POST' && !locked) {
           }
           if (visibility === 'public' || post?.visibility === 'public') await markWebsiteChanged(svc);
           await log('admin_saved_post', { id, slug, visibility, published_at: publishedAt });
-          return Astro.redirect(withCompany(scope, `/admin/news/${id}?saved=1`), 303);
+          return Astro.redirect(withCompany(scope, `/admin/news/${id}?saved=1${reapprove ? '&reapprove=1' : ''}`), 303);
+        }
         }
       }
     }
@@ -98,7 +109,8 @@ if (Astro.request.method === 'POST' && !locked) {
       // Imported articles kept their text as Markdown: an empty HTML version means "the original".
       const body = rev.body_html || (await markdownToHtml(post.body_md || ''));
       const content = { title: rev.title, excerpt: rev.excerpt, body_html: body, seo_description: rev.seo_description, cover_url: rev.cover_url };
-      await supabase.from('posts').update({ ...content, body_md: '', updated_at: new Date().toISOString(), updated_by: userId, autosave: null, autosave_at: null }).eq('id', post.id).throwOnError();
+      const reapprove = await changedAfterApproval(svc, 'post', post.id, userId, Astro.url.origin, rev.title);
+      await supabase.from('posts').update({ ...content, body_md: '', updated_at: new Date().toISOString(), updated_by: userId, autosave: null, autosave_at: null, ...(reapprove ? { published_at: null, notify_on_publish: false } : {}) }).eq('id', post.id).throwOnError();
       await saveRevision(svc, post.id, content, userId, 'restore');
       if (post.visibility === 'public') await markWebsiteChanged(svc);
       await log('admin_restored_post_version', { slug: post.slug, from: rev.saved_at });
@@ -121,6 +133,7 @@ const hasAutosave = Boolean(post?.autosave && post.autosave_at && post.autosave_
 const localDate = (iso: string | null | undefined) => (iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '');
 const defaultCompany = post?.entity_id ?? scope.defaultCompany?.id;
 const companyNames = Object.fromEntries(scope.companies.map((c) => [c.id, c.display_name]));
+const postApproval = post ? await getApproval(svc, 'post', post.id) : null;
 ---
 
 <Admin title={post ? `Edit: ${post.title}` : 'New post'}>
@@ -128,6 +141,7 @@ const companyNames = Object.fromEntries(scope.companies.map((c) => [c.id, c.disp
     <div>
       <a href={withCompany(scope, '/admin/news')} class="text-sm text-white/50 hover:text-white">← All news</a>
       <h1 class="mt-2 font-display text-3xl font-bold">{post ? post.title : 'New post'}</h1>
+      {post && <div class="mt-2"><ApprovalChip type="post" id={post.id} approval={postApproval} /></div>}
       {post && <p class="mt-1 text-sm text-white/45">{state === 'live' ? `Published ${dateTime.format(new Date(post.published_at!))}` : state === 'scheduled' ? `Scheduled for ${dateTime.format(new Date(post.published_at!))}` : 'Draft'} · last saved {dateTime.format(new Date(post.updated_at))}{post.visibility === 'public' && state === 'live' && <> · <a href={`/news/${post.slug}`} target="_blank" class="text-lk-blue hover:underline">view in the portal ↗</a></>}</p>}
     </div>
   </div>

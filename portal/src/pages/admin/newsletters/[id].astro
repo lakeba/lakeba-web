@@ -1,4 +1,6 @@
 ---
+import { changedAfterApproval, getApproval, heldBack, sameContent } from '../../../lib/approvals';
+import ApprovalChip from '../../../components/ApprovalChip.astro';
 import Admin from '../../../layouts/Admin.astro';
 import Alert from '../../../components/Alert.astro';
 import CompanySelect from '../../../components/CompanySelect.astro';
@@ -25,7 +27,7 @@ const me = Astro.locals.user!;
 const isNew = Astro.params.id === 'new';
 let error = '';
 let designErrors: string[] = [];
-const notice = ({ saved: 'Saved.', test: 'Test email sent to you.', sending: 'Sending has started. It takes a few minutes; this page shows progress.', scheduled: 'Scheduled.', cancelled: 'Schedule cancelled; the issue is a draft again.', template: 'Saved as a template.', html: 'Now in HTML mode.', compose: 'Back in compose mode.', design: 'Now in the designer: drag blocks from the panel on the right.' } as Record<string, string>)[Astro.url.searchParams.get('done') ?? ''] ?? '';
+const notice = ({ saved: 'Saved.', test: 'Test email sent to you.', sending: 'Sending has started. It takes a few minutes; this page shows progress.', scheduled: 'Scheduled.', cancelled: 'Schedule cancelled; the issue is a draft again.', template: 'Saved as a template.', reapprove: 'Saved. It was changed after approval, so it needs approving again (and any schedule was cancelled).', html: 'Now in HTML mode.', compose: 'Back in compose mode.', design: 'Now in the designer: drag blocks from the panel on the right.' } as Record<string, string>)[Astro.url.searchParams.get('done') ?? ''] ?? '';
 const companyCols = 'id, code, display_name, legal_name, brand_color, relationship, shareholder_mailbox';
 type Row = Issue & { started_at: string | null; updated_at: string; mode: 'compose' | 'html' | 'design'; html_body: string; mjml: string; design_json: unknown; design_html: string };
 const load = async (id: string) => (await svc.from('newsletter_issues').select('*').eq('id', id).maybeSingle()).data as Row | null;
@@ -93,8 +95,14 @@ if (Astro.request.method === 'POST') {
           row.design_html = (await compileMjml(String(row.mjml))).html;
         }
       }
+      // Optional approval: changing an approved issue asks again and cancels its schedule.
+      const content = ['subject', 'preheader', 'mode', 'html_body', 'content', 'mjml', 'design_html'];
+      const changed = content.some((k) => k in row && !sameContent(row[k], (issue as Record<string, unknown>)[k]));
+      const reapprove = changed && (await changedAfterApproval(svc, 'newsletter', issue.id, me.id, Astro.url.origin, String(row.subject ?? issue.subject)));
+      if (reapprove && issue.status === 'scheduled' && !issue.started_at) Object.assign(row, { status: 'draft', scheduled_at: null });
       await svc.from('newsletter_issues').update(row).eq('id', issue.id).throwOnError();
       issue = await load(issue.id);
+      if (reapprove && intent === 'save') return back(issue!.id, 'reapprove');
       await log('admin_saved_newsletter', { id: issue!.id, mode: issue!.mode, subject: issue!.subject });
       if (intent === 'save') return back(issue!.id, 'saved');
       if (intent === 'to-html') return back(issue!.id, 'html');
@@ -121,6 +129,8 @@ if (Astro.request.method === 'POST') {
         await sendRaw({ to: Astro.locals.profile!.email, subject: `[Test] ${issue!.subject}`, html, text, replyTo: comp.shareholder_mailbox ?? undefined });
         await log('admin_tested_newsletter', { id: issue!.id });
         return back(issue!.id, 'test');
+      } else if ((intent === 'schedule' || intent === 'send') && heldBack(await getApproval(svc, 'newsletter', issue!.id), 'newsletter')) {
+        error = heldBack(await getApproval(svc, 'newsletter', issue!.id), 'newsletter')!;
       } else if (intent === 'schedule') {
         const at = parseLocal(field(form, 'scheduled_at'));
         if (!at || at <= new Date().toISOString()) error = 'Choose a time in the future.';
@@ -176,11 +186,13 @@ const pct = (n: number) => (sent ? `${Math.round((n / sent) * 100)}%` : '—');
 const localDate = (iso: string | null | undefined) => (iso ? new Date(new Date(iso).getTime() - new Date().getTimezoneOffset() * 60_000).toISOString().slice(0, 16) : '');
 const brand = scope.companies.find((c) => c.id === entityId)?.brand_color ?? '#276ae7';
 const pickable = templates.filter((t) => t.audience !== 'public' || editor.group);
+const issueApproval = issue ? await getApproval(svc, 'newsletter', issue.id) : null;
 ---
 
 <Admin title={issue?.subject || 'New newsletter'}>
   <a href={withCompany(scope, '/admin/newsletters')} class="text-sm text-white/50 hover:text-white">← All newsletters</a>
   <h1 class="mt-2 font-display text-3xl font-bold">{isNew ? 'New newsletter issue' : issue?.subject || 'Untitled issue'}</h1>
+  {issue && <div class="mt-2"><ApprovalChip type="newsletter" id={issue.id} approval={issueApproval} /></div>}
   {issue && <p class="mt-1 text-sm text-white/45">{issue.audience === 'public' ? 'Public newsletter' : `${scope.companies.find((c) => c.id === issue!.entity_id)?.display_name ?? ''} shareholders`} · {issue.status}{issue.status === 'scheduled' && issue.scheduled_at && ` for ${dateTime.format(new Date(issue.scheduled_at))}`}{issue.sent_at && ` · finished ${dateTime.format(new Date(issue.sent_at))}`}</p>}
   <div class="mt-5 space-y-3">
     {notice && <Alert tone="success">{notice}</Alert>}

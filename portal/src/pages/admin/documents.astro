@@ -11,6 +11,9 @@ import { pdfChunks } from '../../lib/pdf-text';
 import { buildKnowledgeBase, NEWS_FROM } from '../../lib/knowledge';
 import { askEnabled, askName } from '../../lib/ask';
 import { adminScope, formCompany } from '../../lib/admin-company';
+import { serviceClient } from '../../lib/admin';
+import { approvalsFor, getApproval, heldBack, requestApproval } from '../../lib/approvals';
+import ApprovalChip from '../../components/ApprovalChip.astro';
 import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import CompanySelect from '../../components/CompanySelect.astro';
 
@@ -63,7 +66,9 @@ if (Astro.request.method === 'POST') {
     else if (!title || !categories.includes(category) || !(audience in audiences)) error = 'Fill in the title, category and audience.';
     else if (audience === 'holder' && !holderId) error = 'Choose the holder this document is for.';
     else {
-      const publishedAt = when === 'now' ? new Date().toISOString() : when === 'schedule' ? parseLocal(field(form, 'publish_at')) : null;
+      // Optional approval: the document waits as a draft until it's approved.
+      const needsApproval = form.get('needs_approval') === 'on';
+      const publishedAt = needsApproval ? null : when === 'now' ? new Date().toISOString() : when === 'schedule' ? parseLocal(field(form, 'publish_at')) : null;
       const path = `entity/${company.id}/${category}/${new Date().getFullYear()}/${crypto.randomUUID()}-${safeName(file.name)}`;
       const bytes = new Uint8Array(await file.arrayBuffer());
       const { error: uploadError } = await supabase.storage.from('documents').upload(path, bytes, { contentType: file.type || 'application/octet-stream' });
@@ -83,8 +88,10 @@ if (Astro.request.method === 'POST') {
         } else {
           const passages = file.type === 'application/pdf' ? await indexPdf(doc.id, bytes) : 0;
           await supabase.rpc('log_event', { event_action: 'admin_uploaded_document', event_detail: { document_id: doc.id, title } });
-          if (when === 'now' && audience === 'all_investors') await announce(title, summary, company.id, shared);
-          notice = `Uploaded “${title}”${passages ? ` (${passages} passages indexed for search)` : ''}.`;
+          if (when === 'now' && audience === 'all_investors' && !needsApproval) await announce(title, summary, company.id, shared);
+          const asked = needsApproval ? await requestApproval(serviceClient(), Astro.locals.access, Astro.locals.user!.id, { type: 'document', id: doc.id, entityId: company.id, title, note: field(form, 'approval_note'), origin: Astro.url.origin }) : null;
+          if (needsApproval && !asked) await supabase.rpc('log_event', { event_action: 'approval_requested', event_detail: { item_type: 'document', item_id: doc.id, title } });
+          notice = `Uploaded “${title}”${passages ? ` (${passages} passages indexed for search)` : ''}.${needsApproval ? (asked ? ` It’s a draft: ${asked}` : ' It’s a draft until it’s approved; approvers have been told.') : ''}`;
         }
       }
     }
@@ -95,6 +102,8 @@ if (Astro.request.method === 'POST') {
       await supabase.rpc('log_event', { event_action: intent === 'kb-on' ? 'admin_added_to_ask' : 'admin_removed_from_ask', event_detail: { document_id: id, title: doc.title } });
       notice = intent === 'kb-on' ? `“${doc.title}” is now used by Ask Lakeba.` : `Ask Lakeba no longer uses “${doc.title}”.`;
     }
+  } else if (intent === 'publish' && heldBack(await getApproval(serviceClient(), 'document', id), 'document')) {
+    error = heldBack(await getApproval(serviceClient(), 'document', id), 'document')!;
   } else if (intent === 'publish' || intent === 'unpublish') {
     const { data: doc } = await supabase.from('documents')
       .update({ published_at: intent === 'publish' ? new Date().toISOString() : null }).eq('id', id).select('title, summary, audience, entity_id, shared_with_group').single();
@@ -138,6 +147,7 @@ const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.di
 const groupCompany = scope.companies.find((c) => c.relationship === 'group');
 const kbCost = { warm: (kb.approxTokens * 0.2 + 1500 * 20) / 1e6, cold: (kb.approxTokens * 8 + 1500 * 20) / 1e6 };
 const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+const docApprovals = await approvalsFor(serviceClient(), 'document', (docs ?? []).map((d) => d.id));
 ---
 
 <Admin title="Documents">
@@ -172,6 +182,8 @@ const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD',
       <div><label class="label" for="publish_at">Scheduled time</label><input class="field" id="publish_at" name="publish_at" type="datetime-local" /></div>
       <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="in_knowledge_base" checked class="size-4 accent-lk-blue" /> Use in Ask (ignored for registers, which are never used)</label>
       {groupCompany && scope.companies.length > 1 && <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="shared_with_group" class="size-4 accent-lk-blue" /> Also share with Lakeba Group shareholders (venture documents only, e.g. a venture’s annual report)</label>}
+      <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="needs_approval" class="size-4 accent-lk-blue" /> Ask for approval before it’s published (optional; it stays a draft until approved)</label>
+      <div class="sm:col-span-2"><label class="label" for="approval_note">Note for the approver (optional)</label><input class="field" id="approval_note" name="approval_note" maxlength="1000" /></div>
       <div class="sm:col-span-2"><button name="intent" value="upload" class="btn-primary">Upload</button></div>
     </form>
   </details>
@@ -187,7 +199,7 @@ const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD',
               <tr>
                 <td class="px-5 py-3"><a href={`/documents/${d.id}`} class="font-medium text-white hover:underline">{d.title}</a><span class="block text-xs text-white/40">{scope.companies.length > 1 && `${companyName(d.entity_id)} · `}{categoryLabels[d.category]} · {fileSize(d.size_bytes)}{d.in_knowledge_base && d.audience === 'all_investors' && <span class="ml-1 rounded-full bg-lk-blue/15 px-2 py-0.5 text-lk-blue">Ask</span>}{d.shared_with_group && <span class="ml-1 rounded-full bg-white/10 px-2 py-0.5 text-white/60">Shared with group</span>}</span></td>
                 <td class="px-5 py-3 text-white/60">{d.audience === 'holder' ? (d.holders as { name: string } | null)?.name : audiences[d.audience as keyof typeof audiences]}</td>
-                <td class="px-5 py-3"><span class={`rounded-full px-2.5 py-0.5 text-xs ${statusStyle[s]}`}>{s}</span>{d.published_at && <span class="mt-1 block text-xs text-white/40">{dateTime.format(new Date(d.published_at))}</span>}</td>
+                <td class="px-5 py-3"><span class={`rounded-full px-2.5 py-0.5 text-xs ${statusStyle[s]}`}>{s}</span> <ApprovalChip type="document" id={d.id} approval={docApprovals.get(d.id) ?? null} compact />{d.published_at && <span class="mt-1 block text-xs text-white/40">{dateTime.format(new Date(d.published_at))}</span>}</td>
                 <td class="px-5 py-3 text-right text-white/70">{readCount.get(d.id) ?? 0}</td>
                 <td class="px-5 py-3">
                   <form method="post" class="flex justify-end gap-3 text-xs">

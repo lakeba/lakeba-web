@@ -4,6 +4,8 @@ import PageHeader from '../../components/PageHeader.astro';
 import Alert from '../../components/Alert.astro';
 import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
+import { approvalsFor, getApproval, heldBack } from '../../lib/approvals';
+import ApprovalChip from '../../components/ApprovalChip.astro';
 import { adminScope, withCompany } from '../../lib/admin-company';
 import { displayName } from '../../lib/admin-forms';
 import { notifyMembers } from '../../lib/notify';
@@ -79,6 +81,9 @@ if (company && Astro.request.method === 'POST') {
       await log('admin_cancelled_trade_pairing', { match_id: m.id });
       for (const i of [sell, buy]) await tell(i, 'A trading pairing was cancelled', `The pairing of ${fmtShares.format(Number(m.shares))} shares was cancelled. Your interest is open again for those shares.`);
       notice = 'Pairing cancelled; both interests are open again for those shares.';
+    } else if (heldBack(await getApproval(svc, 'trade', m.id), 'trade')) {
+      // Optional approval (e.g. by Compliance): the transfer waits for it.
+      error = heldBack(await getApproval(svc, 'trade', m.id), 'trade')!;
     } else {
       const on = field(form, 'completed_on') || today;
       const [sellerHas, buyerHas] = await Promise.all([latestShares(svc, sell.holder_id, m.share_class_id), latestShares(svc, buy.holder_id, m.share_class_id)]);
@@ -127,6 +132,7 @@ const userIds = [...new Set((rows ?? []).map((r) => r.user_id).filter(Boolean))]
 if (userIds.length) for (const p of (await svc.from('profiles').select('id, email, first_name, last_name').in('id', userIds)).data ?? []) people.set(p.id, p);
 const interests = (rows ?? []).map((r) => ({ ...r, profiles: people.get(r.user_id) ?? null })) as unknown as Row[];
 const matches = (matchRows ?? []) as Match[];
+const tradeApprovals = await approvalsFor(svc, 'trade', matches.map((m) => m.id));
 const { available } = fills(matches);
 const byId = new Map(interests.map((i) => [i.id, i]));
 const className = new Map((classRows ?? []).map((c) => [c.id, c.name]));
@@ -190,7 +196,7 @@ const statusTone: Record<string, string> = { open: 'bg-white/10 text-white/70', 
                   <td class="px-5 py-3 text-right tabular-nums">{fmtShares.format(Number(m.shares))}</td>
                   <td class="px-5 py-3 text-right tabular-nums">{audPrecise.format(Number(m.price))}</td>
                   <td class="px-5 py-3 text-right tabular-nums text-white/60">{aud.format(Number(m.shares) * Number(m.price))}</td>
-                  <td class="px-5 py-3 text-white/60">{m.status === 'approved' ? 'Arranging transfer' : m.status === 'completed' ? `Completed ${shortDate.format(new Date(m.completed_on!))}` : 'Cancelled'}</td>
+                  <td class="px-5 py-3 text-white/60">{m.status === 'approved' ? 'Arranging transfer' : m.status === 'completed' ? `Completed ${shortDate.format(new Date(m.completed_on!))}` : 'Cancelled'}{m.status === 'approved' && <span class="mt-1 block"><ApprovalChip type="trade" id={m.id} approval={tradeApprovals.get(m.id) ?? null} compact /></span>}</td>
                   <td class="px-5 py-3">{m.status === 'approved' && (
                     <div class="flex flex-col items-end gap-2">
                       <form method="post" class="flex flex-wrap items-center justify-end gap-2" onsubmit="return confirm('Complete this transfer and update the register for both holders?')">

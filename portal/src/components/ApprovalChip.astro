@@ -1,0 +1,11 @@
+---
+import { STATUS_TEXT, approvalHref, type Approval, type ItemType } from '../lib/approvals';
+
+// An item's approval at a glance, linking to its approval page (ask, approve, history).
+interface Props { type: ItemType; id: string; approval: Approval | null; compact?: boolean }
+const { type, id, approval, compact = false } = Astro.props;
+const tone = !approval ? 'border-white/10 text-white/55' : approval.status === 'approved' ? 'border-lk-green/30 text-lk-green' : approval.status === 'pending' ? 'border-lk-orange/30 text-lk-orange' : 'border-lk-red/30 text-lk-red';
+---
+<a href={approvalHref(type, id)} class:list={['inline-flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs hover:bg-white/5', tone]} data-approval={approval?.status ?? 'none'}>
+  {approval ? STATUS_TEXT[approval.status] : compact ? 'Approval' : 'Ask for approval (optional)'}
+</a>

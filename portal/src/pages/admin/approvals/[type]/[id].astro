@@ -1,0 +1,117 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime } from '../../../../lib/format';
+import { ITEMS, STATUS_TEXT, decide, getApproval, loadItem, mayAsk, mayDecide, requestApproval, withdrawApproval, type ItemType } from '../../../../lib/approvals';
+
+// One item's approval: what it is, where it stands, and (depending on the
+// person's roles) asking for approval, withdrawing the request, approving it
+// or asking for changes. The person who asked can't approve.
+const access = Astro.locals.access;
+const me = Astro.locals.user!.id;
+const type = Astro.params.type as ItemType;
+if (!(type in ITEMS)) return new Response('Not found', { status: 404 });
+const svc = serviceClient();
+const item = await loadItem(svc, type, Astro.params.id!);
+const area = ITEMS[type].area;
+if (!item || !access.can(`${area}.view`, item.entityId)) return new Response('Not found', { status: 404 });
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { item_type: type, item_id: item.id, title: item.title, ...detail } });
+let error = '', notice = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const current = await getApproval(svc, type, item.id);
+  const note = field(form, 'note');
+  if (intent === 'ask') {
+    if (current?.status === 'pending') error = 'This is already waiting for approval.';
+    else {
+      error = (await requestApproval(svc, access, me, { type, id: item.id, entityId: item.entityId, title: item.title, note, origin: Astro.url.origin })) ?? '';
+      if (!error) {
+        await log('approval_requested', { note });
+        notice = 'Approval asked for. Approvers have been told.';
+        // Something scheduled to go live waits for the approval instead.
+        if (type === 'document' || type === 'post') {
+          const { data: unscheduled } = await svc.from(type === 'document' ? 'documents' : 'posts').update({ published_at: null }).eq('id', item.id).gt('published_at', new Date().toISOString()).select('id');
+          if (unscheduled?.length) notice += ' Its scheduled publishing was cancelled: publish it once it’s approved.';
+        }
+      }
+    }
+  } else if (intent === 'withdraw' && current) {
+    error = (await withdrawApproval(svc, access, current)) ?? '';
+    if (!error) { await log('approval_withdrawn'); notice = 'Request withdrawn: this no longer needs approval.'; }
+  } else if ((intent === 'approve' || intent === 'changes') && current) {
+    error = (await decide(svc, access, me, current, { decision: intent === 'approve' ? 'approved' : 'changes_requested', note, origin: Astro.url.origin })) ?? '';
+    if (!error) { await log(intent === 'approve' ? 'approval_given' : 'approval_changes_requested', { note }); notice = intent === 'approve' ? 'Approved. They’ve been told.' : 'Sent back with your note.'; }
+  }
+}
+
+const a = await getApproval(svc, type, item.id);
+const ids = [a?.requested_by, a?.decided_by].filter(Boolean) as string[];
+const { data: people } = ids.length ? await svc.from('profiles').select('id, email, first_name, last_name').in('id', ids) : { data: [] };
+const who = (id: string | null) => { const p = (people ?? []).find((x) => x.id === id); return p ? [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email : 'someone'; };
+const { data: company } = item.entityId ? await svc.from('entities').select('display_name').eq('id', item.entityId).maybeSingle() : { data: null };
+const { data: history } = await svc.from('audit_log').select('action, created_at, user_id, detail').like('action', 'approval_%').eq('detail->>item_id', item.id).order('created_at', { ascending: false }).limit(30);
+const histIds = [...new Set((history ?? []).map((h) => h.user_id).filter(Boolean))] as string[];
+const { data: histPeople } = histIds.length ? await svc.from('profiles').select('id, email').in('id', histIds) : { data: [] };
+const ACTION: Record<string, string> = { approval_requested: 'asked for approval', approval_withdrawn: 'withdrew the request', approval_given: 'approved', approval_changes_requested: 'asked for changes' };
+const canAsk = mayAsk(access, type, item.entityId) && a?.status !== 'pending' && a?.status !== 'approved';
+const canDecide = Boolean(a && a.status === 'pending' && mayDecide(access, me, a));
+const ownRequest = Boolean(a && a.status === 'pending' && a.requested_by === me && access.can(`${area}.approve`, item.entityId));
+---
+
+<Admin title={`Approval: ${item.title}`}>
+  <a href="/admin/approvals" class="text-sm text-white/50 hover:text-white">← Approvals</a>
+  <p class="eyebrow mt-3">{ITEMS[type].label}{company && ` · ${company.display_name}`}</p>
+  <h1 class="mt-1 font-display text-3xl font-bold">{item.title}</h1>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+
+  <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
+    <section class="card space-y-4">
+      <ul class="space-y-1 text-sm text-white/70">{item.facts.map((f) => <li>{f}</li>)}</ul>
+      <div class="flex flex-wrap gap-2">
+        <a href={item.open} class="btn-ghost text-sm">Open the {ITEMS[type].label.toLowerCase()}</a>
+        {item.preview && <a href={item.preview} target="_blank" rel="noopener" class="btn-ghost text-sm">Preview</a>}
+      </div>
+      <h2 class="pt-2 font-display text-lg font-bold">History</h2>
+      <ul class="divide-y divide-white/5 text-sm">
+        {(history ?? []).map((h) => (
+          <li class="py-2"><span class="text-white/85">{(histPeople ?? []).find((p) => p.id === h.user_id)?.email ?? 'Someone'}</span> <span class="text-white/60">{ACTION[h.action] ?? h.action}</span>
+            <span class="block text-xs text-white/40">{dateTime.format(new Date(h.created_at))}{(h.detail as { note?: string })?.note && ` · “${(h.detail as { note: string }).note}”`}</span></li>
+        ))}
+        {!history?.length && <li class="py-2 text-white/45">Nothing yet.</li>}
+      </ul>
+    </section>
+
+    <aside class="space-y-4">
+      <section class="card space-y-3">
+        <h2 class="font-display text-lg font-bold">{a ? STATUS_TEXT[a.status] : 'No approval needed'}</h2>
+        {!a && <p class="text-sm text-white/55">Approval is optional. Ask for it and {ITEMS[type].holds} waits until someone with “approve” for {ITEMS[type].label.toLowerCase()}s says yes.</p>}
+        {a && <p class="text-sm text-white/60">Asked by {who(a.requested_by)}, {dateTime.format(new Date(a.requested_at))}{a.note && <>: “{a.note}”</>}</p>}
+        {a?.decided_at && <p class="text-sm text-white/60">{a.status === 'approved' ? 'Approved' : 'Sent back'} by {who(a.decided_by)}, {dateTime.format(new Date(a.decided_at))}{a.decision_note && <>: “{a.decision_note}”</>}</p>}
+        {a?.status === 'pending' && <p class="text-sm text-lk-orange">Until then, {ITEMS[type].holds} is held back.</p>}
+        {a?.status === 'approved' && <p class="text-sm text-lk-green">Go ahead with {ITEMS[type].holds}. Changing it asks for approval again.</p>}
+        {ownRequest && <p class="text-xs text-white/45">You asked for this one, so someone else has to approve it.</p>}
+      </section>
+      {canDecide && (
+        <form method="post" class="card space-y-3">
+          <h2 class="font-display text-lg font-bold">Your decision</h2>
+          <div><label class="label" for="dnote">Note (needed when asking for changes)</label><textarea id="dnote" name="note" rows="3" maxlength="1000" class="field"></textarea></div>
+          <div class="flex gap-2"><button name="intent" value="approve" class="btn-primary">Approve</button><button name="intent" value="changes" class="btn-ghost">Ask for changes</button></div>
+        </form>
+      )}
+      {canAsk && (
+        <form method="post" class="card space-y-3">
+          <h2 class="font-display text-lg font-bold">{a ? 'Ask for approval again' : 'Ask for approval'}</h2>
+          <div><label class="label" for="anote">Note for the approver (optional)</label><textarea id="anote" name="note" rows="3" maxlength="1000" class="field" placeholder="e.g. please check the figures in the second paragraph"></textarea></div>
+          <button name="intent" value="ask" class="btn-primary w-full">Ask for approval</button>
+        </form>
+      )}
+      {a && (access.can(`${area}.approve`, item.entityId) || (a.status === 'pending' && mayAsk(access, type, item.entityId))) && (
+        <form method="post"><button name="intent" value="withdraw" class="w-full text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Withdraw the request? It will no longer need approval.')">Withdraw the request (no approval needed)</button></form>
+      )}
+    </aside>
+  </div>
+</Admin>

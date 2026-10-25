@@ -6,6 +6,9 @@ import { field } from '../../../lib/forms';
 import { displayName, parseLocal, toLocalInput } from '../../../lib/admin-forms';
 import { dateTime, shares } from '../../../lib/format';
 import { notifyMembers } from '../../../lib/notify';
+import { serviceClient } from '../../../lib/admin';
+import { changedAfterApproval, getApproval, heldBack } from '../../../lib/approvals';
+import ApprovalChip from '../../../components/ApprovalChip.astro';
 
 const { id } = Astro.params;
 const supabase = Astro.locals.supabase;
@@ -18,15 +21,24 @@ const log = (action: string, detail: Record<string, unknown> = {}) => supabase.r
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = field(form, 'intent');
+  // Optional approval: opening proxy voting and publishing results wait for it; changing the meeting or its resolutions asks again.
+  const svc = serviceClient();
+  const reapprove = () => changedAfterApproval(svc, 'meeting', id!, Astro.locals.user!.id, Astro.url.origin);
   if (intent === 'save-meeting') {
-    const { data: before } = await supabase.from('meetings').select('status, title, entity_id').eq('id', id!).single();
+    const { data: before } = await supabase.from('meetings').select('status, title, entity_id, starts_at, proxy_deadline, location, notice_document_id, minutes_document_id').eq('id', id!).single();
     const status = statuses.includes(field(form, 'status')) ? field(form, 'status') : 'upcoming';
-    const { error: e } = await supabase.from('meetings').update({
+    const next = {
       title: field(form, 'title'), starts_at: parseLocal(field(form, 'starts_at')), proxy_deadline: parseLocal(field(form, 'proxy_deadline')),
       location: field(form, 'location') || null, livestream_url: field(form, 'livestream_url') || null, status,
       notice_document_id: field(form, 'notice_document_id') || null, minutes_document_id: field(form, 'minutes_document_id') || null,
-    }).eq('id', id!);
-    if (e) error = e.code === '23514' ? 'The proxy deadline must be before the meeting starts.' : e.message;
+    };
+    const same = (a: unknown, b: unknown) => (a && b && typeof a === 'string' && typeof b === 'string' && !Number.isNaN(Date.parse(a)) && !Number.isNaN(Date.parse(b)) ? Date.parse(a) === Date.parse(b) : (a ?? null) === (b ?? null));
+    const changed = Boolean(before) && (['title', 'starts_at', 'proxy_deadline', 'location', 'notice_document_id', 'minutes_document_id'] as const).some((k) => !same(before![k], next[k]));
+    if (changed) await reapprove();
+    const held = ['open', 'results'].includes(status) && before?.status !== status ? heldBack(await getApproval(svc, 'meeting', id!), 'meeting') : null;
+    const { error: e } = held ? { error: null } : await supabase.from('meetings').update(next).eq('id', id!);
+    if (held) error = held;
+    else if (e) error = e.code === '23514' ? 'The proxy deadline must be before the meeting starts.' : e.message;
     else {
       await log('admin_updated_meeting', { status });
       if (status === 'open' && before?.status !== 'open') {
@@ -43,13 +55,15 @@ if (Astro.request.method === 'POST') {
       kind: field(form, 'kind') === 'special' ? 'special' : 'ordinary',
     });
     if (e) error = e.code === '23505' ? 'That resolution number is already used.' : e.message;
-    else { await log('admin_added_resolution'); notice = 'Resolution added.'; }
+    else { await log('admin_added_resolution'); await reapprove(); notice = 'Resolution added.'; }
   } else if (intent === 'outcome') {
     await supabase.from('resolutions').update({ outcome: field(form, 'outcome') || null }).eq('id', field(form, 'resolution_id')).throwOnError();
     await log('admin_set_outcome', { resolution_id: field(form, 'resolution_id'), outcome: field(form, 'outcome') });
+    await reapprove();
     notice = 'Outcome saved.';
   } else if (intent === 'delete-resolution') {
     await supabase.from('resolutions').delete().eq('id', field(form, 'resolution_id')).throwOnError();
+    await reapprove();
     notice = 'Resolution deleted.';
   } else if (intent === 'answer') {
     const { data: answered } = await supabase.from('meeting_questions').update({ answer: field(form, 'answer'), answered_at: new Date().toISOString() }).eq('id', field(form, 'question_id')).select('user_id, meetings(title, entity_id)').single().throwOnError();
@@ -71,6 +85,7 @@ if (!m) return new Response('Not found', { status: 404 });
 
 type Tally = { resolution_id: string; vote: 'for' | 'against' | 'abstain'; holders: number; shares: number };
 const votesFor = (rid: string, vote: Tally['vote']) => ((tally ?? []) as Tally[]).find((t) => t.resolution_id === rid && t.vote === vote);
+const meetingApproval = await getApproval(serviceClient(), 'meeting', m.id);
 const votedShares = (rid: string) => ['for', 'against'].reduce((a, v) => a + Number(votesFor(rid, v as Tally['vote'])?.shares ?? 0), 0);
 ---
 
@@ -79,6 +94,7 @@ const votedShares = (rid: string) => ['for', 'against'].reduce((a, v) => a + Num
   <PageHeader title={m.title} subtitle={`${dateTime.format(new Date(m.starts_at))} · proxies close ${dateTime.format(new Date(m.proxy_deadline))}`}>
     <a href={`/agm/${m.id}`} class="btn-ghost">View as shareholder</a>
   </PageHeader>
+  <div class="-mt-2 mb-6"><ApprovalChip type="meeting" id={m.id} approval={meetingApproval} /></div>
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 

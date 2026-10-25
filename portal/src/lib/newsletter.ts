@@ -295,7 +295,10 @@ export async function sendQueued(svc: Svc, origin: string) {
 /** Scheduled issues whose time has come start sending. */
 export async function startScheduled(svc: Svc, origin: string, signInLink: (userId: string) => Promise<string>) {
   const { data: due } = await svc.from('newsletter_issues').select('id').eq('status', 'scheduled').lte('scheduled_at', new Date().toISOString());
-  for (const i of due ?? []) if (await claimIssue(svc, i.id)) await prepareIssue(svc, i.id, origin, signInLink);
+  // An issue waiting for approval (optional per issue) stays scheduled until it's approved.
+  const { data: held } = due?.length ? await svc.from('approvals').select('item_id').eq('item_type', 'newsletter').neq('status', 'approved').in('item_id', due.map((i) => i.id)) : { data: [] };
+  const wait = new Set((held ?? []).map((h) => h.item_id));
+  for (const i of due ?? []) if (!wait.has(i.id) && (await claimIssue(svc, i.id))) await prepareIssue(svc, i.id, origin, signInLink);
 }
 
 /**
