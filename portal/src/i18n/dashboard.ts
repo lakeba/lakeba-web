@@ -79,6 +79,8 @@ export default {
     // Inbox
     'New documents, meetings and replies from the board.': 'Nuevos documentos, juntas y respuestas del consejo.',
     'Mark all as read': 'Marcar todo como leído',
+    'Delete all': 'Eliminar todo',
+    'Delete all notifications? This can’t be undone.': '¿Eliminar todas las notificaciones? No se puede deshacer.',
     "You're all caught up": 'No tiene nada pendiente',
     'Notifications about new documents, meetings and replies will appear here.': 'Aquí aparecerán los avisos de nuevos documentos, juntas y respuestas.',
     // Components
@@ -170,6 +172,8 @@ export default {
     // Inbox
     'New documents, meetings and replies from the board.': 'Nuovi documenti, assemblee e risposte del CdA.',
     'Mark all as read': 'Segna tutto come letto',
+    'Delete all': 'Elimina tutto',
+    'Delete all notifications? This can’t be undone.': 'Eliminare tutte le notifiche? Non si può annullare.',
     "You're all caught up": 'Non hai nulla da leggere',
     'Notifications about new documents, meetings and replies will appear here.': 'Qui troverai le notifiche su nuovi documenti, assemblee e risposte.',
     // Components
@@ -261,6 +265,8 @@ export default {
     // Inbox
     'New documents, meetings and replies from the board.': '新文件、会议及董事会的回复。',
     'Mark all as read': '全部标为已读',
+    'Delete all': '全部删除',
+    'Delete all notifications? This can’t be undone.': '删除所有通知？此操作无法撤销。',
     "You're all caught up": '您已读完所有通知',
     'Notifications about new documents, meetings and replies will appear here.': '有关新文件、会议和回复的通知将显示在这里。',
     // Components

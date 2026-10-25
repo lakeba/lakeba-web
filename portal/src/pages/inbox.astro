@@ -2,11 +2,15 @@
 import Portal from '../layouts/Portal.astro';
 import PageHeader from '../components/PageHeader.astro';
 import Empty from '../components/Empty.astro';
+import { serviceClient } from '../lib/admin';
 
 const { supabase, t, fmt } = Astro.locals;
 if (Astro.request.method === 'POST') {
-  await supabase.from('notifications').update({ read_at: new Date().toISOString() }).is('read_at', null);
-  return Astro.redirect('/inbox');
+  const form = await Astro.request.formData();
+  // Delete all: only this person's own notifications (people may only mark theirs as read, so the server deletes them).
+  if (form.get('intent') === 'delete-all') await serviceClient().from('notifications').delete().eq('user_id', Astro.locals.user!.id);
+  else await supabase.from('notifications').update({ read_at: new Date().toISOString() }).is('read_at', null);
+  return Astro.redirect('/inbox', 303);
 }
 // Show which company a notification is from when someone has more than one.
 const companyOf = (id: string | null) => (Astro.locals.companies.length > 1 ? Astro.locals.companies.find((c) => c.id === id)?.display_name : undefined);
@@ -16,7 +20,12 @@ const unread = (items ?? []).filter((n) => !n.read_at).length;
 
 <Portal title={t('Inbox')}>
   <PageHeader eyebrow={t('Inbox')} title={t('Notifications')} subtitle={t('New documents, meetings and replies from the board.')}>
-    {unread > 0 && <form method="post"><button class="btn-ghost">{t('Mark all as read')}</button></form>}
+    {(items?.length ?? 0) > 0 && (
+      <div class="flex flex-wrap gap-2">
+        {unread > 0 && <form method="post"><button name="intent" value="read-all" class="btn-ghost">{t('Mark all as read')}</button></form>}
+        <form method="post" data-confirm={t('Delete all notifications? This can’t be undone.')} onsubmit="return confirm(this.dataset.confirm)"><button name="intent" value="delete-all" class="btn-ghost text-lk-red">{t('Delete all')}</button></form>
+      </div>
+    )}
   </PageHeader>
   {items?.length ? (
     <ul class="grid max-w-3xl gap-3">
