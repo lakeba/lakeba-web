@@ -7,21 +7,36 @@ import { field } from '../../../../lib/forms';
 import { AREAS } from '../../../../lib/permissions';
 import { loadRoles } from '../../../../lib/roles-admin';
 
-// System → Roles: every role and what it allows (See · Do · Approve per area),
-// who holds it, and new custom roles.
+// System → Roles: the roles (edit, delete, new), who holds each, and a
+// side-by-side comparison of what they allow (See · Do · Approve per area).
 const access = Astro.locals.access;
 if (!access.can('users.view', null)) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 let error = '';
-if (Astro.request.method === 'POST' && access.can('users.do', null)) {
+const mayChange = access.can('users.do', null);
+const notice = Astro.url.searchParams.get('deleted') ? `Role “${Astro.url.searchParams.get('deleted')}” deleted.` : '';
+if (Astro.request.method === 'POST' && mayChange) {
   const form = await Astro.request.formData();
-  const name = field(form, 'name').slice(0, 60);
-  const key = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
-  if (name.length < 2 || !/^[a-z]/.test(key)) error = 'Give the role a name (starting with a letter).';
-  else {
-    const { error: e } = await svc.from('roles').insert({ key, name, description: field(form, 'description').slice(0, 300), created_by: Astro.locals.user!.id });
-    if (e) error = /duplicate|unique/i.test(e.message) ? 'A role with that name already exists.' : e.message;
-    else { await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_created_role', event_detail: { key, name } }); return Astro.redirect(`/admin/system/roles/${key}`, 303); }
+  const intent = field(form, 'intent');
+  if (intent === 'delete') {
+    const r = (await loadRoles(svc)).find((x) => x.key === field(form, 'key'));
+    const { count } = r ? await svc.from('user_roles').select('id', { count: 'exact', head: true }).eq('role_key', r.key) : { count: 0 };
+    if (!r || r.builtin) error = 'Built-in roles can’t be deleted.';
+    else if (count) error = `Remove “${r.name}” from the ${count} ${count === 1 ? 'person' : 'people'} who hold it first.`;
+    else {
+      await svc.from('roles').delete().eq('key', r.key);
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_deleted_role', event_detail: { role: r.key } });
+      return Astro.redirect(`/admin/system/roles?deleted=${encodeURIComponent(r.name)}`, 303);
+    }
+  } else if (intent === 'create') {
+    const name = field(form, 'name').slice(0, 60);
+    const key = name.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
+    if (name.length < 2 || !/^[a-z]/.test(key)) error = 'Give the role a name (starting with a letter).';
+    else {
+      const { error: e } = await svc.from('roles').insert({ key, name, description: field(form, 'description').slice(0, 300), created_by: Astro.locals.user!.id });
+      if (e) error = /duplicate|unique/i.test(e.message) ? 'A role with that name already exists.' : e.message;
+      else { await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_created_role', event_detail: { key, name } }); return Astro.redirect(`/admin/system/roles/${key}?new=1`, 303); }
+    }
   }
 }
 const roles = await loadRoles(svc);
@@ -32,24 +47,58 @@ const mark = (perms: string[], area: string) => ['view', 'do', 'approve'].map((l
 
 <Admin title="Roles">
   <SystemNav />
-  <h1 class="font-display text-3xl font-bold">Roles</h1>
-  <p class="mt-1 max-w-3xl text-sm text-white/55">What each role can <strong>S</strong>ee, <strong>D</strong>o and <strong>A</strong>pprove in each area. A person’s permissions are those of all their roles, for the whole group or for the company each role is given for. Open a role to change it.</p>
-  {error && <div class="mt-5"><Alert tone="error">{error}</Alert></div>}
+  <div class="flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <h1 class="font-display text-3xl font-bold">Roles</h1>
+      <p class="mt-1 max-w-3xl text-sm text-white/55">A role is a set of permissions: what it can see, do and approve in each area. Give roles to people in <a href="/admin/system/users" class="text-lk-blue hover:underline">Users</a>; a person with several roles has all their permissions.</p>
+    </div>
+    {mayChange && <a href="#new-role" class="btn-primary">New role</a>}
+  </div>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+
   <section class="card mt-6 overflow-x-auto p-0">
     <table class="w-full text-left text-sm">
-      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-4 py-3">Area</th>{roles.map((r) => <th class="px-3 py-3 text-center"><a href={`/admin/system/roles/${r.key}`} class="hover:text-white">{r.name}</a><span class="block text-[10px] font-normal normal-case text-white/35">{holders(r.key)} {holders(r.key) === 1 ? 'person' : 'people'}</span></th>)}</tr></thead>
+      <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3 font-medium">Role</th><th class="px-5 py-3 font-medium">What it’s for</th><th class="px-5 py-3 font-medium">People</th><th class="px-5 py-3"></th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {roles.map((r) => (
+          <tr>
+            <td class="px-5 py-3"><a href={`/admin/system/roles/${r.key}`} class="font-medium text-white hover:text-lk-blue">{r.name}</a><span class="block text-xs text-white/40">{r.builtin ? 'Built-in' : 'Custom'} · {r.permissions.length} permission{r.permissions.length === 1 ? '' : 's'}</span></td>
+            <td class="max-w-md px-5 py-3 text-white/60">{r.description || '—'}</td>
+            <td class="px-5 py-3"><a href={`/admin/system/users?role=${r.key}`} class="text-white/75 hover:text-white">{holders(r.key)}</a></td>
+            <td class="px-5 py-3">
+              <div class="flex items-center justify-end gap-2">
+                <a href={`/admin/system/roles/${r.key}`} class="btn-ghost !px-3 !py-1.5 text-xs">{mayChange && r.key !== 'admin' ? 'Edit' : 'View'}</a>
+                {mayChange && !r.builtin && (
+                  <form method="post"><input type="hidden" name="key" value={r.key} /><button name="intent" value="delete" class="btn-ghost !px-3 !py-1.5 text-xs text-lk-red" onclick={`return confirm('Delete the role “${r.name}”?')`} disabled={holders(r.key) > 0} title={holders(r.key) > 0 ? 'Remove it from everyone first' : undefined}>Delete</button></form>
+                )}
+              </div>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </section>
+  <p class="mt-2 text-xs text-white/40">Built-in roles can be edited but not deleted; Admin always has every permission. A custom role can be deleted once nobody holds it.</p>
+
+  {mayChange && (
+    <form method="post" id="new-role" class="card mt-6 grid max-w-3xl scroll-mt-32 gap-3 sm:grid-cols-[14rem_1fr_auto] sm:items-end">
+      <h2 class="font-display text-lg font-bold sm:col-span-3">New role</h2>
+      <div><label class="label" for="name">Name</label><input id="name" name="name" required maxlength="60" placeholder="e.g. Auditor" class="field" /></div>
+      <div><label class="label" for="description">What it’s for</label><input id="description" name="description" maxlength="300" placeholder="e.g. Read-only access for the external audit" class="field" /></div>
+      <button name="intent" value="create" class="btn-primary">Create and choose permissions</button>
+    </form>
+  )}
+
+  <details class="card mt-6 overflow-x-auto p-0">
+    <summary class="cursor-pointer px-5 py-4 font-display text-lg font-bold">Compare roles</summary>
+    <p class="px-5 text-xs text-white/45"><strong>S</strong>ee · <strong>D</strong>o · <strong>A</strong>pprove, per area.</p>
+    <table class="mt-2 w-full text-left text-sm">
+      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-4 py-3">Area</th>{roles.map((r) => <th class="px-3 py-3 text-center">{r.name}</th>)}</tr></thead>
       <tbody class="divide-y divide-white/5">
         {AREAS.map((a) => (
           <tr><td class="px-4 py-2 text-white/80">{a.label}</td>{roles.map((r) => <td class="px-3 py-2 text-center font-mono text-xs tracking-widest text-white/70">{mark(r.permissions, a.key)}</td>)}</tr>
         ))}
       </tbody>
     </table>
-  </section>
-  {access.can('users.do', null) && (
-    <form method="post" class="card mt-6 grid max-w-3xl gap-3 sm:grid-cols-[14rem_1fr_auto] sm:items-end">
-      <div><label class="label" for="name">New role</label><input id="name" name="name" required maxlength="60" placeholder="e.g. Auditor" class="field" /></div>
-      <div><label class="label" for="description">What it’s for</label><input id="description" name="description" maxlength="300" placeholder="e.g. Read-only access for the external audit" class="field" /></div>
-      <button class="btn-primary">Create</button>
-    </form>
-  )}
+  </details>
 </Admin>

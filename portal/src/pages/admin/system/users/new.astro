@@ -1,0 +1,91 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import SystemNav from '../../../../components/SystemNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import ShareLink from '../../../../components/ShareLink.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { sendInvite } from '../../../../lib/admin-auth';
+import { field } from '../../../../lib/forms';
+import { grantRole, loadRoles } from '../../../../lib/roles-admin';
+import { sydneyToIso } from '../../../../lib/press';
+
+// System → Users → Add person: invites someone by email and gives them their
+// roles in one go. (Investors are usually invited from Admin → Investors,
+// where they are linked to their holder.)
+const access = Astro.locals.access;
+if (!access.can('users.do', null)) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!.id;
+const roles = await loadRoles(svc);
+const { data: entities } = await svc.from('entities').select('id, display_name').eq('portal', 'full').order('sort');
+let error = '', done: { id: string; email: string; url: string; problems: string[] } | null = null;
+const v = { email: '', first_name: '', last_name: '', roles: [] as string[], scope: 'group', until: '', note: '' };
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  Object.assign(v, { email: field(form, 'email').toLowerCase(), first_name: field(form, 'first_name').slice(0, 80), last_name: field(form, 'last_name').slice(0, 80), roles: form.getAll('role').map(String), scope: field(form, 'scope'), until: field(form, 'until'), note: field(form, 'note').slice(0, 300) });
+  const chosen = roles.filter((r) => v.roles.includes(r.key));
+  const entityId = v.scope === 'group' ? null : (entities ?? []).some((e) => e.id === v.scope) ? v.scope : undefined;
+  const { data: existing } = v.email ? await svc.from('profiles').select('id').ilike('email', v.email).maybeSingle() : { data: null };
+  if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(v.email)) error = 'Enter their email address.';
+  else if (existing) error = `${v.email} already has a portal account: open it to give them roles.|${existing.id}`;
+  else if (!v.first_name) error = 'Enter their first name.';
+  else if (entityId === undefined) error = 'Choose where the roles apply.';
+  else if (v.until && new Date(sydneyToIso(`${v.until}T23:59`) ?? 0) <= new Date()) error = 'The end date must be in the future.';
+  else {
+    const { error: inviteError, userId, url } = await sendInvite(v.email, Astro.url.origin, { first_name: v.first_name, last_name: v.last_name });
+    if (inviteError || !userId) error = inviteError ?? 'Could not send the invitation.';
+    else {
+      await svc.from('profiles').update({ first_name: v.first_name, last_name: v.last_name }).eq('id', userId);
+      const company = entityId ? (entities ?? []).find((e) => e.id === entityId)?.display_name ?? 'one company' : 'the whole group';
+      const problems: string[] = [];
+      for (const role of chosen) {
+        const e = await grantRole(svc, access, me, { userId, role, entityId, expiresAt: v.until ? sydneyToIso(`${v.until}T23:59`) : null, note: v.note || 'given when they were added', origin: Astro.url.origin, companyName: company });
+        if (e) problems.push(`${role.name}: ${e}`);
+        else await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_granted_role', event_detail: { user_id: userId, email: v.email, role: role.key, entity_id: entityId, until: v.until || null } });
+      }
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_invited_user', event_detail: { user_id: userId, email: v.email, roles: chosen.map((r) => r.key) } });
+      done = { id: userId, email: v.email, url: url ?? '', problems };
+    }
+  }
+}
+const [errorText, existingId] = error.split('|');
+---
+
+<Admin title="Add person">
+  <SystemNav />
+  <a href="/admin/system/users" class="text-sm text-white/50 hover:text-white">← Users</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">Add person</h1>
+  <p class="mt-1 max-w-3xl text-sm text-white/55">They get an email to set their password. Staff roles need two-step sign-in, which they’re asked to set up the first time. To add an investor and link them to their holding, use <a href="/admin/investors" class="text-lk-blue hover:underline">Investors</a>.</p>
+
+  {done ? (
+    <div class="mt-6 max-w-2xl space-y-4">
+      <Alert tone="success">Invitation sent to {done.email}.</Alert>
+      {done.problems.length > 0 && <Alert tone="error">Some roles weren’t given: {done.problems.join(' · ')}</Alert>}
+      {done.url && <ShareLink url={done.url} label="Invitation link (if the email doesn’t arrive)" />}
+      <div class="flex gap-2"><a href={`/admin/system/users/${done.id}`} class="btn-primary">Open their page</a><a href="/admin/system/users/new" class="btn-ghost">Add someone else</a></div>
+    </div>
+  ) : (
+    <form method="post" class="card mt-6 grid max-w-3xl gap-4 sm:grid-cols-2">
+      {errorText && <div class="sm:col-span-2"><Alert tone="error">{errorText}{existingId && <> <a href={`/admin/system/users/${existingId}`} class="underline">Open their page</a></>}</Alert></div>}
+      <div class="sm:col-span-2"><label class="label" for="email">Email</label><input id="email" name="email" type="email" required value={v.email} class="field" /></div>
+      <div><label class="label" for="first_name">First name</label><input id="first_name" name="first_name" required value={v.first_name} class="field" /></div>
+      <div><label class="label" for="last_name">Last name</label><input id="last_name" name="last_name" value={v.last_name} class="field" /></div>
+      <fieldset class="sm:col-span-2">
+        <legend class="label">Roles (none for now is fine: give them later)</legend>
+        <div class="mt-1 grid gap-2 sm:grid-cols-2">
+          {roles.map((r) => (
+            <label class="flex items-start gap-3 rounded-xl border border-white/10 p-3 text-sm hover:bg-white/5">
+              <input type="checkbox" name="role" value={r.key} checked={v.roles.includes(r.key)} class="mt-0.5 size-4 accent-lk-blue" />
+              <span><span class="font-medium text-white">{r.name}</span><span class="block text-xs text-white/50">{r.description}</span></span>
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <div><label class="label" for="scope">Roles apply to</label><select id="scope" name="scope" class="field"><option value="group">The whole group (every company)</option>{(entities ?? []).map((e) => <option value={e.id} selected={v.scope === e.id}>{e.display_name} only</option>)}</select></div>
+      <div><label class="label" for="until">Until (optional)</label><input id="until" name="until" type="date" value={v.until} class="field" /></div>
+      <div class="sm:col-span-2"><label class="label" for="note">Note (optional)</label><input id="note" name="note" maxlength="300" value={v.note} placeholder="e.g. joins the marketing team in November" class="field" /></div>
+      <div class="sm:col-span-2"><button class="btn-primary">Send the invitation</button></div>
+    </form>
+  )}
+</Admin>

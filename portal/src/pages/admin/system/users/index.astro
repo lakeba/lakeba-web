@@ -4,6 +4,7 @@ import SystemNav from '../../../../components/SystemNav.astro';
 import { serviceClient } from '../../../../lib/admin';
 import { dateTime } from '../../../../lib/format';
 import { loadRoles } from '../../../../lib/roles-admin';
+import Alert from '../../../../components/Alert.astro';
 
 // System → Users: everyone with a portal account, their roles (and for which
 // company, until when), whether they're an investor (from the register).
@@ -35,6 +36,8 @@ const people = (profiles ?? []).filter((p) => {
   if (roleFilter && !mine.some((a) => a.role_key === roleFilter)) return false;
   return !q || `${p.email} ${p.first_name ?? ''} ${p.last_name ?? ''}`.toLowerCase().includes(q);
 });
+const mayChange = access.can('users.do', null);
+const deleted = sp.get('deleted');
 const counts = { staff: (profiles ?? []).filter((p) => byUser.has(p.id)).length, investors: (profiles ?? []).filter((p) => investors.has(p.id)).length, all: (profiles ?? []).length };
 ---
 
@@ -42,8 +45,10 @@ const counts = { staff: (profiles ?? []).filter((p) => byUser.has(p.id)).length,
   <SystemNav />
   <div class="flex flex-wrap items-end justify-between gap-4">
     <div><h1 class="font-display text-3xl font-bold">Users</h1>
-      <p class="mt-1 max-w-3xl text-sm text-white/55">Everyone with a portal account. Staff roles (Admin, Board, Marketing, Legal, Compliance and your own) are given here, for the whole group or one company, optionally until a date. Investor follows the share register.</p></div>
+      <p class="mt-1 max-w-3xl text-sm text-white/55">Everyone with a portal account. Add people, change their details and roles, or delete them here. Roles (Admin, Board, Marketing, Legal, Compliance and your own) are for the whole group or one company, optionally until a date. Investor follows the share register.</p></div>
+    {mayChange && <a href="/admin/system/users/new" class="btn-primary">Add person</a>}
   </div>
+  {deleted && <div class="mt-5"><Alert tone="success">{deleted} was deleted.</Alert></div>}
   <form method="get" class="card mt-6 grid gap-3 p-4 sm:grid-cols-[1fr_12rem_12rem_auto] sm:items-end">
     <div><label class="label" for="q">Search</label><input id="q" name="q" value={sp.get('q') ?? ''} placeholder="Name or email" class="field py-2" /></div>
     <div><label class="label" for="show">Show</label><select id="show" name="show" class="field py-2"><option value="staff" selected={show === 'staff'}>People with a role ({counts.staff})</option><option value="investors" selected={show === 'investors'}>Investors ({counts.investors})</option><option value="all" selected={show === 'all'}>Everyone ({counts.all})</option></select></div>
@@ -52,7 +57,7 @@ const counts = { staff: (profiles ?? []).filter((p) => byUser.has(p.id)).length,
   </form>
   <section class="card mt-4 overflow-x-auto p-0">
     <table class="w-full text-left text-sm">
-      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Person</th><th class="px-5 py-3">Roles</th><th class="px-5 py-3">Investor</th><th class="px-5 py-3">Signed in</th></tr></thead>
+      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Person</th><th class="px-5 py-3">Roles</th><th class="px-5 py-3">Investor</th><th class="px-5 py-3">Signed in</th><th class="px-5 py-3"></th></tr></thead>
       <tbody class="divide-y divide-white/5">
         {people.slice(0, 400).map((p) => (
           <tr>
@@ -60,9 +65,10 @@ const counts = { staff: (profiles ?? []).filter((p) => byUser.has(p.id)).length,
             <td class="px-5 py-2.5"><span class="flex flex-wrap gap-1">{(byUser.get(p.id) ?? []).map((a) => <span class="rounded-full bg-white/10 px-2 py-0.5 text-xs text-white/80">{roleName.get(a.role_key) ?? a.role_key}{a.entity_id && ` · ${companyName.get(a.entity_id) ?? 'one company'}`}{a.expires_at && ` · until ${dateTime.format(new Date(a.expires_at)).split(',')[0]}`}</span>)}{!byUser.has(p.id) && <span class="text-xs text-white/35">–</span>}</span></td>
             <td class="px-5 py-2.5 text-xs text-white/60">{investors.has(p.id) ? 'Yes' : '–'}</td>
             <td class="px-5 py-2.5 text-xs text-white/45">{p.first_signed_in_at ? 'Yes' : 'Not yet'}</td>
+            <td class="px-5 py-2.5 text-right"><a href={`/admin/system/users/${p.id}`} class="btn-ghost !px-3 !py-1.5 text-xs">{mayChange ? 'Edit' : 'View'}</a></td>
           </tr>
         ))}
-        {!people.length && <tr><td colspan="4" class="px-5 py-8 text-center text-white/45">Nobody matches.</td></tr>}
+        {!people.length && <tr><td colspan="5" class="px-5 py-8 text-center text-white/45">Nobody matches.</td></tr>}
       </tbody>
     </table>
     {people.length > 400 && <p class="px-5 py-3 text-xs text-white/45">Showing 400 of {people.length}: search to narrow it down.</p>}

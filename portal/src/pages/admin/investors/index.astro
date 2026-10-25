@@ -9,7 +9,8 @@ import { memberIds } from '../../../lib/notify';
 import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
 import HoldingNote from '../../../components/HoldingNote.astro';
 import { field } from '../../../lib/forms';
-import { displayName, roles } from '../../../lib/admin-forms';
+import { displayName } from '../../../lib/admin-forms';
+import { loadRoles } from '../../../lib/roles-admin';
 import { aud, percent, shares, shortDate } from '../../../lib/format';
 import { latestPrices, loadHolderPositions, type Position } from '../../../lib/holdings';
 
@@ -48,8 +49,7 @@ if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = field(form, 'intent') || 'invite';
   const email = field(form, 'email').toLowerCase();
-  // Company admins invite investors only, linked to a holder in their company.
-  const role = scope.isGroupAdmin ? field(form, 'role') : 'investor';
+  // Investors only, linked to their holder (company admins: a holder in their company). Staff are added in System → Users.
   const holderId = field(form, 'holder_id');
   if (intent === 'welcome') {
     if (!welcomeCompany) error = 'Choose a company first.';
@@ -69,23 +69,20 @@ if (Astro.request.method === 'POST') {
     }
   } else if (!scope.isGroupAdmin && !(holderId && welcomeCompany && (await svc.rpc('holder_in_entity', { target_holder: holderId, target_entity: welcomeCompany.id })).data)) {
     error = 'Choose your company and a holder in it.';
-  } else if (!email || !roles.includes(role as never)) {
-    error = 'Enter an email and choose a role.';
+  } else if (!email) {
+    error = 'Enter their email address.';
+  } else if (!holderId) {
+    error = 'Choose the holder they invest through. To add staff (Admin, Board, Marketing…), use System → Users.';
   } else {
     const { error: inviteError, userId, url: inviteUrl } = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') }, brandOf(welcomeCompany));
     if (inviteError || !userId) {
       error = inviteError ?? 'Could not send the invitation.';
     } else {
-      // Staff roles live in user_roles (System → Users); an investor needs none.
-      if (role !== 'investor') {
-        const { error: e } = await svc.from('user_roles').insert({ user_id: userId, role_key: role, granted_by: Astro.locals.user!.id, note: 'given with the invitation' });
-        if (e && !/duplicate|unique/i.test(e.message)) throw e;
-      }
       if (holderId) {
         // Checked above for company admins, so the service key may write the link.
         await svc.from('holder_members').upsert({ holder_id: holderId, user_id: userId, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner' }).throwOnError();
       }
-      await supabase.rpc('log_event', { event_action: 'admin_invited_user', event_detail: { email, role, holder_id: holderId || null } });
+      await supabase.rpc('log_event', { event_action: 'admin_invited_user', event_detail: { email, role: 'investor', holder_id: holderId || null } });
       notice = `Invitation sent to ${email}.`;
       shareLink = inviteUrl ?? '';
     }
@@ -98,6 +95,12 @@ const [{ data: profiles }, { data: links }, { data: holders }, { data: authUsers
   supabase.from('holders').select('id, name').order('name'),
   svc.auth.admin.listUsers({ perPage: 1000 }),
 ]);
+// Staff roles (System → Users), shown and filtered here; everyone else is an investor.
+const [allRoles, { data: roleRows }] = await Promise.all([loadRoles(svc), svc.from('user_roles').select('user_id, role_key').or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)]);
+const roleNames = new Map(allRoles.map((r) => [r.key, r.name]));
+const rolesOf = new Map<string, string[]>();
+for (const r of roleRows ?? []) rolesOf.set(r.user_id, [...(rolesOf.get(r.user_id) ?? []), r.role_key]);
+const roleLabel = (id: string) => (rolesOf.get(id) ?? []).map((k) => roleNames.get(k) ?? k).sort().join(', ') || 'Investor';
 const candidates = welcomeCompany ? await welcomeCandidates(welcomeCompany.id) : [];
 const { data: pauses } = await supabase.from('ask_user_pauses').select('user_id');
 const askOff = new Set((pauses ?? []).map((x) => x.user_id));
@@ -156,13 +159,13 @@ const allRows = people.map((p) => {
   };
 });
 const rows = allRows.filter((r) =>
-  (!f.q || r.text.includes(f.q)) && (!f.role || r.p.role === f.role) && (!f.status || r.status === f.status)
+  (!f.q || r.text.includes(f.q)) && (!f.role || (f.role === 'investor' ? !rolesOf.has(r.p.id) : (rolesOf.get(r.p.id) ?? []).includes(f.role))) && (!f.status || r.status === f.status)
   && (!f.mfa || (f.mfa === 'on') === r.mfa) && (!f.ask || (f.ask === 'off') === r.askOff)
   && (!f.board || (f.board === 'off') === r.boardOff) && (!f.note || (f.note === 'yes') === r.hasNote),
 ).sort((a, b) => {
   const by: Record<SortKey, number> = {
     name: displayName(a.p).localeCompare(displayName(b.p), 'en', { sensitivity: 'base' }),
-    role: a.p.role.localeCompare(b.p.role),
+    role: roleLabel(a.p.id).localeCompare(roleLabel(b.p.id)),
     shares: a.t.shares - b.t.shares,
     value: a.t.value - b.t.value,
     mfa: Number(a.mfa) - Number(b.mfa),
@@ -185,7 +188,7 @@ import ShareLink from '../../../components/ShareLink.astro';
 ---
 
 <Admin title="Investors">
-  <PageHeader title="Investors" subtitle="Accounts, roles and which holding entities each person can see." />
+  <PageHeader title="Investors" subtitle="Shareholders’ accounts and which holding entities each person can see. Staff and their roles are managed in System → Users." />
   <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
@@ -218,15 +221,14 @@ import ShareLink from '../../../components/ShareLink.astro';
   ) : scope.companies.length > 1 && <p class="mb-6 text-sm text-white/50">Pick a company above to send welcome emails to its shareholders.</p>}
 
   <details class="card mb-6" open={Boolean(error)}>
-    <summary class="cursor-pointer font-display text-lg font-bold text-white">Invite someone</summary>
+    <summary class="cursor-pointer font-display text-lg font-bold text-white">Invite an investor</summary>
+    <p class="mt-2 text-sm text-white/55">Adding staff (Admin, Board, Marketing, Legal, Compliance…)? Use <a href="/admin/system/users/new" class="text-lk-blue hover:underline">System → Users → Add person</a>.</p>
     <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
-      <div><label class="label" for="email">Email</label><input class="field" id="email" name="email" type="email" required /></div>
-      {scope.isGroupAdmin && <div><label class="label" for="role">Role</label>
-        <select class="field" id="role" name="role">{roles.map((r) => <option value={r}>{r}</option>)}</select></div>}
+      <div class="sm:col-span-2"><label class="label" for="email">Email</label><input class="field" id="email" name="email" type="email" required /></div>
       <div><label class="label" for="first_name">First name</label><input class="field" id="first_name" name="first_name" /></div>
       <div><label class="label" for="last_name">Last name</label><input class="field" id="last_name" name="last_name" /></div>
-      <div><label class="label" for="holder_id">Link to holder (optional)</label>
-        <select class="field" id="holder_id" name="holder_id"><option value="">—</option>{(holders ?? []).map((h) => <option value={h.id}>{h.name}</option>)}</select></div>
+      <div><label class="label" for="holder_id">Holder they invest through</label>
+        <select class="field" id="holder_id" name="holder_id" required><option value="">Choose…</option>{(holders ?? []).map((h) => <option value={h.id}>{h.name}</option>)}</select></div>
       <div><label class="label" for="access">Access</label>
         <select class="field" id="access" name="access"><option value="owner">Owner (can vote)</option><option value="viewer">Viewer (read only)</option></select></div>
       <div class="sm:col-span-2"><button class="btn-primary">Send invitation</button></div>
@@ -238,7 +240,7 @@ import ShareLink from '../../../components/ShareLink.astro';
     {sort !== 'name' && <input type="hidden" name="sort" value={sort} />}
     {dir === -1 && <input type="hidden" name="dir" value="desc" />}
     <div class="sm:col-span-2"><label class="label" for="f-q">Search</label><input class="field !py-2 text-sm" id="f-q" name="q" type="search" value={params.get('q') ?? ''} placeholder="Name, email or holder" /></div>
-        <div><label class="label" for="f-role">Role</label><select class="field !py-2 text-sm" id="f-role" name="role"><option value="" selected={f.role === ''}>Any</option><option value="investor" selected={f.role === 'investor'}>Investor</option><option value="board" selected={f.role === 'board'}>Board</option><option value="admin" selected={f.role === 'admin'}>Admin</option></select></div>
+        <div><label class="label" for="f-role">Role</label><select class="field !py-2 text-sm" id="f-role" name="role"><option value="" selected={f.role === ''}>Any</option><option value="investor" selected={f.role === 'investor'}>Investor only</option>{allRoles.map((r) => <option value={r.key} selected={f.role === r.key}>{r.name}</option>)}</select></div>
         <div><label class="label" for="f-status">Status</label><select class="field !py-2 text-sm" id="f-status" name="status"><option value="" selected={f.status === ''}>Any</option><option value="active" selected={f.status === 'active'}>Active</option><option value="invited" selected={f.status === 'invited'}>Invited, not signed in</option><option value="never" selected={f.status === 'never'}>Never invited</option><option value="disabled" selected={f.status === 'disabled'}>Disabled</option></select></div>
         <div><label class="label" for="f-mfa">Two-step</label><select class="field !py-2 text-sm" id="f-mfa" name="mfa"><option value="" selected={f.mfa === ''}>Any</option><option value="on" selected={f.mfa === 'on'}>On</option><option value="off" selected={f.mfa === 'off'}>Off</option></select></div>
         <div><label class="label" for="f-ask">Ask</label><select class="field !py-2 text-sm" id="f-ask" name="ask"><option value="" selected={f.ask === ''}>Any</option><option value="on" selected={f.ask === 'on'}>On</option><option value="off" selected={f.ask === 'off'}>Off</option></select></div>
@@ -268,7 +270,7 @@ import ShareLink from '../../../components/ShareLink.astro';
                 {askOff.has(p.id) && <span class="mt-1 mr-1 inline-block rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/60">Ask off</span>}
                 {p.board_qa_enabled === false && <span class="mt-1 inline-block rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/60">Board Q&amp;A off</span>}
               </td>
-              <td class="px-5 py-3 capitalize text-white/70">{p.role}</td>
+              <td class="px-5 py-3 text-white/70">{rolesOf.has(p.id) ? <a href={`/admin/system/users/${p.id}`} class="hover:text-white hover:underline">{roleLabel(p.id)}</a> : 'Investor'}</td>
               <td class="px-5 py-3 text-white/60">
                 {hs.length ? hs.map((h) => (
                   <div class="py-0.5">

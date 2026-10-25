@@ -6,7 +6,9 @@ import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { dateTime } from '../../../../lib/format';
 import { AREAS, LEVEL_LABEL } from '../../../../lib/permissions';
-import { grantRole, loadRoles, removeRole } from '../../../../lib/roles-admin';
+import { beyondMe, grantRole, loadRoles, removeRole } from '../../../../lib/roles-admin';
+import { sendWelcome } from '../../../../lib/admin-auth';
+import ShareLink from '../../../../components/ShareLink.astro';
 import { sydneyToIso } from '../../../../lib/press';
 
 // One person: their roles (give, remove, until when) and, from those roles,
@@ -21,7 +23,7 @@ if (!person) return Astro.redirect('/admin/system/users');
 const { data: entities } = await svc.from('entities').select('id, display_name, relationship').eq('portal', 'full').order('sort');
 const companyName = (eid: string | null) => (eid ? (entities ?? []).find((e) => e.id === eid)?.display_name ?? 'one company' : 'the whole group');
 let roles = await loadRoles(svc);
-let error = '', notice = '';
+let error = '', notice = '', shareLink = '';
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { user_id: person.id, email: person.email, ...detail } });
 
 if (Astro.request.method === 'POST') {
@@ -38,6 +40,39 @@ if (Astro.request.method === 'POST') {
     else {
       error = (await grantRole(svc, access, me.id, { userId: person.id, role, entityId, expiresAt: until ? sydneyToIso(`${until}T23:59`) : null, note: field(form, 'note'), origin: Astro.url.origin, companyName: companyName(entityId) })) ?? '';
       if (!error) { await log('admin_granted_role', { role: role.key, entity_id: entityId, until: until || null }); notice = `${role.name} given for ${companyName(entityId)}.`; }
+    }
+  } else if (intent === 'details' && access.can('users.do', null)) {
+    const first = field(form, 'first_name').slice(0, 80), last = field(form, 'last_name').slice(0, 80);
+    if (!first && !last) error = 'Enter a name.';
+    else {
+      await svc.from('profiles').update({ first_name: first, last_name: last }).eq('id', person.id).throwOnError();
+      await log('admin_updated_user_details', {});
+      Object.assign(person, { first_name: first, last_name: last });
+      notice = 'Details saved.';
+    }
+  } else if (intent === 'resend' && access.can('users.do', null)) {
+    const { error: e, url } = await sendWelcome(person.email, Astro.url.origin);
+    if (e) error = e;
+    else { await log('admin_resent_invitation', {}); notice = `A new email to set their password was sent to ${person.email}.`; shareLink = url ?? ''; }
+  } else if (intent === 'delete-person' && access.can('users.do', null)) {
+    // Like Admin → Investors: never anyone tied to the share register or meeting records.
+    const { data: links } = await svc.from('holder_members').select('holder_id').eq('user_id', person.id);
+    const { count: votes } = await svc.from('proxy_votes').select('resolution_id', { count: 'exact', head: true }).eq('lodged_by', person.id);
+    const { data: held } = await svc.from('user_roles').select('role_key, entity_id, roles(role_permissions(permission))').eq('user_id', person.id);
+    const theirs = (held ?? []) as unknown as { role_key: string; entity_id: string | null; roles: { role_permissions: { permission: string }[] } | null }[];
+    const { data: admins } = await svc.from('user_roles').select('user_id').eq('role_key', 'admin').is('entity_id', null).or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+    const groupAdmins = new Set((admins ?? []).map((a) => a.user_id));
+    if (person.id === me.id) error = 'You can’t delete yourself.';
+    else if (links?.length) error = 'They’re linked to a holder on the share register, so they can’t be deleted here. Unlink them in Admin → Investors first if that’s really intended.';
+    else if (votes) error = 'They lodged proxy votes, which are kept as meeting records. Remove their roles instead.';
+    else if (theirs.some((r) => beyondMe(access, (r.roles?.role_permissions ?? []).map((x) => x.permission), r.entity_id).length)) error = 'They have permissions you don’t have yourself, so you can’t delete them.';
+    else if (groupAdmins.has(person.id) && groupAdmins.size <= 1) error = 'They’re the last group Admin: give someone else the Admin role first.';
+    else if (field(form, 'confirm_email').toLowerCase() !== person.email.toLowerCase()) error = 'Type their email address to confirm.';
+    else {
+      await log('admin_deleted_user', { roles: theirs.map((r) => r.role_key) });
+      const { error: e } = await svc.auth.admin.deleteUser(person.id);
+      if (e) error = e.message;
+      else return Astro.redirect(`/admin/system/users?deleted=${encodeURIComponent(person.email)}`, 303);
     }
   } else if (intent === 'remove') {
     const r = await removeRole(svc, access, me.id, { assignmentId: field(form, 'assignment'), origin: Astro.url.origin });
@@ -68,7 +103,7 @@ const mayChange = access.can('users.do', null);
   <a href="/admin/system/users" class="text-sm text-white/50 hover:text-white">← Users</a>
   <h1 class="mt-2 font-display text-3xl font-bold">{[person.first_name, person.last_name].filter(Boolean).join(' ') || person.email}</h1>
   <p class="mt-1 text-sm text-white/50">{person.email} · {holders ? <>Investor ({holders} holding{holders > 1 ? 's' : ''}) · <a href={`/admin/investors/${person.id}`} class="text-lk-blue hover:underline">investor page</a></> : 'Not an investor'} · two-step {mfaOn ? 'on' : 'not set up'} · last sign-in {authUser?.user?.last_sign_in_at ? dateTime.format(new Date(authUser.user.last_sign_in_at)) : 'never'}</p>
-  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}{shareLink && <ShareLink url={shareLink} label="Set-password link (if the email doesn’t arrive)" />}
     {assignments.some((a) => a.active) && !mfaOn && <Alert tone="info">They’ll be asked to set up two-step sign-in next time they sign in: roles only work after it.</Alert>}</div>
 
   <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
@@ -102,6 +137,16 @@ const mayChange = access.can('users.do', null);
       </section>
       {mayChange && (
         <form method="post" class="card space-y-3">
+          <h2 class="font-display text-lg font-bold">Details</h2>
+          <div class="grid grid-cols-2 gap-2"><div><label class="label" for="first_name">First name</label><input id="first_name" name="first_name" value={person.first_name ?? ''} maxlength="80" class="field" /></div>
+            <div><label class="label" for="last_name">Last name</label><input id="last_name" name="last_name" value={person.last_name ?? ''} maxlength="80" class="field" /></div></div>
+          <p class="text-xs text-white/45">Email: {person.email}{holders ? ' (change it from their investor page)' : ''}</p>
+          <div class="flex flex-wrap gap-2"><button name="intent" value="details" class="btn-ghost text-sm">Save details</button>
+            {!person.first_signed_in_at && <button name="intent" value="resend" class="btn-ghost text-sm">Send the invitation again</button>}</div>
+        </form>
+      )}
+      {mayChange && (
+        <form method="post" class="card space-y-3">
           <h2 class="font-display text-lg font-bold">Give a role</h2>
           <div><label class="label" for="role">Role</label><select id="role" name="role" required class="field"><option value="">Choose…</option>{roles.map((r) => <option value={r.key}>{r.name}</option>)}</select></div>
           <div><label class="label" for="scope">For</label><select id="scope" name="scope" class="field"><option value="group">The whole group (every company)</option>{(entities ?? []).map((e) => <option value={e.id}>{e.display_name} only</option>)}</select></div>
@@ -110,6 +155,18 @@ const mayChange = access.can('users.do', null);
           <button name="intent" value="grant" class="btn-primary w-full">Give the role</button>
           <p class="text-xs text-white/40">They’re told by email and in their Inbox. Roles need two-step sign-in.</p>
         </form>
+      )}
+      {mayChange && person.id !== me.id && (
+        <details class="card">
+          <summary class="cursor-pointer text-sm font-medium text-lk-red">Delete this person</summary>
+          {holders ? <p class="mt-3 text-sm text-white/55">They’re linked to the share register, so they can’t be deleted here. Remove their roles instead, or manage them in <a href={`/admin/investors/${person.id}`} class="text-lk-blue hover:underline">Investors</a>.</p> : (
+            <form method="post" class="mt-3 space-y-3">
+              <p class="text-sm text-white/60">Deletes their account and roles. It can’t be undone. Their past actions stay in the audit log.</p>
+              <div><label class="label" for="confirm_email">Type their email to confirm</label><input id="confirm_email" name="confirm_email" autocomplete="off" class="field" /></div>
+              <button name="intent" value="delete-person" class="btn-ghost w-full text-lk-red" onclick="return confirm('Delete this person? This can’t be undone.')">Delete permanently</button>
+            </form>
+          )}
+        </details>
       )}
     </aside>
   </div>

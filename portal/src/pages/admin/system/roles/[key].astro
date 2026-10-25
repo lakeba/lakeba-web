@@ -14,7 +14,7 @@ if (!access.can('users.view', null)) return new Response('Forbidden', { status: 
 const svc = serviceClient();
 let role = (await loadRoles(svc)).find((r) => r.key === Astro.params.key);
 if (!role) return Astro.redirect('/admin/system/roles');
-let error = '', notice = '';
+let error = '', notice = Astro.url.searchParams.get('new') ? 'Role created. Tick what it can see, do and approve, then Save. Then give it to people in Users.' : '';
 const mayChange = access.can('users.do', null);
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { role: role!.key, ...detail } });
 if (Astro.request.method === 'POST' && mayChange) {
