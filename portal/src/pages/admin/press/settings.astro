@@ -29,6 +29,9 @@ if (Astro.request.method === 'POST') {
     else {
       const mailbox = field(form, 'reply_mailbox').toLowerCase() || 'press@lakeba.com';
       const value = {
+        // One wire service per line: "Name | submission email (optional) | notes".
+        wires: field(form, 'wires').split('\n').map((l) => l.split('|').map((x) => x.trim())).filter((x) => x[0]).slice(0, 20)
+          .map(([name, email = '', notes = '']) => ({ name: name.slice(0, 80), email: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email) ? email.toLowerCase() : '', notes: notes.slice(0, 300) })),
         reply_tracking: form.get('reply_tracking') === 'on', reply_mailbox: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(mailbox) ? mailbox.slice(0, 200) : 'press@lakeba.com',
         boilerplate_html: cleanHtml(String(form.get('boilerplate_html') ?? '')).slice(0, 5000), about_title: field(form, 'about_title').slice(0, 80) || 'About Lakeba Group',
         contact_name: field(form, 'contact_name').slice(0, 120), contact_email: email.slice(0, 200), contact_phone: field(form, 'contact_phone').slice(0, 60), dateline_city: field(form, 'dateline_city').toUpperCase().slice(0, 40) || 'SYDNEY',
@@ -75,6 +78,11 @@ const { data: people } = team?.length ? await svc.from('profiles').select('id, e
         <div><label class="label" for="contact_email">Email</label><input id="contact_email" name="contact_email" type="email" value={s.contact_email} class="field" /></div>
         <div><label class="label" for="contact_phone">Phone (optional)</label><input id="contact_phone" name="contact_phone" value={s.contact_phone} class="field" /></div>
         <div><label class="label" for="dateline_city">Usual dateline city</label><input id="dateline_city" name="dateline_city" value={s.dateline_city} class="field uppercase" /></div>
+      </div>
+      <div class="space-y-3 border-t border-white/5 pt-4">
+        <h2 class="font-display text-lg font-bold">Wire services</h2>
+        <p class="text-sm text-white/60">The wires you use, one per line: <code class="text-xs">Name | submission email (optional) | notes</code>. With an email, an approver can send a release’s package to that desk from the portal; otherwise download the package and upload it on the wire’s website.</p>
+        <textarea name="wires" rows="4" class="field font-mono text-xs" placeholder={"EIN Presswire | | account under press@lakeba.com\nMedianet | (their submission address) | Australian distribution"}>{s.wires.map((w) => [w.name, w.email, w.notes].join(' | ')).join('\n')}</textarea>
       </div>
       <div class="space-y-3 border-t border-white/5 pt-4">
         <h2 class="font-display text-lg font-bold">Pitches and replies</h2>

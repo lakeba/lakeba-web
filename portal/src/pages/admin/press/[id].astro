@@ -132,8 +132,7 @@ if (Astro.request.method === 'POST') {
         }
       }
       if (intent === 'approve' && access.approver && ['draft', 'in_review', 'changes_requested'].includes(r.status)) {
-        const { data: distributions } = await svc.from('press_distributions').select('id, status, follow_up_of, created_at').eq('release_id', r.id).order('created_at', { ascending: false });
-const brackets = openBrackets(r);
+        const brackets = openBrackets(r);
         const pending = r.quotes.filter((q) => q.status !== 'approved' && q.status !== 'changed');
         const serious = r.checks.filter((c) => c.severity === 'serious');
         const when = field(form, 'publish') === 'later' ? sydneyToIso(field(form, 'publish_at')) : new Date().toISOString();
@@ -147,7 +146,7 @@ const brackets = openBrackets(r);
         else if (r.embargo_until && new Date(when) < new Date(r.embargo_until)) error = `It can’t be published before the embargo (${sydneyTime(r.embargo_until)}).`;
         else {
           await saveVersion(svc, r, me.id, 'approved');
-          await svc.from('press_releases').update({ status: 'approved', approved_by: me.id, approved_at: new Date().toISOString(), publish_at: when }).eq('id', r.id).throwOnError();
+          await svc.from('press_releases').update({ status: 'approved', approved_by: me.id, approved_at: new Date().toISOString(), publish_at: when, notify_investors: form.get('notify_investors') === 'on' }).eq('id', r.id).throwOnError();
           await log('press_approved', { publish_at: when, quotes_overridden: pending.length > 0, serious_acknowledged: serious.length });
           const now = new Date(when) <= new Date();
           if (now) await publishRelease(svc, (await loadRelease(svc, r.id))!, me.id);
@@ -212,6 +211,7 @@ const people = [...new Set([...(versions ?? []).map((v) => v.saved_by), r.create
 const { data: profiles } = people.length ? await svc.from('profiles').select('id, email, first_name, last_name').in('id', people) : { data: [] };
 const who = (id: string | null) => { const p = (profiles ?? []).find((x) => x.id === id); return p ? [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email : 'someone'; };
 const { data: post } = r.post_id ? await svc.from('posts').select('slug, published_at').eq('id', r.post_id).maybeSingle() : { data: null };
+const { data: distributions } = await svc.from('press_distributions').select('id, status, follow_up_of, created_at').eq('release_id', r.id).order('created_at', { ascending: false });
 const brackets = openBrackets(r);
 const checkedFresh = Boolean(r.checks_at && new Date(r.checks_at) >= new Date(r.updated_at));
 const pendingQuotes = r.quotes.filter((q) => q.status !== 'approved' && q.status !== 'changed');
@@ -383,6 +383,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
           <label class="flex items-center gap-2 text-sm"><input type="radio" name="publish" value="now" checked class="accent-lk-blue" /> Publish now</label>
           <label class="flex items-center gap-2 text-sm"><input type="radio" name="publish" value="later" class="accent-lk-blue" /> Publish at (Sydney time)</label>
           <input name="publish_at" type="datetime-local" value={isoToSydney(r.embargo_until)} class="field" />
+          <label class="flex gap-2 text-sm text-white/70"><input type="checkbox" name="notify_investors" checked={r.notify_investors} class="mt-1 accent-lk-blue" /> Tell {companyName(r.entity_id)}’s investors in the portal when it’s published</label>
           {pendingQuotes.length > 0 && <label class="flex gap-2 text-sm text-white/70"><input type="checkbox" name="quotes_ok" class="mt-1 accent-lk-blue" /> The people quoted approved their words another way</label>}
           {r.checks.some((c) => c.severity === 'serious') && <label class="flex gap-2 text-sm text-lk-red"><input type="checkbox" name="serious_ok" class="mt-1 accent-lk-blue" /> I reviewed the serious points</label>}
           <button name="intent" value="approve" class="btn-primary w-full" onclick="return confirm('Approve this press release for publication on the newsroom?')">Approve</button>
@@ -398,7 +399,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
 
       {['approved', 'published'].includes(r.status) && (
         <section class="card space-y-3">
-          <h2 class="font-display text-lg font-bold">Send to journalists</h2>
+          <div class="flex items-center justify-between gap-2"><h2 class="font-display text-lg font-bold">Send to journalists</h2><a href={`/admin/press/${r.id}/channels`} class="text-xs text-lk-blue hover:underline">Social and wires →</a></div>
           <ul class="divide-y divide-white/5 text-sm">
             {(distributions ?? []).map((d) => <li class="py-2"><a href={`/admin/press/distribution/${d.id}`} class="text-white/80 hover:text-lk-blue">{d.follow_up_of ? 'Follow-up' : 'Distribution'} · {d.status}</a><span class="block text-xs text-white/45">{dateTime.format(new Date(d.created_at))}</span></li>)}
             {!distributions?.length && <li class="py-2 text-white/45">Not sent to journalists yet.{r.status === 'approved' && ' Pitches before publication go out under embargo, with a private link to the release.'}</li>}

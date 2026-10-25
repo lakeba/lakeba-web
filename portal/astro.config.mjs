@@ -59,6 +59,16 @@ export default defineConfig({
       WEBSITE_WORKFLOW: envField.string({ context: 'server', access: 'secret', default: 'deploy.yml' }),
       // Tests only: stand-in GitHub API.
       GITHUB_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.github.com' }),
+      // Press releases on social networks. Bluesky: the account's handle and an app password (Settings → App passwords).
+      BLUESKY_HANDLE: envField.string({ context: 'server', access: 'secret', optional: true }),
+      BLUESKY_APP_PASSWORD: envField.string({ context: 'server', access: 'secret', optional: true }),
+      BLUESKY_SERVICE: envField.string({ context: 'server', access: 'secret', default: 'https://bsky.social' }),
+      // X (pay per post): an app's consumer key and secret, and the account's access token and secret (OAuth 1.0a).
+      X_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      X_API_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+      X_ACCESS_TOKEN: envField.string({ context: 'server', access: 'secret', optional: true }),
+      X_ACCESS_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+      X_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.x.com' }),
     },
   },
   vite: {

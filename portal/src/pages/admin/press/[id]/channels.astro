@@ -1,0 +1,176 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PressNav from '../../../../components/PressNav.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime } from '../../../../lib/format';
+import { sendRaw } from '../../../../lib/mail';
+import { loadRelease, pressAccess, pressSettings, sydneyTime } from '../../../../lib/press';
+import { articleUrl, blueskyConfigured, linkedinShareUrl, postBluesky, postX, socialText, wirePackage, xConfigured } from '../../../../lib/press-channels';
+import { pressFrom } from '../../../../lib/press-outreach';
+
+// A release beyond the newsroom: social networks (Bluesky and X posted by the
+// portal; LinkedIn shared by a page admin, its link recorded) and wire
+// services (the package downloaded or emailed to the wire's desk; the cost and
+// the wire's link recorded). Writers prepare the texts; approvers post.
+const access = pressAccess(Astro.locals);
+if (!access) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+const me = Astro.locals.user!;
+let r = await loadRelease(svc, Astro.params.id!);
+if (!r || !['approved', 'published'].includes(r.status)) return Astro.redirect(r ? `/admin/press/${r.id}` : '/admin/press');
+const s = await pressSettings(svc);
+const { data: post } = r.post_id ? await svc.from('posts').select('slug').eq('id', r.post_id).maybeSingle() : { data: null };
+const published = r.status === 'published' && post?.slug;
+const link = published ? articleUrl(post!.slug) : '';
+let error = '';
+const done = Astro.url.searchParams.get('done') ?? '';
+const notice = ({ saved: 'Saved.', bluesky: 'Posted on Bluesky.', x: 'Posted on X.', recorded: 'Recorded.', emailed: 'The package was emailed to the wire’s desk and recorded.', removed: 'Removed.' } as Record<string, string>)[done] ?? '';
+const back = (d: string) => Astro.redirect(`/admin/press/${r!.id}/channels?done=${d}`, 303);
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { id: r!.id, ...detail } });
+const record = (row: Record<string, unknown>) => svc.from('press_channel_posts').insert({ release_id: r!.id, posted_by: me.id, ...row });
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (intent === 'save-social') {
+      await svc.from('press_releases').update({ social: { ...r.social, linkedin: field(form, 'linkedin').slice(0, 3000), x: field(form, 'x').slice(0, 300), bluesky: field(form, 'bluesky').slice(0, 300) } }).eq('id', r.id);
+      return back('saved');
+    }
+    if (!access.approver) error = 'Only an approver can post or submit.';
+    else if (intent === 'post-bluesky' || intent === 'post-x') {
+      if (!published) error = 'Social posts go out once the release is published (embargoes).';
+      else {
+        const text = field(form, intent === 'post-x' ? 'x' : 'bluesky') || r.social.x || r.headline;
+        try {
+          const out = intent === 'post-x' ? await postX(text, link) : await postBluesky(svc, r, text, link);
+          await record({ channel: intent.slice(5), status: 'posted', text: out.text, url: out.url, external_id: out.id });
+          await log(`press_posted_${intent.slice(5)}`, { url: out.url });
+          return back(intent.slice(5));
+        } catch (e) {
+          await record({ channel: intent.slice(5), status: 'failed', text, error: (e as Error).message.slice(0, 300) });
+          error = (e as Error).message;
+        }
+      }
+    } else if (intent === 'record') {
+      const url = field(form, 'url');
+      const cost = Number(field(form, 'cost').replace(/[^0-9.]/g, ''));
+      const channel = ['linkedin', 'wire', 'other'].includes(field(form, 'channel')) ? field(form, 'channel') : 'other';
+      if (url && !/^https?:\/\//.test(url)) error = 'The link should start with https://';
+      else if (channel === 'linkedin' && !url) error = 'Paste the LinkedIn post’s link.';
+      else {
+        await record({ channel, target: field(form, 'target').slice(0, 80), status: channel === 'wire' ? 'submitted' : 'posted', url: url.slice(0, 500), text: field(form, 'text').slice(0, 3000), cost: cost > 0 ? cost : null, currency: field(form, 'currency') || 'AUD' });
+        await log('press_channel_recorded', { channel, target: field(form, 'target') });
+        return back('recorded');
+      }
+    } else if (intent === 'wire-email') {
+      const wire = s.wires.find((w) => w.name === field(form, 'target'));
+      if (!wire?.email) error = 'That wire has no submission email in Settings.';
+      else {
+        const p = await wirePackage(svc, r, s, post?.slug ?? null, Astro.url.origin);
+        const embargo = r.status === 'published' ? '' : ` (EMBARGOED until ${sydneyTime(r.embargo_until ?? r.publish_at!)})`;
+        const ok = await sendRaw({
+          to: wire.email, from: pressFrom(), replyTo: s.contact_email, subject: `Press release for distribution: ${r.headline}${embargo}`.slice(0, 250),
+          text: `Hello,\n\nPlease distribute the attached press release from Lakeba Group${embargo ? `, not before ${sydneyTime(r.embargo_until ?? r.publish_at!)} (Sydney)` : ''}. The text, a PDF and the images are attached.\n\n${p.text}\n\nKind regards,\n${s.contact_name}\n${s.contact_email}${s.contact_phone ? `\n${s.contact_phone}` : ''}`,
+          html: `<p>Hello,</p><p>Please distribute the attached press release from Lakeba Group${embargo ? `, <strong>not before ${sydneyTime(r.embargo_until ?? r.publish_at!)} (Sydney)</strong>` : ''}. The text, a PDF and the images are attached.</p><pre style="white-space:pre-wrap;font-family:Arial,sans-serif">${p.text.replace(/[&<>]/g, (c) => `&#${c.charCodeAt(0)};`)}</pre><p>Kind regards,<br>${s.contact_name}<br>${s.contact_email}</p>`,
+          attachments: [{ filename: `${p.name}.zip`, content: p.bytes, contentType: 'application/zip' }],
+        });
+        if (!ok) error = 'Email isn’t configured on this server.';
+        else {
+          await record({ channel: 'wire', target: wire.name, status: 'submitted', text: `Emailed to ${wire.email}` });
+          await log('press_wire_emailed', { wire: wire.name });
+          return back('emailed');
+        }
+      }
+    } else if (intent === 'remove') {
+      await svc.from('press_channel_posts').delete().eq('id', field(form, 'post')).eq('release_id', r.id);
+      return back('removed');
+    }
+  } catch (e) { error = (e as Error).message || 'Something went wrong.'; }
+  r = (await loadRelease(svc, r.id))!;
+}
+const { data: history } = await svc.from('press_channel_posts').select('*').eq('release_id', r.id).order('posted_at', { ascending: false });
+const posted = (c: string) => (history ?? []).some((h) => h.channel === c && h.status === 'posted');
+const costs = (history ?? []).filter((h) => h.cost).reduce((m, h) => m.set(h.currency, (m.get(h.currency) ?? 0) + Number(h.cost)), new Map<string, number>());
+const bskyDefault = r.social.bluesky || r.social.x || r.summary || r.headline;
+---
+
+<Admin title={`Social and wires: ${r.headline}`}>
+  <PressNav />
+  <a href={`/admin/press/${r.id}`} class="text-sm text-white/50 hover:text-white">← {r.headline}</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">Social and wires</h1>
+  <p class="mt-1 text-sm text-white/45">{published ? <>Published · <a href={link} target="_blank" rel="noopener" class="text-lk-blue hover:underline">{link}</a></> : `Approved, publishes ${r.publish_at ? sydneyTime(r.publish_at) : 'soon'}: social posts wait until it’s public; wires can take it now, under embargo.`}</p>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+
+  <form method="post" class="mt-6 grid gap-4 lg:grid-cols-3">
+    <section class="card space-y-3">
+      <h2 class="font-display text-lg font-bold">LinkedIn</h2>
+      <textarea name="linkedin" rows="8" maxlength="3000" class="field text-sm" data-copy-source="linkedin">{r.social.linkedin ?? ''}</textarea>
+      <p class="text-xs text-white/45">Posting to a company page through LinkedIn’s API needs LinkedIn’s approval, so a page admin shares it: copy the text, open LinkedIn (as the Lakeba page), paste, post, then record the post’s link below.</p>
+      <div class="flex flex-wrap gap-2"><button type="button" class="btn-ghost text-sm" data-copy="linkedin">Copy text</button>
+        {published ? <a href={linkedinShareUrl(link)} target="_blank" rel="noopener" class="btn-ghost text-sm">Open LinkedIn ↗</a> : <span class="text-xs text-white/40">LinkedIn opens once published.</span>}</div>
+    </section>
+    <section class="card space-y-3">
+      <h2 class="font-display text-lg font-bold">Bluesky</h2>
+      <textarea name="bluesky" rows="5" maxlength="300" class="field text-sm">{bskyDefault}</textarea>
+      <p class="text-xs text-white/45">Posted with a link card (headline, summary, picture). Up to 300 characters including the link.</p>
+      {!blueskyConfigured() ? <p class="text-xs text-lk-orange">Not set up: add the Lakeba Bluesky handle and an app password to the server.</p>
+        : access.approver && <button name="intent" value="post-bluesky" class="btn-primary text-sm" disabled={!published} onclick={posted('bluesky') ? "return confirm('Already posted on Bluesky. Post again?')" : "return confirm('Post this on Lakeba’s Bluesky now?')"}>Post on Bluesky</button>}
+    </section>
+    <section class="card space-y-3">
+      <h2 class="font-display text-lg font-bold">X</h2>
+      <textarea name="x" rows="5" maxlength="300" class="field text-sm">{r.social.x ?? ''}</textarea>
+      <p class="text-xs text-white/45">Up to 280 characters; the link counts as 23. X charges per post (about US$0.20 with a link).</p>
+      {!xConfigured() ? <p class="text-xs text-lk-orange">Not set up: add the X app’s keys and the account’s access token to the server.</p>
+        : access.approver && <button name="intent" value="post-x" class="btn-primary text-sm" disabled={!published} onclick={posted('x') ? "return confirm('Already posted on X. Post again?')" : "return confirm('Post this on Lakeba’s X now? X charges for it.')"}>Post on X</button>}
+    </section>
+    <div class="lg:col-span-3"><button name="intent" value="save-social" class="btn-ghost">Save the texts</button></div>
+  </form>
+
+  <section class="card mt-6 space-y-4">
+    <div class="flex flex-wrap items-center justify-between gap-2"><h2 class="font-display text-lg font-bold">Wire services</h2>
+      <a href={`/admin/press/${r.id}/wire-package`} class="btn-ghost text-sm">Download the wire package (.zip)</a></div>
+    <p class="text-sm text-white/55">The package has what wires ask for: the release as text ({r.status === 'published' ? '“for immediate release”' : 'marked EMBARGOED with its time'}), a copy for Word, the PDF and the images. Upload it on the wire’s website, or email it to a wire’s desk below. Record each submission with its cost and the wire’s link to it.</p>
+    <ul class="divide-y divide-white/5 text-sm">
+      {s.wires.map((w) => (
+        <li class="flex flex-wrap items-center justify-between gap-3 py-2.5"><span><strong class="text-white">{w.name}</strong><span class="block text-xs text-white/45">{w.email || 'submit on their website'}{w.notes && ` · ${w.notes}`}</span></span>
+          {access.approver && w.email && <form method="post"><input type="hidden" name="target" value={w.name} /><button name="intent" value="wire-email" class="btn-ghost px-3 py-1.5 text-xs" onclick={`return confirm('Email the package to ${w.name} (${w.email}) now?')`}>Email the package</button></form>}</li>
+      ))}
+      {!s.wires.length && <li class="py-2.5 text-white/45">No wires listed yet{access.approver ? ': add them in Settings and team' : ''}.</li>}
+    </ul>
+    <form method="post" class="grid gap-3 border-t border-white/5 pt-4 sm:grid-cols-[10rem_1fr_1fr_7rem_6rem_auto] sm:items-end">
+      <div><label class="label" for="channel">Record</label><select id="channel" name="channel" class="field py-2 text-sm"><option value="wire">Wire</option><option value="linkedin">LinkedIn post</option><option value="other">Other</option></select></div>
+      <div><label class="label" for="target">Where</label><input id="target" name="target" list="wires" placeholder="e.g. EIN Presswire" class="field py-2 text-sm" /><datalist id="wires">{s.wires.map((w) => <option value={w.name} />)}</datalist></div>
+      <div><label class="label" for="url">Link</label><input id="url" name="url" placeholder="https://…" class="field py-2 text-sm" /></div>
+      <div><label class="label" for="cost">Cost</label><input id="cost" name="cost" inputmode="decimal" class="field py-2 text-sm" /></div>
+      <div><label class="label" for="currency">Currency</label><select id="currency" name="currency" class="field py-2 text-sm"><option>AUD</option><option>USD</option><option>EUR</option><option>GBP</option></select></div>
+      {access.approver ? <button name="intent" value="record" class="btn-primary py-2">Record</button> : <span class="text-xs text-white/45">Approvers record</span>}
+    </form>
+  </section>
+
+  <section class="card mt-6">
+    <h2 class="font-display text-lg font-bold">Where it went</h2>
+    {costs.size > 0 && <p class="mt-1 text-sm text-white/55">Spent: {[...costs].map(([c, v]) => `${c} ${v.toFixed(2)}`).join(' · ')}</p>}
+    <ul class="mt-2 divide-y divide-white/5 text-sm">
+      {(history ?? []).map((h) => (
+        <li class="flex flex-wrap items-center justify-between gap-3 py-2.5"><span><strong class="text-white">{h.channel === 'x' ? 'X' : h.channel === 'wire' ? h.target || 'Wire' : h.channel.charAt(0).toUpperCase() + h.channel.slice(1)}</strong>{h.channel !== 'wire' && h.target && ` · ${h.target}`} <span class:list={['text-xs', h.status === 'failed' ? 'text-lk-red' : 'text-white/45']}>· {h.status}{h.error && `: ${h.error}`}{h.cost && ` · ${h.currency} ${Number(h.cost).toFixed(2)}`} · {dateTime.format(new Date(h.posted_at))}</span>
+          {h.url && <a href={h.url} target="_blank" rel="noopener noreferrer" class="block text-xs text-lk-blue hover:underline">{h.url}</a>}{h.text && h.channel !== 'wire' && <span class="block max-w-2xl truncate text-xs text-white/45">{h.text}</span>}</span>
+          {access.approver && <form method="post"><input type="hidden" name="post" value={h.id} /><button name="intent" value="remove" class="text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Remove this record? (It doesn’t delete the post itself.)')">Remove</button></form>}</li>
+      ))}
+      {!history?.length && <li class="py-3 text-white/45">Nothing yet.</li>}
+    </ul>
+  </section>
+</Admin>
+
+<script>
+  for (const b of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+    b.addEventListener('click', async () => {
+      const src = document.querySelector<HTMLTextAreaElement>(`[data-copy-source="${b.dataset.copy}"]`);
+      if (!src) return;
+      await navigator.clipboard.writeText(src.value).catch(() => { src.select(); document.execCommand('copy'); });
+      const t = b.textContent; b.textContent = 'Copied ✓'; setTimeout(() => { b.textContent = t; }, 1500);
+    });
+  }
+</script>

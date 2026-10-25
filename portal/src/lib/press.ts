@@ -17,12 +17,14 @@ export type Check = { quote: string; why: string; severity: 'warning' | 'serious
 export type Release = {
   id: string; entity_id: string | null; status: 'draft' | 'in_review' | 'changes_requested' | 'approved' | 'published' | 'withdrawn';
   head_points: string; headline: string; headline_options: string[]; subheadline: string; dateline_city: string; body_html: string;
-  quotes: Quote[]; summary: string; social: { linkedin?: string; x?: string }; checks: Check[]; checks_at: string | null;
+  quotes: Quote[]; summary: string; social: { linkedin?: string; x?: string; bluesky?: string }; checks: Check[]; checks_at: string | null;
   cover_url: string | null; kit: KitItem[]; embargo_until: string | null; publish_at: string | null; post_id: string | null;
   review_note: string; submitted_by: string | null; submitted_at: string | null; approved_by: string | null; approved_at: string | null;
-  published_at: string | null; created_by: string | null; updated_by: string | null; created_at: string; updated_at: string;
+  published_at: string | null; created_by: string | null; updated_by: string | null; created_at: string; updated_at: string; notify_investors: boolean;
 };
-export type PressSettings = { boilerplate_html: string; about_title: string; contact_name: string; contact_email: string; contact_phone: string; dateline_city: string; reply_tracking: boolean; reply_mailbox: string };
+export type PressSettings = { boilerplate_html: string; about_title: string; contact_name: string; contact_email: string; contact_phone: string; dateline_city: string; reply_tracking: boolean; reply_mailbox: string; wires: Wire[] };
+/** A wire service the press office uses: where its desk takes submissions by email (optional), and notes (account, price). */
+export type Wire = { name: string; email: string; notes: string };
 
 export const STATUS_LABEL: Record<Release['status'], string> = {
   draft: 'Draft', in_review: 'Waiting for approval', changes_requested: 'Changes requested', approved: 'Approved, scheduled', published: 'Published', withdrawn: 'Withdrawn',
@@ -39,7 +41,7 @@ export function pressAccess(locals: App.Locals) {
 export async function pressSettings(svc: Svc): Promise<PressSettings> {
   const { data } = await svc.from('portal_settings').select('value').eq('key', 'press').maybeSingle();
   const v = (data?.value ?? {}) as Partial<PressSettings>;
-  return { boilerplate_html: v.boilerplate_html ?? '', about_title: v.about_title || 'About Lakeba Group', contact_name: v.contact_name ?? 'Lakeba Media Relations', contact_email: v.contact_email || 'press@lakeba.com', contact_phone: v.contact_phone ?? '', dateline_city: v.dateline_city || 'SYDNEY', reply_tracking: v.reply_tracking === true, reply_mailbox: v.reply_mailbox || 'press@lakeba.com' };
+  return { boilerplate_html: v.boilerplate_html ?? '', about_title: v.about_title || 'About Lakeba Group', contact_name: v.contact_name ?? 'Lakeba Media Relations', contact_email: v.contact_email || 'press@lakeba.com', contact_phone: v.contact_phone ?? '', dateline_city: v.dateline_city || 'SYDNEY', reply_tracking: v.reply_tracking === true, reply_mailbox: v.reply_mailbox || 'press@lakeba.com', wires: Array.isArray(v.wires) ? v.wires : [] };
 }
 
 export async function loadRelease(svc: Svc, id: string) {
@@ -102,6 +104,8 @@ export async function publishRelease(svc: Svc, r: Release, by: string | null) {
   const fields = {
     ...content, visibility: 'public', venture: company && company.relationship !== 'group' ? company.display_name : '', entity_id: company?.id ?? r.entity_id,
     categories: ['Press release'], share_image_url: r.cover_url, published_at: when, press_release_id: r.id, external: false,
+    // Investors are told once, by the usual news notification, if the approver asked.
+    ...(r.notify_investors ? { notify_on_publish: true } : {}),
     updated_by: by, updated_at: new Date().toISOString(),
   };
   let postId = r.post_id;
