@@ -270,7 +270,7 @@ import ShareLink from '../../../components/ShareLink.astro';
                 {askOff.has(p.id) && <span class="mt-1 mr-1 inline-block rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/60">Ask off</span>}
                 {p.board_qa_enabled === false && <span class="mt-1 inline-block rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/60">Board Q&amp;A off</span>}
               </td>
-              <td class="px-5 py-3 text-white/70">{rolesOf.has(p.id) ? <a href={`/admin/system/users/${p.id}`} class="hover:text-white hover:underline">{roleLabel(p.id)}</a> : 'Investor'}</td>
+              <td class="px-5 py-3 text-white/70">{rolesOf.has(p.id) ? <a href={`/admin/system/users/${p.id}`} class="hover:text-white hover:underline">{roleLabel(p.id)}</a> : hs.length ? 'Investor' : <span class="text-white/40">No holder</span>}</td>
               <td class="px-5 py-3 text-white/60">
                 {hs.length ? hs.map((h) => (
                   <div class="py-0.5">
