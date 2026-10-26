@@ -28,8 +28,15 @@ const excelDate = (v) => (v ? (Date.UTC(+v.slice(0, 4), +v.slice(5, 7) - 1, +v.s
 /** A holder's ID in the file: its register reference, or one the import recognises for holders created without one. */
 export const holderFileId = (h) => h.registry_ref || `PORTAL-${h.id.slice(0, 8)}`;
 
-/** Everything in the portal, as rows per sheet (input columns only). */
-export async function exportRows(svc) {
+/**
+ * Everything in the portal, as rows per sheet (input columns only). With a
+ * company (a venture's own admins), only that company: its row, classes,
+ * holdings, the holders in them and who sees those holders, its board and
+ * admins, prices and notes. Nobody's roles are listed then.
+ * @param {*} svc
+ * @param {{ entityId: string } | null} [scope]
+ */
+export async function exportRows(svc, scope = null) {
   const all = async (q) => { const { data, error } = await q; if (error) throw error; return data ?? []; };
   const now = new Date().toISOString();
   const [entities, classes, holders, profiles, members, holdings, board, roleRows, prices, notes] = await Promise.all([
@@ -44,6 +51,26 @@ export async function exportRows(svc) {
     all(svc.from('reference_prices').select('*').order('priced_on')),
     all(svc.from('holding_notes').select('holder_id, share_class_id, note')),
   ]);
+  if (scope) {
+    const classIds = new Set(classes.filter((c) => c.entity_id === scope.entityId).map((c) => c.id));
+    const keepHoldings = holdings.filter((h) => classIds.has(h.share_class_id));
+    const holderIds = new Set(keepHoldings.map((h) => h.holder_id));
+    const keepMembers = members.filter((m) => holderIds.has(m.holder_id));
+    const keepBoard = board.filter((b) => b.entity_id === scope.entityId);
+    const keepAdmins = roleRows.filter((r) => r.role_key === 'admin' && r.entity_id === scope.entityId);
+    const userIds = new Set([...keepMembers.map((m) => m.user_id), ...keepBoard.map((b) => b.user_id), ...keepAdmins.map((r) => r.user_id)]);
+    const narrow = (list, keep) => list.splice(0, list.length, ...list.filter(keep));
+    narrow(entities, (e) => e.id === scope.entityId);
+    narrow(classes, (c) => classIds.has(c.id));
+    narrow(holdings, (h) => classIds.has(h.share_class_id));
+    narrow(holders, (h) => holderIds.has(h.id));
+    narrow(members, (m) => holderIds.has(m.holder_id));
+    narrow(board, (b) => b.entity_id === scope.entityId);
+    narrow(roleRows, (r) => r.role_key === 'admin' && r.entity_id === scope.entityId);
+    narrow(profiles, (p) => userIds.has(p.id));
+    narrow(prices, (p) => classIds.has(p.share_class_id));
+    narrow(notes, (n) => classIds.has(n.share_class_id) && holderIds.has(n.holder_id));
+  }
   const entity = new Map(entities.map((e) => [e.id, e]));
   const classCode = new Map(classes.map((c) => [c.id, `${entity.get(c.entity_id)?.code}-${c.code}`]));
   const holderId = new Map(holders.map((h) => [h.id, holderFileId(h)]));

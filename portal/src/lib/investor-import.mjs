@@ -14,15 +14,22 @@
 // the group Admin role, which a file never gives or takes; "Company admin" on
 // the Boards sheet is the Admin role for that company only. Files exported
 // by the portal (investor-export.mjs) read back unchanged.
+//
+// With a company (scope: a venture's own admins), the file is that company's
+// only, and only it can change: its classes, holdings, board, prices and notes;
+// its holders and people unless they also belong to another company (those
+// are kept as they are, and nobody is given access to a shared holder).
+// Relationship, portal access and Lakeba's stake stay Lakeba's; no roles are
+// given or taken, and no company admins added. Removals stay inside it.
 import { readXlsx } from './xlsx-read.mjs';
 
 /** @typedef {{ sheet: string, action: 'add' | 'update' | 'remove' | 'keep', item: string, details: string[] }} Change */
 
 /**
- * @param {{ data: Buffer | Uint8Array, name: string, svc: import('@supabase/supabase-js').SupabaseClient, apply: boolean, target: string, remove?: boolean, actorId?: string | null }} opts
+ * @param {{ data: Buffer | Uint8Array, name: string, svc: import('@supabase/supabase-js').SupabaseClient, apply: boolean, target: string, remove?: boolean, actorId?: string | null, scope?: { entityId: string, code: string } | null }} opts
  * @returns {Promise<{ lines: string[], problems: string[], warnings: string[], applied: boolean, changes: Change[], changedHolders: string[], latestAsAt: string | null }>}
  */
-export async function runImport({ data, name, svc, apply, target, remove = false, actorId = null }) {
+export async function runImport({ data, name, svc, apply, target, remove = false, actorId = null, scope = null }) {
   const FIRST = 4;
   const cellValue = (v) => (typeof v === 'string' ? v.trim() || null : v ?? null);
   const iso = (v) => {
@@ -88,7 +95,9 @@ export async function runImport({ data, name, svc, apply, target, remove = false
     if (c.stake_as_at === 'invalid') bad('Companies', c, 'stake as-at date is not a date');
     if (c.relationship === 'group' && c.portal !== 'full') bad('Companies', c, 'the group must have Full portal access');
   }
-  if (companies.filter((c) => c.relationship === 'group').length !== 1) problems.push('Companies: exactly one company must be the Group');
+  if (scope) {
+    if (companies.length !== 1 || companies[0].code !== scope.code) problems.push(`Companies: this workbook is for ${scope.code} only: the Companies sheet must have just its row`);
+  } else if (companies.filter((c) => c.relationship === 'group').length !== 1) problems.push('Companies: exactly one company must be the Group');
   const companyCodes = new Set(companies.map((c) => c.code));
 
   const classes = rows('Share classes').map((r) => {
@@ -255,13 +264,71 @@ export async function runImport({ data, name, svc, apply, target, remove = false
   const del = (sheet, item, details = []) => changes.push({ sheet, action: 'remove', item, details });
   const keep = (sheet, item, why) => changes.push({ sheet, action: 'keep', item, details: [why] });
 
+  // One company only (scope): what it may change, and what stays as it is because it also belongs elsewhere.
+  const own = { classIds: new Set(), holderIds: new Set(), sharedHolders: new Set(), people: new Set(), sharedPeople: new Set() };
+  if (scope) {
+    for (const c of dbClasses) if (c.entity_id === scope.entityId) own.classIds.add(c.id);
+    for (const h of dbHoldings) (own.classIds.has(h.share_class_id) ? own.holderIds : own.sharedHolders).add(h.holder_id);
+    for (const h of dbHolders) if (h.represents_entity_id) own.sharedHolders.add(h.id);
+    for (const m of dbMembers) {
+      if (own.holderIds.has(m.holder_id)) own.people.add(m.user_id);
+      if (own.sharedHolders.has(m.holder_id)) own.sharedPeople.add(m.user_id);
+    }
+    for (const b of dbBoard) (b.entity_id === scope.entityId ? own.people : own.sharedPeople).add(b.user_id);
+    for (const r of liveRoles) { own.sharedPeople.add(r.user_id); if (r.role_key === 'admin' && r.entity_id === scope.entityId) own.people.add(r.user_id); }
+    const isShared = (h) => own.sharedHolders.has(h.id);
+
+    for (const c of companies) {
+      const db = entityByCode.get(c.code);
+      if (!db) { bad('Companies', c, `${c.code} isn’t in the portal: only Lakeba adds companies`); continue; }
+      for (const [k, label] of [['relationship', 'Relationship'], ['portal', 'Portal access'], ['lakeba_stake', 'Lakeba stake'], ['stake_as_at', 'Stake as at']]) {
+        if (norm(c[k]) !== norm(db[k])) warn.push(`Companies row ${c._row}: ${label} is set by Lakeba, so the file’s value is ignored.`);
+        c[k] = db[k];
+      }
+    }
+    for (const c of classes) if (c.company !== scope.code) bad('Share classes', c, `class ${c.full} isn’t ${scope.code}’s`);
+    for (const [sheet, list] of [['Holdings', holdings], ['Prices', prices], ['Holding notes', holdingNotes]]) {
+      for (const x of list) if (classByFull.get(x.full) && classByFull.get(x.full).company !== scope.code) bad(sheet, x, `class ${x.full} isn’t ${scope.code}’s`);
+    }
+    for (const b of [...boards]) {
+      if (b.company !== scope.code) { bad('Boards', b, `company ${b.company} isn’t ${scope.code}`); continue; }
+      if (b.position !== 'admin') continue;
+      const u = profileByEmail.get(b.email);
+      if (!(u && liveRoles.some((r) => r.user_id === u.id && r.role_key === 'admin' && r.entity_id === scope.entityId))) {
+        warn.push(`Boards row ${b._row}: ${b.email} isn’t made a company admin from a file. Lakeba gives that role (System → Users).`);
+        boards.splice(boards.indexOf(b), 1);
+      }
+    }
+    for (const h of holders) {
+      const db = holderByRef.get(h.ref);
+      if (!db && h.ref.endsWith('-GROUP')) bad('Holders', h, `${h.ref} would stand for a company: only Lakeba adds those`);
+      if (db && isShared(db) && (norm(h.name) !== norm(db.name) || norm(h.kind) !== norm(db.kind))) bad('Holders', h, `${h.ref} also holds shares in another company (or stands for one), so its name and kind are kept as they are`);
+    }
+    for (const a of access) {
+      const h = holderByRef.get(a.ref); const u = profileByEmail.get(a.email);
+      if (!h || !isShared(h)) continue;
+      const db = u && dbMembers.find((m) => m.holder_id === h.id && m.user_id === u.id);
+      if (!db || db.access !== a.access) bad('Access', a, `${a.ref} also holds shares in another company, so who sees it is changed by Lakeba`);
+    }
+    for (const p of people) {
+      if (p.roleNames.length) warn.push(`People row ${p._row}: roles are given by Lakeba (System → Users), so the Roles column is ignored.`);
+      p.roles = [];
+      const db = profileByEmail.get(p.email);
+      if (db && own.sharedPeople.has(db.id) && fieldChanges(p, db, [['first_name', ''], ['last_name', ''], ['phone', ''], ['notify_email', '']]).length) bad('People', p, `${p.email} also belongs to another company (or has a role), so their details are kept as they are`);
+    }
+  }
+  const sharedHolder = (id) => Boolean(scope) && own.sharedHolders.has(id);
+  const ownHolder = (id) => !scope || (own.holderIds.has(id) && !own.sharedHolders.has(id));
+  const ownPerson = (id) => !scope || (own.people.has(id) && !own.sharedPeople.has(id));
+  const ownClass = (id) => !scope || own.classIds.has(id);
+
   // Companies
   for (const c of companies) {
     const db = entityByCode.get(c.code);
     if (!db) add('Companies', `${c.code} ${c.display_name ?? ''}`.trim(), [c.legal_name, c.relationship, c.portal].filter(Boolean));
     else upd('Companies', `${c.code} ${c.display_name ?? ''}`.trim(), fieldChanges(c, db, [['display_name', 'Display name'], ['legal_name', 'Legal name'], ['company_number', 'ACN / ABN'], ['country', 'Country'], ['relationship', 'Relationship'], ['portal', 'Portal access'], ['lakeba_stake', 'Lakeba stake %'], ['stake_as_at', 'Stake as at'], ['website', 'Website']]));
   }
-  for (const e of dbEntities) if (!companyCodes.has(e.code)) keep('Companies', `${e.code} ${e.display_name}`, 'Not in the file. Companies are never removed by an import (their documents, news and meetings would go too).');
+  for (const e of dbEntities) if (!companyCodes.has(e.code) && !scope) keep('Companies', `${e.code} ${e.display_name}`, 'Not in the file. Companies are never removed by an import (their documents, news and meetings would go too).');
 
   // Share classes
   for (const c of classes) {
@@ -291,7 +358,7 @@ export async function runImport({ data, name, svc, apply, target, remove = false
     if (!db) add('People', p.email, [[p.first_name, p.last_name].filter(Boolean).join(' '), ...roleDetails].filter(Boolean));
     else upd('People', p.email, [...fieldChanges(p, db, [['first_name', 'First name'], ['last_name', 'Last name'], ['phone', 'Phone'], ['notify_email', 'Email notifications']]), ...roleDetails]);
     // Roles no longer listed: taken away only when removing.
-    for (const r of db ? drops : []) { roleRemovals.push(r); del('People', `${p.email}: ${roleLabel(r)} role`, ['role taken away']); }
+    for (const r of db && !scope ? drops : []) { roleRemovals.push(r); del('People', `${p.email}: ${roleLabel(r)} role`, ['role taken away']); }
   }
 
   // Access
@@ -382,26 +449,26 @@ export async function runImport({ data, name, svc, apply, target, remove = false
   ]);
   const removal = { members: [], holdings: [], board: [], companyAdmins: [], prices: [], notes: [], holders: [], classes: [], people: [], roles: roleRemovals };
   const refOfId = (id) => fileRefOf(holderById.get(id) ?? { id, registry_ref: null });
-  for (const m of dbMembers) if (!fileMemberKeys.has(memberKey(m.user_id, m.holder_id)) && profileById.get(m.user_id) && !profileById.get(m.user_id).email.toLowerCase().endsWith('@lakeba.test')) {
+  for (const m of dbMembers) if (ownHolder(m.holder_id) && !fileMemberKeys.has(memberKey(m.user_id, m.holder_id)) && profileById.get(m.user_id) && !profileById.get(m.user_id).email.toLowerCase().endsWith('@lakeba.test')) {
     removal.members.push(m); del('Access', `${profileById.get(m.user_id).email} → ${refOfId(m.holder_id)}`, [m.access]);
   }
-  for (const h of dbHoldings) if (!fileHoldingKeys.has(holdingKey(h.holder_id, h.share_class_id, h.as_at))) {
+  for (const h of dbHoldings) if (ownClass(h.share_class_id) && !fileHoldingKeys.has(holdingKey(h.holder_id, h.share_class_id, h.as_at))) {
     removal.holdings.push(h); del('Holdings', `${refOfId(h.holder_id)} ${classById.get(h.share_class_id) ? classFull(classById.get(h.share_class_id)) : '?'} as at ${h.as_at}`, [`${show(Number(h.shares))} shares`]);
   }
-  for (const b of dbBoard) if (!fileBoardKeys.has(boardKey(b.entity_id, b.user_id, b.position)) && profileById.get(b.user_id)) {
+  for (const b of dbBoard) if ((!scope || b.entity_id === scope.entityId) && !fileBoardKeys.has(boardKey(b.entity_id, b.user_id, b.position)) && profileById.get(b.user_id)) {
     removal.board.push(b); del('Boards', `${entityById.get(b.entity_id)?.code} · ${profileById.get(b.user_id).email} · ${b.position}`);
   }
-  for (const r of liveRoles) if (r.role_key === 'admin' && r.entity_id && !fileCompanyAdmins.has(`${r.user_id}|${r.entity_id}`) && profileById.get(r.user_id)) {
+  for (const r of liveRoles) if (!scope && r.role_key === 'admin' && r.entity_id && !fileCompanyAdmins.has(`${r.user_id}|${r.entity_id}`) && profileById.get(r.user_id)) {
     removal.companyAdmins.push(r); del('Boards', `${entityById.get(r.entity_id)?.code} · ${profileById.get(r.user_id).email} · Company admin`, ['Admin role for this company']);
   }
-  for (const p of dbPrices) if (!filePriceKeys.has(priceKey(p.share_class_id, p.priced_on, p.source))) {
+  for (const p of dbPrices) if (ownClass(p.share_class_id) && !filePriceKeys.has(priceKey(p.share_class_id, p.priced_on, p.source))) {
     removal.prices.push(p); del('Prices', `${classById.get(p.share_class_id) ? classFull(classById.get(p.share_class_id)) : '?'} ${p.priced_on} (${p.source})`, [`${show(Number(p.price))} ${p.currency}`]);
   }
-  if (hasNotesSheet) for (const x of dbNotes) if (!fileNoteKeys.has(noteKey(x.holder_id, x.share_class_id))) {
+  if (hasNotesSheet) for (const x of dbNotes) if (ownClass(x.share_class_id) && !fileNoteKeys.has(noteKey(x.holder_id, x.share_class_id))) {
     removal.notes.push(x); del('Holding notes', `${refOfId(x.holder_id)} ${classById.get(x.share_class_id) ? classFull(classById.get(x.share_class_id)) : '?'}`, [x.note]);
   }
   for (const h of dbHolders) {
-    if (holderRefs.has(fileRefOf(h))) continue;
+    if (holderRefs.has(fileRefOf(h)) || !ownHolder(h.id) || (scope && !own.holderIds.has(h.id))) continue;
     const item = `${fileRefOf(h)} ${h.name}`;
     const why = votesByHolder.has(h.id) ? 'it has proxy votes (meeting records)' : docsByHolder.has(h.id) ? 'documents were published just for this holder' : tradesByHolder.some((t) => t.holder_id === h.id) ? 'it has secondary trading records' : '';
     if (why) keep('Holders', item, `Not in the file, but kept: ${why}.`);
@@ -409,7 +476,7 @@ export async function runImport({ data, name, svc, apply, target, remove = false
   }
   const staff = new Set(liveRoles.map((r) => r.user_id));
   for (const p of dbProfiles) {
-    if (emails.has(p.email.toLowerCase()) || p.email.toLowerCase().endsWith('@lakeba.test')) continue;
+    if (emails.has(p.email.toLowerCase()) || p.email.toLowerCase().endsWith('@lakeba.test') || !ownPerson(p.id)) continue;
     const why = p.id === actorId ? 'that’s you' : staff.has(p.id) ? 'they have a staff role (remove it in System → Users first)' : votesByUser.has(p.id) ? 'they lodged proxy votes' : questionsByUser.has(p.id) ? 'they asked Board Q&A questions' : meetingQsByUser.has(p.id) ? 'they asked meeting questions' : '';
     if (why) keep('People', p.email, `Not in the file, but kept: ${why}.`);
     else { removal.people.push(p); del('People', p.email, ['their account is deleted']); }
@@ -418,7 +485,7 @@ export async function runImport({ data, name, svc, apply, target, remove = false
   const removedHoldingIds = new Set(removal.holdings.map((h) => h.id));
   const removedPriceIds = new Set(removal.prices.map((p) => p.id));
   for (const c of dbClasses) {
-    if (classByFull.has(classFull(c))) continue;
+    if (classByFull.has(classFull(c)) || !ownClass(c.id)) continue;
     const item = `${classFull(c)} ${c.name}`;
     const holdingsLeft = dbHoldings.some((h) => h.share_class_id === c.id && !removedHoldingIds.has(h.id) && !removedHolderIds.has(h.holder_id));
     const pricesLeft = dbPrices.some((p) => p.share_class_id === c.id && !removedPriceIds.has(p.id));
@@ -492,6 +559,7 @@ export async function runImport({ data, name, svc, apply, target, remove = false
       dbClassByKey.set(classKey(e.id, c.code), data);
     }
     for (const h of holders) {
+      if (holderByRef.get(h.ref) && sharedHolder(holderByRef.get(h.ref).id)) continue; // kept as it is (checked above)
       // A holder exported without a register reference gets this ID as its reference now.
       const portalOnly = holderByRef.get(h.ref);
       if (portalOnly && !portalOnly.registry_ref) await svc.from('holders').update({ registry_ref: h.ref }).eq('id', portalOnly.id).throwOnError();
@@ -507,7 +575,7 @@ export async function runImport({ data, name, svc, apply, target, remove = false
         if (error) throw new Error(`${p.email}: ${error.message}`);
         profile = { id: data.user.id };
       }
-      await svc.from('profiles').update({ first_name: p.first_name, last_name: p.last_name, phone: p.phone, notify_email: p.notify_email }).eq('id', profile.id).throwOnError();
+      if (!scope || !own.sharedPeople.has(profile.id)) await svc.from('profiles').update({ first_name: p.first_name, last_name: p.last_name, phone: p.phone, notify_email: p.notify_email }).eq('id', profile.id).throwOnError();
       profileByEmail.set(p.email, { ...profile, email: p.email });
       for (const r of p.roles) {
         const entity_id = r.company ? entityByCode.get(r.company).id : null;
@@ -518,6 +586,7 @@ export async function runImport({ data, name, svc, apply, target, remove = false
       }
     }
     for (const a of access) {
+      if (sharedHolder(holderByRef.get(a.ref).id)) continue; // unchanged (checked above)
       await svc.from('holder_members').upsert({ holder_id: holderByRef.get(a.ref).id, user_id: profileByEmail.get(a.email).id, access: a.access }, { onConflict: 'holder_id,user_id' }).throwOnError();
     }
     const holdingRows = holdings.map((h) => {
@@ -557,7 +626,7 @@ export async function runImport({ data, name, svc, apply, target, remove = false
       for (const c of removal.classes) await svc.from('share_classes').delete().eq('id', c.id).throwOnError();
       for (const p of removal.people) { const { error } = await svc.auth.admin.deleteUser(p.id); if (error) throw new Error(`${p.email}: ${error.message}`); }
     }
-    await svc.from('audit_log').insert({ user_id: actorId, action: 'investor_data_imported', detail: { file: name, removals: remove, added: changes.filter((c) => c.action === 'add').length, updated: changes.filter((c) => c.action === 'update').length, removed: remove ? removals : 0, companies: companies.length, holders: holders.length, people: people.length, holdings: holdings.length } });
+    await svc.from('audit_log').insert({ user_id: actorId, action: 'investor_data_imported', entity_id: scope?.entityId ?? null, detail: { file: name, company: scope?.code ?? null, removals: remove, added: changes.filter((c) => c.action === 'add').length, updated: changes.filter((c) => c.action === 'update').length, removed: remove ? removals : 0, companies: companies.length, holders: holders.length, people: people.length, holdings: holdings.length } });
     lines.splice(3, 0, '**Imported.** Review the changes above in the portal.', '');
   } else if (apply) {
     lines.splice(3, 0, '**Not imported** because of the problems below.', '');

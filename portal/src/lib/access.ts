@@ -53,8 +53,8 @@ export async function loadAccess(svc: Svc, userId: string, strong: boolean): Pro
 }
 
 const under = (path: string, p: string) => path === p || path.startsWith(`${p}/`);
-/** Tools that stay with group Admins whatever the roles: data import, sending notifications, the LinkedIn campaign, Ask's tests. */
-const GROUP_ADMIN_ONLY = ['/admin/import', '/admin/notifications', '/admin/linkedin', '/admin/ask-tests'];
+/** Tools that stay with group Admins whatever the roles: sending notifications, the LinkedIn campaign, Ask's tests. */
+const GROUP_ADMIN_ONLY = ['/admin/notifications', '/admin/linkedin', '/admin/ask-tests'];
 /**
  * Where an approver without "do" may send forms: the approval actions only
  * (the pages check "approve" again). Press settings are for approvers.
@@ -75,6 +75,8 @@ export const formAction = (form: FormData | null) => (form?.get('then') === 'sen
 export function adminMayRequest(a: Access, path: string, writing: boolean, action = '') {
   if (a.groupAdmin) return true;
   if (GROUP_ADMIN_ONLY.some((p) => under(path, p))) return false;
+  // Import data: the whole platform for group Admins; one company's workbook for whoever manages a company's register (lib/import-scope.ts).
+  if (under(path, '/admin/import')) return a.canAny('investors.do');
   if (path.startsWith('/admin/investors/')) return !writing && a.can('investors.view', null);
   // Approvals: for anyone who prepares or approves something; each item checks its own area.
   if (under(path, '/admin/approvals')) return ALL_PERMISSIONS.some((p) => !p.endsWith('.view') && a.canAny(p));
