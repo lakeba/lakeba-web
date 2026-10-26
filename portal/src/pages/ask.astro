@@ -22,7 +22,7 @@ const examples = isGroup ? [
   t('What has {company} announced recently?', { company: name }),
 ];
 // Texts the browser script shows.
-const i18n = clientStrings(t, ['Thanks for the feedback.', 'Could not save your feedback.', 'Sources', '+{n} more', '{name} is unavailable right now.', 'Stopped.']);
+const i18n = clientStrings(t, ['No conversations yet.', 'Delete', 'Delete this conversation?', 'Thanks for the feedback.', 'Could not save your feedback.', 'Sources', '+{n} more', '{name} is unavailable right now.', 'Stopped.', 'That answer didn’t finish. Your question is back in the box: send it again.']);
 const isAdmin = Astro.locals.access.groupAdmin;
 ---
 
@@ -40,7 +40,23 @@ const isAdmin = Astro.locals.access.groupAdmin;
         <p class="eyebrow">{title} · AI</p>
         <h1 class="mt-3 text-3xl font-extrabold">{isGroup ? t('Ask about your company') : t('Ask about {company}', { company: name })}</h1>
       </div>
-      <button type="button" data-new-chat class="btn-ghost px-4 py-2 text-sm" hidden>{t('New chat')}</button>
+      <div class="flex shrink-0 gap-2">
+        <button type="button" data-history-open class="btn-ghost px-4 py-2 text-sm" aria-expanded="false" aria-controls="ask-history">{t('Your conversations')}</button>
+        <button type="button" data-new-chat class="btn-ghost px-4 py-2 text-sm" hidden>{t('New chat')}</button>
+      </div>
+    </div>
+
+    {/* Earlier conversations (kept 12 months): open one to read it and carry on. */}
+    <div id="ask-history" data-history-panel class="fixed inset-0 z-50" hidden>
+      <div class="absolute inset-0 bg-black/40" data-history-close></div>
+      <aside class="absolute inset-y-0 right-0 flex w-full max-w-sm flex-col border-l border-white/10 bg-ink shadow-2xl" aria-label={t('Your conversations')}>
+        <div class="flex items-center justify-between border-b border-white/10 px-5 py-4">
+          <h2 class="font-display text-lg font-bold">{t('Your conversations')}</h2>
+          <button type="button" class="text-sm text-white/55 hover:text-white" data-history-close>{t('Close')} ✕</button>
+        </div>
+        <ul class="flex-1 divide-y divide-white/5 overflow-y-auto" data-history-list></ul>
+        <p class="border-t border-white/10 px-5 py-3 text-xs text-white/40">{t('Kept for 12 months. Only you can see your conversations here.')}</p>
+      </aside>
     </div>
 
     <div data-empty class="flex flex-1 flex-col items-center justify-center py-12 text-center">
@@ -149,13 +165,16 @@ const isAdmin = Astro.locals.access.groupAdmin;
   const userTpl = document.querySelector<HTMLTemplateElement>('[data-user-template]')!;
   const botTpl = document.querySelector<HTMLTemplateElement>('[data-assistant-template]')!;
 
-  // The conversation is kept for this browser tab only.
+  // The conversation is kept in this browser tab, and on the server: coming back
+  // (another page, a reload, a new tab) shows it again, including an answer
+  // that was still being written.
   let turns: Turn[] = [];
   let conversationId = crypto.randomUUID();
   let controller: AbortController | null = null;
+  let hasSession = false;
   try {
     const saved = JSON.parse(sessionStorage.getItem(STORE) ?? 'null');
-    if (saved?.turns) ({ turns, conversationId } = saved);
+    if (saved?.turns) { ({ turns, conversationId } = saved); hasSession = true; }
   } catch {}
   const save = () => { try { sessionStorage.setItem(STORE, JSON.stringify({ turns, conversationId })); } catch {} };
 
@@ -230,11 +249,49 @@ const isAdmin = Astro.locals.access.groupAdmin;
   const busy = (on: boolean) => { send.hidden = on; stop.hidden = !on; input.disabled = on; };
   const scrollDown = () => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 
-  for (const t of turns) t.role === 'user' ? addUser(t.content) : addAssistant(t);
-  refresh();
+  const renderAll = () => { list.replaceChildren(); for (const t of turns) t.role === 'user' ? addUser(t.content) : addAssistant(t); refresh(); };
+  renderAll();
+
+  // Pick the conversation up from the server when this tab has none yet, or its last question has no answer here.
+  let polling = false;
+  async function resume() {
+    const waiting = turns.at(-1)?.role === 'user' ? turns.at(-1)!.content : null;
+    if (hasSession && !waiting) return;
+    const data = await fetch(`/api/ask-history?company=${encodeURIComponent(COMPANY)}${hasSession ? `&conversation=${conversationId}` : ''}`).then((r) => r.json()).catch(() => null);
+    if (!data?.conversationId) {
+      if (waiting) { turns.pop(); renderAll(); input.value = waiting; }
+      return;
+    }
+    conversationId = data.conversationId;
+    turns = (data.turns as Turn[]).map((t) => (t.role === 'assistant' && t.content === 'Stopped.' ? { ...t, content: tr('Stopped.') } : t));
+    if (data.pending) {
+      turns.push({ role: 'user', content: data.pending.question });
+      renderAll();
+      const view = addAssistant();
+      view.text.innerHTML = render(data.pending.answer || '');
+      view.text.lastElementChild?.classList.add('cursor');
+      busy(true); polling = true;
+      while (polling) {
+        await new Promise((r) => setTimeout(r, 1500));
+        const next = await fetch(`/api/ask-history?company=${encodeURIComponent(COMPANY)}&conversation=${conversationId}`).then((r) => r.json()).catch(() => null);
+        if (!next) continue;
+        if (next.pending) { view.text.innerHTML = render(next.pending.answer || ''); view.text.lastElementChild?.classList.add('cursor'); continue; }
+        turns = next.turns; polling = false;
+      }
+      busy(false);
+    } else if (waiting && turns.at(-2)?.content !== waiting) {
+      // The answer never arrived (for example the server restarted): offer the question again.
+      input.value = waiting;
+      const note = document.createElement('p'); note.className = 'text-sm text-white/50'; note.setAttribute('data-unfinished', ''); note.textContent = tr('That answer didn’t finish. Your question is back in the box: send it again.');
+      queueMicrotask(() => list.after(note));
+    }
+    renderAll(); save(); scrollDown();
+  }
+  resume();
 
   async function ask(question: string) {
     turns.push({ role: 'user', content: question });
+    save();
     addUser(question);
     refresh();
     const view = addAssistant();
@@ -290,10 +347,50 @@ const isAdmin = Astro.locals.access.groupAdmin;
     }
   }
 
+  // Your conversations: list, open (and carry on), delete.
+  const panel = document.querySelector<HTMLElement>('[data-history-panel]')!;
+  const listEl = panel.querySelector<HTMLUListElement>('[data-history-list]')!;
+  const openBtn = root.querySelector<HTMLButtonElement>('[data-history-open]')!;
+  const when = new Intl.DateTimeFormat(document.documentElement.lang || undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
+  const closePanel = () => { panel.hidden = true; openBtn.setAttribute('aria-expanded', 'false'); openBtn.focus(); };
+  async function loadList() {
+    const data = await fetch(`/api/ask-history?company=${encodeURIComponent(COMPANY)}&list=1`).then((r) => r.json()).catch(() => null);
+    const items = (data?.conversations ?? []) as { id: string; title: string; updatedAt: string; questions: number }[];
+    listEl.replaceChildren(...(items.length ? items.map((c) => {
+      const li = document.createElement('li');
+      li.className = 'flex items-start gap-2 px-5 py-3' + (c.id === conversationId ? ' bg-white/5' : '');
+      const open = document.createElement('button');
+      open.type = 'button'; open.className = 'min-w-0 flex-1 text-left';
+      open.innerHTML = `<span class="block truncate text-sm text-white/85">${escape(c.title)}</span><span class="text-xs text-white/40">${escape(when.format(new Date(c.updatedAt)))} · ${c.questions}</span>`;
+      open.addEventListener('click', async () => {
+        if (controller || polling) return;
+        const d = await fetch(`/api/ask-history?company=${encodeURIComponent(COMPANY)}&conversation=${c.id}`).then((r) => r.json()).catch(() => null);
+        if (!d?.conversationId) return;
+        conversationId = d.conversationId;
+        turns = (d.turns as Turn[]).map((t) => (t.role === 'assistant' && t.content === 'Stopped.' ? { ...t, content: tr('Stopped.') } : t));
+        save(); renderAll(); closePanel(); scrollDown(); input.focus();
+        if (d.pending) { hasSession = true; turns.push({ role: 'user', content: d.pending.question }); save(); resume(); }
+      });
+      const del = document.createElement('button');
+      del.type = 'button'; del.className = 'shrink-0 px-1 text-xs text-white/35 hover:text-lk-red'; del.textContent = tr('Delete'); del.setAttribute('aria-label', `${tr('Delete')}: ${c.title}`);
+      del.addEventListener('click', async () => {
+        if (!confirm(tr('Delete this conversation?'))) return;
+        await fetch(`/api/ask-history?company=${encodeURIComponent(COMPANY)}&conversation=${c.id}`, { method: 'DELETE' });
+        if (c.id === conversationId) newChat.click();
+        loadList();
+      });
+      li.append(open, del);
+      return li;
+    }) : [Object.assign(document.createElement('li'), { className: 'px-5 py-6 text-sm text-white/45', textContent: tr('No conversations yet.') })]));
+  }
+  openBtn.addEventListener('click', () => { panel.hidden = false; openBtn.setAttribute('aria-expanded', 'true'); loadList(); });
+  panel.querySelectorAll('[data-history-close]').forEach((x) => x.addEventListener('click', closePanel));
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) closePanel(); });
+
   form.addEventListener('submit', (e) => {
     e.preventDefault();
     const q = input.value.trim();
-    if (!q || controller) return;
+    if (!q || controller || polling) return;
     input.value = '';
     input.style.height = '';
     ask(q);
@@ -302,7 +399,12 @@ const isAdmin = Astro.locals.access.groupAdmin;
     if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) { e.preventDefault(); form.requestSubmit(); }
   });
   input.addEventListener('input', () => { input.style.height = 'auto'; input.style.height = `${input.scrollHeight}px`; });
-  stop.addEventListener('click', () => controller?.abort());
+  // Stop: the server stops writing (leaving the page doesn't), then this page stops listening.
+  stop.addEventListener('click', () => {
+    fetch('/api/ask-stop', { method: 'POST', keepalive: true, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ conversationId }) }).catch(() => {});
+    polling = false;
+    controller?.abort();
+  });
   newChat.addEventListener('click', () => { turns = []; conversationId = crypto.randomUUID(); save(); list.replaceChildren(); refresh(); input.focus(); });
   root.querySelectorAll<HTMLButtonElement>('[data-example]').forEach((b) => b.addEventListener('click', () => { input.value = b.textContent ?? ''; form.requestSubmit(); }));
   input.focus();

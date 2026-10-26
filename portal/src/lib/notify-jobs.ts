@@ -153,6 +153,9 @@ async function cleanup(now = new Date()) {
   const before = new Date(now.getTime() - 30 * 24 * 3600_000).toISOString();
   await svc.from('notification_outbox').delete().lt('created_at', before);
   await svc.from('notification_jobs').delete().lt('ran_at', before);
+  // Ask Lakeba conversations are kept for 12 months (people can reopen them on the Ask page).
+  const year = new Date(now.getTime() - 365 * 24 * 3600_000).toISOString();
+  await svc.from('ask_exchanges').delete().lt('created_at', year);
 }
 
 declare global { var __lakebaNotifyWorker: ReturnType<typeof setInterval> | undefined }

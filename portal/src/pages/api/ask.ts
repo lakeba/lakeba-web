@@ -5,6 +5,7 @@ import { serviceClient } from '../../lib/admin';
 import { buildMessages, client, costUsd, declineFor, FULL_CONTEXT_LIMIT, isDecline, loadHouseRules, MODEL, searchPassages, sourcesFor, systemPrompt, validateTurns, type ChatTurn, type SourceRef } from '../../lib/ask';
 import { checkAskAllowed, loadLimits, precheckOnTopic, PRECHECK_MODEL } from '../../lib/ask-limits';
 import { loadRetrieval, retrieveKnowledgeBase, standaloneQuery } from '../../lib/retrieval';
+import { running } from '../../lib/ask-running';
 
 /**
  * Streams an Ask Lakeba answer as server-sent events:
@@ -13,6 +14,9 @@ import { loadRetrieval, retrieveKnowledgeBase, standaloneQuery } from '../../lib
  *   data: {"exchange": "<id>"}   the stored record, so the answer can be rated
  *   data: {"error": "..."}       if something went wrong
  * Every exchange is stored for admin review (Admin → Ask review).
+ * The answer is written to the end even if the browser goes away (the page
+ * picks it up again from /api/ask-history); the Stop button stops it
+ * (/api/ask-stop).
  * Cost protection (lib/ask-limits.ts) runs before anything reaches Claude.
  */
 export const POST: APIRoute = async ({ request, locals, url }) => {
@@ -47,6 +51,10 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   await supabase.rpc('log_event', { event_action: 'ask_question', event_detail: { length: turns.at(-1)!.content.length, turn: Math.ceil(turns.length / 2) } });
 
   const encoder = new TextEncoder();
+  // Only Stop ends the answer early; leaving the page doesn't.
+  const stop = new AbortController();
+  running.get(conversationId)?.stop.abort();
+  running.set(conversationId, { userId: locals.user!.id, companyCode: company.code, question: turns.at(-1)!.content, answer: '', stop });
   const stream = new ReadableStream({
     async start(controller) {
       const send = (payload: object) => {
@@ -103,10 +111,12 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           fallbacks: 'default',
           system: systemPrompt(houseRules, company) + languageRule,
           messages: buildMessages(kb, turns),
-        }, { signal: request.signal });
+        }, { signal: stop.signal });
         for await (const event of response) {
           if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
             record.answer += event.delta.text;
+            const live = running.get(conversationId);
+            if (live?.stop === stop) live.answer = record.answer;
             send({ text: event.delta.text });
           }
         }
@@ -143,7 +153,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           },
         });
       } catch (error) {
-        if (request.signal.aborted) record.error = 'stopped';
+        if (stop.signal.aborted) record.error = 'stopped';
         else {
           console.error('Ask Lakeba failed', error instanceof Anthropic.APIError ? `${error.status} ${error.message}` : error);
           record.error = error instanceof Anthropic.APIError ? `api_${error.status}` : 'failed';
@@ -165,6 +175,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
           ...record.usage,
         }).select('id').single();
         if (stored) send({ exchange: stored.id });
+        if (running.get(conversationId)?.stop === stop) running.delete(conversationId);
         try { controller.close(); } catch {}
       }
     },
