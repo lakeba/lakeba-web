@@ -23,7 +23,7 @@ const passkeyStrings = clientStrings(t, [
 ]);
 
 const next = safeNext(Astro.url.searchParams.get('next'));
-// From a venture's address: its name in the heading (the layout shows its brand).
+// From a venture's own domain (?venture=mist): its name in the heading (the layout shows its brand).
 const slug = Astro.url.searchParams.get('venture');
 const venture = slug && /^[a-z0-9-]{1,40}$/.test(slug) ? await ventureBySlug(slug) : null;
 let error = Astro.url.searchParams.get('error') === 'link' ? t('That link has expired or was already used. Please sign in again.') : '';

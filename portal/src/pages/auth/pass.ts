@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 import { createHash, randomBytes } from 'node:crypto';
 import { serviceClient } from '../../lib/admin';
 import { domainStatus } from '../../lib/domains';
-import { isOwnDomainAddress, ownDomainVenture, ventureOrigin } from '../../lib/sites';
+import { isOwnDomainAddress, ownDomainVenture } from '../../lib/sites';
 
 /**
  * On the central address, for someone signed in: a one-time pass to a venture's
@@ -16,14 +16,14 @@ import { isOwnDomainAddress, ownDomainVenture, ventureOrigin } from '../../lib/s
  * that venture alone (its shares, board or admins, and no other company) and
  * have no staff role, and only while the domain still points to the portal: a
  * venture misusing its domain could reach nothing it doesn't already hold.
- * Everyone else opens the venture on its Lakeba address instead.
+ * Everyone else opens the venture on the central address instead.
  */
 export const GET: APIRoute = async ({ url, locals, redirect }) => {
   const to = url.searchParams.get('to') ?? '';
   if (!isOwnDomainAddress(to)) return redirect('/');
   const target = new URL(to);
   const venture = ownDomainVenture(target.hostname)!;
-  const instead = () => redirect(venture.slug ? `${ventureOrigin(url, venture.slug)}${target.pathname}${target.search}` : '/', 303);
+  const instead = () => redirect(`/company/${venture.code}?next=${encodeURIComponent(`${target.pathname}${target.search}`)}`, 303);
   const svc = serviceClient();
   const user = locals.user!;
   const [{ count: roles }, { data: mine }, dns] = await Promise.all([

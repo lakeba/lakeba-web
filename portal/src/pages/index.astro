@@ -16,7 +16,7 @@ const userId = Astro.locals.user!.id;
 const role = Astro.locals.profile?.role;
 const { company, companies, t, fmt } = Astro.locals;
 const { aud, audPrecise, longDate, percent, shares, shortDate } = fmt;
-// Sent here from a venture's address this person doesn't belong to.
+// Sent here from a venture's own domain (or a company switch) this person doesn't belong to.
 const unavailable = Astro.url.searchParams.has('unavailable');
 // "Ask Lakeba", "Ask Ezifin", or the company's own name for it.
 const askLabel = company?.ask_name?.trim() || t('Ask {brand}', { brand: brandName(company) });

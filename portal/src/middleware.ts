@@ -8,7 +8,7 @@ import { tradingEnabled } from './lib/trading';
 import { INTL, fromAcceptLanguage, isLocale, translator, type Locale } from './lib/i18n';
 import { formats } from './lib/format';
 import { SUPABASE_URL, TWO_STEP_OFF_FOR_TESTING } from 'astro:env/server';
-import { RESERVED_SLUGS, centralOrigin, cookieDomain, ownDomainVenture, refreshOwnDomains, siteOf, siteOriginFor, ventureBySlug, ventureOrigin } from './lib/sites';
+import { centralOrigin, ownDomainVenture, refreshOwnDomains, siteOf } from './lib/sites';
 import { isKnownHost } from './lib/known-hosts.mjs';
 
 // Sends queued browser notifications and runs scheduled ones (reminders, daily summaries).
@@ -19,10 +19,8 @@ const PUBLIC_PATHS = ['/press', '/login', '/forgot-password', '/auth/confirm', '
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 
-/** On a venture's address, these open on the central one (sign-in, two-step, passkeys and admin live there). */
+/** On a venture's own domain, these open on the central address (sign-in, two-step, passkeys and admin live there). */
 const CENTRAL_PATHS = ['/login', '/forgot-password', '/passkey-login', '/mfa', '/account/security', '/api/passkeys', '/admin', '/auth/pass'];
-/** Set once a session has been moved onto the cookies shared by all the portal's addresses. */
-const SHARED_COOKIE = 'lakeba-shared-session';
 
 /** Staging on this Mac only: staff can try the portal without an authenticator app. Never on another database. */
 const twoStepOff = TWO_STEP_OFF_FOR_TESTING && /^http:\/\/(127\.0\.0\.1|localhost):54321$/.test(SUPABASE_URL);
@@ -37,9 +35,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (!isKnownHost(url.hostname) && !ownDomainVenture(url.hostname)) return new Response('Not found', { status: 404 });
   rememberOrigin(url.origin);
   const site = siteOf(url);
-  const hostOnly = new Set<string>();
-  const done = (response: Response) => withSecurityHeaders(clearHostOnly(response, hostOnly));
-  locals.supabase = createSupabase(context, hostOnly);
+  const done = (response: Response) => withSecurityHeaders(response);
+  locals.supabase = createSupabase(context);
   locals.site = { kind: site.kind, venture: null, central: centralOrigin(url) };
   locals.user = null;
   locals.profile = null;
@@ -59,7 +56,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   setLocale(isLocale(asked) ? asked : isLocale(cookieLang) ? cookieLang : fromAcceptLanguage(context.request.headers.get('accept-language')) ?? 'en');
 
   if (site.kind === 'venture') {
-    const venture = site.own ? ownDomainVenture(url.hostname) : await ventureBySlug(site.slug!);
+    const venture = ownDomainVenture(url.hostname);
     if (!venture) return new Response('Not found', { status: 404 });
     locals.site.venture = venture;
     // Sign-in steps and admin open on the central address, coming back here afterwards.
@@ -68,17 +65,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
       const back = params.get('next');
       if (back?.startsWith('/') && !back.startsWith('//')) params.set('next', `${url.origin}${back}`);
       if (path.startsWith('/admin')) { if (!params.has('company')) params.set('company', venture.code); }
-      else params.set('venture', venture.slug!);
+      else if (venture.slug) params.set('venture', venture.slug);
       return redirect(`${locals.site.central}${path}?${params}`, 302);
     }
-    // A venture with its own domain is opened there (old links on its Lakeba address keep working).
-    // People already signed in stay here: staff never get a pass to a venture's own domain (auth/pass).
-    if (!site.own && venture.custom_domain_verified_at && venture.custom_domain && !/(^|;\s*)sb-[^=;]*-auth-token(\.0)?=/.test(context.request.headers.get('cookie') ?? '')) return redirect(`${siteOriginFor(url, venture)}${path}${url.search}`, 302);
-  }
-  // investors.lakeba.com/mist → mist.investors.lakeba.com
-  if (site.kind === 'central' && context.request.method === 'GET') {
-    const name = path.match(/^\/([a-z0-9-]+)\/?$/)?.[1];
-    if (name && !RESERVED_SLUGS.includes(name) && await ventureBySlug(name)) return redirect(`${ventureOrigin(url, name)}/`, 302);
   }
 
   // getClaims() validates the JWT signature rather than trusting the cookie.
@@ -105,15 +94,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   if (!locals.user) {
     if (matches(path, PUBLIC_PATHS)) return done(await next());
-    if (site.kind === 'venture') return redirect(`${locals.site.central}/login?venture=${site.slug}&next=${encodeURIComponent(url.href)}`, 302);
+    if (site.kind === 'venture') return redirect(`${locals.site.central}/login?${new URLSearchParams({ ...(site.slug ? { venture: site.slug } : {}), next: url.href })}`, 302);
     return redirect(`/login?next=${encodeURIComponent(path + url.search)}`);
-  }
-
-  // A session from before addresses were shared: write it again on the shared cookies (and drop this address's own).
-  if (site.kind !== 'other' && !site.own && !context.cookies.get(SHARED_COOKIE)?.value) {
-    const { data: { session } } = await locals.supabase.auth.getSession();
-    if (session) await locals.supabase.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
-    context.cookies.set(SHARED_COOKIE, '1', { path: '/', domain: cookieDomain(url), httpOnly: true, sameSite: 'lax', secure: url.protocol === 'https:', maxAge: 31_536_000 });
   }
 
   const { data: aal } = await locals.supabase.auth.mfa.getAuthenticatorAssuranceLevel();
@@ -137,7 +119,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.company = companyContext.current;
   locals.group = companyContext.group;
   locals.adminOf = companyContext.adminOf;
-  // On a venture's address, that venture is the company being viewed; people who don't belong to it go to the central address.
+  // On a venture's own domain, that venture is the company being viewed; people who don't belong to it go to the central address.
   if (locals.site.venture) {
     const mine = locals.companies.find((c) => c.id === locals.site.venture!.id);
     if (!mine) return redirect(`${locals.site.central}/?unavailable=${locals.site.venture.code}`, 302);
@@ -168,14 +150,6 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   return done(await next());
 });
-
-/** Removes this address's own copies of cookies that are now shared (see SHARED_COOKIE). */
-function clearHostOnly(response: Response, names: Set<string>) {
-  try {
-    for (const name of names) response.headers.append('Set-Cookie', `${name}=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax`);
-  } catch { /* a response with fixed headers: the next one clears them */ }
-  return response;
-}
 
 function withSecurityHeaders(response: Response) {
   const h = response.headers;

@@ -10,7 +10,7 @@ import type { Company } from '../lib/companies';
 interface Props { title: string; subtitle?: string; wide?: boolean; company?: Company | null }
 const { title, subtitle, wide = false, company } = Astro.props;
 const { t, locale } = Astro.locals;
-// Arriving from a venture's address (?venture=mist), or a page about one venture (company): its name on the page, Lakeba as the provider.
+// Arriving from a venture's own domain (?venture=mist), or a page about one venture (company): its name on the page, Lakeba as the provider.
 const slug = Astro.url.searchParams.get('venture');
 const venture = company ?? Astro.locals.site?.venture ?? (slug && /^[a-z0-9-]{1,40}$/.test(slug) ? await ventureBySlug(slug) : null);
 const brand = brandOf(venture);

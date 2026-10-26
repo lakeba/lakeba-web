@@ -2,7 +2,7 @@ import type { APIRoute } from 'astro';
 
 /**
  * The website component: one line on any website shows the company's news.
- *   <script src="https://mist.investors.lakeba.com/embed/news.js" data-key="pk_live_…" async></script>
+ *   <script src="https://investors.lakeba.com/embed/news.js" data-key="pk_live_…" async></script>
  *   <lakeba-news></lakeba-news>
  * Options on <lakeba-news>: limit (default 6), category, view="list" (never opens articles in
  * place), key (another publishable key). An article opens on the same page (?news=its-slug).

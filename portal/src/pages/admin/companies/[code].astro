@@ -76,13 +76,13 @@ if (Astro.request.method === 'POST') {
       if (mayGroup && c.relationship !== 'group') Object.assign(next, { slug: field(form, 'slug').trim().toLowerCase() || null, custom_domain: field(form, 'custom_domain').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '') || null });
       const isEmail = (v: unknown) => v == null || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v));
       if (!isEmail(next.reply_to) || !isEmail(next.contact_email)) return 'Enter the email addresses in full, e.g. investors@mist.com.';
-      if (next.slug != null && !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(String(next.slug))) return 'The address name is up to 40 lowercase letters, digits or hyphens, e.g. mist.';
+      if (next.slug != null && !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(String(next.slug))) return 'The short name is up to 40 lowercase letters, digits or hyphens, e.g. mist.';
       if (next.custom_domain != null && !/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/.test(String(next.custom_domain))) return 'Enter the domain only, e.g. investors.mist.com.';
-      if (next.slug && RESERVED_SLUGS.includes(String(next.slug))) return `${next.slug} is a page of the portal; choose another address name.`;
+      if (next.slug && RESERVED_SLUGS.includes(String(next.slug))) return `${next.slug} is a word the portal uses; choose another short name.`;
       if (next.slug && next.slug !== c.slug && (await svc.from('entities').select('id').eq('slug', next.slug).neq('id', c.id).maybeSingle()).data) return `${next.slug} is already used by another company.`;
       if (next.custom_domain && next.custom_domain !== c.custom_domain && (await svc.from('entities').select('id').eq('custom_domain', next.custom_domain).neq('id', c.id).maybeSingle()).data) return `${next.custom_domain} is already used by another company.`;
       const yesNo = (v: unknown) => (v ? 'On' : 'Off');
-      const lines = changes(c, next, { slug: 'Lakeba address', custom_domain: 'Own domain', sender_name: 'Sender name', reply_to: 'Replies go to', contact_email: 'Contact email', ask_name: 'Name of Ask', email_footer: 'Email footer', document_footer: 'Document footer', ask_enabled: 'Ask', board_qa_enabled: 'Board Q&A', ask_monthly_budget_usd: 'Ask budget a month (USD)', brand_color: 'Colour', tagline: 'Short description' },
+      const lines = changes(c, next, { slug: 'Short name', custom_domain: 'Own domain', sender_name: 'Sender name', reply_to: 'Replies go to', contact_email: 'Contact email', ask_name: 'Name of Ask', email_footer: 'Email footer', document_footer: 'Document footer', ask_enabled: 'Ask', board_qa_enabled: 'Board Q&A', ask_monthly_budget_usd: 'Ask budget a month (USD)', brand_color: 'Colour', tagline: 'Short description' },
         (k, v) => (k === 'ask_enabled' || k === 'board_qa_enabled' ? yesNo(v) : fmt(v)));
       if (!lines.length) return 'Nothing changed.';
       return { title: 'Save these venture settings?', lines, apply: async () => {
@@ -362,7 +362,7 @@ const sel = 'field !py-1.5 text-sm';
         <div><label class="label" for="tagline">Short description</label><input id="tagline" name="tagline" value={c.tagline ?? ''} maxlength="120" placeholder="e.g. Climate data for property" class="field" disabled={!mayEdit} /></div>
         {c.relationship !== 'group' && (
           <>
-            <div><label class="label" for="slug">Lakeba address</label><div class="flex items-center gap-1"><input id="slug" name="slug" value={c.slug ?? ''} placeholder={c.code.toLowerCase()} class="field" disabled={!mayEdit || !mayGroup} /><span class="shrink-0 text-xs text-white/45">.investors.lakeba.com</span></div></div>
+            <div><label class="label" for="slug">Short name</label><input id="slug" name="slug" value={c.slug ?? ''} placeholder={c.code.toLowerCase()} class="field" disabled={!mayEdit || !mayGroup} /><p class="mt-1 text-xs text-white/40">For its branded sign-in link (…/login?venture={c.slug ?? c.code.toLowerCase()}).</p></div>
             <div><label class="label" for="custom_domain">Own domain (optional)</label><input id="custom_domain" name="custom_domain" value={c.custom_domain ?? ''} placeholder="investors.example.com" class="field" disabled={!mayEdit || !mayGroup} /><p class="mt-1 text-xs text-white/40">Used once its DNS points to the portal: see Domain and mail.</p></div>
           </>
         )}

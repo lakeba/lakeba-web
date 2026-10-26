@@ -100,47 +100,54 @@ tar -xzf D/storage.tgz -C /opt/supabase/volumes
 4. **Check**: `scripts/check-entities.mjs` against the server (35 checks; it
    passed on the empty database on 22 October 2026).
 
-## Venture addresses (not live yet)
+## Ventures' own domains (not live yet)
 
-Each venture with a full portal can have its own address, `{slug}.investors.lakeba.com`
-(the slug is set in Admin → Companies → a company → Venture settings). Sign-in, two-step,
-passkeys and admin stay on `investors.lakeba.com`, and the session cookie is shared by all
-the addresses, so one sign-in counts everywhere. Without `PORTAL_DOMAIN` the portal works
-on one address, as before. To switch it on:
+Every company is on `investors.lakeba.com` (picked with the company switcher). A venture with a full
+portal can also have its own domain, `investors.mist.com` (Admin → Companies → a company → Domain
+and mail). There are no `{venture}.investors.lakeba.com` addresses.
 
-1. **DNS**: a wildcard record `*.investors.lakeba.com` pointing to the server (A `139.180.180.225`).
-2. **Certificate**: a wildcard certificate needs Let's Encrypt's DNS check, so Caddy needs the
-   DNS plugin for Lakeba's DNS provider and an API token for it. Add to the Caddyfile:
-   `*.investors.lakeba.com { tls { dns <provider> {env.DNS_API_TOKEN} } reverse_proxy 127.0.0.1:4321 }`.
-3. **Portal**: `PORTAL_DOMAIN=investors.lakeba.com` in `/etc/lakeba-portal/portal.env`, then
-   restart `lakeba-portal`. Existing sessions move onto the shared cookie on their next visit.
-4. **Check**: signed out, `https://<slug>.investors.lakeba.com/` should send you to
-   `https://investors.lakeba.com/login?venture=<slug>…`.
+The venture adds a CNAME to `investors.lakeba.com` (or, where its DNS provider can't, an A record with
+the server's address, `PORTAL_SERVER_IP`), and the check puts it in use (no Lakeba approval).
+- **Sign-in:** still happens on `investors.lakeba.com`. A one-time pass carries it to the venture's
+  domain, only for people who belong to that venture alone, with no staff role, and only while the
+  domain still points here. Everyone else opens the venture on `investors.lakeba.com`.
+- **Emails:** keep linking to `investors.lakeba.com`. Never use a venture's domain for sign-in links.
+- **If the server's address ever changes:** ventures with an A record must update it. Look for
+  `company_domain_verified` entries whose `found` starts with `A`.
+
+To switch own domains on (once):
+
+1. **Caddy:** certificates for own domains come from Caddy's on-demand TLS, which asks the portal first;
+   the portal says yes only for verified domains. Add the global block at the top of the Caddyfile, keep
+   the `investors.lakeba.com` block as it is, add the catch-all block after it, and make port 80 redirect
+   to HTTPS (instead of `respond 404`), then `caddy validate` and `systemctl reload caddy`:
+   ```
+   {
+     on_demand_tls {
+       ask http://127.0.0.1:4321/api/public/domain-check
+     }
+   }
+   https:// {
+     tls { on_demand }
+     header -Server
+     reverse_proxy 127.0.0.1:4321
+   }
+   http:// {
+     redir https://{host}{uri} 308
+   }
+   ```
+2. **Portal:** `PORTAL_DOMAIN=investors.lakeba.com` in `/etc/lakeba-portal/portal.env`, then restart
+   `lakeba-portal`. It only tells the portal its own address; nothing changes for people who don't use
+   an own domain, and sessions stay where they are.
+3. **Check:**
+   - A venture presses "Check now" on Domain and mail.
+   - Signed out, `https://investors.<venture>.com/` should open its sign-in page on
+     `investors.lakeba.com` (`?venture=<short name>`).
+   - The first visit fetches its certificate, which takes a few seconds.
 
 Passkeys don't need changes: they are only ever used on `investors.lakeba.com`.
 
-**A venture's own domain** (`investors.mist.com`, in Admin → Companies → a company → Domain and mail):
-the venture adds a CNAME to `investors.lakeba.com` (or, where its DNS provider can't, an A record with the
-server's address, `PORTAL_SERVER_IP`), and the check puts it in use (no Lakeba approval). A sign-in pass
-goes there only for people who belong to that venture alone, with no staff role, and only while the domain
-still points here; everyone else stays on its Lakeba address. If the server's address ever changes,
-ventures with an A record must update it: look for `company_domain_verified` entries whose `found` starts with `A`. Sign-in still happens
-on `investors.lakeba.com`; a one-time pass carries it to the venture's domain. Its certificate comes
-from Caddy's on-demand TLS, allowed only for verified domains:
-
-```
-{
-  on_demand_tls {
-    ask http://127.0.0.1:4321/api/public/domain-check
-  }
-}
-https:// {
-  tls { on_demand }
-  reverse_proxy 127.0.0.1:4321
-}
-```
-
-The portal turns away any host name that isn't Lakeba's, a venture address or a verified venture domain
+The portal turns away any host name that isn't Lakeba's or a verified venture domain
 (`src/lib/known-hosts.mjs`).
 
 **A venture's own Microsoft 365** (same page): its Microsoft 365 administrator approves the portal's app

@@ -9,8 +9,8 @@ Production runs `main` (8a715e0) until this is merged and deployed.
 Nothing visible to investors or Lakeba's admins beyond new settings, as long as these stay
 unset in `/etc/lakeba-portal/portal.env`:
 
-- `PORTAL_DOMAIN`: without it the portal keeps its one address; venture addresses, shared
-  cookies and own domains are all off.
+- `PORTAL_DOMAIN`: without it there are no own domains; with it, only the portal's own address is
+  known (no `{venture}.investors.lakeba.com` addresses exist).
 - `GOOGLE_SERVICE_ACCOUNT_FILE`: without it the Gmail mailbox step says it isn't set up.
 - Lakeba's Microsoft app stays single-tenant until it's switched to multi-tenant in Azure,
   so no venture can approve it yet.
@@ -54,14 +54,13 @@ The old code doesn't rely on what they replaced. Restore the backup from step 1 
 database change failed halfway. Each runs in a transaction, so that shouldn't happen. Restoring
 the backup loses anything written since.
 
-## Before switching on venture addresses or own domains later
+## Before switching on own domains later
 
-- **Venture addresses:** DNS, the wildcard certificate and `PORTAL_DOMAIN` (see
-  deploy-vultr.md, Venture addresses).
-- **Own domains:** the venture sets everything up (Domain and mail); no Lakeba approval.
+- **Own domains:** Caddy's on-demand certificates and `PORTAL_DOMAIN` (deploy-vultr.md, Ventures'
+  own domains). The venture then sets everything up (Domain and mail); no Lakeba approval.
   - Sign-in passes to an own domain go only to people who belong to that venture alone (no
     shares, board seat or admin role in any other company, no staff role), and only while the
-    domain still points to the portal. Everyone else opens the venture on its Lakeba address.
+    domain still points to the portal. Everyone else opens the venture on investors.lakeba.com.
   - So a venture that misused its domain could only reach sessions that see its own data.
   - `custom_domain_approved_at` (migration 20261125000000) is no longer used; it can be dropped
     after this code is deployed.

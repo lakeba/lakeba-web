@@ -33,7 +33,7 @@ const label = place?.label ?? 'investors';
     {c.custom_domain_verified_at ? <span class="text-sm text-lk-green">✓ In use</span> : c.custom_domain ? <span class="text-sm text-lk-orange">Waiting for one DNS record</span> : <span class="text-sm text-white/45">Not set up · optional</span>}
   </div>
   <Facts items={[
-    ['What changes', `Investors open ${c.display_name}’s portal at ${c.custom_domain ?? suggested ?? 'an address of your own, like investors.yourcompany.com'} instead of ${lakebaAddress}. The old address keeps working and forwards there.`],
+    ['What changes', `Investors open ${c.display_name}’s portal at ${c.custom_domain ?? suggested ?? 'an address of your own, like investors.yourcompany.com'} instead of ${lakebaAddress}. It stays on investors.lakeba.com too.`],
     ['What stays the same', `Your website and everyone’s email. Investors still sign in on ${portalDomain}.`],
     ['Time', 'About 5 minutes, then up to a few hours before it takes effect.'],
     ['Who does it', host ? `Whoever can sign in to ${host.name}, where ${zone} is managed. Often the person who bought the domain, or your web designer.` : `Whoever manages ${zone ?? 'your domain'}’s DNS records. Often the person who bought the domain, or your web designer.`],
@@ -52,7 +52,7 @@ const label = place?.label ?? 'investors';
   ) : c.custom_domain_verified_at ? (
     <div class="space-y-2">
       <p class="text-sm">Investors open the portal at <span class="font-mono text-white">{c.custom_domain}</span>, since {dateTime.format(new Date(c.custom_domain_verified_at))}. Nothing else to do.</p>
-      {manage && <form method="post"><button name="intent" value="stop-domain" class="btn-ghost text-sm" onclick="return confirm('Go back to the Lakeba address?')">Stop using it</button></form>}
+      {manage && <form method="post"><button name="intent" value="stop-domain" class="btn-ghost text-sm" onclick="return confirm('Stop using this address? Investors use Lakeba’s address only.')">Stop using it</button></form>}
     </div>
   ) : (
     <>

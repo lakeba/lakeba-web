@@ -90,7 +90,7 @@ export async function checkDomain(c: SetupCompany, who: Who, origin: string) {
     if (data?.length) {
       forgetVentureSites(); await refreshOwnDomains();
       await audit(c, who, 'company_domain_verified', { domain: c.custom_domain, found: r.found });
-      await tellAdmins(c, origin, `${c.display_name}’s portal now opens at ${c.custom_domain}`, `Its DNS record points to the portal, so investors now open ${c.display_name}’s portal at ${c.custom_domain}. Its Lakeba address keeps working and forwards.`);
+      await tellAdmins(c, origin, `${c.display_name}’s portal now opens at ${c.custom_domain}`, `Its DNS record points to the portal, so investors now open ${c.display_name}’s portal at ${c.custom_domain}. investors.lakeba.com keeps working too.`);
     }
   }
   return r;
@@ -185,15 +185,15 @@ export async function runSetupAction(c: SetupCompany, who: Who, form: FormData, 
       await svc.from('entities').update({ custom_domain: domain, custom_domain_verified_at: null }).eq('id', c.id).throwOnError();
       forgetVentureSites(); await refreshOwnDomains();
       await audit(c, who, 'company_domain_set', { domain, was: c.custom_domain });
-      if (!who.userId && domain) await tellAdmins(c, central, `${c.display_name}’s web address will be ${domain}`, `${who.label} chose it. Investors move there once its DNS record is in place; the old address keeps working and forwards.`);
-      return { notice: domain ? `Saved. Now add the DNS record below for ${domain}.` : `${c.display_name}’s portal stays on its Lakeba address.` };
+      if (!who.userId && domain) await tellAdmins(c, central, `${c.display_name}’s web address will be ${domain}`, `${who.label} chose it. Investors move there once its DNS record is in place; investors.lakeba.com keeps working too.`);
+      return { notice: domain ? `Saved. Now add the DNS record below for ${domain}.` : `${c.display_name}’s portal stays on Lakeba’s address only.` };
     }
     case 'stop-domain': {
       if (!who.manage || !who.userId) break;
       await svc.from('entities').update({ custom_domain_verified_at: null }).eq('id', c.id).throwOnError();
       forgetVentureSites();
       await audit(c, who, 'company_domain_stopped', { domain: c.custom_domain });
-      return { notice: `${c.display_name}’s portal is back on its Lakeba address.` };
+      return { notice: `${c.display_name}’s portal is back on Lakeba’s address only.` };
     }
     case 'consent-link': {
       if (!MS_CLIENT_ID) return { error: 'The portal’s Microsoft 365 app isn’t set up on this server yet (Lakeba’s side).' };

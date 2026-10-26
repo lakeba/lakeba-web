@@ -150,7 +150,7 @@ const KNOWN_TARGETS: [RegExp, string][] = [[/wix(dns)?\./, 'Wix'], [/squarespace
 export async function domainStatus(domainName: string): Promise<{ ok: boolean; found: string; problem?: string }> {
   const portal = strip(PORTAL_DOMAIN ?? '');
   const name = strip(domainName);
-  if (!portal) return { ok: false, found: 'venture addresses are not switched on', problem: 'Venture addresses aren’t switched on on this server yet (Lakeba’s side).' };
+  if (!portal) return { ok: false, found: 'own domains are not switched on', problem: 'Own domains aren’t switched on on this server yet (Lakeba’s side).' };
   if (DNS_TEST_RECORDS && !DNS_TEST_FILE) {
     const test = new Map(DNS_TEST_RECORDS.split(',').filter(Boolean).map((x) => x.split('=').map(strip) as [string, string]));
     return test.get(name) === portal ? { ok: true, found: `CNAME ${portal}` } : { ok: false, found: 'no record', problem: `There’s no record for ${name} yet.` };
