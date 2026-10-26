@@ -85,6 +85,7 @@ if (Astro.request.method === 'POST') {
       if (!lines.length) return 'Nothing changed.';
       return { title: 'Save these venture settings?', lines, apply: async () => {
         await svc.from('entities').update(next).eq('id', c.id).throwOnError();
+        if ('custom_domain' in next && next.custom_domain !== c.custom_domain) await svc.from('entities').update({ custom_domain_verified_at: null }).eq('id', c.id);
         forgetVentureSites();
         await log('company_venture_settings_saved', { changes: lines });
         return 'Venture settings saved.';
@@ -191,6 +192,7 @@ const sel = 'field !py-1.5 text-sm';
     <span class="flex gap-2">
       {mayGroup && access.can('users.do', null) && c.relationship !== 'group' && <a href={`/admin/companies/${c.code}/setup`} class="btn-ghost text-sm">Set-up checklist</a>}
       {access.can('news.view', c.id) && <a href={`/admin/companies/${c.code}/website`} class="btn-ghost text-sm">Website news</a>}
+      {c.relationship !== 'group' && <a href={`/admin/companies/${c.code}/domain`} class="btn-ghost text-sm">Domain and mail</a>}
     </span>
   </div>
   <p class="mt-1 text-sm text-white/50">{c.code} · {RELATIONSHIPS[c.relationship as keyof typeof RELATIONSHIPS]} · {PORTAL_ACCESS[c.portal as keyof typeof PORTAL_ACCESS]}{!mayEdit && ' · read only'}</p>
@@ -312,7 +314,7 @@ const sel = 'field !py-1.5 text-sm';
         {c.relationship !== 'group' && (
           <>
             <div><label class="label" for="slug">Lakeba address</label><div class="flex items-center gap-1"><input id="slug" name="slug" value={c.slug ?? ''} placeholder={c.code.toLowerCase()} class="field" disabled={!mayEdit || !mayGroup} /><span class="shrink-0 text-xs text-white/45">.investors.lakeba.com</span></div></div>
-            <div><label class="label" for="custom_domain">Own domain (optional)</label><input id="custom_domain" name="custom_domain" value={c.custom_domain ?? ''} placeholder="investors.example.com" class="field" disabled={!mayEdit || !mayGroup} /><p class="mt-1 text-xs text-white/40">Saved for later: venture addresses aren’t live yet.</p></div>
+            <div><label class="label" for="custom_domain">Own domain (optional)</label><input id="custom_domain" name="custom_domain" value={c.custom_domain ?? ''} placeholder="investors.example.com" class="field" disabled={!mayEdit || !mayGroup} /><p class="mt-1 text-xs text-white/40">Used once its DNS points to the portal: see Domain and mail.</p></div>
           </>
         )}
         <div><label class="label" for="sender_name">Emails come from</label><input id="sender_name" name="sender_name" value={c.sender_name ?? ''} maxlength="80" placeholder="Lakeba’s usual sender" class="field" disabled={!mayEdit} /></div>

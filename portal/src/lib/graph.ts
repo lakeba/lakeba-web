@@ -1,10 +1,13 @@
 import { createHash, createSign, randomUUID, X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { serviceClient } from './admin';
 import { MS_CLIENT_CERT_FILE, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_GRAPH_BASE, MS_LOGIN_BASE, MS_TENANT_ID } from 'astro:env/server';
 
 // Microsoft Graph for the shareholder mailboxes. The app ("Lakeba Investor
 // Portal – Mail") is limited in Exchange to those mailboxes only. It signs in
-// with a certificate (production) or a client secret.
+// with a certificate (production) or a client secret. A venture whose own
+// Microsoft 365 administrator approved the app (entities.ms_tenant_id) has its
+// mailboxes there: each call signs in to the Microsoft 365 the mailbox belongs to.
 
 export const graphConfigured = () => Boolean(MS_TENANT_ID && MS_CLIENT_ID && (MS_CLIENT_CERT_FILE || MS_CLIENT_SECRET));
 
@@ -22,10 +25,11 @@ function clientAssertion(tokenUrl: string) {
   return `${header}.${payload}.${b64u(signature)}`;
 }
 
-let cached: { token: string; expires: number } | null = null;
-async function accessToken() {
+const tokens = new Map<string, { token: string; expires: number }>();
+async function accessToken(tenant = MS_TENANT_ID!) {
+  const cached = tokens.get(tenant);
   if (cached && cached.expires > Date.now() + 60_000) return cached.token;
-  const tokenUrl = `${MS_LOGIN_BASE}/${MS_TENANT_ID}/oauth2/v2.0/token`;
+  const tokenUrl = `${MS_LOGIN_BASE}/${tenant}/oauth2/v2.0/token`;
   const body = new URLSearchParams({ client_id: MS_CLIENT_ID!, scope: 'https://graph.microsoft.com/.default', grant_type: 'client_credentials' });
   if (MS_CLIENT_CERT_FILE) {
     body.set('client_assertion_type', 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer');
@@ -34,13 +38,29 @@ async function accessToken() {
   const res = await fetch(tokenUrl, { method: 'POST', body });
   const data = (await res.json().catch(() => ({}))) as { access_token?: string; expires_in?: number; error_description?: string };
   if (!res.ok || !data.access_token) throw new Error(`Microsoft sign-in failed: ${data.error_description?.split('\n')[0] ?? res.status}`);
-  cached = { token: data.access_token, expires: Date.now() + (data.expires_in ?? 3600) * 1000 };
-  return cached.token;
+  tokens.set(tenant, { token: data.access_token, expires: Date.now() + (data.expires_in ?? 3600) * 1000 });
+  return data.access_token;
 }
+
+// Which Microsoft 365 a mailbox is in: a venture's (its shareholder mailbox or sending address) or Lakeba's.
+let tenants = new Map<string, string>();
+let tenantsAt = 0;
+async function tenantOf(mailbox: string | null) {
+  if (!mailbox) return undefined;
+  if (Date.now() - tenantsAt > 60_000) {
+    tenantsAt = Date.now();
+    const { data } = await serviceClient().from('entities').select('ms_tenant_id, shareholder_mailbox, mail_from').not('ms_tenant_id', 'is', null);
+    tenants = new Map((data ?? []).flatMap((e) => [e.shareholder_mailbox, e.mail_from].filter(Boolean).map((m) => [String(m).toLowerCase(), e.ms_tenant_id as string])));
+  }
+  return tenants.get(mailbox.toLowerCase());
+}
+/** After a venture connects or disconnects its Microsoft 365. */
+export const forgetTenants = () => { tenantsAt = 0; };
 
 export async function graph<T = unknown>(path: string, init: RequestInit & { prefer?: string } = {}): Promise<T> {
   const url = path.startsWith('http') ? path : `${MS_GRAPH_BASE}${path}`;
-  const headers: Record<string, string> = { authorization: `Bearer ${await accessToken()}`, ...(init.body ? { 'content-type': 'application/json' } : {}) };
+  const mailbox = /\/users\/([^/?]+)/.exec(new URL(url).pathname)?.[1];
+  const headers: Record<string, string> = { authorization: `Bearer ${await accessToken(await tenantOf(mailbox ? decodeURIComponent(mailbox) : null))}`, ...(init.body ? { 'content-type': 'application/json' } : {}) };
   if (init.prefer) headers.prefer = init.prefer;
   const res = await fetch(url, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) } });
   if (res.status === 202 || res.status === 204) return undefined as T;
@@ -93,6 +113,15 @@ export const getMessage = (mailbox: string, id: string) =>
 export async function setCategory(mailbox: string, id: string, category: string, existing: string[] = []) {
   const keep = existing.filter((c) => !c.startsWith('Portal: '));
   await graph(`/users/${encodeURIComponent(mailbox)}/messages/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ categories: [...keep, category] }) });
+}
+
+/** Sends an email from a mailbox (a venture's own address, in its own Microsoft 365). */
+export async function sendAs(from: string, m: { to: string; subject: string; html: string; replyTo?: string | null }) {
+  await graph(`/users/${encodeURIComponent(from)}/sendMail`, {
+    method: 'POST',
+    body: JSON.stringify({ message: { subject: m.subject, body: { contentType: 'HTML', content: m.html }, toRecipients: [{ emailAddress: { address: m.to } }],
+      ...(m.replyTo ? { replyTo: [{ emailAddress: { address: m.replyTo } }] } : {}) }, saveToSentItems: true }),
+  });
 }
 
 /** Replies in the same Outlook thread, to the given address only. */

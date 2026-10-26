@@ -1,0 +1,142 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import { createHash, randomBytes } from 'node:crypto';
+import { MS_CLIENT_ID, MS_LOGIN_BASE, PORTAL_DOMAIN } from 'astro:env/server';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime } from '../../../../lib/format';
+import { brandOf } from '../../../../lib/brand';
+import { pointsHere } from '../../../../lib/domains';
+import { forgetTenants, graphConfigured, sendAs } from '../../../../lib/graph';
+import { forgetVentureSites, refreshOwnDomains, siteOriginFor } from '../../../../lib/sites';
+import { COLUMNS, type Company } from '../../../../lib/companies';
+
+// A venture's own domain and its own Microsoft 365. The domain (group admins):
+// its DNS record, checked here; once it points to the portal the venture's
+// portal opens there (sign-in carried across with a one-time pass). Microsoft
+// 365 (the venture's admins): its Microsoft 365 administrator approves the
+// portal's app with a link; then emails go from the venture's own address,
+// after a test email went through, and its shareholder mailbox is read there.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const code = (Astro.params.code ?? '').toUpperCase();
+const load = async () => (await svc.from('entities').select(COLUMNS).eq('code', code).maybeSingle()).data as Company | null;
+let c = await load();
+if (!c || c.relationship === 'group' || !access.can('investors.view', c.id)) return new Response('Not found', { status: 404 });
+const mayDomain = access.can('investors.do', null);
+const mayMail = access.can('investors.do', c.id);
+const me = Astro.locals.user!;
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { company: code, ...detail } });
+const central = Astro.locals.site?.central ?? Astro.url.origin;
+let error = '', notice = '', consentUrl = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'check-dns' && mayDomain && c.custom_domain) {
+    const r = await pointsHere(c.custom_domain);
+    if (r.ok) {
+      await svc.from('entities').update({ custom_domain_verified_at: new Date().toISOString() }).eq('id', c.id).throwOnError();
+      forgetVentureSites(); await refreshOwnDomains();
+      await log('company_domain_verified', { domain: c.custom_domain, found: r.found });
+      notice = `${c.custom_domain} points to the portal (${r.found}). ${c.display_name}’s portal now opens there.`;
+    } else error = `${c.custom_domain} doesn’t point to the portal yet (found: ${r.found}). DNS changes can take an hour to show.`;
+  } else if (intent === 'stop-domain' && mayDomain) {
+    await svc.from('entities').update({ custom_domain_verified_at: null }).eq('id', c.id).throwOnError();
+    forgetVentureSites();
+    await log('company_domain_stopped', { domain: c.custom_domain });
+    notice = `${c.display_name}’s portal is back on its Lakeba address.`;
+  } else if (intent === 'consent-link' && mayMail) {
+    const state = randomBytes(24).toString('base64url');
+    await svc.from('ms_consent_requests').insert({ state_hash: createHash('sha256').update(state).digest('hex'), entity_id: c.id, created_by: me.id, expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString() }).throwOnError();
+    consentUrl = `${MS_LOGIN_BASE}/organizations/v2.0/adminconsent?${new URLSearchParams({ client_id: MS_CLIENT_ID ?? '', scope: 'https://graph.microsoft.com/.default', redirect_uri: `${central}/auth/ms-consent`, state })}`;
+    await log('company_microsoft365_link_made');
+  } else if (intent === 'disconnect' && mayMail) {
+    await svc.from('entities').update({ ms_tenant_id: null, mail_from_verified_at: null }).eq('id', c.id).throwOnError();
+    forgetTenants();
+    await log('company_microsoft365_disconnected');
+    notice = 'Disconnected. Emails go out through Lakeba again.';
+  } else if (intent === 'send-from' && mayMail && c.ms_tenant_id) {
+    const from = field(form, 'mail_from').toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(from)) error = 'Enter the address emails should come from, e.g. investors@mist.com.';
+    else {
+      // Saved first, so the mailbox is known to be in this venture's Microsoft 365; used once a test email went through.
+      await svc.from('entities').update({ mail_from: from, mail_from_verified_at: null }).eq('id', c.id).throwOnError();
+      forgetTenants();
+      try {
+        await sendAs(from, { to: me.email, subject: `Test from ${c.display_name}’s investor portal`, html: `<p>This test email came from ${from} through ${c.display_name}’s own Microsoft 365. Emails from the portal to ${c.display_name}’s investors now come from this address.</p>` });
+        await svc.from('entities').update({ mail_from_verified_at: new Date().toISOString() }).eq('id', c.id).throwOnError();
+        await log('company_send_from_verified', { address: from });
+        notice = `A test email went from ${from} to ${me.email}. ${c.display_name}’s emails now come from there.`;
+      } catch (e) {
+        error = `The test email couldn’t be sent from ${from}: ${(e as Error).message}. Check the address exists in ${c.display_name}’s Microsoft 365.`;
+      }
+    }
+  }
+  c = (await load())!;
+}
+
+const address = siteOriginFor(Astro.url, c);
+const portalDomain = PORTAL_DOMAIN ?? 'investors.lakeba.com';
+const brand = brandOf(c);
+---
+
+<Admin title={`${c.display_name} domain and mail`}>
+  <a href={`/admin/companies/${code}`} class="text-sm text-white/50 hover:text-white">← {c.display_name}</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">Domain and mail</h1>
+  <p class="mt-1 text-sm text-white/55">Now at <span class="font-mono text-white/80">{address}</span>. Emails come from {brand.sendFrom ?? 'Lakeba’s address, in its name'}.</p>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+
+  <div class="mt-6 grid gap-6 lg:grid-cols-2">
+    <section class="card space-y-3">
+      <h2 class="font-display text-lg font-bold">Own domain</h2>
+      {!c.custom_domain ? (
+        <p class="text-sm text-white/55">No own domain yet. {mayDomain ? <>Enter it in <a href={`/admin/companies/${code}`} class="text-lk-blue hover:underline">Venture settings</a> (e.g. investors.{c.slug ?? 'example'}.com).</> : 'A Lakeba group admin sets it up.'}</p>
+      ) : (
+        <>
+          <p class="text-sm"><span class="font-mono text-white">{c.custom_domain}</span> · {c.custom_domain_verified_at ? <span class="text-lk-green">in use since {dateTime.format(new Date(c.custom_domain_verified_at))}</span> : <span class="text-lk-orange">waiting for its DNS record</span>}</p>
+          <div class="rounded-xl bg-black/30 p-3 text-sm">
+            <p class="text-white/60">In {c.display_name}’s DNS, add:</p>
+            <p class="mt-1 font-mono text-white">{c.custom_domain} &nbsp;CNAME&nbsp; {portalDomain}</p>
+          </div>
+          <p class="text-xs text-white/45">Then check it here. Once it points to the portal, {c.display_name}’s portal opens there; its Lakeba address keeps working and forwards. Investors still sign in on {portalDomain}, and come back signed in.</p>
+          {mayDomain && <form method="post" class="flex flex-wrap gap-2">
+            <button name="intent" value="check-dns" class="btn-primary text-sm">Check DNS</button>
+            {c.custom_domain_verified_at && <button name="intent" value="stop-domain" class="btn-ghost text-sm" onclick="return confirm('Go back to the Lakeba address?')">Stop using it</button>}
+          </form>}
+        </>
+      )}
+    </section>
+
+    <section class="card space-y-3">
+      <h2 class="font-display text-lg font-bold">{c.display_name}’s Microsoft 365</h2>
+      {!graphConfigured() && <Alert tone="info">The portal’s Microsoft 365 app isn’t set up on this server.</Alert>}
+      {c.ms_tenant_id ? (
+        <>
+          <p class="text-sm">Connected <span class="font-mono text-xs text-white/50">({c.ms_tenant_id})</span>. Its shareholder mailbox (Shareholder emails) is read there.</p>
+          {mayMail && (
+            <form method="post" class="space-y-2">
+              <input type="hidden" name="intent" value="send-from" />
+              <label class="label" for="mail_from">Emails to investors come from</label>
+              <div class="flex gap-2"><input id="mail_from" name="mail_from" type="email" value={c.mail_from ?? ''} placeholder={`investors@${(c.website ?? 'https://example.com').replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`} class="field" /><button class="btn-ghost shrink-0 text-sm">Send a test</button></div>
+              <p class="text-xs text-white/45">{c.mail_from_verified_at ? `In use since ${dateTime.format(new Date(c.mail_from_verified_at))}.` : 'Used once a test email to you goes through.'} Newsletters still go through Lakeba, in {c.display_name}’s name.</p>
+            </form>
+          )}
+          {mayMail && <form method="post"><button name="intent" value="disconnect" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Disconnect? Emails go out through Lakeba again.')">Disconnect</button></form>}
+        </>
+      ) : (
+        <>
+          <p class="text-sm text-white/60">Emails go out through Lakeba, in {c.display_name}’s name. To send from {c.display_name}’s own address and read its shareholder mailbox in its own Microsoft 365, its Microsoft 365 administrator approves the portal once.</p>
+          {consentUrl ? (
+            <div class="space-y-2">
+              <p class="text-sm text-white/70">Send this link to {c.display_name}’s Microsoft 365 administrator (it works for 7 days):</p>
+              <pre class="overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-white/85">{consentUrl}</pre>
+              <a href={consentUrl} target="_blank" rel="noopener" class="btn-ghost text-sm">Open it (if you are that administrator)</a>
+            </div>
+          ) : mayMail && <form method="post"><button name="intent" value="consent-link" class="btn-primary text-sm">Make the approval link</button></form>}
+        </>
+      )}
+    </section>
+  </div>
+</Admin>

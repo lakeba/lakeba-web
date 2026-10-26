@@ -9,7 +9,7 @@ declare namespace App {
      * code was entered, which Supabase still requires to change two-step or
      * passkey settings.
      */
-    user: { id: string; email: string; aal: 'aal1' | 'aal2'; strongBy: 'code' | 'passkey' | null; codeVerified: boolean } | null;
+    user: { id: string; email: string; aal: 'aal1' | 'aal2'; strongBy: 'code' | 'passkey' | 'pass' | null; codeVerified: boolean } | null;
     profile: {
       email: string;
       first_name: string;

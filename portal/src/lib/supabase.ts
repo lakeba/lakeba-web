@@ -1,7 +1,7 @@
 import { createServerClient, parseCookieHeader } from '@supabase/ssr';
 import type { AstroCookies } from 'astro';
 import { SUPABASE_PUBLISHABLE_KEY, SUPABASE_URL } from 'astro:env/server';
-import { cookieDomain, isPortalAddress } from './sites';
+import { cookieDomain, isOwnDomainAddress, isPortalAddress } from './sites';
 
 /**
  * A per-request Supabase client whose session lives in httpOnly cookies. On
@@ -32,8 +32,10 @@ export function createSupabase({ request, cookies, url }: { request: Request; co
 /**
  * Only allow redirects within the portal, to avoid open redirects: a path on
  * this address, or (with venture addresses on) a full address of the portal's own.
+ * A venture's own domain is reached through a one-time pass (it can't share the session cookie).
  */
 export function safeNext(next: string | null | undefined, fallback = '/') {
+  if (next && isOwnDomainAddress(next)) return `/auth/pass?to=${encodeURIComponent(next)}`;
   if (next && isPortalAddress(next)) return next;
   return next && next.startsWith('/') && !next.startsWith('//') && !next.startsWith('/\\') ? next : fallback;
 }

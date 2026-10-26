@@ -1,0 +1,35 @@
+---
+import Auth from '../../layouts/Auth.astro';
+import Alert from '../../components/Alert.astro';
+import { createHash } from 'node:crypto';
+import { serviceClient } from '../../lib/admin';
+import { forgetTenants } from '../../lib/graph';
+
+// Where Microsoft sends a venture's Microsoft 365 administrator back after they
+// approved (or declined) the portal's app in their organisation. The "state"
+// says which company asked; it is used once.
+const svc = serviceClient();
+const q = Astro.url.searchParams;
+const state = q.get('state') ?? '';
+const tenant = (q.get('tenant') ?? '').toLowerCase();
+let company: string | null = null;
+let problem = q.get('error') ? 'The approval was not given.' : '';
+if (!problem) {
+  const { data: req } = /^[A-Za-z0-9_-]{20,64}$/.test(state)
+    ? await svc.from('ms_consent_requests').delete().eq('state_hash', createHash('sha256').update(state).digest('hex')).gt('expires_at', new Date().toISOString()).select('entity_id').maybeSingle()
+    : { data: null };
+  if (!req) problem = 'This approval link has expired or was already used. Ask for a new one in the portal.';
+  else if (q.get('admin_consent') !== 'True' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(tenant)) problem = 'Microsoft didn’t confirm the approval.';
+  else {
+    const { data: e } = await svc.from('entities').update({ ms_tenant_id: tenant, mail_from_verified_at: null }).eq('id', req.entity_id).select('code, display_name').single();
+    forgetTenants();
+    await svc.from('audit_log').insert({ action: 'company_microsoft365_connected', entity_id: req.entity_id, detail: { company: e?.code, tenant } });
+    company = e?.display_name ?? null;
+  }
+}
+Astro.response.headers.set('Cache-Control', 'no-store');
+---
+
+<Auth title="Microsoft 365">
+  {problem ? <Alert tone="error">{problem}</Alert> : <Alert tone="success">Thank you: {company}’s Microsoft 365 is connected to its investor portal. Its admins can now choose the address emails are sent from.</Alert>}
+</Auth>

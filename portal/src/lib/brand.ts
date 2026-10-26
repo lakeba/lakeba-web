@@ -13,6 +13,7 @@ export type BrandSource = {
   code?: string; display_name: string; legal_name?: string | null; relationship: 'group' | 'controlled' | 'portfolio';
   brand_color?: string | null; sender_name?: string | null; reply_to?: string | null; contact_email?: string | null;
   ask_name?: string | null; email_footer?: string | null; document_footer?: string | null;
+  ms_tenant_id?: string | null; mail_from?: string | null; mail_from_verified_at?: string | null;
 };
 
 export type Brand = {
@@ -34,6 +35,8 @@ export type Brand = {
   emailFooter: string | null;
   /** A line at the foot of the company's PDFs (statements, tax packs). */
   documentFooter: string | null;
+  /** Its own address in its own Microsoft 365, once a test email went through; emails then go from there. */
+  sendFrom: string | null;
 };
 
 const clean = (s: string | null | undefined) => (s ?? '').trim() || null;
@@ -52,8 +55,9 @@ export function brandOf(c: BrandSource | null | undefined): Brand {
     replyTo: clean(c?.reply_to),
     emailFooter: clean(c?.email_footer),
     documentFooter: clean(c?.document_footer),
+    sendFrom: !isGroup && c?.ms_tenant_id && c.mail_from_verified_at ? clean(c.mail_from) : null,
   };
 }
 
 /** The columns brandOf reads, for selects of entities. */
-export const BRAND_COLUMNS = 'code, display_name, legal_name, relationship, brand_color, sender_name, reply_to, contact_email, ask_name, email_footer, document_footer';
+export const BRAND_COLUMNS = 'code, display_name, legal_name, relationship, brand_color, sender_name, reply_to, contact_email, ask_name, email_footer, document_footer, ms_tenant_id, mail_from, mail_from_verified_at';

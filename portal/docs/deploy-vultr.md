@@ -119,6 +119,34 @@ on one address, as before. To switch it on:
 
 Passkeys don't need changes: they are only ever used on `investors.lakeba.com`.
 
+**A venture's own domain** (`investors.mist.com`, in Admin → Companies → a company → Domain and mail):
+the venture adds a CNAME to `investors.lakeba.com`, and "Check DNS" puts it in use. Sign-in still happens
+on `investors.lakeba.com`; a one-time pass carries it to the venture's domain. Its certificate comes
+from Caddy's on-demand TLS, allowed only for verified domains:
+
+```
+{
+  on_demand_tls {
+    ask http://127.0.0.1:4321/api/public/domain-check
+  }
+}
+https:// {
+  tls { on_demand }
+  reverse_proxy 127.0.0.1:4321
+}
+```
+
+The portal turns away any host name that isn't Lakeba's, a venture address or a verified venture domain
+(`src/lib/known-hosts.mjs`).
+
+**A venture's own Microsoft 365** (same page): its Microsoft 365 administrator approves the portal's app
+with a link; then the portal reads its shareholder mailbox there and sends its emails from its own
+address (after a test email). Before the first venture does this, in Azure (Entra ID) the app
+"Lakeba Investor Portal – Mail" must be **multi-tenant**, have the redirect address
+`https://investors.lakeba.com/auth/ms-consent`, and have the application permissions **Mail.ReadWrite**
+and **Mail.Send**. Each venture can then limit the app to its own mailboxes in Exchange, as Lakeba does.
+Newsletters still go through Lakeba's mail, in the venture's name.
+
 ## Rebuilding the server from scratch
 
 1. New Ubuntu server in Sydney with your SSH key; DNS A record to its IP.

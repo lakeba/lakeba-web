@@ -7,18 +7,19 @@ import { serviceClient } from './lib/admin';
 import { tradingEnabled } from './lib/trading';
 import { INTL, fromAcceptLanguage, isLocale, translator, type Locale } from './lib/i18n';
 import { formats } from './lib/format';
-import { RESERVED_SLUGS, centralOrigin, cookieDomain, siteOf, ventureBySlug, ventureOrigin } from './lib/sites';
+import { RESERVED_SLUGS, centralOrigin, cookieDomain, ownDomainVenture, refreshOwnDomains, siteOf, siteOriginFor, ventureBySlug, ventureOrigin } from './lib/sites';
+import { isKnownHost } from './lib/known-hosts.mjs';
 
 // Sends queued browser notifications and runs scheduled ones (reminders, daily summaries).
 startNotificationWorker();
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/press', '/login', '/forgot-password', '/auth/confirm', '/go', '/passkey-login', '/e', '/room', '/news-media', '/api/public', '/api/v1', '/embed', '/n', '/favicon.ico'];
+const PUBLIC_PATHS = ['/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/go', '/passkey-login', '/e', '/room', '/news-media', '/api/public', '/api/v1', '/embed', '/n', '/favicon.ico'];
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 
 /** On a venture's address, these open on the central one (sign-in, two-step, passkeys and admin live there). */
-const CENTRAL_PATHS = ['/login', '/forgot-password', '/passkey-login', '/mfa', '/account/security', '/api/passkeys', '/admin'];
+const CENTRAL_PATHS = ['/login', '/forgot-password', '/passkey-login', '/mfa', '/account/security', '/api/passkeys', '/admin', '/auth/pass'];
 /** Set once a session has been moved onto the cookies shared by all the portal's addresses. */
 const SHARED_COOKIE = 'lakeba-shared-session';
 
@@ -27,6 +28,9 @@ const matches = (path: string, list: string[]) => list.some((p) => path === p ||
 export const onRequest = defineMiddleware(async (context, next) => {
   const { url, locals, redirect } = context;
   const path = url.pathname;
+  // Ventures' own domains are let through by Astro with any other HTTPS name: turn away all but those.
+  await refreshOwnDomains();
+  if (!isKnownHost(url.hostname) && !ownDomainVenture(url.hostname)) return new Response('Not found', { status: 404 });
   rememberOrigin(url.origin);
   const site = siteOf(url);
   const hostOnly = new Set<string>();
@@ -51,7 +55,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   setLocale(isLocale(asked) ? asked : isLocale(cookieLang) ? cookieLang : fromAcceptLanguage(context.request.headers.get('accept-language')) ?? 'en');
 
   if (site.kind === 'venture') {
-    const venture = await ventureBySlug(site.slug!);
+    const venture = site.own ? ownDomainVenture(url.hostname) : await ventureBySlug(site.slug!);
     if (!venture) return new Response('Not found', { status: 404 });
     locals.site.venture = venture;
     // Sign-in steps and admin open on the central address, coming back here afterwards.
@@ -63,6 +67,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
       else params.set('venture', venture.slug!);
       return redirect(`${locals.site.central}${path}?${params}`, 302);
     }
+    // A venture with its own domain is opened there (old links on its Lakeba address keep working).
+    if (!site.own && venture.custom_domain_verified_at && venture.custom_domain) return redirect(`${siteOriginFor(url, venture)}${path}${url.search}`, 302);
   }
   // investors.lakeba.com/mist → mist.investors.lakeba.com
   if (site.kind === 'central' && context.request.method === 'GET') {
@@ -75,12 +81,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
   const claims = data?.claims;
   if (claims) {
     const codeVerified = claims.aal === 'aal2';
-    // A passkey sign-in where the device checked the person counts as two-step (see passkey_sessions).
-    const usedPasskey = !codeVerified && (claims.amr as { method: string }[] | undefined)?.some((a) => a.method === 'passkey');
-    const passkeyVerified = usedPasskey ? (await locals.supabase.rpc('session_is_strong')).data === true : false;
+    // A passkey sign-in where the device checked the person counts as two-step (see passkey_sessions),
+    // and so does a one-time pass from such a session to a venture's own domain (auth/redeem).
+    const methods = ((claims.amr as { method: string }[] | undefined) ?? []).map((a) => a.method);
+    const usedPasskey = !codeVerified && methods.includes('passkey');
+    const maybeStrong = !codeVerified && methods.some((m) => ['passkey', 'otp', 'magiclink'].includes(m));
+    const passkeyVerified = maybeStrong ? (await locals.supabase.rpc('session_is_strong')).data === true : false;
     locals.user = {
       id: claims.sub, email: String(claims.email ?? ''), aal: codeVerified || passkeyVerified ? 'aal2' : 'aal1',
-      strongBy: codeVerified ? 'code' : passkeyVerified ? 'passkey' : null, codeVerified,
+      strongBy: codeVerified ? 'code' : passkeyVerified ? (usedPasskey ? 'passkey' : 'pass') : null, codeVerified,
     };
   }
 
@@ -91,7 +100,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   // A session from before addresses were shared: write it again on the shared cookies (and drop this address's own).
-  if (site.kind !== 'other' && !context.cookies.get(SHARED_COOKIE)?.value) {
+  if (site.kind !== 'other' && !site.own && !context.cookies.get(SHARED_COOKIE)?.value) {
     const { data: { session } } = await locals.supabase.auth.getSession();
     if (session) await locals.supabase.auth.setSession({ access_token: session.access_token, refresh_token: session.refresh_token });
     context.cookies.set(SHARED_COOKIE, '1', { path: '/', domain: cookieDomain(url), httpOnly: true, sameSite: 'lax', secure: url.protocol === 'https:', maxAge: 31_536_000 });

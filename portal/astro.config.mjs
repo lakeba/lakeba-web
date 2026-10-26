@@ -2,26 +2,18 @@
 import { defineConfig, envField } from 'astro/config';
 import node from '@astrojs/node';
 import tailwindcss from '@tailwindcss/vite';
+import { KNOWN_HOSTS } from './src/lib/known-hosts.mjs';
 
 // Server-rendered: every page checks the session. Runs as a plain Node server
 // (production: a Vultr server in Sydney behind Caddy; see deploy/vultr/).
 // https://astro.build/config
 export default defineConfig({
   output: 'server',
-  // Host names the portal may be reached on. Astro checks requests (and the
-  // origin of form posts) against these. Add the production domain here.
+  // Host names the portal may be reached on (src/lib/known-hosts.mjs). Ventures' own domains
+  // can't be listed ahead: any HTTPS name (and any *.localhost name, for tests on this Mac) is
+  // let through here, and the middleware turns away all but verified venture domains.
   security: {
-    allowedDomains: [
-      { hostname: 'localhost' },
-      { hostname: '127.0.0.1' },
-      { hostname: '192.168.1.141' }, // this Mac on the local network (plain HTTP)
-      { hostname: '100.117.227.8' }, // this Mac on the Tailscale network
-      { hostname: 'giuseppe-macbook-pro.tail21d16f.ts.net', protocol: 'https' }, // same, via Tailscale HTTPS
-      { hostname: 'investors.lakeba.com', protocol: 'https' }, // production (Caddy in front, HTTPS only)
-      { hostname: '*.investors.lakeba.com', protocol: 'https' }, // venture addresses (mist.investors.lakeba.com)
-      { hostname: 'investors.lakeba.localhost' }, // venture addresses tested on this Mac (PORTAL_DOMAIN=investors.lakeba.localhost)
-      { hostname: '*.investors.lakeba.localhost' },
-    ],
+    allowedDomains: [...KNOWN_HOSTS, { protocol: 'https' }, { hostname: '**.localhost' }],
   },
   adapter: node({ mode: 'standalone' }),
   server: { port: 4322 },
@@ -58,6 +50,8 @@ export default defineConfig({
       // Venture addresses: the portal's own domain (investors.lakeba.com). Ventures are reached at
       // {slug}.<this>, sign-in happens here, and the session is shared across them. Empty: one address, as before.
       PORTAL_DOMAIN: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // Tests on this Mac only: "investors.mist.localhost=investors.lakeba.localhost" (comma-separated) stands in for DNS records.
+      DNS_TEST_RECORDS: envField.string({ context: 'server', access: 'secret', optional: true }),
       // The public website (news articles link there; it reads /api/public/news.json when built).
       PUBLIC_SITE_URL: envField.string({ context: 'server', access: 'public', default: 'https://lakeba.github.io/lakeba-web' }),
       // Rebuilds the website when public news changes: a GitHub token that may run the website's deploy workflow.
