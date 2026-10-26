@@ -12,5 +12,5 @@ export const POST: APIRoute = async ({ params, locals, url }) => {
     ? await checkDomain(c, { userId: me.id, email: me.email, label: me.email, manage: false, group: false }, locals.site?.central ?? url.origin)
     : null;
   const now = (await loadSetupCompany({ id: c.id }))!;
-  return Response.json({ stamp: setupStamp(now), domain: r ? (r.ok ? (now.custom_domain_approved_at ? 'The record is there.' : 'The record is there. Waiting for Lakeba’s approval.') : r.problem) : null }, { headers: { 'cache-control': 'no-store' } });
+  return Response.json({ stamp: setupStamp(now), domain: r ? (r.ok ? 'The record is there.' : r.problem) : null }, { headers: { 'cache-control': 'no-store' } });
 };

@@ -85,8 +85,7 @@ export function plainError(provider: 'microsoft' | 'google' | 'gmail', message: 
 export async function checkDomain(c: SetupCompany, who: Who, origin: string) {
   if (!c.custom_domain) return null;
   const r = await domainStatus(c.custom_domain);
-  // Only an address Lakeba approved goes live: whoever controls a domain controls what reaches it.
-  if (r.ok && !c.custom_domain_verified_at && c.custom_domain_approved_at) {
+  if (r.ok && !c.custom_domain_verified_at) {
     const { data } = await serviceClient().from('entities').update({ custom_domain_verified_at: new Date().toISOString() }).eq('id', c.id).is('custom_domain_verified_at', null).select('id');
     if (data?.length) {
       forgetVentureSites(); await refreshOwnDomains();
@@ -98,7 +97,7 @@ export async function checkDomain(c: SetupCompany, who: Who, origin: string) {
 }
 
 /** What changed since a page was opened: the page reloads when this differs. */
-export const setupStamp = (c: SetupCompany) => [c.custom_domain, c.custom_domain_approved_at, c.custom_domain_verified_at, c.ms_tenant_id, c.mail_from_verified_at, c.mail_via, c.google_mailbox_verified_at].join('|');
+export const setupStamp = (c: SetupCompany) => [c.custom_domain, c.custom_domain_verified_at, c.ms_tenant_id, c.mail_from_verified_at, c.mail_via, c.google_mailbox_verified_at].join('|');
 
 /** The link a Microsoft 365 administrator approves the portal with (7 days, used once). */
 async function consentLink(c: SetupCompany, who: Who, central: string) {
@@ -167,7 +166,6 @@ export async function runSetupAction(c: SetupCompany, who: Who, form: FormData, 
     case 'check-dns': {
       const r = await checkDomain(c, who, central);
       if (!r) return { error: 'There’s no own domain to check yet.' };
-      if (r.ok && !c.custom_domain_approved_at) return { notice: `The DNS record for ${c.custom_domain} is in place. It goes live once Lakeba approves the address.` };
       return r.ok ? { notice: `${c.custom_domain} points to the portal. ${c.display_name}’s portal now opens there.` } : { error: r.problem ?? `${c.custom_domain} doesn’t point to the portal yet.` };
     }
     case 'set-domain': {
@@ -184,20 +182,11 @@ export async function runSetupAction(c: SetupCompany, who: Who, form: FormData, 
         const { data: taken } = await svc.from('entities').select('id').eq('custom_domain', domain).neq('id', c.id).maybeSingle();
         if (taken) return { error: `${domain} is already used by another company.` };
       }
-      // A group admin's choice is approved at once; anyone else's waits for Lakeba's approval.
-      await svc.from('entities').update({ custom_domain: domain, custom_domain_verified_at: null, custom_domain_approved_at: domain && who.group ? new Date().toISOString() : null }).eq('id', c.id).throwOnError();
+      await svc.from('entities').update({ custom_domain: domain, custom_domain_verified_at: null }).eq('id', c.id).throwOnError();
       forgetVentureSites(); await refreshOwnDomains();
       await audit(c, who, 'company_domain_set', { domain, was: c.custom_domain });
-      if (domain && !who.group) await tellAdmins(c, central, `${c.display_name} asks to use ${domain}`, `${who.label} chose ${domain} as ${c.display_name}’s web address. It goes live only once a Lakeba group admin approves it (Domain and mail) and its DNS record is in place.`, true);
-      if (!who.userId && domain) await tellAdmins(c, central, `${c.display_name}’s web address will be ${domain}`, `${who.label} chose it. Lakeba approves it, and investors move there once its DNS record is in place; the old address keeps working and forwards.`);
-      return { notice: domain ? `Saved. Now add the DNS record below for ${domain}.${who.group ? '' : ' Lakeba also approves the address before it goes live.'}` : `${c.display_name}’s portal stays on its Lakeba address.` };
-    }
-    case 'approve-domain': {
-      if (!who.group || !who.userId || !c.custom_domain) break;
-      await svc.from('entities').update({ custom_domain_approved_at: new Date().toISOString() }).eq('id', c.id).eq('custom_domain', c.custom_domain).throwOnError();
-      await audit(c, who, 'company_domain_approved', { domain: c.custom_domain });
-      const r = await checkDomain({ ...c, custom_domain_approved_at: new Date().toISOString() }, who, central);
-      return { notice: `${c.custom_domain} is approved.${r?.ok ? ` ${c.display_name}’s portal now opens there.` : ' It goes live as soon as its DNS record is in place.'}` };
+      if (!who.userId && domain) await tellAdmins(c, central, `${c.display_name}’s web address will be ${domain}`, `${who.label} chose it. Investors move there once its DNS record is in place; the old address keeps working and forwards.`);
+      return { notice: domain ? `Saved. Now add the DNS record below for ${domain}.` : `${c.display_name}’s portal stays on its Lakeba address.` };
     }
     case 'stop-domain': {
       if (!who.manage || !who.userId) break;

@@ -17,7 +17,7 @@ export type Company = {
   ask_enabled: boolean; board_qa_enabled: boolean;
   shareholder_address: string | null; ask_monthly_budget_usd: number | null;
   custom_domain_verified_at: string | null; ms_tenant_id: string | null; mail_from: string | null; mail_from_verified_at: string | null;
-  mail_via: 'microsoft' | 'google' | null; google_mailbox_verified_at: string | null; ms_connected_at: string | null; custom_domain_approved_at: string | null;
+  mail_via: 'microsoft' | 'google' | null; google_mailbox_verified_at: string | null; ms_connected_at: string | null;
 };
 export type CompanyContext = {
   /** Companies with a full portal that this person belongs to (all of them for admins). */
@@ -33,7 +33,7 @@ export type CompanyContext = {
 export const COMPANY_COOKIE = 'lakeba-company';
 export const COLUMNS = 'id, code, display_name, legal_name, relationship, portal, brand_color, tagline, logo_url, website, company_number, country, '
   + 'slug, custom_domain, sender_name, reply_to, contact_email, ask_name, email_footer, document_footer, ask_enabled, board_qa_enabled, shareholder_address, ask_monthly_budget_usd, '
-  + 'custom_domain_verified_at, ms_tenant_id, mail_from, mail_from_verified_at, mail_via, google_mailbox_verified_at, ms_connected_at, custom_domain_approved_at';
+  + 'custom_domain_verified_at, ms_tenant_id, mail_from, mail_from_verified_at, mail_via, google_mailbox_verified_at, ms_connected_at';
 
 export async function loadCompanyContext(supabase: SupabaseClient, cookies: AstroCookies): Promise<CompanyContext> {
   const [{ data: memberIds }, { data: visible }, { data: admins }] = await Promise.all([

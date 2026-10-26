@@ -58,12 +58,13 @@ the backup loses anything written since.
 
 - **Venture addresses:** DNS, the wildcard certificate and `PORTAL_DOMAIN` (see
   deploy-vultr.md, Venture addresses).
-- **Own domains:** a Lakeba group admin approves each one (Domain and mail).
-  - Sign-in passes to an own domain go only to that venture's investors, and only while the
-    domain still points to the portal. Staff (anyone with a role) open the venture on its
-    Lakeba address instead.
-  - Whoever controls the domain can still capture its traffic, so approve only ventures you
-    trust with their investors' sign-ins.
+- **Own domains:** the venture sets everything up (Domain and mail); no Lakeba approval.
+  - Sign-in passes to an own domain go only to people who belong to that venture alone (no
+    shares, board seat or admin role in any other company, no staff role), and only while the
+    domain still points to the portal. Everyone else opens the venture on its Lakeba address.
+  - So a venture that misused its domain could only reach sessions that see its own data.
+  - `custom_domain_approved_at` (migration 20261125000000) is no longer used; it can be dropped
+    after this code is deployed.
 - **Microsoft 365 per venture:** make the Azure app multi-tenant.
   - The return page refuses Lakeba's own Microsoft 365, any already linked to another
     company, and any where the app isn't approved.

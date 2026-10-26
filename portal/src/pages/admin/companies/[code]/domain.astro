@@ -112,7 +112,7 @@ const poll = Boolean(c.custom_domain && !c.custom_domain_verified_at) || Boolean
   )}
 
   <div class="mt-6 space-y-6">
-    <DomainGuide c={c} place={place ?? (det.dns ? { zone: det.dns.zone, host: det.dns, label: 'investors' } : null)} check={check} portalDomain={portalDomain} lakebaAddress={lakebaAddress} suggested={det.emailDomain ? `investors.${det.emailDomain}` : null} choose={manage} manage={manage} group={group} />
+    <DomainGuide c={c} place={place ?? (det.dns ? { zone: det.dns.zone, host: det.dns, label: 'investors' } : null)} check={check} portalDomain={portalDomain} lakebaAddress={lakebaAddress} suggested={det.emailDomain ? `investors.${det.emailDomain}` : null} choose={manage} manage={manage} />
     <EmailGuides c={c} det={det} admin={true} manage={manage} testTo={me.email} suggested={suggestedAddress}
       consentUrl={consentUrl} msReady={graphConfigured()} msClientId={MS_CLIENT_ID ?? null}
       serverIp={PORTAL_SERVER_IP} gmailReady={gmailConfigured()} gmailClientId={gmailClientId()} gmailScope={GMAIL_SCOPE} />

@@ -21,11 +21,8 @@ interface Props {
   choose: boolean;
   /** The venture's admin: may also stop using it. */
   manage: boolean;
-  /** A Lakeba group admin: approves the address. */
-  group?: boolean;
 }
-const { c, place, check, portalDomain, lakebaAddress, suggested, choose, manage, group = false } = Astro.props;
-const awaiting = Boolean(c.custom_domain && !c.custom_domain_approved_at);
+const { c, place, check, portalDomain, lakebaAddress, suggested, choose, manage } = Astro.props;
 const host = place?.host;
 const zone = place?.zone ?? c.custom_domain?.split('.').slice(-2).join('.');
 const label = place?.label ?? 'investors';
@@ -33,7 +30,7 @@ const label = place?.label ?? 'investors';
 <section id="domain" class="card space-y-4">
   <div class="flex flex-wrap items-baseline justify-between gap-2">
     <h2 class="font-display text-lg font-bold">Your own web address</h2>
-    {c.custom_domain_verified_at ? <span class="text-sm text-lk-green">✓ In use</span> : c.custom_domain ? <span class="text-sm text-lk-orange">{awaiting ? (check?.ok ? 'Waiting for Lakeba’s approval' : 'Waiting for Lakeba’s approval and the DNS record') : 'Waiting for one DNS record'}</span> : <span class="text-sm text-white/45">Not set up · optional</span>}
+    {c.custom_domain_verified_at ? <span class="text-sm text-lk-green">✓ In use</span> : c.custom_domain ? <span class="text-sm text-lk-orange">Waiting for one DNS record</span> : <span class="text-sm text-white/45">Not set up · optional</span>}
   </div>
   <Facts items={[
     ['What changes', `Investors open ${c.display_name}’s portal at ${c.custom_domain ?? suggested ?? 'an address of your own, like investors.yourcompany.com'} instead of ${lakebaAddress}. The old address keeps working and forwards there.`],
@@ -49,12 +46,6 @@ const label = place?.label ?? 'investors';
       <div class="flex gap-2"><input id="custom_domain" name="custom_domain" value={c.custom_domain ?? suggested ?? ''} placeholder="investors.yourcompany.com" class="field font-mono" /><button class="btn-primary shrink-0 text-sm">{c.custom_domain ? 'Change' : 'Use this address'}</button></div>
       <p class="text-xs text-white/45">An address on your own domain, usually starting with “investors.”. Nothing changes for investors until its DNS record is in place.</p>
     </form>
-  )}
-  {awaiting && (
-    <div class="rounded-xl bg-lk-orange/10 px-3 py-2 text-sm text-white/75">
-      <p>Lakeba approves each venture’s own address before it goes live. You can add the DNS record now; the portal switches over once both are done.</p>
-      {group && <form method="post" class="mt-2"><button name="intent" value="approve-domain" class="btn-primary text-sm">Approve {c.custom_domain}</button></form>}
-    </div>
   )}
   {!c.custom_domain ? (
     <p class="text-sm text-white/60">{choose ? 'Once you choose the address, the DNS record to add appears here.' : 'Not set up yet: the venture’s admins choose the address first.'}</p>
@@ -97,7 +88,7 @@ const label = place?.label ?? 'investors';
         </Step>
       </ol>
       <div class="rounded-xl border border-white/10 p-3 text-sm">
-        <p class="text-white/70" data-domain-status>{check ? (check.ok ? (awaiting ? 'The record is there. Waiting for Lakeba’s approval.' : 'The record is there.') : `Last check: ${check.problem}`) : 'Not checked yet.'}</p>
+        <p class="text-white/70" data-domain-status>{check ? (check.ok ? 'The record is there.' : `Last check: ${check.problem}`) : 'Not checked yet.'}</p>
         <form method="post" class="mt-2"><button name="intent" value="check-dns" class="btn-ghost text-sm">Check now</button></form>
       </div>
       <details class="text-sm text-white/60">

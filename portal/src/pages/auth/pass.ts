@@ -11,10 +11,12 @@ import { isOwnDomainAddress, ownDomainVenture, ventureOrigin } from '../../lib/s
  * gives a two-step session there too (auth/redeem). Signed-out people are sent
  * to sign in first and come back here.
  *
- * Whoever controls a domain controls what reaches it, so a pass only goes to
- * the venture's own domain for that venture's investors, never for staff
- * (admins, board, anyone with a role), and only while the domain still points
- * to the portal. Everyone else opens the venture on its Lakeba address instead.
+ * Whoever controls a domain controls what reaches it, and a venture sets up its
+ * own domain without Lakeba. So a pass only goes there for people who belong to
+ * that venture alone (its shares, board or admins, and no other company) and
+ * have no staff role, and only while the domain still points to the portal: a
+ * venture misusing its domain could reach nothing it doesn't already hold.
+ * Everyone else opens the venture on its Lakeba address instead.
  */
 export const GET: APIRoute = async ({ url, locals, redirect }) => {
   const to = url.searchParams.get('to') ?? '';
@@ -29,8 +31,9 @@ export const GET: APIRoute = async ({ url, locals, redirect }) => {
     locals.supabase.rpc('my_entity_ids'),
     domainStatus(target.hostname),
   ]);
-  const member = ((mine ?? []) as (string | { my_entity_ids: string })[]).some((e) => (typeof e === 'string' ? e : e.my_entity_ids) === venture.id);
-  if (locals.profile?.role !== 'investor' || (roles ?? 0) > 0 || !member || !dns.ok) return instead();
+  const companies = new Set(((mine ?? []) as (string | { my_entity_ids: string })[]).map((e) => (typeof e === 'string' ? e : e.my_entity_ids)));
+  const onlyThisVenture = companies.size === 1 && companies.has(venture.id);
+  if (locals.profile?.role !== 'investor' || (roles ?? 0) > 0 || !onlyThisVenture || !dns.ok) return instead();
   const token = randomBytes(32).toString('base64url');
   await svc.from('sign_in_passes').insert({
     token_hash: createHash('sha256').update(token).digest('hex'), user_id: user.id, target_origin: target.origin,
