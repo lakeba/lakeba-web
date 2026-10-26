@@ -66,7 +66,9 @@ if (Astro.request.method === 'POST') {
         sender_name: text('sender_name', 80), reply_to: email('reply_to'), contact_email: email('contact_email'),
         ask_name: text('ask_name', 40), email_footer: text('email_footer', 500), document_footer: text('document_footer', 300),
         ask_enabled: form.get('ask_enabled') === 'on', board_qa_enabled: form.get('board_qa_enabled') === 'on',
+        brand_color: field(form, 'brand_color').trim().toLowerCase() || null, tagline: field(form, 'tagline').trim().slice(0, 120),
       };
+      if (next.brand_color != null && !/^#[0-9a-f]{6}$/.test(String(next.brand_color))) return 'The colour is a hex code, e.g. #0d9488.';
       // The addresses decide where the venture's portal is reached, so they stay with people who manage the whole register.
       // Lakeba pays for Ask: its monthly cap per company is set by people who manage the whole register.
       if (mayGroup) { const b = field(form, 'ask_monthly_budget_usd').trim(); Object.assign(next, { ask_monthly_budget_usd: b === '' ? null : Number(b) }); }
@@ -80,7 +82,7 @@ if (Astro.request.method === 'POST') {
       if (next.slug && next.slug !== c.slug && (await svc.from('entities').select('id').eq('slug', next.slug).neq('id', c.id).maybeSingle()).data) return `${next.slug} is already used by another company.`;
       if (next.custom_domain && next.custom_domain !== c.custom_domain && (await svc.from('entities').select('id').eq('custom_domain', next.custom_domain).neq('id', c.id).maybeSingle()).data) return `${next.custom_domain} is already used by another company.`;
       const yesNo = (v: unknown) => (v ? 'On' : 'Off');
-      const lines = changes(c, next, { slug: 'Lakeba address', custom_domain: 'Own domain', sender_name: 'Sender name', reply_to: 'Replies go to', contact_email: 'Contact email', ask_name: 'Name of Ask', email_footer: 'Email footer', document_footer: 'Document footer', ask_enabled: 'Ask', board_qa_enabled: 'Board Q&A', ask_monthly_budget_usd: 'Ask budget a month (USD)' },
+      const lines = changes(c, next, { slug: 'Lakeba address', custom_domain: 'Own domain', sender_name: 'Sender name', reply_to: 'Replies go to', contact_email: 'Contact email', ask_name: 'Name of Ask', email_footer: 'Email footer', document_footer: 'Document footer', ask_enabled: 'Ask', board_qa_enabled: 'Board Q&A', ask_monthly_budget_usd: 'Ask budget a month (USD)', brand_color: 'Colour', tagline: 'Short description' },
         (k, v) => (k === 'ask_enabled' || k === 'board_qa_enabled' ? yesNo(v) : fmt(v)));
       if (!lines.length) return 'Nothing changed.';
       return { title: 'Save these venture settings?', lines, apply: async () => {
@@ -163,10 +165,38 @@ if (Astro.request.method === 'POST') {
     }
     return 'Unknown action.';
   };
+  if (op === 'logo' || op === 'logo-remove') {
+    // The logo, straight away (a file can't go through check-and-save); the old file is removed.
+    const c = company!;
+    const old = c.logo_url?.startsWith('/company-logo/') ? c.logo_url.slice('/company-logo/'.length) : null;
+    const file = form.get('logo');
+    const ext = file instanceof File ? ({ 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/svg+xml': 'svg' } as Record<string, string>)[file.type] : undefined;
+    if (!mayEdit) error = 'You can’t change this company.';
+    else if (op === 'logo' && (!(file instanceof File) || !file.size)) error = 'Choose a logo file.';
+    else if (op === 'logo' && !ext) error = 'Use a PNG, JPEG, WebP or SVG image.';
+    else if (op === 'logo' && (file as File).size > 2 * 1024 * 1024) error = 'The logo must be 2 MB or smaller.';
+    else {
+      let logo: string | null = null;
+      if (op === 'logo') {
+        const path = `${c.code}-${Date.now()}.${ext}`;
+        const { error: up } = await svc.storage.from('logos').upload(path, new Uint8Array(await (file as File).arrayBuffer()), { contentType: (file as File).type });
+        if (up) error = up.message; else logo = `/company-logo/${path}`;
+      }
+      if (!error) {
+        await svc.from('entities').update({ logo_url: logo }).eq('id', c.id).throwOnError();
+        if (old) await svc.storage.from('logos').remove([old]);
+        forgetVentureSites();
+        await log(logo ? 'admin_uploaded_logo' : 'admin_removed_logo', {});
+        notice = logo ? 'Logo saved.' : 'Logo removed.';
+        company = await load();
+      }
+    }
+  } else {
   const p = await plan();
   if (typeof p === 'string') error = p;
   else if (intent === 'review') review = { title: p.title, lines: p.lines, fields, danger: p.danger };
   else if (intent === 'apply') { notice = await p.apply(); company = await load(); }
+  }
 }
 
 const c = company!;
@@ -307,10 +337,29 @@ const sel = 'field !py-1.5 text-sm';
         <p class="text-xs text-white/40">Logo, colour, tagline and portfolio entry: <a href="/admin/ventures" class="text-lk-blue hover:underline">Ventures &amp; prices</a>.</p>
       </form>
 
+      <div class="card mt-6 space-y-3">
+        <h2 class="font-display text-lg font-bold">Logo</h2>
+        <div class="flex items-center gap-4">
+          <div class="grid h-16 w-32 shrink-0 place-items-center rounded-xl bg-white p-2">{c.logo_url ? <img src={c.logo_url} alt={`${c.display_name} logo`} class="max-h-12 max-w-28 object-contain" /> : <span class="text-xs text-[#6b7a90]">No logo</span>}</div>
+          <p class="text-xs text-white/45">In {c.display_name}’s portal header, on its sign-in page and in Lakeba’s portfolio. PNG, SVG, JPEG or WebP, up to 2 MB; a wide logo on a transparent background works best.</p>
+        </div>
+        {mayEdit && (
+          <div class="flex flex-wrap items-center gap-2">
+            <form method="post" enctype="multipart/form-data" class="flex flex-wrap items-center gap-2"><input type="hidden" name="op" value="logo" /><input type="file" name="logo" accept="image/png,image/jpeg,image/webp,image/svg+xml" required class="max-w-56 text-xs text-white/60" /><button class="btn-ghost text-sm">Upload</button></form>
+            {c.logo_url && <form method="post"><input type="hidden" name="op" value="logo-remove" /><button class="text-xs text-white/45 hover:text-lk-red">Remove</button></form>}
+          </div>
+        )}
+      </div>
+
       <form method="post" class="card mt-6 space-y-3">
         <h2 class="font-display text-lg font-bold">Venture settings</h2>
         <p class="text-xs text-white/45">How {c.display_name} appears to its investors. Leave a field empty to use Lakeba’s.</p>
         <input type="hidden" name="op" value="venture" />
+        <div class="grid grid-cols-[auto_1fr] items-end gap-2">
+          <div><label class="label" for="brand_color">Colour</label><input id="brand_color" name="brand_color" type="color" value={c.brand_color ?? '#276ae7'} class="h-11 w-14 cursor-pointer rounded-xl border border-white/10 bg-transparent p-1" disabled={!mayEdit} /></div>
+          <p class="pb-2 text-xs text-white/45">Buttons, links and highlights in {c.display_name}’s portal, and its emails. A very light colour is kept for details only, so text stays readable.</p>
+        </div>
+        <div><label class="label" for="tagline">Short description</label><input id="tagline" name="tagline" value={c.tagline ?? ''} maxlength="120" placeholder="e.g. Climate data for property" class="field" disabled={!mayEdit} /></div>
         {c.relationship !== 'group' && (
           <>
             <div><label class="label" for="slug">Lakeba address</label><div class="flex items-center gap-1"><input id="slug" name="slug" value={c.slug ?? ''} placeholder={c.code.toLowerCase()} class="field" disabled={!mayEdit || !mayGroup} /><span class="shrink-0 text-xs text-white/45">.investors.lakeba.com</span></div></div>

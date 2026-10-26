@@ -5,7 +5,7 @@ import ThemeInit from '../../../src/components/ThemeInit.astro';
 import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 import LinkedInIcon from '../components/LinkedInIcon.astro';
 import { brandName } from '../lib/companies';
-import { brandOf } from '../lib/brand';
+import { accentOf, brandOf } from '../lib/brand';
 import NoteBanner from '../components/NoteBanner.astro';
 import { HTML_LANG } from '../lib/i18n';
 interface Props { title: string }
@@ -18,6 +18,8 @@ const brand = brandName(company);
 const contact = brandOf(company).contactEmail;
 // On a venture's own address (sites.ts) the header carries its name; the switcher still reaches the others.
 const onVenture = Astro.locals.site?.kind === 'venture';
+// A venture's colour as the accent while its investors look at it (Lakeba's blue otherwise).
+const accent = accentOf(company);
 
 const nav: { href: string; label: string; tag?: string }[] = [
   { href: '/', label: t('Dashboard') },
@@ -51,7 +53,7 @@ const { count: unread } = user
 ---
 
 <!doctype html>
-<html lang={HTML_LANG[locale]}>
+<html lang={HTML_LANG[locale]} style={accent ? `--color-lk-blue:${accent}` : undefined}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -77,8 +79,9 @@ const { count: unread } = user
       <div class="container-portal flex h-16 items-center justify-between gap-4">
         {onVenture && company ? (
         <a href="/" class="flex min-w-0 shrink items-center gap-2.5">
-          <span class="size-3 shrink-0 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>
-          <span class="truncate font-display text-lg font-bold text-white">{company.display_name}</span>
+          {company.logo_url
+            ? <span class="grid h-9 shrink-0 place-items-center rounded-lg bg-white px-2"><img src={company.logo_url} alt={company.display_name} class="max-h-7 max-w-32 object-contain" /></span>
+            : <><span class="size-3 shrink-0 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span><span class="truncate font-display text-lg font-bold text-white">{company.display_name}</span></>}
           <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">{t('Investors')}</span>
         </a>
         ) : (
@@ -91,8 +94,9 @@ const { count: unread } = user
         {company && (companies.length > 1 ? (
           <details class="relative mr-auto">
             <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label={t('Switch company')}>
-              {!onVenture && <span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>}
-              {onVenture ? <span class="hidden font-medium sm:inline">{t('Your companies')}</span> : <span class="max-w-[10rem] truncate font-medium">{company.display_name}</span>}
+              {onVenture ? <span class="hidden font-medium sm:inline">{t('Your companies')}</span>
+                : company.logo_url ? <span class="grid h-6 place-items-center rounded bg-white px-1.5"><img src={company.logo_url} alt={company.display_name} class="max-h-5 max-w-24 object-contain" /></span>
+                : <><span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span><span class="max-w-[10rem] truncate font-medium">{company.display_name}</span></>}
               <svg viewBox="0 0 20 20" class="size-4 text-white/45" fill="currentColor" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </summary>
             <div class="glass absolute left-0 mt-2 w-64 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
@@ -108,7 +112,8 @@ const { count: unread } = user
           </details>
         ) : !isGroup && !onVenture && (
           <span class="mr-auto flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm font-medium text-white/85">
-            <span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>{company.display_name}
+            {company.logo_url ? <span class="grid h-6 place-items-center rounded bg-white px-1.5"><img src={company.logo_url} alt={company.display_name} class="max-h-5 max-w-24 object-contain" /></span>
+              : <><span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>{company.display_name}</>}
           </span>
         ))}
         <div class="flex items-center gap-2">

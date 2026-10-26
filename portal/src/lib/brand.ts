@@ -59,5 +59,18 @@ export function brandOf(c: BrandSource | null | undefined): Brand {
   };
 }
 
+/**
+ * A venture's colour as the portal's accent (buttons, links, highlights) for its
+ * investors: only when white text on it stays readable (contrast 3:1 or more);
+ * otherwise null, and the portal keeps Lakeba's blue. Never for Lakeba itself.
+ */
+export function accentOf(c: { relationship: string; brand_color?: string | null } | null | undefined) {
+  const hex = c && c.relationship !== 'group' ? clean(c.brand_color) : null;
+  if (!hex || !/^#[0-9a-f]{6}$/i.test(hex)) return null;
+  const [r, g, b] = [1, 3, 5].map((i) => { const v = parseInt(hex.slice(i, i + 2), 16) / 255; return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4; });
+  const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+  return 1.05 / (luminance + 0.05) >= 3 ? hex : null;
+}
+
 /** The columns brandOf reads, for selects of entities. */
 export const BRAND_COLUMNS = 'code, display_name, legal_name, relationship, brand_color, sender_name, reply_to, contact_email, ask_name, email_footer, document_footer, ms_tenant_id, mail_from, mail_from_verified_at';

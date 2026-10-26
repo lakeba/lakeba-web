@@ -7,6 +7,7 @@ import { serviceClient } from './lib/admin';
 import { tradingEnabled } from './lib/trading';
 import { INTL, fromAcceptLanguage, isLocale, translator, type Locale } from './lib/i18n';
 import { formats } from './lib/format';
+import { SUPABASE_URL, TWO_STEP_OFF_FOR_TESTING } from 'astro:env/server';
 import { RESERVED_SLUGS, centralOrigin, cookieDomain, ownDomainVenture, refreshOwnDomains, siteOf, siteOriginFor, ventureBySlug, ventureOrigin } from './lib/sites';
 import { isKnownHost } from './lib/known-hosts.mjs';
 
@@ -14,7 +15,7 @@ import { isKnownHost } from './lib/known-hosts.mjs';
 startNotificationWorker();
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/go', '/passkey-login', '/e', '/room', '/news-media', '/api/public', '/api/v1', '/embed', '/n', '/favicon.ico'];
+const PUBLIC_PATHS = ['/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/go', '/passkey-login', '/e', '/room', '/news-media', '/company-logo', '/api/public', '/api/v1', '/embed', '/n', '/favicon.ico'];
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 
@@ -22,6 +23,9 @@ const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-logi
 const CENTRAL_PATHS = ['/login', '/forgot-password', '/passkey-login', '/mfa', '/account/security', '/api/passkeys', '/admin', '/auth/pass'];
 /** Set once a session has been moved onto the cookies shared by all the portal's addresses. */
 const SHARED_COOKIE = 'lakeba-shared-session';
+
+/** Staging on this Mac only: staff can try the portal without an authenticator app. Never on another database. */
+const twoStepOff = TWO_STEP_OFF_FOR_TESTING && /^http:\/\/(127\.0\.0\.1|localhost):54321$/.test(SUPABASE_URL);
 
 const matches = (path: string, list: string[]) => list.some((p) => path === p || path.startsWith(`${p}/`));
 
@@ -86,7 +90,12 @@ export const onRequest = defineMiddleware(async (context, next) => {
     const methods = ((claims.amr as { method: string }[] | undefined) ?? []).map((a) => a.method);
     const usedPasskey = !codeVerified && methods.includes('passkey');
     const maybeStrong = !codeVerified && methods.some((m) => ['passkey', 'otp', 'magiclink'].includes(m));
-    const passkeyVerified = maybeStrong ? (await locals.supabase.rpc('session_is_strong')).data === true : false;
+    let passkeyVerified = maybeStrong ? (await locals.supabase.rpc('session_is_strong')).data === true : false;
+    // With two-step off for testing, the session is recorded as strong, so the database's checks agree too.
+    if (twoStepOff && !codeVerified && !passkeyVerified && claims.session_id) {
+      await serviceClient().from('passkey_sessions').upsert({ session_id: claims.session_id, user_id: claims.sub }, { ignoreDuplicates: true });
+      passkeyVerified = true;
+    }
     locals.user = {
       id: claims.sub, email: String(claims.email ?? ''), aal: codeVerified || passkeyVerified ? 'aal2' : 'aal1',
       strongBy: codeVerified ? 'code' : passkeyVerified ? (usedPasskey ? 'passkey' : 'pass') : null, codeVerified,
@@ -110,7 +119,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.mfaEnrolled = aal?.nextLevel === 'aal2';
 
   // Enrolled users must complete MFA for this session before anything else.
-  if (locals.mfaEnrolled && locals.user.aal !== 'aal2' && !matches(path, MFA_PATHS)) {
+  if (locals.mfaEnrolled && locals.user.aal !== 'aal2' && !twoStepOff && !matches(path, MFA_PATHS)) {
     return redirect(`/mfa/verify?next=${encodeURIComponent(path + url.search)}`);
   }
 
@@ -144,7 +153,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   };
 
   // Anyone with a staff role cannot use the portal until they have enrolled MFA.
-  if (locals.access.staff && !locals.mfaEnrolled && !matches(path, MFA_PATHS)) {
+  if (locals.access.staff && !locals.mfaEnrolled && !twoStepOff && !matches(path, MFA_PATHS)) {
     return redirect('/mfa/setup?required=1');
   }
 

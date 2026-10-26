@@ -4,7 +4,7 @@ import Mark from '../../../src/components/Mark.astro';
 import ThemeInit from '../../../src/components/ThemeInit.astro';
 import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 import { HTML_LANG, LANGUAGE_NAMES, LOCALES } from '../lib/i18n';
-import { brandOf } from '../lib/brand';
+import { accentOf, brandOf } from '../lib/brand';
 import { ventureBySlug } from '../lib/sites';
 interface Props { title: string; subtitle?: string; wide?: boolean }
 const { title, subtitle, wide = false } = Astro.props;
@@ -22,7 +22,7 @@ const languageLinks = LOCALES.map((l) => {
 ---
 
 <!doctype html>
-<html lang={HTML_LANG[locale]}>
+<html lang={HTML_LANG[locale]} style={accentOf(venture) ? `--color-lk-blue:${accentOf(venture)}` : undefined}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -50,7 +50,9 @@ const languageLinks = LOCALES.map((l) => {
     <main class:list={['w-full', wide ? 'max-w-3xl' : 'max-w-md']}>
       {venture ? (
         <div class="mb-8 text-center">
-          <p class="flex items-center justify-center gap-2.5"><span class="size-3 rounded-full" style={`background:${brand.color}`}></span><span class="font-display text-xl font-bold text-white">{venture.display_name}</span><span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span></p>
+          {venture.logo_url
+            ? <p class="flex items-center justify-center gap-2.5"><span class="grid h-12 place-items-center rounded-xl bg-white px-3"><img src={venture.logo_url} alt={venture.display_name} class="max-h-9 max-w-44 object-contain" /></span><span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span></p>
+            : <p class="flex items-center justify-center gap-2.5"><span class="size-3 rounded-full" style={`background:${brand.color}`}></span><span class="font-display text-xl font-bold text-white">{venture.display_name}</span><span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span></p>}
           <p class="mt-2 flex items-center justify-center gap-1.5 text-xs text-white/40"><Mark class="size-3.5" /> {t('{company} Investor Portal, powered by Lakeba', { company: venture.display_name })}</p>
         </div>
       ) : (

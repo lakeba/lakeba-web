@@ -52,6 +52,8 @@ export default defineConfig({
       PORTAL_DOMAIN: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Tests on this Mac only: "investors.mist.localhost=investors.lakeba.localhost" (comma-separated) stands in for DNS records.
       DNS_TEST_RECORDS: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // Staging on this Mac only: every sign-in counts as two-step (ignored unless the database is the local one).
+      TWO_STEP_OFF_FOR_TESTING: envField.boolean({ context: 'server', access: 'secret', default: false }),
       // The public website (news articles link there; it reads /api/public/news.json when built).
       PUBLIC_SITE_URL: envField.string({ context: 'server', access: 'public', default: 'https://lakeba.github.io/lakeba-web' }),
       // Rebuilds the website when public news changes: a GitHub token that may run the website's deploy workflow.
