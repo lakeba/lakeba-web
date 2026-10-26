@@ -80,7 +80,7 @@ const { count: unread } = user
         {onVenture && company ? (
         <a href="/" class="flex min-w-0 shrink items-center gap-2.5">
           {company.logo_url
-            ? <span class="grid h-9 shrink-0 place-items-center rounded-lg bg-white px-2"><img src={company.logo_url} alt={company.display_name} class="max-h-7 max-w-32 object-contain" /></span>
+            ? <span class="grid h-9 shrink-0 place-items-center rounded-lg bg-[#fff] px-2"><img src={company.logo_url} alt={company.display_name} class="max-h-7 max-w-32 object-contain" /></span>
             : <><span class="size-3 shrink-0 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span><span class="truncate font-display text-lg font-bold text-white">{company.display_name}</span></>}
           <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">{t('Investors')}</span>
         </a>
@@ -95,7 +95,6 @@ const { count: unread } = user
           <details class="relative mr-auto">
             <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label={t('Switch company')}>
               {onVenture ? <span class="hidden font-medium sm:inline">{t('Your companies')}</span>
-                : company.logo_url ? <span class="grid h-6 place-items-center rounded bg-white px-1.5"><img src={company.logo_url} alt={company.display_name} class="max-h-5 max-w-24 object-contain" /></span>
                 : <><span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span><span class="max-w-[10rem] truncate font-medium">{company.display_name}</span></>}
               <svg viewBox="0 0 20 20" class="size-4 text-white/45" fill="currentColor" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </summary>
@@ -112,8 +111,7 @@ const { count: unread } = user
           </details>
         ) : !isGroup && !onVenture && (
           <span class="mr-auto flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm font-medium text-white/85">
-            {company.logo_url ? <span class="grid h-6 place-items-center rounded bg-white px-1.5"><img src={company.logo_url} alt={company.display_name} class="max-h-5 max-w-24 object-contain" /></span>
-              : <><span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>{company.display_name}</>}
+            <span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>{company.display_name}
           </span>
         ))}
         <div class="flex items-center gap-2">

@@ -52,7 +52,7 @@ const languageLinks = LOCALES.map((l) => {
       {venture ? (
         <div class="mb-8 text-center">
           {venture.logo_url
-            ? <p class="flex items-center justify-center gap-2.5"><span class="grid h-12 place-items-center rounded-xl bg-white px-3"><img src={venture.logo_url} alt={venture.display_name} class="max-h-9 max-w-44 object-contain" /></span><span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span></p>
+            ? <p class="flex items-center justify-center gap-2.5"><span class="grid h-12 place-items-center rounded-xl bg-[#fff] px-3"><img src={venture.logo_url} alt={venture.display_name} class="max-h-9 max-w-44 object-contain" /></span><span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span></p>
             : <p class="flex items-center justify-center gap-2.5"><span class="size-3 rounded-full" style={`background:${brand.color}`}></span><span class="font-display text-xl font-bold text-white">{venture.display_name}</span><span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span></p>}
           <p class="mt-2 flex items-center justify-center gap-1.5 text-xs text-white/40"><Mark class="size-3.5" /> {t('{company} Investor Portal, powered by Lakeba', { company: venture.display_name })}</p>
         </div>
