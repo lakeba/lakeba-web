@@ -9,6 +9,10 @@ import { dateTime } from '../../../../lib/format';
 import { brandOf } from '../../../../lib/brand';
 import { pointsHere } from '../../../../lib/domains';
 import { forgetTenants, graphConfigured, sendAs } from '../../../../lib/graph';
+import { GMAIL_SCOPE, gmailClientId, gmailConfigured, gmailInboxCount } from '../../../../lib/gmail';
+import { sendViaGoogle } from '../../../../lib/mail';
+import { forgetMailboxes } from '../../../../lib/mailboxes';
+import { PORTAL_SERVER_IP } from 'astro:env/server';
 import { forgetVentureSites, refreshOwnDomains, siteOriginFor } from '../../../../lib/sites';
 import { COLUMNS, type Company } from '../../../../lib/companies';
 
@@ -18,10 +22,13 @@ import { COLUMNS, type Company } from '../../../../lib/companies';
 // 365 (the venture's admins): its Microsoft 365 administrator approves the
 // portal's app with a link; then emails go from the venture's own address,
 // after a test email went through, and its shareholder mailbox is read there.
+// Google Workspace instead: emails go from its own address through Google's
+// SMTP relay (its administrator allows this server's address), and its
+// shareholder mailbox is read with Lakeba's service account (Gmail only).
 const svc = serviceClient();
 const access = Astro.locals.access;
 const code = (Astro.params.code ?? '').toUpperCase();
-const load = async () => (await svc.from('entities').select(COLUMNS).eq('code', code).maybeSingle()).data as Company | null;
+const load = async () => (await svc.from('entities').select(`${COLUMNS}, shareholder_mailbox`).eq('code', code).maybeSingle()).data as (Company & { shareholder_mailbox: string | null }) | null;
 let c = await load();
 if (!c || c.relationship === 'group' || !access.can('investors.view', c.id)) return new Response('Not found', { status: 404 });
 const mayDomain = access.can('investors.do', null);
@@ -66,13 +73,45 @@ if (Astro.request.method === 'POST') {
       forgetTenants();
       try {
         await sendAs(from, { to: me.email, subject: `Test from ${c.display_name}’s investor portal`, html: `<p>This test email came from ${from} through ${c.display_name}’s own Microsoft 365. Emails from the portal to ${c.display_name}’s investors now come from this address.</p>` });
-        await svc.from('entities').update({ mail_from_verified_at: new Date().toISOString() }).eq('id', c.id).throwOnError();
-        await log('company_send_from_verified', { address: from });
+        await svc.from('entities').update({ mail_from_verified_at: new Date().toISOString(), mail_via: 'microsoft' }).eq('id', c.id).throwOnError();
+        await log('company_send_from_verified', { address: from, via: 'microsoft' });
         notice = `A test email went from ${from} to ${me.email}. ${c.display_name}’s emails now come from there.`;
       } catch (e) {
         error = `The test email couldn’t be sent from ${from}: ${(e as Error).message}. Check the address exists in ${c.display_name}’s Microsoft 365.`;
       }
     }
+  }
+  if (intent === 'google-send' && mayMail) {
+    const from = field(form, 'mail_from').toLowerCase();
+    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(from)) error = 'Enter the address emails should come from, e.g. investors@mist.com.';
+    else {
+      try {
+        await sendViaGoogle({ from, name: c.sender_name ?? c.display_name, to: me.email, subject: `Test from ${c.display_name}’s investor portal`, html: `<p>This test email came from ${from} through Google’s relay. Emails from the portal to ${c.display_name}’s investors now come from this address.</p>` });
+        await svc.from('entities').update({ mail_from: from, mail_via: 'google', mail_from_verified_at: new Date().toISOString() }).eq('id', c.id).throwOnError();
+        await log('company_send_from_verified', { address: from, via: 'google' });
+        notice = `A test email went from ${from} to ${me.email} through Google. ${c.display_name}’s emails now come from there.`;
+      } catch (e) {
+        error = `Google didn’t accept the test email from ${from}: ${(e as Error).message}. Check the SMTP relay setting in ${c.display_name}’s Google admin console.`;
+      }
+    }
+  } else if (intent === 'google-mailbox' && mayMail) {
+    if (!c.shareholder_mailbox) error = 'Save the shareholder mailbox address first (Shareholder emails).';
+    else {
+      try {
+        const count = await gmailInboxCount(c.shareholder_mailbox);
+        await svc.from('entities').update({ google_mailbox_verified_at: new Date().toISOString() }).eq('id', c.id).throwOnError();
+        forgetMailboxes();
+        await log('company_google_mailbox_connected', { mailbox: c.shareholder_mailbox });
+        notice = `The portal can open ${c.shareholder_mailbox} in Gmail (Inbox has ${count} emails). Set it to Review in Shareholder emails.`;
+      } catch (e) {
+        error = `The portal can’t open ${c.shareholder_mailbox} yet: ${(e as Error).message}. Check the domain-wide delegation in ${c.display_name}’s Google admin console (changes can take a few minutes).`;
+      }
+    }
+  } else if (intent === 'google-disconnect' && mayMail) {
+    await svc.from('entities').update({ google_mailbox_verified_at: null, ...(c.mail_via === 'google' ? { mail_via: null, mail_from_verified_at: null } : {}) }).eq('id', c.id).throwOnError();
+    forgetMailboxes();
+    await log('company_google_disconnected');
+    notice = 'Disconnected from Google. Emails go out through Lakeba again.';
   }
   c = (await load())!;
 }
@@ -137,6 +176,45 @@ const brand = brandOf(c);
           ) : mayMail && <form method="post"><button name="intent" value="consent-link" class="btn-primary text-sm">Make the approval link</button></form>}
         </>
       )}
+    </section>
+
+    <section class="card space-y-3 lg:col-span-2">
+      <h2 class="font-display text-lg font-bold">{c.display_name} on Google Workspace</h2>
+      <p class="text-sm text-white/60">For a company that uses Gmail rather than Microsoft 365. Both steps are done by {c.display_name}’s Google administrator in the Google admin console, once.</p>
+      <div class="grid gap-6 lg:grid-cols-2">
+        <div class="space-y-2">
+          <h3 class="font-semibold">1. Emails from its own address {c.mail_via === 'google' && <span class="text-sm font-normal text-lk-green">· in use</span>}</h3>
+          <ol class="list-decimal space-y-1 pl-5 text-sm text-white/65">
+            <li>Apps → Google Workspace → Gmail → Routing → <strong class="text-white/85">SMTP relay service</strong> → Configure.</li>
+            <li>Allowed senders: <strong class="text-white/85">Only addresses in my domains</strong>.</li>
+            <li>Authentication: <strong class="text-white/85">Only accept mail from the specified IP addresses</strong>, and add <span class="font-mono text-white">{PORTAL_SERVER_IP}</span> (Lakeba’s server).</li>
+            <li>Encryption: <strong class="text-white/85">Require TLS encryption</strong>. Save.</li>
+          </ol>
+          {mayMail && (
+            <form method="post" class="space-y-2">
+              <input type="hidden" name="intent" value="google-send" />
+              <label class="label" for="g_mail_from">Emails to investors come from</label>
+              <div class="flex gap-2"><input id="g_mail_from" name="mail_from" type="email" value={c.mail_via === 'google' ? c.mail_from ?? '' : ''} placeholder="investors@mist.com" class="field" /><button class="btn-ghost shrink-0 text-sm">Send a test</button></div>
+              <p class="text-xs text-white/45">Used once a test email to you goes through Google. Newsletters still go through Lakeba, in {c.display_name}’s name.</p>
+            </form>
+          )}
+        </div>
+        <div class="space-y-2">
+          <h3 class="font-semibold">2. Its shareholder mailbox {c.google_mailbox_verified_at && <span class="text-sm font-normal text-lk-green">· connected</span>}</h3>
+          {!gmailConfigured() ? <Alert tone="info">Lakeba’s Google service account isn’t set up on this server.</Alert> : (
+            <>
+              <ol class="list-decimal space-y-1 pl-5 text-sm text-white/65">
+                <li>Security → Access and data control → API controls → <strong class="text-white/85">Manage domain-wide delegation</strong> → Add new.</li>
+                <li>Client ID: <span class="font-mono text-white">{gmailClientId()}</span></li>
+                <li>OAuth scope: <span class="break-all font-mono text-white">{GMAIL_SCOPE}</span> (Gmail only). Authorise.</li>
+              </ol>
+              <p class="text-xs text-white/45">Google applies this to every mailbox in {c.display_name}’s domain; the portal only ever opens the shareholder mailbox saved in Shareholder emails{c.shareholder_mailbox ? ` (${c.shareholder_mailbox})` : ''}.</p>
+              {mayMail && <form method="post"><button name="intent" value="google-mailbox" class="btn-ghost text-sm">Check the mailbox</button></form>}
+            </>
+          )}
+        </div>
+      </div>
+      {mayMail && (c.mail_via === 'google' || c.google_mailbox_verified_at) && <form method="post"><button name="intent" value="google-disconnect" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Disconnect from Google? Emails go out through Lakeba again.')">Disconnect from Google</button></form>}
     </section>
   </div>
 </Admin>

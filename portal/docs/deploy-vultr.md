@@ -147,6 +147,17 @@ address (after a test email). Before the first venture does this, in Azure (Entr
 and **Mail.Send**. Each venture can then limit the app to its own mailboxes in Exchange, as Lakeba does.
 Newsletters still go through Lakeba's mail, in the venture's name.
 
+**A venture on Google Workspace** (same page, "on Google Workspace"):
+- *Sending from its own address* needs nothing from Lakeba: the venture's Google administrator turns on
+  Gmail's SMTP relay for the server's address (`PORTAL_SERVER_IP`, 139.180.180.225), only for addresses
+  in its domains and with TLS; the portal sends through `smtp-relay.gmail.com:587` after a test email.
+- *Reading its shareholder mailbox* uses one Google service account of Lakeba's, made once: a Google
+  Cloud project with the Gmail API on, a service account with a JSON key, the key file on the server
+  (root and the service only) and `GOOGLE_SERVICE_ACCOUNT_FILE=<path>` in `portal.env`. Each venture's
+  administrator then allows its Client ID with the scope `https://www.googleapis.com/auth/gmail.modify`
+  (domain-wide delegation); the page shows both. Google applies that to every mailbox in the venture's
+  domain, so tell the venture: the portal only ever opens the shareholder mailbox saved in its settings.
+
 ## Rebuilding the server from scratch
 
 1. New Ubuntu server in Sydney with your SSH key; DNS A record to its IP.

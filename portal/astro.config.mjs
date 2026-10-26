@@ -54,6 +54,15 @@ export default defineConfig({
       DNS_TEST_RECORDS: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Staging on this Mac only: every sign-in counts as two-step (ignored unless the database is the local one).
       TWO_STEP_OFF_FOR_TESTING: envField.boolean({ context: 'server', access: 'secret', default: false }),
+      // Ventures on Google Workspace. Sending: Google's SMTP relay (the venture allows this server's address).
+      // GOOGLE_RELAY_URL replaces it in tests (e.g. smtp://127.0.0.1:54325).
+      GOOGLE_RELAY_URL: envField.string({ context: 'server', access: 'secret', optional: true }),
+      PORTAL_SERVER_IP: envField.string({ context: 'server', access: 'public', default: '139.180.180.225' }),
+      // Reading shareholder mailboxes: Lakeba's Google service account (its JSON key file), which a venture's
+      // Google administrator allows for Gmail only. The two addresses can be pointed at stand-ins for tests.
+      GOOGLE_SERVICE_ACCOUNT_FILE: envField.string({ context: 'server', access: 'secret', optional: true }),
+      GOOGLE_TOKEN_URL: envField.string({ context: 'server', access: 'secret', default: 'https://oauth2.googleapis.com/token' }),
+      GMAIL_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://gmail.googleapis.com/gmail/v1' }),
       // The public website (news articles link there; it reads /api/public/news.json when built).
       PUBLIC_SITE_URL: envField.string({ context: 'server', access: 'public', default: 'https://lakeba.github.io/lakeba-web' }),
       // Rebuilds the website when public news changes: a GitHub token that may run the website's deploy workflow.

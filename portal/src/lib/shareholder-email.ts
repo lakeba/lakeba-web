@@ -1,6 +1,7 @@
 import { serviceClient } from './admin';
 import { client as claude } from './ask';
-import { getMessage, graphConfigured, newMessages, sendReply, setCategory, type GraphMessage } from './graph';
+import type { GraphMessage } from './graph';
+import { anyMailboxes, getMailboxMessage, labelMessage, mailboxReady, newMailboxMessages, replyToMessage } from './mailboxes';
 import { companyFor } from './mail-routing';
 import { notifyAdmins } from './notify';
 import { createSignInLink } from './sign-in-links';
@@ -180,7 +181,7 @@ export async function ingest(svc: Svc, entityId: string, mailbox: string, messag
   if (!from?.address) return null;
   const { data: existing } = await svc.from('shareholder_emails').select('id').eq('mailbox', mailbox).eq('graph_id', message.id).maybeSingle();
   if (existing) return existing.id;
-  const full = message.internetMessageHeaders ? message : await getMessage(mailbox, message.id);
+  const full = message.internetMessageHeaders ? message : await getMailboxMessage(mailbox, message.id);
   const checks = senderChecks(full);
   const automated = isAutomated(full);
   const { data: profile } = await svc.from('profiles').select('id, email, first_name').ilike('email', from.address.replace(/[%_]/g, '\\$&')).maybeSingle();
@@ -192,7 +193,7 @@ export async function ingest(svc: Svc, entityId: string, mailbox: string, messag
   }).select('id').single();
   if (error) throw error;
   if (automated) {
-    await setCategory(mailbox, message.id, 'Portal: ignored', full.categories).catch(() => {});
+    await labelMessage(mailbox, message.id, 'Portal: ignored', full.categories).catch(() => {});
     return row.id;
   }
   await prepare(svc, row.id, origin);
@@ -238,7 +239,7 @@ export async function prepare(svc: Svc, emailId: string, origin: string) {
     }).eq('id', emailId);
     await svc.from('shareholder_email_replies').delete().eq('email_id', emailId).eq('kind', 'draft');
     if (status !== 'ignored') await svc.from('shareholder_email_replies').insert({ email_id: emailId, kind: 'draft', body: reading.reply.slice(0, 8000), links });
-    await setCategory(e.mailbox, e.graph_id, ({ ignored: 'Portal: ignored', draft_ready: 'Portal: draft ready', auto_scheduled: 'Portal: automatic reply', needs_person: 'Portal: needs a person' } as Record<string, string>)[status]).catch(() => {});
+    await labelMessage(e.mailbox, e.graph_id, ({ ignored: 'Portal: ignored', draft_ready: 'Portal: draft ready', auto_scheduled: 'Portal: automatic reply', needs_person: 'Portal: needs a person' } as Record<string, string>)[status]).catch(() => {});
     if (status !== 'ignored') {
       await notifyAdmins({
         kind: 'admin_email', entityId: e.entity_id, origin, link: `/admin/emails?id=${emailId}`,
@@ -322,7 +323,7 @@ export async function sendDueAutoReplies(origin: string) {
 export async function cancelAutoReply(svc: Svc, emailId: string, by: string) {
   const { data } = await svc.from('shareholder_emails').update({ status: 'draft_ready', auto_send_at: null, auto_cancelled_by: by }).eq('id', emailId).eq('status', 'auto_scheduled').select('mailbox, graph_id');
   if (!data?.length) return false;
-  await setCategory(data[0].mailbox, data[0].graph_id, 'Portal: draft ready').catch(() => {});
+  await labelMessage(data[0].mailbox, data[0].graph_id, 'Portal: draft ready').catch(() => {});
   await svc.from('audit_log').insert({ user_id: by, action: 'shareholder_email_auto_cancelled', detail: { email_id: emailId } });
   return true;
 }
@@ -359,11 +360,11 @@ export async function sendReplyFor(svc: Svc, { emailId, body, links, sentBy, ori
   const closing = stripSignOff(body) === body.trim() ? 'Kind regards,\n' : '';
   const html = `<div style="font-family:Inter,Arial,sans-serif;color:#0b1d37;line-height:1.6">${escape(body).replace(/\n/g, '<br>')}${linksHtml}<p>${escape(closing + signature).replace(/\n/g, '<br>')}</p></div>`;
 
-  await sendReply(e.mailbox, e.graph_id, to, html);
+  await replyToMessage(e.mailbox, e.graph_id, to, html);
   const now = new Date().toISOString();
   await svc.from('shareholder_email_replies').insert({ email_id: emailId, kind: 'sent', body, links, sent_to: to.address, sent_at: now, sent_by: sentBy, automatic });
   await svc.from('shareholder_emails').update({ status: 'replied', handled_by: sentBy, handled_at: now }).eq('id', emailId);
-  await setCategory(e.mailbox, e.graph_id, automatic ? 'Portal: replied automatically' : 'Portal: replied').catch(() => {});
+  await labelMessage(e.mailbox, e.graph_id, automatic ? 'Portal: replied automatically' : 'Portal: replied').catch(() => {});
   await svc.from('audit_log').insert({ user_id: sentBy, action: automatic ? 'shareholder_email_auto_replied' : 'shareholder_email_replied', detail: { email_id: emailId, to: to.address, links: links.length } });
   return to.address;
 }
@@ -377,7 +378,7 @@ export async function toBoardQa(svc: Svc, emailId: string, by: string) {
   if (error) throw error;
   await svc.from('query_messages').insert({ query_id: q.id, author_id: e.user_id, body: e.body_text.slice(0, 10000) || subject });
   await svc.from('shareholder_emails').update({ status: 'board_qa', query_id: q.id, handled_by: by, handled_at: new Date().toISOString() }).eq('id', emailId);
-  await setCategory(e.mailbox, e.graph_id, 'Portal: moved to Board Q&A').catch(() => {});
+  await labelMessage(e.mailbox, e.graph_id, 'Portal: moved to Board Q&A').catch(() => {});
   await svc.from('audit_log').insert({ user_id: by, action: 'shareholder_email_to_board_qa', detail: { email_id: emailId, query_id: q.id } });
   return q.id;
 }
@@ -387,7 +388,7 @@ export async function toBoardQa(svc: Svc, emailId: string, by: string) {
 let polling = false;
 /** Checks every company mailbox that's switched on (every minute from the portal's worker). */
 export async function pollMailboxes(origin: string) {
-  if (!graphConfigured() || polling) return { checked: 0, emails: 0 };
+  if (!anyMailboxes() || polling) return { checked: 0, emails: 0 };
   polling = true;
   const svc = serviceClient();
   let checked = 0, emails = 0;
@@ -397,9 +398,10 @@ export async function pollMailboxes(origin: string) {
     // (mist.shareholders@lakeba.com, an alias of shareholders@): each mailbox is read
     // once, and every email is filed to the company it was sent to.
     for (const [mailbox, sharing] of Map.groupBy(companies ?? [], (c) => c.shareholder_mailbox!.toLowerCase())) {
+      if (!(await mailboxReady(mailbox))) continue;
       const { data: state } = await svc.from('email_sync_state').select('delta_link').eq('mailbox', mailbox).maybeSingle();
       try {
-        const { messages, deltaLink } = await newMessages(mailbox, state?.delta_link ?? null);
+        const { messages, deltaLink } = await newMailboxMessages(mailbox, state?.delta_link ?? null);
         for (const m of messages.sort((a, b) => a.receivedDateTime.localeCompare(b.receivedDateTime))) {
           const c = companyFor(m, mailbox, sharing);
           if (await ingest(svc, c.id, mailbox, m, origin)) emails++;

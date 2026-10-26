@@ -5,7 +5,7 @@ import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
 import { dateTime } from '../../lib/format';
 import { serviceClient } from '../../lib/admin';
-import { graph, graphConfigured } from '../../lib/graph';
+import { anyMailboxes, inboxCount } from '../../lib/mailboxes';
 import { adminScope } from '../../lib/admin-company';
 import { AUTO_CONFIDENCE, AUTO_DELAY_MS, AUTO_PER_DAY, CATEGORIES, FLAGS, type Flag, SELF_SERVICE, STATUS_LABELS, cancelAutoReply, pollMailboxes, prepare, sendReplyFor, shareholderContext, toBoardQa, type Category } from '../../lib/shareholder-email';
 
@@ -47,8 +47,8 @@ if (Astro.request.method === 'POST') {
       if (!c?.shareholder_mailbox) error = 'Save a mailbox address first.';
       else {
         try {
-          const inbox = await graph<{ totalItemCount: number }>(`/users/${encodeURIComponent(c.shareholder_mailbox)}/mailFolders/inbox?$select=totalItemCount`);
-          notice = `${c.display_name}: connected to ${c.shareholder_mailbox} (Inbox has ${inbox.totalItemCount} emails). You can set it to Review.`;
+          const count = await inboxCount(c.shareholder_mailbox);
+          notice = `${c.display_name}: connected to ${c.shareholder_mailbox} (Inbox has ${count} emails). You can set it to Review.`;
         } catch (e) {
           error = `${c.display_name}: can’t open ${c.shareholder_mailbox}. ${/403|denied/i.test(String((e as Error).message)) ? 'In Exchange, mark this mailbox for the portal app (CustomAttribute15 LakebaPortal) and allow up to an hour.' : (e as Error).message}`;
         }
@@ -141,7 +141,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
 
 <Admin title="Shareholder emails">
   <PageHeader title="Shareholder emails" subtitle="Emails to each company’s shareholder mailbox, sorted, matched to the shareholder and with a draft reply. A person sends every reply for now." />
-  {!graphConfigured() && <div class="mb-6"><Alert tone="error">Microsoft 365 isn’t connected on this server yet, so no mailbox is read.</Alert></div>}
+  {!anyMailboxes() && <div class="mb-6"><Alert tone="error">Neither Microsoft 365 nor Google is connected on this server yet, so no mailbox is read.</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 

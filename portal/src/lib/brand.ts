@@ -13,7 +13,7 @@ export type BrandSource = {
   code?: string; display_name: string; legal_name?: string | null; relationship: 'group' | 'controlled' | 'portfolio';
   brand_color?: string | null; sender_name?: string | null; reply_to?: string | null; contact_email?: string | null;
   ask_name?: string | null; email_footer?: string | null; document_footer?: string | null;
-  ms_tenant_id?: string | null; mail_from?: string | null; mail_from_verified_at?: string | null;
+  ms_tenant_id?: string | null; mail_from?: string | null; mail_from_verified_at?: string | null; mail_via?: string | null;
 };
 
 export type Brand = {
@@ -35,8 +35,10 @@ export type Brand = {
   emailFooter: string | null;
   /** A line at the foot of the company's PDFs (statements, tax packs). */
   documentFooter: string | null;
-  /** Its own address in its own Microsoft 365, once a test email went through; emails then go from there. */
+  /** Its own address, once a test email went through: emails then go from there, through its own
+   *  Microsoft 365 or Google's SMTP relay (sendVia). */
   sendFrom: string | null;
+  sendVia: 'microsoft' | 'google' | null;
 };
 
 const clean = (s: string | null | undefined) => (s ?? '').trim() || null;
@@ -55,7 +57,7 @@ export function brandOf(c: BrandSource | null | undefined): Brand {
     replyTo: clean(c?.reply_to),
     emailFooter: clean(c?.email_footer),
     documentFooter: clean(c?.document_footer),
-    sendFrom: !isGroup && c?.ms_tenant_id && c.mail_from_verified_at ? clean(c.mail_from) : null,
+    ...ownSender(isGroup ? null : c),
   };
 }
 
@@ -72,5 +74,13 @@ export function accentOf(c: { relationship: string; brand_color?: string | null 
   return 1.05 / (luminance + 0.05) >= 3 ? hex : null;
 }
 
+function ownSender(c: BrandSource | null | undefined): Pick<Brand, 'sendFrom' | 'sendVia'> {
+  const from = clean(c?.mail_from);
+  if (!c || !from || !c.mail_from_verified_at) return { sendFrom: null, sendVia: null };
+  if (c.mail_via === 'google') return { sendFrom: from, sendVia: 'google' };
+  if (c.mail_via === 'microsoft' && c.ms_tenant_id) return { sendFrom: from, sendVia: 'microsoft' };
+  return { sendFrom: null, sendVia: null };
+}
+
 /** The columns brandOf reads, for selects of entities. */
-export const BRAND_COLUMNS = 'code, display_name, legal_name, relationship, brand_color, sender_name, reply_to, contact_email, ask_name, email_footer, document_footer, ms_tenant_id, mail_from, mail_from_verified_at';
+export const BRAND_COLUMNS = 'code, display_name, legal_name, relationship, brand_color, sender_name, reply_to, contact_email, ask_name, email_footer, document_footer, ms_tenant_id, mail_from, mail_from_verified_at, mail_via';

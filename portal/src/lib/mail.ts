@@ -1,9 +1,18 @@
 import nodemailer from 'nodemailer';
-import { MAIL_FROM, SMTP_URL } from 'astro:env/server';
+import { GOOGLE_RELAY_URL, MAIL_FROM, PORTAL_DOMAIN, SMTP_URL } from 'astro:env/server';
 import { brandOf, type Brand } from './brand';
 import { sendAs } from './graph';
 
 const transport = SMTP_URL ? nodemailer.createTransport(SMTP_URL) : null;
+// Google's SMTP relay, for ventures on Google Workspace: their administrator allows this server's
+// address to send as their addresses (no password), over TLS.
+const googleRelay = GOOGLE_RELAY_URL ? nodemailer.createTransport(GOOGLE_RELAY_URL)
+  : nodemailer.createTransport({ host: 'smtp-relay.gmail.com', port: 587, secure: false, requireTLS: true, name: PORTAL_DOMAIN || 'investors.lakeba.com' });
+
+/** Sends through Google's SMTP relay from a venture's own address (also its test email). */
+export async function sendViaGoogle(m: { from: string; name?: string | null; to: string; subject: string; html: string; text?: string; replyTo?: string | null }) {
+  await googleRelay.sendMail({ from: m.name ? `"${m.name.replace(/["\\<>\r\n]/g, '')}" <${m.from}>` : m.from, replyTo: m.replyTo ?? undefined, to: m.to, subject: m.subject, html: m.html, text: m.text });
+}
 
 /** Sends a fully built email (newsletters). Returns false when SMTP isn't configured. */
 export async function sendRaw(message: { to: string; subject: string; html: string; text: string; replyTo?: string; headers?: Record<string, string>; from?: string; messageId?: string; attachments?: { filename: string; content: Buffer; contentType?: string }[] }) {
@@ -25,7 +34,8 @@ export function senderNamed(name: string | null) {
  * Sends a short branded email. Without SMTP configured, it is skipped.
  * brand: the company it is from (Lakeba by default); its sender name, reply-to
  * and footer are used when the company has set them. A venture with its own
- * Microsoft 365 connected sends from its own address there instead.
+ * sending set up sends from its own address instead: through its Microsoft 365,
+ * or Google's SMTP relay.
  */
 export async function sendMail({ to, subject, text, link, linkLabel, brand = brandOf(null), footer }: { to: string; subject: string; text: string; link?: string; linkLabel?: string; brand?: Brand; footer?: string }) {
   if (!transport && !brand.sendFrom) return;
@@ -37,6 +47,7 @@ export async function sendMail({ to, subject, text, link, linkLabel, brand = bra
       <p style="font-weight:700;font-size:18px">${brand.isGroup ? 'lakeba · Investors' : `${escape(brand.name)} · Investors <span style="font-weight:400;font-size:12px;color:#6b7a90">powered by Lakeba</span>`}</p>
       <p style="line-height:1.6">${escape(text).replace(/\n/g, '<br>')}</p>${button}
       <p style="color:#6b7a90;font-size:12px">${footer ? escape(footer) : brand.emailFooter ? escape(brand.emailFooter) : standard}</p></div>`;
+  if (brand.sendFrom && brand.sendVia === 'google') return sendViaGoogle({ from: brand.sendFrom, name: brand.senderName ?? brand.name, to, subject, html, text: link ? `${text}\n\n${link}` : text, replyTo: brand.replyTo });
   if (brand.sendFrom) return sendAs(brand.sendFrom, { to, subject, html, replyTo: brand.replyTo });
   await transport!.sendMail({
     from: senderNamed(brand.senderName),
