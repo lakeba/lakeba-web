@@ -4,13 +4,14 @@ import { absoluteBody, absoluteMedia, markdownToHtml } from '../../../lib/news-c
 import { type Release, settingsFor } from '../../../lib/press';
 
 /**
- * Published public news, newest first, for the public website (read when it is
- * built). Never drafts, scheduled posts or shareholder-only posts.
+ * Published public news, newest first, for lakeba.com (read when it is built):
+ * posts marked for lakeba.com. Never drafts, scheduled posts or shareholder-only
+ * posts. Ventures' own websites use the news API (/api/v1/news) instead.
  */
 export const GET: APIRoute = async ({ url }) => {
   const { data, error } = await serviceClient().from('posts')
     .select('slug, title, excerpt, body_html, body_md, venture, categories, cover_url, external, source_url, source_name, seo_description, share_image_url, published_at, updated_at, press_release_id, entities(display_name)')
-    .eq('visibility', 'public').lte('published_at', new Date().toISOString()).order('published_at', { ascending: false });
+    .eq('visibility', 'public').eq('on_lakeba_site', true).lte('published_at', new Date().toISOString()).order('published_at', { ascending: false });
   if (error) return Response.json({ error: 'unavailable' }, { status: 503 });
   const origin = url.origin;
   // Press releases also carry their press kit, PDF and media contact.

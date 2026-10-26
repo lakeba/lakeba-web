@@ -165,6 +165,8 @@ export async function publishRelease(svc: Svc, r: Release, by: string | null) {
   };
   const fields = {
     ...content, visibility: 'public', venture: company && company.relationship !== 'group' ? company.display_name : '', entity_id: company?.id ?? r.entity_id,
+    // A non-controlling venture's release is on its own website; lakeba.com only if a group editor adds it.
+    ...(r.post_id ? {} : { on_lakeba_site: company?.relationship !== 'portfolio', on_venture_site: true }),
     categories: ['Press release'], share_image_url: r.cover_url, published_at: when, press_release_id: r.id, external: false,
     // Investors are told once, by the usual news notification, if the approver asked.
     ...(r.notify_investors ? { notify_on_publish: true } : {}),

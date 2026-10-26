@@ -1,0 +1,114 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { sendInvite } from '../../../../lib/admin-auth';
+import { brandOf } from '../../../../lib/brand';
+import { grantRole, loadRoles } from '../../../../lib/roles-admin';
+import { forgetVentureSites, siteOriginFor } from '../../../../lib/sites';
+import { COLUMNS, type Company } from '../../../../lib/companies';
+
+// Putting a venture on the platform, step by step (Lakeba group admins): its
+// full portal, brand and settings, address, first admins, register, investors,
+// mail and website news. Each step shows where it stands and links to the page
+// that does it; the portal switch and the first admins are done right here.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const code = (Astro.params.code ?? '').toUpperCase();
+if (!access.can('investors.do', null) || !access.can('users.do', null)) return new Response('Not found', { status: 404 });
+const load = async () => (await svc.from('entities').select(`${COLUMNS}, shareholder_mailbox`).eq('code', code).maybeSingle()).data as (Company & { shareholder_mailbox: string | null }) | null;
+let c = await load();
+if (!c || c.relationship === 'group') return new Response('Not found', { status: 404 });
+const me = Astro.locals.user!.id;
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { company: code, ...detail } });
+let error = '', notice = '', inviteLink = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'full-portal') {
+    await svc.from('entities').update({ portal: 'full' }).eq('id', c.id).throwOnError();
+    forgetVentureSites();
+    await log('company_portal_switched_on', {});
+    notice = `${c.display_name} now has its full portal.`;
+  } else if (intent === 'admin') {
+    const email = field(form, 'email').toLowerCase();
+    const role = (await loadRoles(svc)).find((r) => r.key === 'admin')!;
+    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email)) error = 'Enter their email address.';
+    else {
+      // An existing account gets the role; anyone else is invited in the company's name.
+      const { data: existing } = await svc.from('profiles').select('id').ilike('email', email).maybeSingle();
+      let userId = existing?.id as string | undefined;
+      if (!userId) {
+        const sent = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') }, brandOf(c));
+        if (sent.error || !sent.userId) error = sent.error ?? 'Could not send the invitation.';
+        else { userId = sent.userId; inviteLink = sent.url ?? ''; await svc.from('profiles').update({ first_name: field(form, 'first_name'), last_name: field(form, 'last_name') }).eq('id', userId); }
+      }
+      if (userId && !error) {
+        const e = await grantRole(svc, access, me, { userId, role, entityId: c.id, expiresAt: null, note: 'first admin, from the set-up checklist', origin: Astro.url.origin, companyName: c.display_name });
+        if (e) error = e;
+        else { await log('admin_granted_role', { user_id: userId, email, role: 'admin', entity_id: c.id }); notice = existing ? `${email} is now an Admin for ${c.display_name}.` : `${email} is invited as an Admin for ${c.display_name}.`; }
+      }
+    }
+  }
+  c = (await load())!;
+}
+
+const now = new Date().toISOString();
+const [{ data: admins }, { data: classes }, { count: keys }] = await Promise.all([
+  svc.from('user_roles').select('user_id, profiles(email, first_signed_in_at)').eq('role_key', 'admin').eq('entity_id', c.id).or(`expires_at.is.null,expires_at.gt.${now}`),
+  svc.from('share_classes').select('id').eq('entity_id', c.id),
+  svc.from('news_api_keys').select('id', { count: 'exact', head: true }).eq('entity_id', c.id).is('revoked_at', null),
+]);
+const classIds = (classes ?? []).map((x) => x.id);
+const { data: holdingRows } = classIds.length ? await svc.from('holdings').select('holder_id').in('share_class_id', classIds).range(0, 99999) : { data: [] };
+const holderIds = [...new Set((holdingRows ?? []).map((h) => h.holder_id as string))];
+const holders = holderIds.length;
+const { count: members } = holders ? await svc.from('holder_members').select('user_id', { count: 'exact', head: true }).in('holder_id', holderIds.slice(0, 1000)) : { count: 0 };
+const adminList = ((admins ?? []) as unknown as { user_id: string; profiles: { email: string; first_signed_in_at: string | null } | null }[]);
+const address = c.portal === 'full' ? siteOriginFor(Astro.url, c) : null;
+const settingsSet = Boolean(c.sender_name || c.contact_email || c.email_footer || c.ask_name);
+type Step = { done: boolean; title: string; detail: string; href?: string; action?: string };
+const steps: Step[] = [
+  { done: c.portal === 'full', title: 'Full portal', detail: c.portal === 'full' ? 'Investors can sign in to its own portal.' : 'Today it is only an entry in Lakeba’s portfolio.' },
+  { done: Boolean(c.legal_name && c.brand_color), title: 'Name, legal name and colour', detail: c.brand_color ? `Colour ${c.brand_color}${c.logo_url ? ', logo set' : ''}.` : 'Its colour and logo are set in Ventures & prices.', href: '/admin/ventures', action: 'Brand' },
+  { done: settingsSet, title: 'Venture settings', detail: settingsSet ? 'Sender, contact and wording set.' : 'Sender name, contact email, footers and Ask’s name (Lakeba’s are used until then).', href: `/admin/companies/${code}`, action: 'Settings' },
+  { done: Boolean(c.slug), title: 'Address', detail: address ? `${address}${c.custom_domain ? ` · own domain saved: ${c.custom_domain}` : ''}` : c.slug ? `Address name: ${c.slug}` : 'Choose its address name in Venture settings.', href: `/admin/companies/${code}`, action: 'Address' },
+  { done: adminList.length > 0, title: 'First admins', detail: adminList.length ? adminList.map((a) => `${a.profiles?.email}${a.profiles?.first_signed_in_at ? '' : ' (not signed in yet)'}`).join(', ') : 'Nobody manages it yet: invite its first admin below.' },
+  { done: holders > 0, title: 'Share register', detail: holders ? `${holders} holder${holders === 1 ? '' : 's'} in ${classIds.length} share class${classIds.length === 1 ? '' : 'es'}.` : 'Import its register with the investor data workbook.', href: '/admin/import', action: 'Import' },
+  { done: (members ?? 0) > 0, title: 'Investors invited', detail: (members ?? 0) ? `${members} investor account${members === 1 ? '' : 's'} linked to its holders.` : 'Send welcome emails from Investors once the register is in.', href: `/admin/investors?company=${code}`, action: 'Investors' },
+  { done: Boolean(c.shareholder_mailbox), title: 'Shareholder mail', detail: c.shareholder_mailbox ? `${c.shareholder_address ?? c.shareholder_mailbox}${c.shareholder_address ? ` on ${c.shareholder_mailbox}` : ''}` : 'Optional: an address for shareholder emails (on Lakeba’s mailbox to start).', href: '/admin/emails', action: 'Mail' },
+  { done: (keys ?? 0) > 0, title: 'News on its website', detail: (keys ?? 0) ? `${keys} key${keys === 1 ? '' : 's'} in use.` : 'Optional: a key for the website component or the news API.', href: `/admin/companies/${code}/website`, action: 'Website news' },
+];
+const doneCount = steps.filter((s) => s.done).length;
+---
+
+<Admin title={`Set up ${c.display_name}`}>
+  <a href={`/admin/companies/${code}`} class="text-sm text-white/50 hover:text-white">← {c.display_name}</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">Set up {c.display_name}</h1>
+  <p class="mt-1 text-sm text-white/55">{doneCount} of {steps.length} done. Trading stays off for ventures until it is cleared.</p>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}
+    {inviteLink && <Alert tone="info">The invitation was emailed. If it doesn’t arrive, send them this link (it works once, for 24 hours): <span class="break-all font-mono text-xs">{inviteLink}</span></Alert>}</div>
+
+  <ol class="card mt-6 divide-y divide-white/5 !p-0">
+    {steps.map((s, i) => (
+      <li class="flex flex-wrap items-center gap-4 px-5 py-4">
+        <span class:list={['grid size-7 shrink-0 place-items-center rounded-full text-xs font-bold', s.done ? 'bg-lk-green/20 text-lk-green' : 'bg-white/10 text-white/60']} aria-label={s.done ? 'Done' : 'To do'}>{s.done ? '✓' : i + 1}</span>
+        <span class="min-w-0 flex-1"><span class="font-semibold text-white">{s.title}</span><span class="block break-words text-sm text-white/55">{s.detail}</span></span>
+        {i === 0 && !s.done && <form method="post"><button name="intent" value="full-portal" class="btn-primary text-sm" onclick={`return confirm('Give ${c.display_name} its full portal?')`}>Switch on</button></form>}
+        {s.href && <a href={s.href} class="btn-ghost text-sm">{s.action}</a>}
+      </li>
+    ))}
+  </ol>
+
+  <form method="post" class="card mt-6 grid gap-3 sm:grid-cols-[1fr_10rem_10rem_auto] sm:items-end">
+    <input type="hidden" name="intent" value="admin" />
+    <p class="text-sm font-semibold sm:col-span-4">Invite an admin for {c.display_name}</p>
+    <div><label class="label" for="email">Email</label><input id="email" name="email" type="email" required class="field" /></div>
+    <div><label class="label" for="first_name">First name</label><input id="first_name" name="first_name" class="field" /></div>
+    <div><label class="label" for="last_name">Last name</label><input id="last_name" name="last_name" class="field" /></div>
+    <button class="btn-primary">Invite</button>
+    <p class="text-xs text-white/40 sm:col-span-4">They get the Admin role for {c.display_name} only, and an invitation in its name. Admins set up two-step sign-in the first time. Other roles: System → Users.</p>
+  </form>
+</Admin>

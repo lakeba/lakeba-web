@@ -23,13 +23,14 @@ const userId = Astro.locals.user!.id;
 const isNew = Astro.params.id === 'new';
 let error = '';
 let notice = Astro.url.searchParams.get('reapprove') ? 'Saved. It was changed after approval, so it’s back to draft until it’s approved again.' : Astro.url.searchParams.get('saved') ? 'Saved.' : '';
-const COLUMNS = 'id, slug, title, excerpt, body_html, body_md, cover_url, share_image_url, published_at, entity_id, visibility, venture, categories, external, source_url, source_name, seo_description, notify_on_publish, notified_at, updated_at, autosave, autosave_at';
-type Post = { id: string; slug: string; title: string; excerpt: string; body_html: string; body_md: string; cover_url: string | null; share_image_url: string | null; published_at: string | null; entity_id: string; visibility: string; venture: string; categories: string[]; external: boolean; source_url: string | null; source_name: string | null; seo_description: string; notify_on_publish: boolean; notified_at: string | null; updated_at: string; autosave: Record<string, string> | null; autosave_at: string | null };
+const COLUMNS = 'id, slug, title, excerpt, body_html, body_md, cover_url, share_image_url, published_at, entity_id, visibility, venture, categories, external, source_url, source_name, seo_description, notify_on_publish, notified_at, updated_at, autosave, autosave_at, on_lakeba_site, on_venture_site';
+type Post = { on_lakeba_site: boolean; on_venture_site: boolean; id: string; slug: string; title: string; excerpt: string; body_html: string; body_md: string; cover_url: string | null; share_image_url: string | null; published_at: string | null; entity_id: string; visibility: string; venture: string; categories: string[]; external: boolean; source_url: string | null; source_name: string | null; seo_description: string; notify_on_publish: boolean; notified_at: string | null; updated_at: string; autosave: Record<string, string> | null; autosave_at: string | null };
 const load = async (id: string) => (await supabase.from('posts').select(COLUMNS).eq('id', id).maybeSingle()).data as Post | null;
 let post = isNew ? null : await load(Astro.params.id!);
 if (!isNew && (!post || !editor.mayEdit(post.entity_id))) return Astro.redirect(withCompany(scope, '/admin/news'));
-// Public posts are the group's voice on the website: only group admins change them.
-const locked = Boolean(post && post.visibility === 'public' && !editor.group);
+// A company's editors publish its public news (on its own website). lakeba.com is the
+// group's voice: only group editors put a post there, and change it once it is there.
+const locked = Boolean(post && post.visibility === 'public' && post.on_lakeba_site && !editor.group);
 const log = (action: string, detail: Record<string, unknown>) => supabase.rpc('log_event', { event_action: action, event_detail: detail });
 const contentOf = (p: Pick<Post, 'title' | 'excerpt' | 'body_html' | 'seo_description' | 'cover_url'>) => ({ title: p.title, excerpt: p.excerpt, body_html: p.body_html, seo_description: p.seo_description, cover_url: p.cover_url });
 
@@ -45,7 +46,6 @@ if (Astro.request.method === 'POST' && !locked) {
     const external = form.get('external') === 'on';
     const sourceUrl = field(form, 'source_url');
     if (!company || !editor.mayEdit(company.id)) error = 'Choose the company.';
-    else if (visibility === 'public' && !editor.group) error = 'Only group admins can publish public news.';
     else if (title.length < 3) error = 'Give the post a title.';
     else if (!slug) error = 'Give the post a web address.';
     else if (external && !/^https?:\/\//.test(sourceUrl)) error = 'A link-only item needs the address of the story.';
@@ -67,6 +67,10 @@ if (Astro.request.method === 'POST' && !locked) {
           external: visibility === 'public' && external, source_url: sourceUrl || null, source_name: field(form, 'source_name') || (sourceUrl.startsWith('http') ? new URL(sourceUrl).hostname : null),
           published_at: publishedAt, notify_on_publish: notify && Boolean(publishedAt), updated_at: new Date().toISOString(), updated_by: userId,
           autosave: null, autosave_at: null,
+          // Where public news appears: the company's own website, and lakeba.com (Lakeba's own posts
+          // always; a venture's only when a group editor puts it there).
+          on_venture_site: visibility !== 'public' || form.get('on_venture_site') === 'on',
+          on_lakeba_site: company.relationship === 'group' ? true : editor.group ? form.get('on_lakeba_site') === 'on' : post?.on_lakeba_site ?? false,
         };
         // Optional approval: nothing goes live until it's approved; changing an approved post asks again (and takes it back to draft).
         const approval = post ? await getApproval(svc, 'post', post.id) : null;
@@ -90,7 +94,7 @@ if (Astro.request.method === 'POST' && !locked) {
             await svc.from('posts').update({ notified_at: new Date().toISOString() }).eq('id', id);
             await notifyMembers({ kind: 'news', entityId: company.id, title, body: row.excerpt || 'A new update is available in the investor portal.', link: `/news/${slug}`, origin: Astro.url.origin, pushDetail: title });
           }
-          if (visibility === 'public' || post?.visibility === 'public') await markWebsiteChanged(svc);
+          if ((visibility === 'public' && row.on_lakeba_site) || (post?.visibility === 'public' && post.on_lakeba_site)) await markWebsiteChanged(svc);
           await log('admin_saved_post', { id, slug, visibility, published_at: publishedAt });
           return Astro.redirect(withCompany(scope, `/admin/news/${id}?saved=1${reapprove ? '&reapprove=1' : ''}`), 303);
         }
@@ -197,9 +201,16 @@ const postApproval = post ? await getApproval(svc, 'post', post.id) : null;
           <div><label class="label" for="visibility">Who sees it</label>
             <select id="visibility" name="visibility" class="field">
               <option value="shareholders" selected={post?.visibility !== 'public'}>Shareholders of the company</option>
-              <option value="public" selected={post?.visibility === 'public'} disabled={!editor.group}>Public: website and all investors{!editor.group && ' (group admins)'}</option>
+              <option value="public" selected={post?.visibility === 'public'}>Public: websites and all investors</option>
             </select></div>
           <CompanySelect scope={scope} id="entity_id" value={defaultCompany} />
+          <div data-public-only class="space-y-2 text-sm">
+            <span class="label">Where it appears</span>
+            <label class="flex items-center gap-3"><input type="checkbox" name="on_venture_site" checked={post ? post.on_venture_site : true} class="size-4 accent-lk-blue" /> On the company’s own website (news feed and component)</label>
+            {editor.group
+              ? <label class="flex items-center gap-3"><input type="checkbox" name="on_lakeba_site" checked={post ? post.on_lakeba_site : true} class="size-4 accent-lk-blue" /> On lakeba.com (always for Lakeba Group’s own news)</label>
+              : <p class="text-xs text-white/45">{post?.on_lakeba_site ? 'Also on lakeba.com.' : 'On lakeba.com only if a Lakeba group editor adds it.'}</p>}
+          </div>
           <div data-public-only><label class="label" for="venture">Label on the website</label><input id="venture" name="venture" value={post?.venture} placeholder="e.g. Lakeba Group, Bricklet" class="field" /></div>
           <div><label class="label" for="when">Status</label>
             <select id="when" name="when" class="field">
