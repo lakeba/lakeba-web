@@ -4,6 +4,7 @@ import Alert from '../../components/Alert.astro';
 import { createHash } from 'node:crypto';
 import { serviceClient } from '../../lib/admin';
 import { forgetTenants } from '../../lib/graph';
+import { adminIds, notifyMembers } from '../../lib/notify';
 
 // Where Microsoft sends a venture's Microsoft 365 administrator back after they
 // approved (or declined) the portal's app in their organisation. The "state"
@@ -16,14 +17,18 @@ let company: string | null = null;
 let problem = q.get('error') ? 'The approval was not given.' : '';
 if (!problem) {
   const { data: req } = /^[A-Za-z0-9_-]{20,64}$/.test(state)
-    ? await svc.from('ms_consent_requests').delete().eq('state_hash', createHash('sha256').update(state).digest('hex')).gt('expires_at', new Date().toISOString()).select('entity_id').maybeSingle()
+    ? await svc.from('ms_consent_requests').delete().eq('state_hash', createHash('sha256').update(state).digest('hex')).gt('expires_at', new Date().toISOString()).select('entity_id, handoff_id').maybeSingle()
     : { data: null };
   if (!req) problem = 'This approval link has expired or was already used. Ask for a new one in the portal.';
   else if (q.get('admin_consent') !== 'True' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(tenant)) problem = 'Microsoft didn’t confirm the approval.';
   else {
-    const { data: e } = await svc.from('entities').update({ ms_tenant_id: tenant, mail_from_verified_at: null }).eq('id', req.entity_id).select('code, display_name').single();
+    const { data: e } = await svc.from('entities').update({ ms_tenant_id: tenant, ms_connected_at: new Date().toISOString(), mail_from_verified_at: null }).eq('id', req.entity_id).select('code, display_name').single();
     forgetTenants();
-    await svc.from('audit_log').insert({ action: 'company_microsoft365_connected', entity_id: req.entity_id, detail: { company: e?.code, tenant } });
+    const { data: h } = req.handoff_id ? await svc.from('setup_handoffs').select('recipient_name, recipient_email').eq('id', req.handoff_id).maybeSingle() : { data: null };
+    const by = h ? `${h.recipient_name ? `${h.recipient_name} (${h.recipient_email})` : h.recipient_email} through the set-up link` : undefined;
+    await svc.from('audit_log').insert({ action: 'company_microsoft365_connected', entity_id: req.entity_id, detail: { company: e?.code, tenant, by } });
+    // The venture's admins see it in their Inbox: the next step (the sending address) is theirs or their IT person's.
+    await notifyMembers({ kind: 'admin_setup', title: `${e?.display_name}’s Microsoft 365 approved the portal`, body: `${by ? `${by.replace(' through the set-up link', '')} approved it. ` : ''}Next: choose the address emails come from and send a test (Domain and mail).`, link: `/admin/companies/${e?.code}/domain`, origin: Astro.url.origin, userIds: await adminIds(req.entity_id) }).catch(() => 0);
     company = e?.display_name ?? null;
   }
 }
@@ -31,5 +36,5 @@ Astro.response.headers.set('Cache-Control', 'no-store');
 ---
 
 <Auth title="Microsoft 365">
-  {problem ? <Alert tone="error">{problem}</Alert> : <Alert tone="success">Thank you: {company}’s Microsoft 365 is connected to its investor portal. Its admins can now choose the address emails are sent from.</Alert>}
+  {problem ? <Alert tone="error">{problem}</Alert> : <Alert tone="success">Thank you: {company}’s Microsoft 365 is connected to its investor portal. Next: choose the address emails come from and send a test, back on the set-up page.</Alert>}
 </Auth>

@@ -1,0 +1,103 @@
+---
+import Alert from '../Alert.astro';
+import Copy from './Copy.astro';
+import Facts from './Facts.astro';
+import Step from './Step.astro';
+import { dateTime } from '../../lib/format';
+import type { SetupCompany } from '../../lib/setup';
+
+// A venture on Microsoft 365: its administrator approves the portal once,
+// someone sends a test from the address investors will see, and (recommended)
+// its IT person limits the portal to that mailbox in Exchange.
+interface Props {
+  c: SetupCompany;
+  /** On the admin page (else the IT person's page). */
+  admin: boolean;
+  manage: boolean;
+  consentUrl: string;
+  ready: boolean;
+  clientId: string | null;
+  suggested: string;
+  /** Where test emails go. */
+  testTo: string;
+}
+const { c, admin, manage, consentUrl, ready, clientId, suggested, testTo } = Astro.props;
+const sending = c.mail_via === 'microsoft' && Boolean(c.mail_from_verified_at);
+const address = (c.mail_via === 'microsoft' ? c.mail_from : null) ?? suggested;
+const mailboxes = [...new Set([address, c.shareholder_mailbox].filter(Boolean) as string[])];
+const filter = mailboxes.map((m) => `PrimarySmtpAddress -eq '${m}'`).join(' -or ');
+const app = clientId ?? '<the portal’s Application ID>';
+const script = [
+  '# Once: Install-Module ExchangeOnlineManagement',
+  'Connect-ExchangeOnline',
+  `New-ServicePrincipal -AppId ${app} -ObjectId <Object ID from step a> -DisplayName "Lakeba Investor Portal"`,
+  `New-ManagementScope -Name "Lakeba investor portal" -RecipientRestrictionFilter "${filter}"`,
+  `New-ManagementRoleAssignment -App ${app} -Role "Application Mail Full Access" -CustomResourceScope "Lakeba investor portal"`,
+  `Test-ServicePrincipalAuthorization -Identity ${app} -Resource ${mailboxes[0]}`,
+].join('\n');
+---
+<section id="microsoft" class="card space-y-4">
+  <div class="flex flex-wrap items-baseline justify-between gap-2">
+    <h2 class="font-display text-lg font-bold">Email with Microsoft 365</h2>
+    {sending ? <span class="text-sm text-lk-green">✓ Emails come from {c.mail_from}</span> : c.ms_tenant_id ? <span class="text-sm text-lk-orange">Approved · send a test next</span> : <span class="text-sm text-white/45">Not connected · optional</span>}
+  </div>
+  {!ready && <Alert tone="info">The portal’s Microsoft 365 app isn’t set up on this server yet (Lakeba’s side).</Alert>}
+  <Facts items={[
+    ['What changes', `Investors get the portal’s emails from ${c.display_name}’s own address (like ${address}) instead of Lakeba’s, and their replies come to you. Shareholder emails can be answered from that mailbox.`],
+    ['What stays the same', 'Everyone’s own email. Nothing is installed.'],
+    ['Time', 'About 15 minutes, plus 10 for the recommended step 4.'],
+    ['Who does it', 'A Microsoft 365 Global Administrator: often whoever set up Microsoft 365 or pays for it. To check who: admin.microsoft.com → Roles → Role assignments → Global Administrator.'],
+  ]} />
+  <ol class="space-y-5">
+    <Step n={1} title="Choose the mailbox investors will see" done={sending}>
+      <p>Investors see this address and can reply to it. We suggest a <strong class="text-white/85">shared mailbox</strong> such as <Copy value={address} />. It’s free (no extra licence), and several people can read it.</p>
+      <p>To make one: <a href="https://admin.microsoft.com" target="_blank" rel="noopener" class="text-lk-blue hover:underline">admin.microsoft.com</a> → Teams &amp; groups → Shared mailboxes → Add a shared mailbox.</p>
+    </Step>
+
+    <Step n={2} title="Approve the portal in Microsoft 365" done={Boolean(c.ms_tenant_id)}>
+      {c.ms_tenant_id ? (
+        <p>Approved{c.ms_connected_at ? ` on ${dateTime.format(new Date(c.ms_connected_at))}` : ''}.</p>
+      ) : (
+        <>
+          <p>The administrator signs in to Microsoft and approves “Lakeba Investor Portal – Mail”. Microsoft’s page says the app may <em>read and write mail in all mailboxes</em> and <em>send mail as any user</em>. That’s Microsoft’s standard wording for this kind of app; the portal only opens the mailboxes in its settings, and step 4 makes Microsoft enforce that. Click <strong class="text-white/85">Accept</strong>.</p>
+          {!admin ? (
+            <form method="post"><button name="intent" value="consent-link" class="btn-primary text-sm" disabled={!ready}>Approve in Microsoft 365</button></form>
+          ) : consentUrl ? (
+            <div class="space-y-2">
+              <p class="text-white/70">The approval link (it works for 7 days, once):</p>
+              <Copy value={consentUrl} block />
+              <a href={consentUrl} target="_blank" rel="noopener" class="btn-ghost text-sm">Open it (if you are the administrator)</a>
+            </div>
+          ) : manage && (
+            <>
+              <form method="post"><button name="intent" value="consent-link" class="btn-primary text-sm" disabled={!ready}>I’m the administrator: approve now</button></form>
+              <p class="text-xs text-white/45">Not the administrator? Use “Send the steps” above: they get a button for this.</p>
+            </>
+          )}
+        </>
+      )}
+    </Step>
+
+    <Step n={3} title="Send a test email" done={sending}>
+      {!c.ms_tenant_id ? <p>After step 2.</p> : (
+        <form method="post" class="space-y-2">
+          <input type="hidden" name="intent" value="send-from" />
+          <label class="label" for="mail_from">Emails to investors come from</label>
+          <div class="flex gap-2"><input id="mail_from" name="mail_from" type="email" required value={address} class="field" /><button class="btn-ghost shrink-0 text-sm">Send a test</button></div>
+          <p class="text-xs text-white/45">{sending ? `In use since ${dateTime.format(new Date(c.mail_from_verified_at!))}.` : `The test goes to ${testTo}. As soon as it goes through, this address is used.`} Newsletters still go through Lakeba, in {c.display_name}’s name.</p>
+        </form>
+      )}
+    </Step>
+
+    <Step n={4} title="Recommended: limit the portal to this mailbox" note="for your IT person · 10 minutes">
+      <p>Without this, Microsoft lets the portal reach every mailbox in {c.display_name}. This step makes Microsoft itself allow only {mailboxes.length > 1 ? 'these mailboxes' : 'this mailbox'}: {mailboxes.join(' and ')}. It needs an Exchange administrator and PowerShell.</p>
+      <ol class="list-[lower-alpha] space-y-2 pl-5">
+        <li>In <a href="https://entra.microsoft.com" target="_blank" rel="noopener" class="text-lk-blue hover:underline">entra.microsoft.com</a> → Enterprise applications → “Lakeba Investor Portal – Mail”, copy its <strong class="text-white/85">Object ID</strong>.</li>
+        <li>In PowerShell, run these lines (put the Object ID in the third line):<Copy value={script} block /><span class="text-xs text-white/45">The last line should show <span class="font-mono">InScope True</span>.</span></li>
+        <li>Then remove the organisation-wide approval: Enterprise applications → “Lakeba Investor Portal – Mail” → Permissions → for <span class="font-mono">Mail.ReadWrite</span> and <span class="font-mono">Mail.Send</span>: ⋯ → Revoke permission. The portal keeps working, only with {mailboxes.length > 1 ? 'these mailboxes' : 'this mailbox'}. Microsoft can take up to 2 hours to apply it.</li>
+      </ol>
+      <p class="text-xs text-white/45">Changing the address later? Add it to the list with <span class="font-mono">Set-ManagementScope -Identity "Lakeba investor portal" -RecipientRestrictionFilter "…"</span>.</p>
+    </Step>
+  </ol>
+  {admin && manage && c.ms_tenant_id && <form method="post"><button name="intent" value="disconnect" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Disconnect Microsoft 365? Emails go out through Lakeba again.')">Disconnect Microsoft 365</button></form>}
+</section>

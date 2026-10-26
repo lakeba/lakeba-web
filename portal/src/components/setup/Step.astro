@@ -1,0 +1,12 @@
+---
+// One numbered step of a set-up guide; ticked when done.
+interface Props { n: string | number; title: string; done?: boolean; note?: string }
+const { n, title, done = false, note } = Astro.props;
+---
+<li class="flex gap-3">
+  <span class:list={['mt-0.5 grid size-6 shrink-0 place-items-center rounded-full text-xs font-bold', done ? 'bg-lk-green/20 text-lk-green' : 'bg-white/10 text-white/70']} aria-hidden="true">{done ? '✓' : n}</span>
+  <div class="min-w-0 flex-1 space-y-2">
+    <p class="font-semibold">{title}{done && <span class="sr-only"> (done)</span>}{note && <span class="ml-1.5 text-xs font-normal text-white/45">{note}</span>}</p>
+    <div class="space-y-2 text-sm text-white/65"><slot /></div>
+  </div>
+</li>

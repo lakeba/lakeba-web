@@ -52,6 +52,8 @@ export default defineConfig({
       PORTAL_DOMAIN: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Tests on this Mac only: "investors.mist.localhost=investors.lakeba.localhost" (comma-separated) stands in for DNS records.
       DNS_TEST_RECORDS: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // Tests only: a JSON file of DNS answers ({"cname": {"name": ["target"]}, "a", "mx", "ns", "txt"}) used instead of real lookups.
+      DNS_TEST_FILE: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Staging on this Mac only: every sign-in counts as two-step (ignored unless the database is the local one).
       TWO_STEP_OFF_FOR_TESTING: envField.boolean({ context: 'server', access: 'secret', default: false }),
       // Ventures on Google Workspace. Sending: Google's SMTP relay (the venture allows this server's address).

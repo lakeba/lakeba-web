@@ -1,0 +1,77 @@
+---
+import Auth from '../../layouts/Auth.astro';
+import Alert from '../../components/Alert.astro';
+import DomainGuide from '../../components/setup/DomainGuide.astro';
+import EmailGuides from '../../components/setup/EmailGuides.astro';
+import SetupScript from '../../components/setup/SetupScript.astro';
+import { MS_CLIENT_ID, PORTAL_DOMAIN, PORTAL_SERVER_IP } from 'astro:env/server';
+import { serviceClient } from '../../lib/admin';
+import { dateTime } from '../../lib/format';
+import { detect, domainStatus, placeOf } from '../../lib/domains';
+import { graphConfigured } from '../../lib/graph';
+import { GMAIL_SCOPE, gmailClientId, gmailConfigured } from '../../lib/gmail';
+import { siteOriginFor } from '../../lib/sites';
+import { handoffByToken, loadSetupCompany, runSetupAction, setupStamp, type Who } from '../../lib/setup';
+
+// The set-up steps a venture's admin sent to whoever looks after its domain or
+// email (Admin → a company → Domain and mail → Send the steps). The link is
+// the only key: no portal account, valid for 7 days, and it opens nothing but
+// these steps. They can approve, check and test; stopping or disconnecting
+// stays with the venture's admins.
+Astro.response.headers.set('Cache-Control', 'no-store');
+const token = Astro.params.token ?? '';
+const h = await handoffByToken(token);
+let c = h ? await loadSetupCompany({ id: h.entity_id }) : null;
+if (!h || !c) {
+  Astro.response.status = 404;
+}
+const svc = serviceClient();
+let error = '', notice = '';
+let sender = 'your colleague';
+if (h && c) {
+  const now = new Date().toISOString();
+  await svc.from('setup_handoffs').update({ last_seen_at: now, ...(h.opened_at ? {} : { opened_at: now }) }).eq('id', h.id);
+  if (h.created_by) {
+    const { data: p } = await svc.from('profiles').select('first_name, last_name, email').eq('id', h.created_by).maybeSingle();
+    sender = [p?.first_name, p?.last_name].filter(Boolean).join(' ') || p?.email || sender;
+  }
+}
+const who: Who | null = h ? { userId: null, email: h.recipient_email, label: `${h.recipient_name ? `${h.recipient_name} (${h.recipient_email})` : h.recipient_email} through the set-up link`, handoffId: h.id, manage: false, group: false } : null;
+const central = Astro.locals.site?.central ?? Astro.url.origin;
+
+if (Astro.request.method === 'POST' && c && who) {
+  const r = await runSetupAction(c, who, await Astro.request.formData(), central);
+  if (r.redirect) return Astro.redirect(r.redirect, 303);
+  ({ notice = '', error = '' } = r);
+  c = (await loadSetupCompany({ id: c.id }))!;
+}
+
+const portalDomain = PORTAL_DOMAIN ?? 'investors.lakeba.com';
+const [det, place, check] = c ? await Promise.all([
+  detect(c),
+  c.custom_domain ? placeOf(c.custom_domain) : Promise.resolve(null),
+  c.custom_domain && !c.custom_domain_verified_at ? domainStatus(c.custom_domain) : Promise.resolve(null),
+]) : [null, null, null];
+---
+
+{!h || !c || !det || !who ? (
+  <Auth title="This link doesn’t work any more">
+    <p class="text-sm text-white/65">Set-up links work for 7 days, and can be stopped by whoever sent them. Ask them for a new one.</p>
+  </Auth>
+) : (
+  <Auth title={`Connect ${c.display_name}’s investor portal`} wide company={c}>
+    <div class="space-y-5">
+      <p class="text-sm text-white/65">Hello{h.recipient_name ? ` ${h.recipient_name}` : ''}. {sender[0].toUpperCase() + sender.slice(1)} at {c.display_name} asked you to help {c.display_name}’s investor portal (run by Lakeba) use {c.display_name}’s own web address and email. Each part is separate and optional; this page checks your work, and {sender} sees as each part is done.</p>
+      {h.note && <blockquote class="rounded-xl border-l-2 border-lk-blue bg-white/[0.04] px-3 py-2 text-sm text-white/75">“{h.note}” <span class="text-white/45">— {sender}</span></blockquote>}
+      {(det.emailDomain && det.mail !== 'none') && <p class="rounded-xl bg-white/[0.04] p-3 text-sm text-white/65">{det.emailDomain}’s email runs on <strong class="text-white/85">{det.mail === 'microsoft' ? 'Microsoft 365' : det.mail === 'google' ? 'Google Workspace' : 'another provider'}</strong>{det.dns && <>, and its domain is managed at <strong class="text-white/85">{det.dns.name}</strong></>}. The steps below are for that.</p>}
+      {notice && <Alert tone="success">{notice}</Alert>}
+      {error && <Alert tone="error">{error}</Alert>}
+      {c.custom_domain && <DomainGuide c={c} place={place} check={check} portalDomain={portalDomain} lakebaAddress={siteOriginFor(Astro.url, { ...c, custom_domain_verified_at: null }).replace(/^https?:\/\//, '')} suggested={null} admin={false} group={false} />}
+      <EmailGuides c={c} det={det} admin={false} manage={false} testTo={h.recipient_email} suggested={`investors@${det.emailDomain ?? 'yourcompany.com'}`}
+        consentUrl="" msReady={graphConfigured()} msClientId={MS_CLIENT_ID ?? null}
+        serverIp={PORTAL_SERVER_IP} gmailReady={gmailConfigured()} gmailClientId={gmailClientId()} gmailScope={GMAIL_SCOPE} />
+      <p class="text-center text-xs text-white/40">This link works until {dateTime.format(new Date(h.expires_at))}. It only opens these steps.</p>
+    </div>
+    <SetupScript statusUrl={`/setup/${token}/status`} stamp={setupStamp(c)} poll={Boolean(c.custom_domain && !c.custom_domain_verified_at)} />
+  </Auth>
+)}

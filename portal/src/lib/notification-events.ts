@@ -33,6 +33,7 @@ export const CATEGORIES: Category[] = [
   { key: 'admin_emails', audience: 'admin', label: 'Shareholder emails', description: 'An email to a shareholder mailbox has a reply ready or needs a person.', email: false, push: true, kinds: ['admin_email'] },
   { key: 'admin_trading', audience: 'admin', label: 'Secondary trading', description: 'A shareholder registered or withdrew an interest to buy or sell.', email: false, push: true, kinds: ['admin_trade'] },
   { key: 'admin_ask', audience: 'admin', label: 'Ask Lakeba', description: 'An answer was rated 👎, or a cost or usage limit was reached.', email: true, push: true, kinds: ['ask_alert', 'admin_ask_feedback'] },
+  { key: 'admin_setup', audience: 'admin', label: 'Venture set-up', description: 'A venture’s own address or email finished a set-up step, or a venture asked Lakeba for help with it.', email: true, push: true, kinds: ['admin_setup'] },
   { key: 'admin_security', audience: 'admin', label: 'Admin security', description: 'An admin account signed in from a new device, or someone’s two-step was reset.', email: true, push: true, locked: true, kinds: ['admin_security'] },
 ];
 
@@ -67,6 +68,7 @@ export function pushText(kind: string, brand: string, detail?: string): { title:
     case 'admin_first_signin': return { title: 'An investor signed in for the first time', body: open };
     case 'admin_email': return { title: 'New shareholder email', body: open };
     case 'ask_alert': case 'admin_ask_feedback': return { title: 'Ask Lakeba needs a look', body: open };
+    case 'admin_setup': return { title: 'Venture set-up: an update', body: open };
     case 'admin_security': return { title: 'Admin security alert', body: detail ?? open };
   }
   return { title: `Update from ${brand}`, body: open };

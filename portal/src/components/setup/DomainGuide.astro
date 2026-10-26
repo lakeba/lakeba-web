@@ -1,0 +1,100 @@
+---
+import Copy from './Copy.astro';
+import { PORTAL_SERVER_IP } from 'astro:env/server';
+import Facts from './Facts.astro';
+import Step from './Step.astro';
+import { dateTime } from '../../lib/format';
+import type { DnsHost } from '../../lib/domains';
+import type { SetupCompany } from '../../lib/setup';
+
+// A venture's own web address (investors.mist.com): what it changes, then the
+// one DNS record to add (a CNAME, or an A record where a CNAME isn't possible),
+// written for the place its DNS is managed.
+interface Props {
+  c: SetupCompany;
+  place: { zone: string | null; host: DnsHost | null; label: string } | null;
+  check: { ok: boolean; problem?: string } | null;
+  portalDomain: string;
+  lakebaAddress: string;
+  suggested: string | null;
+  /** On the admin page; the IT person's page has no Lakeba-side actions. */
+  admin: boolean;
+  group: boolean;
+}
+const { c, place, check, portalDomain, lakebaAddress, suggested, admin, group } = Astro.props;
+const host = place?.host;
+const zone = place?.zone ?? c.custom_domain?.split('.').slice(-2).join('.');
+const label = place?.label ?? 'investors';
+---
+<section id="domain" class="card space-y-4">
+  <div class="flex flex-wrap items-baseline justify-between gap-2">
+    <h2 class="font-display text-lg font-bold">Your own web address</h2>
+    {c.custom_domain_verified_at ? <span class="text-sm text-lk-green">✓ In use</span> : c.custom_domain ? <span class="text-sm text-lk-orange">Waiting for one DNS record</span> : <span class="text-sm text-white/45">Not set up · optional</span>}
+  </div>
+  <Facts items={[
+    ['What changes', `Investors open ${c.display_name}’s portal at ${c.custom_domain ?? suggested ?? 'an address of your own, like investors.yourcompany.com'} instead of ${lakebaAddress}. The old address keeps working and forwards there.`],
+    ['What stays the same', `Your website and everyone’s email. Investors still sign in on ${portalDomain}.`],
+    ['Time', 'About 5 minutes, then up to a few hours before it takes effect.'],
+    ['Who does it', host ? `Whoever can sign in to ${host.name}, where ${zone} is managed. Often the person who bought the domain, or your web designer.` : `Whoever manages ${zone ?? 'your domain'}’s DNS records. Often the person who bought the domain, or your web designer.`],
+  ]} />
+
+  {!c.custom_domain ? (
+    <p class="text-sm text-white/60">
+      Lakeba sets up the address{suggested ? <> (for example <span class="font-mono text-white/85">{suggested}</span>)</> : ''}.
+      {admin && (group ? <> Enter it in <a href={`/admin/companies/${c.code}`} class="text-lk-blue hover:underline">Venture settings</a>.</> : ' Ask for it with “Ask Lakeba for help” above; you’ll then see here exactly what to add.')}
+    </p>
+  ) : c.custom_domain_verified_at ? (
+    <div class="space-y-2">
+      <p class="text-sm">Investors open the portal at <span class="font-mono text-white">{c.custom_domain}</span>, since {dateTime.format(new Date(c.custom_domain_verified_at))}. Nothing else to do.</p>
+      {admin && group && <form method="post"><button name="intent" value="stop-domain" class="btn-ghost text-sm" onclick="return confirm('Go back to the Lakeba address?')">Stop using it</button></form>}
+    </div>
+  ) : (
+    <>
+      <ol class="space-y-4">
+        <Step n={1} title={host ? `Sign in to ${host.name}` : `Open ${zone}’s DNS records`}>
+          {host?.url ? <p>Go to <a href={host.url} target="_blank" rel="noopener" class="text-lk-blue hover:underline">{host.name}</a> and open {zone}’s DNS records{host.where ? <>: <span class="text-white/85">{host.where}</span>.</> : '. Look for “DNS”, “DNS records” or “Manage DNS”.'}</p>
+            : <p>Sign in where {zone} is managed{host ? ` (${host.name})` : ''}, open the domain and look for “DNS”, “DNS records” or “Manage DNS”.</p>}
+        </Step>
+        <Step n={2} title="Add one record with these details">
+          <dl class="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2">
+            <dt class="text-white/50">Type</dt><dd><Copy value="CNAME" /></dd>
+            <dt class="text-white/50">Name <span class="text-white/35">(or Host)</span></dt><dd><Copy value={label} /></dd>
+            <dt class="text-white/50">Value <span class="text-white/35">(or Points to, Target)</span></dt><dd><Copy value={portalDomain} /></dd>
+            <dt class="text-white/50">TTL</dt><dd class="text-white/60">Leave it as it is.</dd>
+          </dl>
+          {host?.note && <p class="rounded-lg bg-lk-orange/10 px-3 py-2 text-lk-orange">{host.note}</p>}
+          <details class="rounded-xl border border-white/10 p-3">
+            <summary class="cursor-pointer text-white/75 hover:text-white">Can’t add a CNAME record? Use an A record instead</summary>
+            <div class="mt-3 space-y-2">
+              <p>Some DNS providers only allow A records, or already use a CNAME for this name. An A record points straight to Lakeba’s server address:</p>
+              <dl class="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-2">
+                <dt class="text-white/50">Type</dt><dd><Copy value="A" /></dd>
+                <dt class="text-white/50">Name <span class="text-white/35">(or Host)</span></dt><dd><Copy value={label} /></dd>
+                <dt class="text-white/50">Value <span class="text-white/35">(or IPv4 address, Points to)</span></dt><dd><Copy value={PORTAL_SERVER_IP} /></dd>
+                <dt class="text-white/50">TTL</dt><dd class="text-white/60">Leave it as it is.</dd>
+              </dl>
+              <p class="text-xs text-white/45">Add only one of the two: the CNAME or this A record. If there’s also an “AAAA” record for “{label}”, delete it. The CNAME is better when it’s possible: it keeps working if Lakeba’s server ever moves, while an A record would then need its address changed (Lakeba would tell you).</p>
+            </div>
+          </details>
+        </Step>
+        <Step n={3} title="Save it. That’s all.">
+          <p>This page checks every minute while it’s open, and switches {c.display_name}’s portal over by itself as soon as the record shows. You can also close it: the check runs again whenever someone opens it.</p>
+        </Step>
+      </ol>
+      <div class="rounded-xl border border-white/10 p-3 text-sm">
+        <p class="text-white/70" data-domain-status>{check ? (check.ok ? 'The record is there.' : `Last check: ${check.problem}`) : 'Not checked yet.'}</p>
+        <form method="post" class="mt-2"><button name="intent" value="check-dns" class="btn-ghost text-sm">Check now</button></form>
+      </div>
+      <details class="text-sm text-white/60">
+        <summary class="cursor-pointer text-white/75">Common mistakes</summary>
+        <ul class="mt-2 list-disc space-y-1 pl-5">
+          <li>Typing the whole address <span class="font-mono">{c.custom_domain}</span> in the Name box. Most providers add “.{zone}” themselves, so just <span class="font-mono">{label}</span>.</li>
+          <li>A record with the same name already exists (often from a website builder). Delete it first, then add this one.</li>
+          <li>An A record with another address (for example the website’s). For the portal it must be <span class="font-mono">{PORTAL_SERVER_IP}</span>, or use the CNAME.</li>
+          <li>Both a CNAME and an A record, or an old “AAAA” record, for the same name. Keep just one.</li>
+          <li>On Cloudflare: leaving the orange cloud on. It must be grey (DNS only).</li>
+        </ul>
+      </details>
+    </>
+  )}
+</section>

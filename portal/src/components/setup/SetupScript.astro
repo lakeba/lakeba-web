@@ -1,0 +1,38 @@
+---
+// Copy buttons, and while something is waiting (a DNS record, an approval) a
+// check every minute: the page reloads when something changed, and otherwise
+// says what the last check found.
+interface Props { statusUrl: string; stamp: string; poll: boolean }
+const { statusUrl, stamp, poll } = Astro.props;
+---
+<script is:inline define:vars={{ statusUrl, stamp, poll }}>
+  document.addEventListener('click', async (e) => {
+    const b = e.target instanceof Element ? e.target.closest('[data-copy]') : null;
+    if (!b) return;
+    const text = b.getAttribute('data-copy');
+    try { await navigator.clipboard.writeText(text); } catch {
+      // Browsers that block the clipboard API: the older way.
+      const t = document.createElement('textarea'); t.value = text; t.style.position = 'fixed'; t.style.opacity = '0';
+      document.body.append(t); t.select(); const done = document.execCommand('copy'); t.remove();
+      if (!done) return;
+    }
+    const was = b.textContent; b.textContent = 'Copied'; setTimeout(() => { b.textContent = was; }, 1500);
+  });
+  if (poll) {
+    const started = Date.now();
+    const tick = async () => {
+      if (Date.now() - started > 3 * 3600_000) return;
+      try {
+        const r = await fetch(statusUrl, { method: 'POST' });
+        if (r.ok) {
+          const j = await r.json();
+          if (j.stamp !== stamp) { location.reload(); return; }
+          const el = document.querySelector('[data-domain-status]');
+          if (el && j.domain) el.textContent = `Checked at ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}: ${j.domain}`;
+        }
+      } catch { /* try again next minute */ }
+      setTimeout(tick, 60_000);
+    };
+    setTimeout(tick, 60_000);
+  }
+</script>

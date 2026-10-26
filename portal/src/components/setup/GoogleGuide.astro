@@ -1,0 +1,76 @@
+---
+import Alert from '../Alert.astro';
+import Copy from './Copy.astro';
+import Facts from './Facts.astro';
+import Step from './Step.astro';
+import { dateTime } from '../../lib/format';
+import type { SetupCompany } from '../../lib/setup';
+
+// A venture on Google Workspace: its administrator lets Lakeba's server send
+// as its addresses (Gmail's SMTP relay), someone sends a test, and optionally
+// allows Lakeba's service account to read its shareholder mailbox.
+interface Props {
+  c: SetupCompany;
+  admin: boolean;
+  manage: boolean;
+  serverIp: string;
+  gmailReady: boolean;
+  clientId: string | null;
+  scope: string;
+  suggested: string;
+  testTo: string;
+}
+const { c, admin, manage, serverIp, gmailReady, clientId, scope, suggested, testTo } = Astro.props;
+const sending = c.mail_via === 'google' && Boolean(c.mail_from_verified_at);
+const address = (c.mail_via === 'google' ? c.mail_from : null) ?? suggested;
+---
+<section id="google" class="card space-y-4">
+  <div class="flex flex-wrap items-baseline justify-between gap-2">
+    <h2 class="font-display text-lg font-bold">Email with Google Workspace (Gmail)</h2>
+    {sending ? <span class="text-sm text-lk-green">✓ Emails come from {c.mail_from}</span> : <span class="text-sm text-white/45">Not connected · optional</span>}
+  </div>
+  <Facts items={[
+    ['What changes', `Investors get the portal’s emails from ${c.display_name}’s own address (like ${address}) instead of Lakeba’s, and their replies come to you.`],
+    ['What stays the same', 'Everyone’s own email. Nothing is installed.'],
+    ['Time', 'About 10 minutes, plus 5 for the optional step 4.'],
+    ['Who does it', 'A Google Workspace super administrator (someone who can sign in to admin.google.com).'],
+  ]} />
+  <ol class="space-y-5">
+    <Step n={1} title="Choose the address investors will see" done={sending}>
+      <p>A mailbox or an alias in Google Workspace, such as <Copy value={address} />. Investors can reply to it.</p>
+    </Step>
+    <Step n={2} title="Let the portal send as that address" done={sending}>
+      <p>In <a href="https://admin.google.com" target="_blank" rel="noopener" class="text-lk-blue hover:underline">admin.google.com</a> → Apps → Google Workspace → Gmail → Routing → <strong class="text-white/85">SMTP relay service</strong> → Configure (or Add another rule):</p>
+      <ul class="list-disc space-y-1.5 pl-5">
+        <li>Name: <Copy value="Lakeba investor portal" /></li>
+        <li>Allowed senders: <strong class="text-white/85">Only addresses in my domains</strong></li>
+        <li>Authentication: tick <strong class="text-white/85">Only accept mail from the specified IP addresses</strong> → Add IP range → <Copy value={serverIp} /> (Lakeba’s server)</li>
+        <li>Encryption: tick <strong class="text-white/85">Require TLS encryption</strong></li>
+        <li>Save. It can take up to an hour to work.</li>
+      </ul>
+    </Step>
+    <Step n={3} title="Send a test email" done={sending}>
+      <form method="post" class="space-y-2">
+        <input type="hidden" name="intent" value="google-send" />
+        <label class="label" for="g_mail_from">Emails to investors come from</label>
+        <div class="flex gap-2"><input id="g_mail_from" name="mail_from" type="email" required value={address} class="field" /><button class="btn-ghost shrink-0 text-sm">Send a test</button></div>
+        <p class="text-xs text-white/45">{sending ? `In use since ${dateTime.format(new Date(c.mail_from_verified_at!))}.` : `The test goes to ${testTo}. As soon as Google accepts it, this address is used.`} Newsletters still go through Lakeba, in {c.display_name}’s name.</p>
+      </form>
+    </Step>
+    <Step n={4} title="Optional: let the portal read the shareholder mailbox" done={Boolean(c.google_mailbox_verified_at)} note="for Shareholder emails">
+      {!gmailReady ? <Alert tone="info">Not available yet: Lakeba’s Google service account isn’t set up on this server.</Alert> : (
+        <>
+          <p>So the portal can sort and draft answers to emails investors send to {c.shareholder_mailbox ?? 'the shareholder mailbox'}. In admin.google.com → Security → Access and data control → API controls → <strong class="text-white/85">Manage Domain Wide Delegation</strong> → Add new:</p>
+          <ul class="list-disc space-y-1.5 pl-5">
+            <li>Client ID: <Copy value={clientId ?? ''} /></li>
+            <li>OAuth scopes: <Copy value={scope} /> (Gmail only) → Authorise</li>
+          </ul>
+          <p class="text-xs text-white/45">Google applies this to every mailbox in {c.display_name}’s domain; the portal only ever opens the shareholder mailbox saved in its settings{c.shareholder_mailbox ? ` (${c.shareholder_mailbox})` : ''}.</p>
+          {c.google_mailbox_verified_at ? <p class="text-lk-green">Connected on {dateTime.format(new Date(c.google_mailbox_verified_at))}.</p>
+            : <form method="post"><button name="intent" value="google-mailbox" class="btn-ghost text-sm">Check the mailbox</button></form>}
+        </>
+      )}
+    </Step>
+  </ol>
+  {admin && manage && (c.mail_via === 'google' || c.google_mailbox_verified_at) && <form method="post"><button name="intent" value="google-disconnect" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Disconnect from Google? Emails go out through Lakeba again.')">Disconnect from Google</button></form>}
+</section>

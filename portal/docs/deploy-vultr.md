@@ -120,7 +120,9 @@ on one address, as before. To switch it on:
 Passkeys don't need changes: they are only ever used on `investors.lakeba.com`.
 
 **A venture's own domain** (`investors.mist.com`, in Admin → Companies → a company → Domain and mail):
-the venture adds a CNAME to `investors.lakeba.com`, and "Check DNS" puts it in use. Sign-in still happens
+the venture adds a CNAME to `investors.lakeba.com` (or, where its DNS provider can't, an A record with the
+server's address, `PORTAL_SERVER_IP`), and the check puts it in use. If the server's address ever changes,
+ventures with an A record must update it: look for `company_domain_verified` entries whose `found` starts with `A`. Sign-in still happens
 on `investors.lakeba.com`; a one-time pass carries it to the venture's domain. Its certificate comes
 from Caddy's on-demand TLS, allowed only for verified domains:
 
@@ -157,6 +159,19 @@ Newsletters still go through Lakeba's mail, in the venture's name.
   administrator then allows its Client ID with the scope `https://www.googleapis.com/auth/gmail.modify`
   (domain-wide delegation); the page shows both. Google applies that to every mailbox in the venture's
   domain, so tell the venture: the portal only ever opens the shareholder mailbox saved in its settings.
+
+**The guided set-up** (same page): the portal looks up the venture's mail and name servers to tell whether
+it uses Microsoft 365 or Google and where its DNS is managed (GoDaddy, Cloudflare…), and shows only those
+steps, with values to copy. A waiting domain is checked every minute while the page is open, and a failed
+check says why (nothing yet, the whole address typed in the Name box, Cloudflare's orange cloud, a record
+pointing at a website builder). The venture's admins can **send the steps** to whoever looks after their
+domain or email: a private link (`/setup/<token>`, 7 days, only a hash kept, can be stopped) that needs no
+portal account; that person can check DNS, approve Microsoft 365, send test emails and check the Gmail
+mailbox, but not stop or disconnect anything. Finished steps and **Ask Lakeba for help** reach the admins'
+Inbox ("Venture set-up" notifications; help requests go to Lakeba's group admins only). Microsoft's step 4
+limits the portal to the venture's mailboxes with Exchange's RBAC for Applications (a management scope plus
+the "Application Mail Full Access" role), then removes the organisation-wide approval in Entra. Needs
+migration `20261124000000_venture_setup_guide`.
 
 ## Rebuilding the server from scratch
 

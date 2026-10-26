@@ -1,0 +1,16 @@
+---
+// A value to paste somewhere else, with a Copy button. `block`: a multi-line script.
+interface Props { value: string; block?: boolean }
+const { value, block = false } = Astro.props;
+---
+{block ? (
+  <div class="relative">
+    <pre class="overflow-x-auto rounded-xl bg-black/40 p-3 pr-20 font-mono text-xs leading-relaxed text-white/85">{value}</pre>
+    <button type="button" data-copy={value} class="absolute top-2 right-2 rounded-lg bg-white/10 px-2.5 py-1 text-xs font-medium text-white/80 hover:bg-white/20">Copy</button>
+  </div>
+) : (
+  <span class="inline-flex max-w-full items-center gap-1.5 rounded-lg bg-white/[0.06] py-0.5 pr-0.5 pl-2 align-middle ring-1 ring-white/15">
+    <code class="truncate font-mono text-[0.85em] text-white">{value}</code>
+    <button type="button" data-copy={value} class="shrink-0 rounded-md bg-white/10 px-2 py-0.5 text-xs font-medium text-white/80 hover:bg-white/20">Copy</button>
+  </span>
+)}

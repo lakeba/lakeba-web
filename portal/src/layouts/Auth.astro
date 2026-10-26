@@ -6,12 +6,13 @@ import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 import { HTML_LANG, LANGUAGE_NAMES, LOCALES } from '../lib/i18n';
 import { accentOf, brandOf } from '../lib/brand';
 import { ventureBySlug } from '../lib/sites';
-interface Props { title: string; subtitle?: string; wide?: boolean }
-const { title, subtitle, wide = false } = Astro.props;
+import type { Company } from '../lib/companies';
+interface Props { title: string; subtitle?: string; wide?: boolean; company?: Company | null }
+const { title, subtitle, wide = false, company } = Astro.props;
 const { t, locale } = Astro.locals;
-// Arriving from a venture's address (?venture=mist): its name on the page, Lakeba as the provider.
+// Arriving from a venture's address (?venture=mist), or a page about one venture (company): its name on the page, Lakeba as the provider.
 const slug = Astro.url.searchParams.get('venture');
-const venture = Astro.locals.site?.venture ?? (slug && /^[a-z0-9-]{1,40}$/.test(slug) ? await ventureBySlug(slug) : null);
+const venture = company ?? Astro.locals.site?.venture ?? (slug && /^[a-z0-9-]{1,40}$/.test(slug) ? await ventureBySlug(slug) : null);
 const brand = brandOf(venture);
 // Language links for signed-out people: the same page with ?lang=xx (other query params kept).
 const languageLinks = LOCALES.map((l) => {

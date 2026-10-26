@@ -15,7 +15,7 @@ import { isKnownHost } from './lib/known-hosts.mjs';
 startNotificationWorker();
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/go', '/passkey-login', '/e', '/room', '/news-media', '/company-logo', '/api/public', '/api/v1', '/embed', '/n', '/favicon.ico'];
+const PUBLIC_PATHS = ['/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/setup', '/go', '/passkey-login', '/e', '/room', '/news-media', '/company-logo', '/api/public', '/api/v1', '/embed', '/n', '/favicon.ico'];
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 

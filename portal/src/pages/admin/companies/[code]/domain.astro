@@ -1,220 +1,121 @@
 ---
 import Admin from '../../../../layouts/Admin.astro';
 import Alert from '../../../../components/Alert.astro';
-import { createHash, randomBytes } from 'node:crypto';
-import { MS_CLIENT_ID, MS_LOGIN_BASE, PORTAL_DOMAIN } from 'astro:env/server';
-import { serviceClient } from '../../../../lib/admin';
-import { field } from '../../../../lib/forms';
+import DomainGuide from '../../../../components/setup/DomainGuide.astro';
+import EmailGuides from '../../../../components/setup/EmailGuides.astro';
+import SetupScript from '../../../../components/setup/SetupScript.astro';
+import { MS_CLIENT_ID, PORTAL_DOMAIN, PORTAL_SERVER_IP } from 'astro:env/server';
 import { dateTime } from '../../../../lib/format';
 import { brandOf } from '../../../../lib/brand';
-import { pointsHere } from '../../../../lib/domains';
-import { forgetTenants, graphConfigured, sendAs } from '../../../../lib/graph';
-import { GMAIL_SCOPE, gmailClientId, gmailConfigured, gmailInboxCount } from '../../../../lib/gmail';
-import { sendViaGoogle } from '../../../../lib/mail';
-import { forgetMailboxes } from '../../../../lib/mailboxes';
-import { PORTAL_SERVER_IP } from 'astro:env/server';
-import { forgetVentureSites, refreshOwnDomains, siteOriginFor } from '../../../../lib/sites';
-import { COLUMNS, type Company } from '../../../../lib/companies';
+import { detect, domainStatus, placeOf } from '../../../../lib/domains';
+import { graphConfigured } from '../../../../lib/graph';
+import { GMAIL_SCOPE, gmailClientId, gmailConfigured } from '../../../../lib/gmail';
+import { siteOriginFor } from '../../../../lib/sites';
+import { HANDOFF_DAYS, loadHandoffs, loadSetupCompany, runSetupAction, setupStamp, type Who } from '../../../../lib/setup';
 
-// A venture's own domain and its own Microsoft 365. The domain (group admins):
-// its DNS record, checked here; once it points to the portal the venture's
-// portal opens there (sign-in carried across with a one-time pass). Microsoft
-// 365 (the venture's admins): its Microsoft 365 administrator approves the
-// portal's app with a link; then emails go from the venture's own address,
-// after a test email went through, and its shareholder mailbox is read there.
-// Google Workspace instead: emails go from its own address through Google's
-// SMTP relay (its administrator allows this server's address), and its
-// shareholder mailbox is read with Lakeba's service account (Gmail only).
-const svc = serviceClient();
+// A venture's own web address and email, as a guided set-up for people who
+// aren't technical: the page works out who runs its email (Microsoft 365 or
+// Google) and where its domain is managed, shows only the steps that apply,
+// with everything to copy, and checks the work every minute. The venture's
+// admins can send the steps to whoever looks after their domain or email (a
+// link that needs no portal account, /setup/<token>) and ask Lakeba for help.
+// The steps themselves are in lib/setup.ts, shared with that page.
 const access = Astro.locals.access;
 const code = (Astro.params.code ?? '').toUpperCase();
-const load = async () => (await svc.from('entities').select(`${COLUMNS}, shareholder_mailbox`).eq('code', code).maybeSingle()).data as (Company & { shareholder_mailbox: string | null }) | null;
-let c = await load();
+let c = await loadSetupCompany({ code });
 if (!c || c.relationship === 'group' || !access.can('investors.view', c.id)) return new Response('Not found', { status: 404 });
-const mayDomain = access.can('investors.do', null);
-const mayMail = access.can('investors.do', c.id);
+const group = access.can('investors.do', null);
+const manage = access.can('investors.do', c.id);
 const me = Astro.locals.user!;
-const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { company: code, ...detail } });
+const profile = Astro.locals.profile;
+const myName = [profile?.first_name, profile?.last_name].filter(Boolean).join(' ');
+const who: Who = { userId: me.id, email: me.email, label: myName ? `${myName} (${me.email})` : me.email, manage, group };
 const central = Astro.locals.site?.central ?? Astro.url.origin;
 let error = '', notice = '', consentUrl = '';
 
-if (Astro.request.method === 'POST') {
-  const form = await Astro.request.formData();
-  const intent = field(form, 'intent');
-  if (intent === 'check-dns' && mayDomain && c.custom_domain) {
-    const r = await pointsHere(c.custom_domain);
-    if (r.ok) {
-      await svc.from('entities').update({ custom_domain_verified_at: new Date().toISOString() }).eq('id', c.id).throwOnError();
-      forgetVentureSites(); await refreshOwnDomains();
-      await log('company_domain_verified', { domain: c.custom_domain, found: r.found });
-      notice = `${c.custom_domain} points to the portal (${r.found}). ${c.display_name}’s portal now opens there.`;
-    } else error = `${c.custom_domain} doesn’t point to the portal yet (found: ${r.found}). DNS changes can take an hour to show.`;
-  } else if (intent === 'stop-domain' && mayDomain) {
-    await svc.from('entities').update({ custom_domain_verified_at: null }).eq('id', c.id).throwOnError();
-    forgetVentureSites();
-    await log('company_domain_stopped', { domain: c.custom_domain });
-    notice = `${c.display_name}’s portal is back on its Lakeba address.`;
-  } else if (intent === 'consent-link' && mayMail) {
-    const state = randomBytes(24).toString('base64url');
-    await svc.from('ms_consent_requests').insert({ state_hash: createHash('sha256').update(state).digest('hex'), entity_id: c.id, created_by: me.id, expires_at: new Date(Date.now() + 7 * 86_400_000).toISOString() }).throwOnError();
-    consentUrl = `${MS_LOGIN_BASE}/organizations/v2.0/adminconsent?${new URLSearchParams({ client_id: MS_CLIENT_ID ?? '', scope: 'https://graph.microsoft.com/.default', redirect_uri: `${central}/auth/ms-consent`, state })}`;
-    await log('company_microsoft365_link_made');
-  } else if (intent === 'disconnect' && mayMail) {
-    await svc.from('entities').update({ ms_tenant_id: null, mail_from_verified_at: null }).eq('id', c.id).throwOnError();
-    forgetTenants();
-    await log('company_microsoft365_disconnected');
-    notice = 'Disconnected. Emails go out through Lakeba again.';
-  } else if (intent === 'send-from' && mayMail && c.ms_tenant_id) {
-    const from = field(form, 'mail_from').toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(from)) error = 'Enter the address emails should come from, e.g. investors@mist.com.';
-    else {
-      // Saved first, so the mailbox is known to be in this venture's Microsoft 365; used once a test email went through.
-      await svc.from('entities').update({ mail_from: from, mail_from_verified_at: null }).eq('id', c.id).throwOnError();
-      forgetTenants();
-      try {
-        await sendAs(from, { to: me.email, subject: `Test from ${c.display_name}’s investor portal`, html: `<p>This test email came from ${from} through ${c.display_name}’s own Microsoft 365. Emails from the portal to ${c.display_name}’s investors now come from this address.</p>` });
-        await svc.from('entities').update({ mail_from_verified_at: new Date().toISOString(), mail_via: 'microsoft' }).eq('id', c.id).throwOnError();
-        await log('company_send_from_verified', { address: from, via: 'microsoft' });
-        notice = `A test email went from ${from} to ${me.email}. ${c.display_name}’s emails now come from there.`;
-      } catch (e) {
-        error = `The test email couldn’t be sent from ${from}: ${(e as Error).message}. Check the address exists in ${c.display_name}’s Microsoft 365.`;
-      }
-    }
-  }
-  if (intent === 'google-send' && mayMail) {
-    const from = field(form, 'mail_from').toLowerCase();
-    if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(from)) error = 'Enter the address emails should come from, e.g. investors@mist.com.';
-    else {
-      try {
-        await sendViaGoogle({ from, name: c.sender_name ?? c.display_name, to: me.email, subject: `Test from ${c.display_name}’s investor portal`, html: `<p>This test email came from ${from} through Google’s relay. Emails from the portal to ${c.display_name}’s investors now come from this address.</p>` });
-        await svc.from('entities').update({ mail_from: from, mail_via: 'google', mail_from_verified_at: new Date().toISOString() }).eq('id', c.id).throwOnError();
-        await log('company_send_from_verified', { address: from, via: 'google' });
-        notice = `A test email went from ${from} to ${me.email} through Google. ${c.display_name}’s emails now come from there.`;
-      } catch (e) {
-        error = `Google didn’t accept the test email from ${from}: ${(e as Error).message}. Check the SMTP relay setting in ${c.display_name}’s Google admin console.`;
-      }
-    }
-  } else if (intent === 'google-mailbox' && mayMail) {
-    if (!c.shareholder_mailbox) error = 'Save the shareholder mailbox address first (Shareholder emails).';
-    else {
-      try {
-        const count = await gmailInboxCount(c.shareholder_mailbox);
-        await svc.from('entities').update({ google_mailbox_verified_at: new Date().toISOString() }).eq('id', c.id).throwOnError();
-        forgetMailboxes();
-        await log('company_google_mailbox_connected', { mailbox: c.shareholder_mailbox });
-        notice = `The portal can open ${c.shareholder_mailbox} in Gmail (Inbox has ${count} emails). Set it to Review in Shareholder emails.`;
-      } catch (e) {
-        error = `The portal can’t open ${c.shareholder_mailbox} yet: ${(e as Error).message}. Check the domain-wide delegation in ${c.display_name}’s Google admin console (changes can take a few minutes).`;
-      }
-    }
-  } else if (intent === 'google-disconnect' && mayMail) {
-    await svc.from('entities').update({ google_mailbox_verified_at: null, ...(c.mail_via === 'google' ? { mail_via: null, mail_from_verified_at: null } : {}) }).eq('id', c.id).throwOnError();
-    forgetMailboxes();
-    await log('company_google_disconnected');
-    notice = 'Disconnected from Google. Emails go out through Lakeba again.';
-  }
-  c = (await load())!;
+if (Astro.request.method === 'POST' && manage) {
+  const r = await runSetupAction(c, who, await Astro.request.formData(), central);
+  ({ notice = '', error = '', consentUrl = '' } = r);
+  c = (await loadSetupCompany({ code }))!;
 }
 
-const address = siteOriginFor(Astro.url, c);
 const portalDomain = PORTAL_DOMAIN ?? 'investors.lakeba.com';
 const brand = brandOf(c);
+const [det, place, check, handoffs] = await Promise.all([
+  detect(c),
+  c.custom_domain ? placeOf(c.custom_domain) : Promise.resolve(null),
+  c.custom_domain && !c.custom_domain_verified_at ? domainStatus(c.custom_domain) : Promise.resolve(null),
+  loadHandoffs(c.id),
+]);
+const lakebaAddress = siteOriginFor(Astro.url, { ...c, custom_domain_verified_at: null }).replace(/^https?:\/\//, '');
+const suggestedAddress = `investors@${det.emailDomain ?? 'yourcompany.com'}`;
+const providerName = { microsoft: 'Microsoft 365 (Outlook)', google: 'Google Workspace (Gmail)', other: 'another provider', none: '' }[det.mail];
+const now = Date.now();
+const poll = Boolean(c.custom_domain && !c.custom_domain_verified_at) || Boolean(consentUrl) || handoffs.some((h) => !h.revoked_at && new Date(h.expires_at).getTime() > now);
 ---
 
 <Admin title={`${c.display_name} domain and mail`}>
   <a href={`/admin/companies/${code}`} class="text-sm text-white/50 hover:text-white">← {c.display_name}</a>
   <h1 class="mt-2 font-display text-3xl font-bold">Domain and mail</h1>
-  <p class="mt-1 text-sm text-white/55">Now at <span class="font-mono text-white/80">{address}</span>. Emails come from {brand.sendFrom ?? 'Lakeba’s address, in its name'}.</p>
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
 
-  <div class="mt-6 grid gap-6 lg:grid-cols-2">
-    <section class="card space-y-3">
-      <h2 class="font-display text-lg font-bold">Own domain</h2>
-      {!c.custom_domain ? (
-        <p class="text-sm text-white/55">No own domain yet. {mayDomain ? <>Enter it in <a href={`/admin/companies/${code}`} class="text-lk-blue hover:underline">Venture settings</a> (e.g. investors.{c.slug ?? 'example'}.com).</> : 'A Lakeba group admin sets it up.'}</p>
-      ) : (
-        <>
-          <p class="text-sm"><span class="font-mono text-white">{c.custom_domain}</span> · {c.custom_domain_verified_at ? <span class="text-lk-green">in use since {dateTime.format(new Date(c.custom_domain_verified_at))}</span> : <span class="text-lk-orange">waiting for its DNS record</span>}</p>
-          <div class="rounded-xl bg-black/30 p-3 text-sm">
-            <p class="text-white/60">In {c.display_name}’s DNS, add:</p>
-            <p class="mt-1 font-mono text-white">{c.custom_domain} &nbsp;CNAME&nbsp; {portalDomain}</p>
-          </div>
-          <p class="text-xs text-white/45">Then check it here. Once it points to the portal, {c.display_name}’s portal opens there; its Lakeba address keeps working and forwards. Investors still sign in on {portalDomain}, and come back signed in.</p>
-          {mayDomain && <form method="post" class="flex flex-wrap gap-2">
-            <button name="intent" value="check-dns" class="btn-primary text-sm">Check DNS</button>
-            {c.custom_domain_verified_at && <button name="intent" value="stop-domain" class="btn-ghost text-sm" onclick="return confirm('Go back to the Lakeba address?')">Stop using it</button>}
-          </form>}
-        </>
-      )}
-    </section>
+  <section class="card mt-6 space-y-3">
+    <h2 class="font-display text-lg font-bold">Where things stand</h2>
+    <ul class="space-y-1.5 text-sm">
+      <li><span class="text-white/50">Investors open the portal at</span> <span class="font-mono text-white/85">{siteOriginFor(Astro.url, c).replace(/^https?:\/\//, '')}</span>{c.custom_domain && !c.custom_domain_verified_at && <span class="text-lk-orange"> · {c.custom_domain} is waiting for its DNS record</span>}</li>
+      <li><span class="text-white/50">Emails to investors come from</span> <span class="text-white/85">{brand.sendFrom ?? `Lakeba’s address, in ${c.display_name}’s name`}</span></li>
+      <li><span class="text-white/50">Shareholder mailbox</span> <span class="text-white/85">{c.shareholder_mailbox ? `${c.shareholder_mailbox}${c.google_mailbox_verified_at ? ' (Gmail, connected)' : c.ms_tenant_id ? ' (Microsoft 365)' : ''}` : 'not set'}</span></li>
+    </ul>
+    {det.emailDomain && (
+      <p class="rounded-xl bg-white/[0.04] p-3 text-sm text-white/65">
+        {det.mail === 'none' ? `We couldn’t find who runs ${det.emailDomain}’s email.` : <>{det.emailDomain}’s email runs on <strong class="text-white/85">{providerName}</strong>.</>}
+        {det.dns && <> Its domain is managed at <strong class="text-white/85">{det.dns.name}</strong>.</>} The steps below are for that. Both parts are optional: the portal works as it is.
+      </p>
+    )}
+  </section>
 
-    <section class="card space-y-3">
-      <h2 class="font-display text-lg font-bold">{c.display_name}’s Microsoft 365</h2>
-      {!graphConfigured() && <Alert tone="info">The portal’s Microsoft 365 app isn’t set up on this server.</Alert>}
-      {c.ms_tenant_id ? (
-        <>
-          <p class="text-sm">Connected <span class="font-mono text-xs text-white/50">({c.ms_tenant_id})</span>. Its shareholder mailbox (Shareholder emails) is read there.</p>
-          {mayMail && (
-            <form method="post" class="space-y-2">
-              <input type="hidden" name="intent" value="send-from" />
-              <label class="label" for="mail_from">Emails to investors come from</label>
-              <div class="flex gap-2"><input id="mail_from" name="mail_from" type="email" value={c.mail_from ?? ''} placeholder={`investors@${(c.website ?? 'https://example.com').replace(/^https?:\/\/(www\.)?/, '').replace(/\/.*$/, '')}`} class="field" /><button class="btn-ghost shrink-0 text-sm">Send a test</button></div>
-              <p class="text-xs text-white/45">{c.mail_from_verified_at ? `In use since ${dateTime.format(new Date(c.mail_from_verified_at))}.` : 'Used once a test email to you goes through.'} Newsletters still go through Lakeba, in {c.display_name}’s name.</p>
-            </form>
-          )}
-          {mayMail && <form method="post"><button name="intent" value="disconnect" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Disconnect? Emails go out through Lakeba again.')">Disconnect</button></form>}
-        </>
-      ) : (
-        <>
-          <p class="text-sm text-white/60">Emails go out through Lakeba, in {c.display_name}’s name. To send from {c.display_name}’s own address and read its shareholder mailbox in its own Microsoft 365, its Microsoft 365 administrator approves the portal once.</p>
-          {consentUrl ? (
-            <div class="space-y-2">
-              <p class="text-sm text-white/70">Send this link to {c.display_name}’s Microsoft 365 administrator (it works for 7 days):</p>
-              <pre class="overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-white/85">{consentUrl}</pre>
-              <a href={consentUrl} target="_blank" rel="noopener" class="btn-ghost text-sm">Open it (if you are that administrator)</a>
-            </div>
-          ) : mayMail && <form method="post"><button name="intent" value="consent-link" class="btn-primary text-sm">Make the approval link</button></form>}
-        </>
-      )}
-    </section>
-
-    <section class="card space-y-3 lg:col-span-2">
-      <h2 class="font-display text-lg font-bold">{c.display_name} on Google Workspace</h2>
-      <p class="text-sm text-white/60">For a company that uses Gmail rather than Microsoft 365. Both steps are done by {c.display_name}’s Google administrator in the Google admin console, once.</p>
-      <div class="grid gap-6 lg:grid-cols-2">
-        <div class="space-y-2">
-          <h3 class="font-semibold">1. Emails from its own address {c.mail_via === 'google' && <span class="text-sm font-normal text-lk-green">· in use</span>}</h3>
-          <ol class="list-decimal space-y-1 pl-5 text-sm text-white/65">
-            <li>Apps → Google Workspace → Gmail → Routing → <strong class="text-white/85">SMTP relay service</strong> → Configure.</li>
-            <li>Allowed senders: <strong class="text-white/85">Only addresses in my domains</strong>.</li>
-            <li>Authentication: <strong class="text-white/85">Only accept mail from the specified IP addresses</strong>, and add <span class="font-mono text-white">{PORTAL_SERVER_IP}</span> (Lakeba’s server).</li>
-            <li>Encryption: <strong class="text-white/85">Require TLS encryption</strong>. Save.</li>
-          </ol>
-          {mayMail && (
-            <form method="post" class="space-y-2">
-              <input type="hidden" name="intent" value="google-send" />
-              <label class="label" for="g_mail_from">Emails to investors come from</label>
-              <div class="flex gap-2"><input id="g_mail_from" name="mail_from" type="email" value={c.mail_via === 'google' ? c.mail_from ?? '' : ''} placeholder="investors@mist.com" class="field" /><button class="btn-ghost shrink-0 text-sm">Send a test</button></div>
-              <p class="text-xs text-white/45">Used once a test email to you goes through Google. Newsletters still go through Lakeba, in {c.display_name}’s name.</p>
-            </form>
-          )}
-        </div>
-        <div class="space-y-2">
-          <h3 class="font-semibold">2. Its shareholder mailbox {c.google_mailbox_verified_at && <span class="text-sm font-normal text-lk-green">· connected</span>}</h3>
-          {!gmailConfigured() ? <Alert tone="info">Lakeba’s Google service account isn’t set up on this server.</Alert> : (
-            <>
-              <ol class="list-decimal space-y-1 pl-5 text-sm text-white/65">
-                <li>Security → Access and data control → API controls → <strong class="text-white/85">Manage domain-wide delegation</strong> → Add new.</li>
-                <li>Client ID: <span class="font-mono text-white">{gmailClientId()}</span></li>
-                <li>OAuth scope: <span class="break-all font-mono text-white">{GMAIL_SCOPE}</span> (Gmail only). Authorise.</li>
-              </ol>
-              <p class="text-xs text-white/45">Google applies this to every mailbox in {c.display_name}’s domain; the portal only ever opens the shareholder mailbox saved in Shareholder emails{c.shareholder_mailbox ? ` (${c.shareholder_mailbox})` : ''}.</p>
-              {mayMail && <form method="post"><button name="intent" value="google-mailbox" class="btn-ghost text-sm">Check the mailbox</button></form>}
-            </>
-          )}
-        </div>
+  {manage && (
+    <section class="card mt-6 space-y-4">
+      <div>
+        <h2 class="font-display text-lg font-bold">Who does this?</h2>
+        <p class="mt-1 text-sm text-white/60">Whoever looks after {c.display_name}’s domain and email. If that isn’t you, send them the steps: they get a private link (no portal account needed, works for {HANDOFF_DAYS} days) with buttons for everything, and you see here as each part is done.</p>
       </div>
-      {mayMail && (c.mail_via === 'google' || c.google_mailbox_verified_at) && <form method="post"><button name="intent" value="google-disconnect" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Disconnect from Google? Emails go out through Lakeba again.')">Disconnect from Google</button></form>}
+      <form method="post" class="grid gap-2 sm:grid-cols-[1fr_1fr_auto] sm:items-end">
+        <input type="hidden" name="intent" value="handoff-send" />
+        <div><label class="label" for="handoff_name">Their name</label><input id="handoff_name" name="handoff_name" class="field" placeholder="Jo Smith" /></div>
+        <div><label class="label" for="handoff_email">Their email</label><input id="handoff_email" name="handoff_email" type="email" required class="field" placeholder="jo@itcompany.com" /></div>
+        <button class="btn-primary text-sm">Send the steps</button>
+        <div class="sm:col-span-3"><label class="label" for="handoff_note">A note for them (optional)</label><input id="handoff_note" name="handoff_note" class="field" maxlength="1000" placeholder="Hi Jo, could you set this up this week?" /></div>
+      </form>
+      {handoffs.length > 0 && (
+        <ul class="divide-y divide-white/5 text-sm">
+          {handoffs.map((h) => {
+            const live = !h.revoked_at && new Date(h.expires_at).getTime() > now;
+            return (
+              <li class="flex flex-wrap items-center justify-between gap-2 py-2">
+                <span><span class="text-white/85">{h.recipient_name ? `${h.recipient_name} (${h.recipient_email})` : h.recipient_email}</span> <span class="text-white/45">· sent {dateTime.format(new Date(h.created_at))} · {h.opened_at ? `last opened ${dateTime.format(new Date(h.last_seen_at ?? h.opened_at))}` : 'not opened yet'}{!live && ' · link stopped'}</span></span>
+                {live && <form method="post"><input type="hidden" name="handoff" value={h.id} /><button name="intent" value="handoff-stop" class="text-xs text-white/45 hover:text-lk-red">Stop this link</button></form>}
+              </li>
+            );
+          })}
+        </ul>
+      )}
+      <details class="text-sm">
+        <summary class="cursor-pointer text-white/75 hover:text-white">Stuck, or want Lakeba to do it with you? Ask Lakeba for help</summary>
+        <form method="post" class="mt-2 space-y-2">
+          <input type="hidden" name="intent" value="help" />
+          <textarea name="help_message" rows="3" maxlength="2000" class="field" placeholder={c.custom_domain ? 'What’s happening, and a good time to call.' : `For example: we’d like our portal at investors.${det.emailDomain ?? 'ourcompany.com'}.`}></textarea>
+          <button class="btn-ghost text-sm">Send to Lakeba</button>
+        </form>
+      </details>
     </section>
+  )}
+
+  <div class="mt-6 space-y-6">
+    <DomainGuide c={c} place={place} check={check} portalDomain={portalDomain} lakebaAddress={lakebaAddress} suggested={det.emailDomain ? `investors.${det.emailDomain}` : null} admin={true} group={group} />
+    <EmailGuides c={c} det={det} admin={true} manage={manage} testTo={me.email} suggested={suggestedAddress}
+      consentUrl={consentUrl} msReady={graphConfigured()} msClientId={MS_CLIENT_ID ?? null}
+      serverIp={PORTAL_SERVER_IP} gmailReady={gmailConfigured()} gmailClientId={gmailClientId()} gmailScope={GMAIL_SCOPE} />
   </div>
+  <SetupScript statusUrl={`/admin/companies/${code}/domain-status`} stamp={setupStamp(c)} poll={poll} />
 </Admin>

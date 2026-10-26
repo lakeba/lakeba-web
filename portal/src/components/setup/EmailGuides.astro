@@ -1,0 +1,43 @@
+---
+import GoogleGuide from './GoogleGuide.astro';
+import MicrosoftGuide from './MicrosoftGuide.astro';
+import type { Detected } from '../../lib/domains';
+import type { SetupCompany } from '../../lib/setup';
+
+// The email part of the set-up: the steps for the provider the venture uses
+// first (from what's connected, else from its domain's mail records), the
+// other one folded away.
+interface Props {
+  c: SetupCompany; det: Detected; admin: boolean; manage: boolean; testTo: string; suggested: string;
+  consentUrl: string; msReady: boolean; msClientId: string | null;
+  serverIp: string; gmailReady: boolean; gmailClientId: string | null; gmailScope: string;
+}
+const p = Astro.props;
+const { c, det } = p;
+const provider = c.mail_via ?? (c.ms_tenant_id ? 'microsoft' : c.google_mailbox_verified_at ? 'google' : det.mail);
+const ms = { c, admin: p.admin, manage: p.manage, consentUrl: p.consentUrl, ready: p.msReady, clientId: p.msClientId, suggested: p.suggested, testTo: p.testTo };
+const google = { c, admin: p.admin, manage: p.manage, serverIp: p.serverIp, gmailReady: p.gmailReady, clientId: p.gmailClientId, scope: p.gmailScope, suggested: p.suggested, testTo: p.testTo };
+const fold = 'card cursor-pointer list-none font-semibold text-white/75 hover:text-white before:mr-2 before:inline-block before:content-["▸"] [details[open]>&]:before:rotate-90';
+---
+{provider === 'microsoft' ? (
+  <>
+    <MicrosoftGuide {...ms} />
+    <details><summary class={fold}>Uses Gmail (Google Workspace) instead? Show those steps</summary><div class="mt-3"><GoogleGuide {...google} /></div></details>
+  </>
+) : provider === 'google' ? (
+  <>
+    <GoogleGuide {...google} />
+    <details><summary class={fold}>Uses Outlook (Microsoft 365) instead? Show those steps</summary><div class="mt-3"><MicrosoftGuide {...ms} /></div></details>
+  </>
+) : (
+  <>
+    <section class="card space-y-2 text-sm text-white/65">
+      <h2 class="font-display text-lg font-bold text-white">Email from your own address</h2>
+      {det.mail === 'other'
+        ? <p>{det.emailDomain}’s email doesn’t look like Microsoft 365 or Google{det.mailHost ? ` (it goes through ${det.mailHost})` : ''}. If it’s one of them behind a filter, choose it below. Otherwise emails keep coming from Lakeba’s address in {c.display_name}’s name, with replies to {c.reply_to ?? c.contact_email ?? 'its contact address'}; ask Lakeba if you need more.</p>
+        : <p>We couldn’t tell who runs {det.emailDomain ?? c.display_name}’s email. Ask whoever looks after it: do people sign in to <strong class="text-white/85">Outlook (Microsoft 365)</strong> or <strong class="text-white/85">Gmail (Google Workspace)</strong>? Then choose below.</p>}
+    </section>
+    <details><summary class={fold}>Microsoft 365 (Outlook)</summary><div class="mt-3"><MicrosoftGuide {...ms} /></div></details>
+    <details><summary class={fold}>Google Workspace (Gmail)</summary><div class="mt-3"><GoogleGuide {...google} /></div></details>
+  </>
+)}
