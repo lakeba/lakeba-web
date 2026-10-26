@@ -29,8 +29,9 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   // The company must be one this person belongs to (membership comes from the database).
   const company = locals.companies.find((c) => c.code === body?.company) ?? null;
   if (!company) return Response.json({ error: t('Ask is available to shareholders of the company you are viewing.') }, { status: 403 });
-  // "Ask Lakeba" / "Ask Ezifin" in the reader's language, for status messages.
-  const name = t('Ask {brand}', { brand: company.relationship === 'group' ? 'Lakeba' : company.display_name });
+  if (!company.ask_enabled) return Response.json({ error: t('AI answers are not switched on yet.') }, { status: 403 });
+  // "Ask Lakeba" / "Ask Ezifin" in the reader's language (or the company's own name for it), for status messages.
+  const name = company.ask_name?.trim() || t('Ask {brand}', { brand: company.relationship === 'group' ? 'Lakeba' : company.display_name });
   // Answers in the reader's interface language; the decline sentence stays exact (isDecline relies on it).
   const replyIn = ({ es: 'Spanish', it: 'Italian', zh: 'Simplified Chinese' } as Record<string, string>)[locale];
   const languageRule = replyIn ? `\n\nReply in ${replyIn} unless the person writes in another language. The exact decline sentence above stays in English, word for word.` : '';

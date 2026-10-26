@@ -5,6 +5,7 @@ import ThemeInit from '../../../src/components/ThemeInit.astro';
 import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 import LinkedInIcon from '../components/LinkedInIcon.astro';
 import { brandName } from '../lib/companies';
+import { brandOf } from '../lib/brand';
 import NoteBanner from '../components/NoteBanner.astro';
 import { HTML_LANG } from '../lib/i18n';
 interface Props { title: string }
@@ -14,6 +15,7 @@ const path = Astro.url.pathname;
 const canAdmin = Astro.locals.access.mayOpen('/admin');
 const isGroup = company?.relationship === 'group';
 const brand = brandName(company);
+const contact = brandOf(company).contactEmail;
 
 const nav: { href: string; label: string; tag?: string }[] = [
   { href: '/', label: t('Dashboard') },
@@ -21,7 +23,7 @@ const nav: { href: string; label: string; tag?: string }[] = [
   ...(isGroup ? [{ href: '/portfolio', label: t('Portfolio') }] : []),
   { href: '/agm', label: t('Meetings') },
   { href: '/news', label: t('News') },
-  ...(company && features.ask ? [{ href: '/ask', label: t('Ask {brand}', { brand }), tag: 'AI' }] : []),
+  ...(company && features.ask ? [{ href: '/ask', label: company.ask_name?.trim() || t('Ask {brand}', { brand }), tag: 'AI' }] : []),
   ...(features.boardQa ? [{ href: '/board', label: t('Board Q&A') }] : []),
   ...(features.trading ? [{ href: '/trading', label: t('Trading') }] : []),
   ...(canAdmin ? [{ href: '/admin', label: t('Admin') }] : []),
@@ -152,7 +154,7 @@ const { count: unread } = user
     </main>
     <footer class="container-portal flex flex-col justify-between gap-2 border-t border-white/5 py-8 pb-28 text-xs text-white/35 sm:flex-row sm:pb-8">
       <p>{isGroup || !company ? `© ${new Date().getFullYear()} Lakeba Group Limited` : t('{company} Investor Portal, powered by Lakeba', { company: company.display_name })}</p>
-      <p>{t('Questions:')} {features.boardQa && <><a href="/board" class="hover:text-white">{t('Board Q&A')}</a> · </>}<a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
+      <p>{t('Questions:')} {features.boardQa && <><a href="/board" class="hover:text-white">{t('Board Q&A')}</a> · </>}<a href={`mailto:${contact}`} class="hover:text-white">{contact}</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
     </footer>
   </body>
 </html>

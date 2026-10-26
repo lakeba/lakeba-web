@@ -1,13 +1,12 @@
 import { serviceClient } from './admin';
 import { sendMail } from './mail';
+import { brandOf, type Brand } from './brand';
 
 /**
  * Invites and password resets are sent by the portal rather than Supabase's
  * templates, so the link carries a token hash that /auth/confirm verifies on
  * the server.
  */
-type Brand = { name: string; color?: string | null };
-const portalName = (brand?: Brand) => (brand && brand.name !== 'Lakeba' ? `${brand.name} Investor Portal` : 'Lakeba Investor Portal');
 
 async function emailLink(kind: 'invite' | 'recovery', email: string, origin: string, opts: { data?: Record<string, string>; brand?: Brand; welcome?: boolean } = {}) {
   const svc = serviceClient();
@@ -16,8 +15,9 @@ async function emailLink(kind: 'invite' | 'recovery', email: string, origin: str
   );
   if (error || !link.properties?.hashed_token) return { error: error?.message ?? 'Could not create the link.', userId: null, url: null };
   const url = `${origin}/auth/confirm?token_hash=${encodeURIComponent(link.properties.hashed_token)}&type=${kind}`;
-  const name = portalName(opts.brand);
-  const mail = { brand: opts.brand?.name, color: opts.brand?.color ?? undefined };
+  const brand = opts.brand ?? brandOf(null);
+  const name = brand.portalName;
+  const mail = { brand };
   // An account created by an import gets a "welcome" email (a set-password link valid for 1 hour).
   await sendMail(
     kind === 'invite'

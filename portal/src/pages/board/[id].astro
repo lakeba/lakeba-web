@@ -3,6 +3,7 @@ import Portal from '../../layouts/Portal.astro';
 import { notifyAdmins } from '../../lib/notify';
 import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
+import { brandName } from '../../lib/companies';
 
 const { supabase, t, fmt } = Astro.locals;
 const userId = Astro.locals.user!.id;
@@ -25,10 +26,12 @@ if (Astro.request.method === 'POST') {
 
 // Only the user's own question, without internal notes (admins could read them via RLS).
 const [{ data: query }, { data: messages }] = await Promise.all([
-  supabase.from('queries').select('subject, status, due_at, created_at').eq('id', id).eq('user_id', userId).maybeSingle(),
+  supabase.from('queries').select('subject, status, due_at, created_at, entity_id').eq('id', id).eq('user_id', userId).maybeSingle(),
   supabase.from('query_messages').select('id, body, created_at, author_id, profiles(first_name, last_name, role)').eq('query_id', id).eq('internal', false).order('created_at'),
 ]);
 if (!query) return new Response('Not found', { status: 404 });
+// Replies are signed with the company the question went to.
+const answeredBy = brandName(Astro.locals.companies.find((c) => c.id === query.entity_id) ?? null);
 const sent = Astro.url.searchParams.get('sent') === '1';
 ---
 
@@ -49,7 +52,7 @@ const sent = Astro.url.searchParams.get('sent') === '1';
         return (
           <li class:list={['flex', mine ? 'justify-end' : 'justify-start']}>
             <div class:list={['max-w-[85%] rounded-3xl p-5', mine ? 'bg-lk-blue/20 rounded-br-md' : 'glass rounded-bl-md']}>
-              <p class="text-xs text-white/45">{mine ? t('You') : `${author?.first_name ?? ''} ${author?.last_name ?? ''}`.trim() || 'Lakeba'}{!mine && ' · Lakeba'} · {fmt.dateTime.format(new Date(m.created_at))}</p>
+              <p class="text-xs text-white/45">{mine ? t('You') : `${author?.first_name ?? ''} ${author?.last_name ?? ''}`.trim() || answeredBy}{!mine && ` · ${answeredBy}`} · {fmt.dateTime.format(new Date(m.created_at))}</p>
               <p class="mt-2 whitespace-pre-line text-white/85">{m.body}</p>
             </div>
           </li>

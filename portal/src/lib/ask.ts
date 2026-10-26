@@ -16,7 +16,7 @@ export const MAX_TURN_CHARS = 4000;
 export const DECLINE = 'I can only help with questions about Lakeba Group, its ventures and its shares, based on the documents in this portal and the news on Lakeba’s website.';
 
 /** The company an Ask conversation is about (Lakeba Group, or a venture with its own portal). */
-export type AskCompany = { id: string; code: string; display_name: string; legal_name: string | null; relationship: string };
+export type AskCompany = { id: string; code: string; display_name: string; legal_name: string | null; relationship: string; ask_name?: string | null };
 const isGroup = (c?: AskCompany | null) => !c || c.relationship === 'group';
 
 /** The exact sentence used to decline off-topic questions, per company. */
@@ -24,8 +24,8 @@ export const declineFor = (c?: AskCompany | null) =>
   isGroup(c) ? DECLINE : `I can only help with questions about ${c!.display_name} and its shares, based on the documents in this portal.`;
 /** Whether an answer is a decline (any company's wording). */
 export const isDecline = (answer: string) => answer.trim().startsWith('I can only help with questions about');
-/** "Ask Lakeba" for the group, "Ask Ezifin" for a venture. */
-export const askName = (c?: AskCompany | null) => (isGroup(c) ? 'Ask Lakeba' : `Ask ${c!.display_name}`);
+/** "Ask Lakeba" for the group, "Ask Ezifin" for a venture, or the name set in its venture settings. */
+export const askName = (c?: AskCompany | null) => c?.ask_name?.trim() || (isGroup(c) ? 'Ask Lakeba' : `Ask ${c!.display_name}`);
 
 /** The locked core rules; house rules are added after them and cannot override them. */
 export const CORE_RULES = `You are Ask Lakeba, the assistant in the Lakeba Group Limited investor portal, chatting with a shareholder or director.
@@ -48,7 +48,7 @@ function ventureRules(c: AskCompany) {
   const name = c.legal_name || c.display_name;
   return CORE_RULES
     .replace('You are Ask Lakeba, the assistant in the Lakeba Group Limited investor portal, chatting with a shareholder or director.',
-      `You are ${askName(c)}, the assistant in the ${c.display_name} investor portal (provided by Lakeba Group, which controls ${c.display_name}), chatting with a shareholder or director of ${name}.`)
+      `You are ${askName(c)}, the assistant in the ${c.display_name} investor portal (provided by Lakeba Group, ${c.relationship === 'controlled' ? 'which controls' : 'a shareholder in'} ${c.display_name}), chatting with a shareholder or director of ${name}.`)
     .replace("Scope — answer only questions about Lakeba Group Limited, its ventures, its shares, governance, meetings and results, using only the material provided: the portal facts sheet, the company documents published in the portal, the News & Media published on Lakeba's own website, and the approved answers from Lakeba.",
       `Scope — answer only questions about ${name}, its shares, governance, meetings and results, using only the material provided: the portal facts sheet, the company documents published in the portal, News & Media about ${c.display_name} published on Lakeba's website, and the approved answers from ${c.display_name}. Do not discuss Lakeba Group's own results, shares or other ventures beyond what this material says.`)
     .replace(`"${DECLINE}"`, `"${declineFor(c)}"`)

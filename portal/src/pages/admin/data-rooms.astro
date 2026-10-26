@@ -8,6 +8,7 @@ import { adminScope, formCompany, withCompany } from '../../lib/admin-company';
 import { DEFAULT_NDA, newGuestToken } from '../../lib/data-rooms';
 import { field } from '../../lib/forms';
 import { sendMail } from '../../lib/mail';
+import { brandOf } from '../../lib/brand';
 import { dateTime, shortDate } from '../../lib/format';
 
 // Data rooms for prospective investors (see the data_rooms migration). All
@@ -33,10 +34,10 @@ async function invite(room: { id: string; entity_id: string; name: string }, gue
   const { data: row, error: e } = await svc.from('data_room_guests').insert({ room_id: room.id, ...guest, token_hash: tokenHash, expires_at: expires, invited_by: userId }).select('id').single();
   if (e || !row) return { error: e?.message ?? 'Could not add the guest.' };
   const company = scope.companies.find((c) => c.id === room.entity_id);
-  const brand = company && company.relationship !== 'group' ? { brand: company.display_name, color: company.brand_color ?? undefined } : {};
+  const brand = brandOf(company);
   const link = `${Astro.url.origin}/room/${token}`;
   await sendMail({
-    to: guest.email, subject: `${company?.display_name ?? 'Lakeba'}: confidential data room – ${room.name}`, ...brand,
+    to: guest.email, subject: `${company?.display_name ?? 'Lakeba'}: confidential data room – ${room.name}`, brand,
     text: `Hello ${guest.name},\n\nYou have been invited to the ${room.name} data room. It holds confidential documents for you to review. Please read and agree to the confidentiality terms when you open it.\n\nThis link is personal to you; please don't forward it. It works until ${shortDate.format(new Date(expires))}.`,
     link, linkLabel: 'Open the data room',
     footer: 'You receive this because you were invited to a confidential data room. Documents you open are marked with your name.',

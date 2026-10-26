@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { loadPositions, loadPrices } from '../../lib/holdings';
 import { holdingStatementPdf } from '../../lib/statement';
 import { brandName, companyIdentity, legalName } from '../../lib/companies';
+import { brandOf } from '../../lib/brand';
 
 /** Personal holding statement PDF for one of the user's holders. */
 export const GET: APIRoute = async ({ params, url, locals }) => {
@@ -13,7 +14,7 @@ export const GET: APIRoute = async ({ params, url, locals }) => {
 
   const price = (await loadPrices(supabase, position.row.share_class_id)).at(-1);
   const issuer = locals.companies.find((c) => c.id === position.row.share_classes?.entity_id) ?? null;
-  const pdf = await holdingStatementPdf(position, price, locals.profile?.email ?? '', { legal: legalName(issuer), short: brandName(issuer), identity: companyIdentity(issuer) });
+  const pdf = await holdingStatementPdf(position, price, locals.profile?.email ?? '', { legal: legalName(issuer), short: brandName(issuer), identity: companyIdentity(issuer), contact: brandOf(issuer).contactEmail, footer: brandOf(issuer).documentFooter });
   await supabase.rpc('log_event', { event_action: 'statement_downloaded', event_detail: { holder_id: position.holder.id } });
 
   const name = `${brandName(issuer).replace(/[^A-Za-z0-9]+/g, '-')}-holding-statement-${position.holder.name.replace(/[^A-Za-z0-9]+/g, '-')}.pdf`;

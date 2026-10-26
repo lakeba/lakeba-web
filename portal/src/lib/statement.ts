@@ -8,8 +8,11 @@ const INK = rgb(0.043, 0.114, 0.216);
 const MUTED = rgb(0.42, 0.48, 0.56);
 
 /** A personal holding statement for one holder and share class. */
-/** issuer: the company whose shares these are (legal name for the heading, its ACN/ABN under it, short name in the notes). */
-export async function holdingStatementPdf(position: Position, price: Price | undefined, recipient: string, issuer: { legal: string; short: string; identity?: string } = { legal: 'Lakeba Group Limited', short: 'Lakeba' }) {
+/**
+ * issuer: the company whose shares these are (legal name for the heading, its ACN/ABN under it, short name in the notes),
+ * where questions go, and its own footer line from its venture settings, if any.
+ */
+export async function holdingStatementPdf(position: Position, price: Price | undefined, recipient: string, issuer: { legal: string; short: string; identity?: string; contact?: string; footer?: string | null } = { legal: 'Lakeba Group Limited', short: 'Lakeba' }) {
   const pdf = await PDFDocument.create();
   pdf.setTitle(`Holding statement – ${position.holder.name}`);
   pdf.setAuthor(issuer.legal);
@@ -94,6 +97,7 @@ export async function holdingStatementPdf(position: Position, price: Price | und
     text(`Indicative only. ${issuer.short} shares are unlisted; this is not a valuation, an offer or financial advice.`, left, y, { size: 8, color: MUTED });
   }
 
-  text(`Prepared for ${recipient} from the ${issuer.short} Investor Portal${issuer.short === 'Lakeba' ? '' : ', powered by Lakeba'}. Questions: info@lakeba.com`, left, 48, { size: 8, color: MUTED });
+  if (issuer.footer) text(issuer.footer, left, 60, { size: 8, color: MUTED });
+  text(`Prepared for ${recipient} from the ${issuer.short} Investor Portal${issuer.short === 'Lakeba' ? '' : ', powered by Lakeba'}. Questions: ${issuer.contact ?? 'info@lakeba.com'}`, left, 48, { size: 8, color: MUTED });
   return pdf.save();
 }

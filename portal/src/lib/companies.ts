@@ -1,5 +1,6 @@
 import type { AstroCookies } from 'astro';
 import type { SupabaseClient } from '@supabase/supabase-js';
+import { brandOf } from './brand';
 
 /*
  * Which companies a signed-in person belongs to, and which one they are
@@ -10,6 +11,10 @@ export type Company = {
   id: string; code: string; display_name: string; legal_name: string | null; relationship: 'group' | 'controlled' | 'portfolio';
   portal: 'full' | 'portfolio' | 'none'; brand_color: string | null; tagline: string; logo_url: string | null; website: string | null;
   company_number: string | null; country: string | null;
+  /** Venture settings (see brand.ts); empty means Lakeba's. */
+  slug: string | null; custom_domain: string | null; sender_name: string | null; reply_to: string | null; contact_email: string | null;
+  ask_name: string | null; email_footer: string | null; document_footer: string | null;
+  ask_enabled: boolean; board_qa_enabled: boolean;
 };
 export type CompanyContext = {
   /** Companies with a full portal that this person belongs to (all of them for admins). */
@@ -23,7 +28,8 @@ export type CompanyContext = {
 };
 
 export const COMPANY_COOKIE = 'lakeba-company';
-const COLUMNS = 'id, code, display_name, legal_name, relationship, portal, brand_color, tagline, logo_url, website, company_number, country';
+export const COLUMNS = 'id, code, display_name, legal_name, relationship, portal, brand_color, tagline, logo_url, website, company_number, country, '
+  + 'slug, custom_domain, sender_name, reply_to, contact_email, ask_name, email_footer, document_footer, ask_enabled, board_qa_enabled';
 
 export async function loadCompanyContext(supabase: SupabaseClient, cookies: AstroCookies): Promise<CompanyContext> {
   const [{ data: memberIds }, { data: visible }, { data: admins }] = await Promise.all([
@@ -40,8 +46,8 @@ export async function loadCompanyContext(supabase: SupabaseClient, cookies: Astr
 }
 
 /** Brand name for headings: "Lakeba" for the group, otherwise the company's name. */
-export const brandName = (c: Company | null) => (!c || c.relationship === 'group' ? 'Lakeba' : c.display_name);
-export const legalName = (c: Company | null) => c?.legal_name || c?.display_name || 'Lakeba Group Limited';
+export const brandName = (c: Company | null) => brandOf(c).name;
+export const legalName = (c: Company | null) => brandOf(c).legalName;
 /**
  * The company's registration line for documents: "ACN 123 456 789" (9 digits)
  * or "ABN 12 345 678 901" (11 digits), as entered otherwise, plus the country

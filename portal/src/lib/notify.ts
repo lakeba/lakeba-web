@@ -1,5 +1,6 @@
 import { serviceClient } from './admin';
 import { sendMail } from './mail';
+import { BRAND_COLUMNS, brandOf } from './brand';
 import { DIGESTED, categoryOf, pushText } from './notification-events';
 import { preferences, queuePush } from './push';
 import { createSignInLink } from './sign-in-links';
@@ -48,7 +49,7 @@ export async function memberIds(entityId?: string) {
 
 async function companyOf(svc: Svc, entityId?: string) {
   if (!entityId) return null;
-  const { data } = await svc.from('entities').select('code, display_name, relationship, brand_color').eq('id', entityId).single();
+  const { data } = await svc.from('entities').select(BRAND_COLUMNS).eq('id', entityId).single();
   return data;
 }
 
@@ -70,10 +71,10 @@ export async function notifyMembers({ title, body, link, kind, userIds, origin, 
   const company = await companyOf(svc, entityId);
   // Open the portal on the right company first (tracked /go/ links work signed out, so they stay as they are).
   const via = (href: string) => (company && href.startsWith('/') && !href.startsWith('/go/') ? `/company/${company.code}?next=${encodeURIComponent(href)}` : href);
-  const brand = company && company.relationship !== 'group' ? company.display_name : 'Lakeba';
+  const brand = brandOf(company);
 
   if (inbox) await svc.from('notifications').insert(recipients.map((user_id) => ({ user_id, kind, title, body, link: via(link), entity_id: entityId ?? null }))).throwOnError();
-  if (!categoryOf(kind)?.emailOnly) await queuePush(svc, recipients, kind, { ...pushText(kind, brand, pushDetail), url: via(link), tag: kind });
+  if (!categoryOf(kind)?.emailOnly) await queuePush(svc, recipients, kind, { ...pushText(kind, brand.name, pushDetail), url: via(link), tag: kind });
   if (!email) return recipients.length;
   const category = categoryOf(kind);
   const prefs = category ? await preferences(svc, recipients, category.key) : null;
@@ -89,7 +90,7 @@ export async function notifyMembers({ title, body, link, kind, userIds, origin, 
   const personal = !emailLink && link.startsWith('/') && category?.audience === 'investor' && !category.locked;
   await Promise.allSettled(
     (profiles ?? []).map(async (p) => sendMail({
-      to: p.email, subject: title, brand, color: brand === 'Lakeba' ? undefined : company?.brand_color ?? undefined,
+      to: p.email, subject: title, brand,
       text: personal ? `${body}\n\nThe button below signs you in once, within ${NOTIFY_LINK_HOURS / 24} days, and only for you.` : body,
       link: personal ? await createSignInLink(svc, { userId: p.id, origin, next: via(link), hours: NOTIFY_LINK_HOURS }) : new URL(via(emailLink ?? link), origin).href,
       linkLabel: personal ? 'Open in the portal' : undefined,

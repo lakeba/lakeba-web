@@ -19,6 +19,8 @@ import { LIVE, fills, forgetTradingSetting, latestShares, refreshStatus, trading
 const svc = serviceClient();
 const scope = await adminScope(Astro.locals, Astro.url);
 const company = scope.selected ?? scope.defaultCompany;
+// Trading for a venture waits for legal advice or the Assetora agreement: only a Lakeba group admin can switch it on.
+const lockedOn = Boolean(company && company.relationship !== 'group' && !scope.isGroupAdmin);
 const userId = Astro.locals.user!.id;
 let notice = '';
 let error = '';
@@ -42,11 +44,13 @@ if (company && Astro.request.method === 'POST') {
   };
   if (intent === 'settings') {
     const opens = field(form, 'window_opens') || null, closes = field(form, 'window_closes') || null;
+    const turningOn = form.get('enabled') === 'on' && !(await tradingSettings(svc, company.id)).enabled;
     if (opens && closes && closes < opens) error = 'The window must close after it opens.';
+    else if (turningOn && lockedOn) error = 'Trading for this company can only be switched on by a Lakeba group admin.';
     else {
       await svc.from('trading_settings').upsert({ entity_id: company.id, enabled: form.get('enabled') === 'on', window_opens: opens, window_closes: closes, rules: field(form, 'rules'), show_book: form.get('show_book') === 'on', updated_by: userId, updated_at: new Date().toISOString() }).throwOnError();
       forgetTradingSetting(company.id);
-      await log('admin_saved_trading_settings', { enabled: form.get('enabled') === 'on', opens, closes });
+      await log('admin_saved_trading_settings', { company: company.code, enabled: form.get('enabled') === 'on', opens, closes });
       notice = 'Trading settings saved.';
     }
   } else if (intent === 'pair') {
@@ -158,7 +162,8 @@ const statusTone: Record<string, string> = { open: 'bg-white/10 text-white/70', 
         </summary>
         <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
           <input type="hidden" name="intent" value="settings" />
-          <label class="flex items-center gap-3 text-sm sm:col-span-2"><input type="checkbox" name="enabled" checked={settings.enabled} class="size-4 accent-lk-blue" /> Show the trading board to {company.display_name} shareholders</label>
+          <label class="flex items-center gap-3 text-sm sm:col-span-2"><input type="checkbox" name="enabled" checked={settings.enabled} disabled={lockedOn && !settings.enabled} class="size-4 accent-lk-blue" /> Show the trading board to {company.display_name} shareholders</label>
+          {lockedOn && !settings.enabled && <p class="-mt-2 text-xs text-white/45 sm:col-span-2">Only a Lakeba group admin can switch trading on for a venture.</p>}
           <div><label class="label" for="window_opens">Window opens (optional)</label><input id="window_opens" name="window_opens" type="date" value={settings.window_opens ?? ''} class="field" /></div>
           <div><label class="label" for="window_closes">Window closes (optional)</label><input id="window_closes" name="window_closes" type="date" value={settings.window_closes ?? ''} class="field" /></div>
           <label class="flex items-center gap-3 text-sm sm:col-span-2"><input type="checkbox" name="show_book" checked={settings.show_book} class="size-4 accent-lk-blue" /> Show shareholders an anonymous order book (prices and share numbers, no names)</label>

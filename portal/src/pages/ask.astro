@@ -8,7 +8,7 @@ const { company, features, t } = Astro.locals;
 if (!company) return Astro.redirect('/');
 const off = !features.ask;
 const isGroup = company.relationship === 'group';
-const title = t('Ask {brand}', { brand: isGroup ? 'Lakeba' : company.display_name });
+const title = company.ask_name?.trim() || t('Ask {brand}', { brand: isGroup ? 'Lakeba' : company.display_name });
 const name = company.display_name;
 const examples = isGroup ? [
   t('What were the FY24 revenue and profit?'),

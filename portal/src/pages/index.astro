@@ -8,7 +8,7 @@ import { holdingAnchor } from '../lib/note-banner';
 import { inCompany, isShareClass, latestPrices, loadPositions, loadPrices, sourceLabels } from '../lib/holdings';
 import { myHolderIds, onBoardOf, onlyMyDocuments } from '../lib/scope';
 import { loadNews } from '../lib/news';
-import { legalName } from '../lib/companies';
+import { brandName, legalName } from '../lib/companies';
 import { categoryLabels, holderKinds } from '../lib/format';
 
 const supabase = Astro.locals.supabase;
@@ -182,7 +182,7 @@ const [noHoldingsBefore, noHoldingsAfter] = t('If you are a shareholder, ask a q
           <p class="font-display text-3xl font-bold text-white">{audPrecise.format(price.price)}</p>
         </div>
         <Sparkline class="mt-6 h-28 w-full" points={prices.map((pr) => ({ label: `${shortDate.format(new Date(pr.priced_on))}: ${audPrecise.format(pr.price)} (${t(sourceLabels[pr.source] ?? pr.source)})`, value: pr.price }))} />
-        <p class="mt-3 text-xs text-white/35">{t('Indicative only. Lakeba shares are unlisted; values use the latest capital raise, secondary trade or directors’ valuation and are not financial advice.')}</p>
+        <p class="mt-3 text-xs text-white/35">{t('Indicative only. {company} shares are unlisted; values use the latest capital raise, secondary trade or directors’ valuation and are not financial advice.', { company: brandName(company) })}</p>
       </section>
     )}
 

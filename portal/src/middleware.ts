@@ -84,8 +84,9 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.access = await loadAccess(serviceClient(), locals.user.id, locals.user.aal === 'aal2');
   const { data: flags } = await locals.supabase.rpc('my_portal_flags').maybeSingle();
   locals.features = {
-    ask: (flags as { ask_enabled?: boolean } | null)?.ask_enabled ?? true,
-    boardQa: (flags as { board_qa_enabled?: boolean } | null)?.board_qa_enabled ?? true,
+    // The person's own switches, and the company's (Admin → Companies → Venture settings).
+    ask: ((flags as { ask_enabled?: boolean } | null)?.ask_enabled ?? true) && (locals.company?.ask_enabled ?? true),
+    boardQa: ((flags as { board_qa_enabled?: boolean } | null)?.board_qa_enabled ?? true) && (locals.company?.board_qa_enabled ?? true),
     trading: locals.company ? await tradingEnabled(serviceClient(), locals.company.id) : false,
   };
 

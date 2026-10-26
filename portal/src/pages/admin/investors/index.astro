@@ -4,6 +4,7 @@ import PageHeader from '../../../components/PageHeader.astro';
 import Alert from '../../../components/Alert.astro';
 import { serviceClient } from '../../../lib/admin';
 import { sendInvite, sendWelcome } from '../../../lib/admin-auth';
+import { brandOf } from '../../../lib/brand';
 import { adminScope } from '../../../lib/admin-company';
 import { memberIds } from '../../../lib/notify';
 import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
@@ -23,7 +24,6 @@ const BATCH = 50;
 let error = '';
 let notice = '';
 let shareLink = '';
-const brandOf = (c: typeof welcomeCompany) => (c && c.relationship !== 'group' ? { name: c.display_name, color: c.brand_color } : undefined);
 
 /** People with a holding in this company who have never signed in, and whether they were already welcomed. */
 async function welcomeCandidates(entityId: string) {

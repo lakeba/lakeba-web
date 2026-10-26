@@ -6,6 +6,7 @@ import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { displayName } from '../../../lib/admin-forms';
 import { shortDate } from '../../../lib/format';
+import { brandOf } from '../../../lib/brand';
 import { CLASS_KINDS, PORTAL_ACCESS, POSITIONS, RELATIONSHIPS, amount, changes, classBlocker, fmt, isDate, wholeShares } from '../../../lib/register';
 
 // One company: its details, its share classes (add, edit, remove when
@@ -53,6 +54,32 @@ if (Astro.request.method === 'POST') {
         await svc.from('entities').update(next).eq('id', c.id).throwOnError();
         await log('register_company_updated', { changes: lines });
         return 'Details saved.';
+      } };
+    }
+    if (op === 'venture') {
+      const text = (k: string, max: number) => field(form, k).trim().slice(0, max) || null;
+      const email = (k: string) => field(form, k).trim().toLowerCase() || null;
+      const next: Record<string, unknown> = {
+        sender_name: text('sender_name', 80), reply_to: email('reply_to'), contact_email: email('contact_email'),
+        ask_name: text('ask_name', 40), email_footer: text('email_footer', 500), document_footer: text('document_footer', 300),
+        ask_enabled: form.get('ask_enabled') === 'on', board_qa_enabled: form.get('board_qa_enabled') === 'on',
+      };
+      // The addresses decide where the venture's portal is reached, so they stay with people who manage the whole register.
+      if (mayGroup && c.relationship !== 'group') Object.assign(next, { slug: field(form, 'slug').trim().toLowerCase() || null, custom_domain: field(form, 'custom_domain').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '') || null });
+      const isEmail = (v: unknown) => v == null || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v));
+      if (!isEmail(next.reply_to) || !isEmail(next.contact_email)) return 'Enter the email addresses in full, e.g. investors@mist.com.';
+      if (next.slug != null && !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(String(next.slug))) return 'The address name is up to 40 lowercase letters, digits or hyphens, e.g. mist.';
+      if (next.custom_domain != null && !/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/.test(String(next.custom_domain))) return 'Enter the domain only, e.g. investors.mist.com.';
+      if (next.slug && next.slug !== c.slug && (await svc.from('entities').select('id').eq('slug', next.slug).neq('id', c.id).maybeSingle()).data) return `${next.slug} is already used by another company.`;
+      if (next.custom_domain && next.custom_domain !== c.custom_domain && (await svc.from('entities').select('id').eq('custom_domain', next.custom_domain).neq('id', c.id).maybeSingle()).data) return `${next.custom_domain} is already used by another company.`;
+      const yesNo = (v: unknown) => (v ? 'On' : 'Off');
+      const lines = changes(c, next, { slug: 'Lakeba address', custom_domain: 'Own domain', sender_name: 'Sender name', reply_to: 'Replies go to', contact_email: 'Contact email', ask_name: 'Name of Ask', email_footer: 'Email footer', document_footer: 'Document footer', ask_enabled: 'Ask', board_qa_enabled: 'Board Q&A' },
+        (k, v) => (k === 'ask_enabled' || k === 'board_qa_enabled' ? yesNo(v) : fmt(v)));
+      if (!lines.length) return 'Nothing changed.';
+      return { title: 'Save these venture settings?', lines, apply: async () => {
+        await svc.from('entities').update(next).eq('id', c.id).throwOnError();
+        await log('company_venture_settings_saved', { changes: lines });
+        return 'Venture settings saved.';
       } };
     }
     if (op === 'add-class' || op === 'edit-class') {
@@ -261,6 +288,29 @@ const sel = 'field !py-1.5 text-sm';
         )}
         {mayEdit && <button name="intent" value="review" class="btn-ghost w-full">Check and save</button>}
         <p class="text-xs text-white/40">Logo, colour, tagline and portfolio entry: <a href="/admin/ventures" class="text-lk-blue hover:underline">Ventures &amp; prices</a>.</p>
+      </form>
+
+      <form method="post" class="card mt-6 space-y-3">
+        <h2 class="font-display text-lg font-bold">Venture settings</h2>
+        <p class="text-xs text-white/45">How {c.display_name} appears to its investors. Leave a field empty to use Lakeba’s.</p>
+        <input type="hidden" name="op" value="venture" />
+        {c.relationship !== 'group' && (
+          <>
+            <div><label class="label" for="slug">Lakeba address</label><div class="flex items-center gap-1"><input id="slug" name="slug" value={c.slug ?? ''} placeholder={c.code.toLowerCase()} class="field" disabled={!mayEdit || !mayGroup} /><span class="shrink-0 text-xs text-white/45">.investors.lakeba.com</span></div></div>
+            <div><label class="label" for="custom_domain">Own domain (optional)</label><input id="custom_domain" name="custom_domain" value={c.custom_domain ?? ''} placeholder="investors.example.com" class="field" disabled={!mayEdit || !mayGroup} /><p class="mt-1 text-xs text-white/40">Saved for later: venture addresses aren’t live yet.</p></div>
+          </>
+        )}
+        <div><label class="label" for="sender_name">Emails come from</label><input id="sender_name" name="sender_name" value={c.sender_name ?? ''} maxlength="80" placeholder="Lakeba’s usual sender" class="field" disabled={!mayEdit} /></div>
+        <div><label class="label" for="reply_to">Replies go to</label><input id="reply_to" name="reply_to" type="email" value={c.reply_to ?? ''} placeholder="No reply-to address" class="field" disabled={!mayEdit} /></div>
+        <div><label class="label" for="contact_email">Contact email</label><input id="contact_email" name="contact_email" type="email" value={c.contact_email ?? ''} placeholder={brandOf(null).contactEmail} class="field" disabled={!mayEdit} /><p class="mt-1 text-xs text-white/40">In the portal footer and on holding statements.</p></div>
+        <div><label class="label" for="ask_name">Name of Ask</label><input id="ask_name" name="ask_name" value={c.ask_name ?? ''} maxlength="40" placeholder={`Ask ${brandOf(c).name}`} class="field" disabled={!mayEdit} /></div>
+        <div><label class="label" for="email_footer">Email footer</label><textarea id="email_footer" name="email_footer" rows="2" maxlength="500" placeholder={`You receive this as a ${brandOf(c).name} shareholder…`} class="field text-sm" disabled={!mayEdit}>{c.email_footer ?? ''}</textarea></div>
+        <div><label class="label" for="document_footer">Holding statement footer</label><textarea id="document_footer" name="document_footer" rows="2" maxlength="300" placeholder="Nothing extra" class="field text-sm" disabled={!mayEdit}>{c.document_footer ?? ''}</textarea></div>
+        <div class="space-y-2 text-sm">
+          <label class="flex items-center gap-3"><input type="checkbox" name="ask_enabled" checked={c.ask_enabled} class="size-4 accent-lk-blue" disabled={!mayEdit} /> Ask is on for {c.display_name}’s investors</label>
+          <label class="flex items-center gap-3"><input type="checkbox" name="board_qa_enabled" checked={c.board_qa_enabled} class="size-4 accent-lk-blue" disabled={!mayEdit} /> Board Q&amp;A is on for {c.display_name}’s investors</label>
+        </div>
+        {mayEdit && <button name="intent" value="review" class="btn-ghost w-full">Check and save</button>}
       </form>
     </aside>
   </div>
