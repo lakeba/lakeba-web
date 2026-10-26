@@ -31,6 +31,8 @@ declare namespace App {
     writing: boolean;
     /** Per-person switches set by admins (Admin → Investors). */
     features: { ask: boolean; boardQa: boolean; trading: boolean };
+    /** View as investor (investor-view.ts): offered to admins, available when they hold shares, on for this session. */
+    investorView: import('./lib/investor-view').InvestorView;
     /** Which address the request came to (sites.ts): the central one, a venture's, or any other (one portal, as before). */
     site: { kind: import('./lib/sites').SiteKind; venture: import('./lib/companies').Company | null; central: string };
     /** Interface language, its translate function and date/number formats. */

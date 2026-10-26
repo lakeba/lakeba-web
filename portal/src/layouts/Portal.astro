@@ -8,6 +8,7 @@ import { brandName } from '../lib/companies';
 import { accentOf, brandOf } from '../lib/brand';
 import NoteBanner from '../components/NoteBanner.astro';
 import { HTML_LANG } from '../lib/i18n';
+import { ADMIN_KINDS } from '../lib/investor-view';
 interface Props { title: string }
 const { title } = Astro.props;
 const { profile, supabase, user, company, companies, adminOf, features, t, locale } = Astro.locals;
@@ -47,9 +48,11 @@ const switchHref = (code: string) => `/company/${code}?next=${encodeURIComponent
 const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
 const initials = `${profile?.first_name?.[0] ?? ''}${profile?.last_name?.[0] ?? ''}`.toUpperCase() || '·';
 
-const { count: unread } = user
-  ? await supabase.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null)
-  : { count: 0 };
+// View as investor (investor-view.ts): admin notifications stay out of sight too.
+const view = Astro.locals.investorView;
+const unreadQuery = supabase.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null);
+const { count: unread } = user ? await (view.on ? unreadQuery.not('kind', 'in', ADMIN_KINDS) : unreadQuery) : { count: 0 };
+const here = `${path}${Astro.url.search}`;
 ---
 
 <!doctype html>
@@ -76,6 +79,15 @@ const { count: unread } = user
       <div class="absolute -top-48 left-1/4 h-[30rem] w-[30rem] rounded-full bg-lk-blue/15 blur-[120px]"></div>
     </div>
     <header class="sticky top-0 z-40 border-b border-white/5 bg-ink/80 backdrop-blur-xl">
+      {view.on && (
+        <div class="bg-lk-orange/15 text-sm text-white/85">
+          <form method="post" action="/account/view" class="container-portal flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-1.5">
+            <span>{t('You’re viewing the portal as an investor.')}</span>
+            <input type="hidden" name="next" value={here} />
+            <button name="view" value="admin" class="font-medium text-lk-orange hover:underline">{t('View as admin')}</button>
+          </form>
+        </div>
+      )}
       <div class="container-portal flex h-16 items-center justify-between gap-4">
         {onVenture && company ? (
         <a href="/" class="flex min-w-0 shrink items-center gap-2.5">
@@ -128,6 +140,16 @@ const { count: unread } = user
               <a href="/account/security" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Security')}</a>
               <a href="/account/notifications" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Notifications')}</a>
               <a href="/inbox" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Inbox')}</a>
+              {view.offered && (
+                <form method="post" action="/account/view" class="border-t border-white/5 mt-1 pt-1">
+                  <input type="hidden" name="next" value={here} />
+                  {view.on
+                    ? <button name="view" value="admin" class="w-full rounded-lg px-3 py-2 text-left hover:bg-white/5">{t('View as admin')}</button>
+                    : view.available
+                      ? <button name="view" value="investor" class="w-full rounded-lg px-3 py-2 text-left hover:bg-white/5">{t('View as investor')}</button>
+                      : <button type="button" disabled class="w-full cursor-not-allowed rounded-lg px-3 py-2 text-left text-white/35" title={t('You don’t hold shares in any company')}>{t('View as investor')}<span class="block text-xs">{t('You don’t hold shares in any company')}</span></button>}
+                </form>
+              )}
               <form method="post" action="/logout"><button class="w-full rounded-lg px-3 py-2 text-left text-white/70 hover:bg-white/5 hover:text-white">{t('Sign out')}</button></form>
             </div>
           </details>

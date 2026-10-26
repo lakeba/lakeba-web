@@ -10,6 +10,7 @@ import { formats } from './lib/format';
 import { SUPABASE_URL, TWO_STEP_OFF_FOR_TESTING } from 'astro:env/server';
 import { centralOrigin, ownDomainVenture, refreshOwnDomains, siteOf } from './lib/sites';
 import { isKnownHost } from './lib/known-hosts.mjs';
+import { NO_VIEW, VIEW_COOKIE, investorCompanyIds, wantsInvestorView } from './lib/investor-view';
 
 // Sends queued browser notifications and runs scheduled ones (reminders, daily summaries).
 startNotificationWorker();
@@ -46,6 +47,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.group = null;
   locals.adminOf = [];
   locals.access = NO_ACCESS;
+  locals.investorView = NO_VIEW;
   locals.writing = !['GET', 'HEAD'].includes(context.request.method);
   locals.features = { ask: false, boardQa: false, trading: false };
   // Language: ?lang= (remembered in a cookie), else the cookie, else the browser; the profile choice wins once signed in.
@@ -93,6 +95,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   if (!locals.user) {
+    // A session's investor view ends with it.
+    if (wantsInvestorView(context.cookies)) context.cookies.delete(VIEW_COOKIE, { path: '/' });
     if (matches(path, PUBLIC_PATHS)) return done(await next());
     if (site.kind === 'venture') return redirect(`${locals.site.central}/login?${new URLSearchParams({ ...(site.slug ? { venture: site.slug } : {}), next: url.href })}`, 302);
     return redirect(`/login?next=${encodeURIComponent(path + url.search)}`);
@@ -119,14 +123,30 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.company = companyContext.current;
   locals.group = companyContext.group;
   locals.adminOf = companyContext.adminOf;
+  // Roles (System → Users); their permissions count only after two-step, like the database's can().
+  locals.access = await loadAccess(serviceClient(), locals.user.id, locals.user.aal === 'aal2');
+  const staff = locals.access.staff;
+  // View as investor (investor-view.ts): an admin who holds shares, without their admin powers for now.
+  if (staff || locals.adminOf.length > 0 || profile?.role === 'admin') {
+    const own = await investorCompanyIds(serviceClient(), locals.user.id);
+    const on = own.holdings.size > 0 && wantsInvestorView(context.cookies);
+    locals.investorView = { offered: true, available: own.holdings.size > 0, on };
+    if (on) {
+      locals.access = NO_ACCESS;
+      locals.adminOf = [];
+      if (locals.profile) locals.profile = { ...locals.profile, role: 'investor' };
+      locals.companies = locals.companies.filter((c) => own.all.has(c.id));
+      locals.group = locals.companies.find((c) => c.relationship === 'group') ?? null;
+      locals.company = locals.companies.find((c) => c.id === locals.company?.id) ?? locals.group ?? locals.companies[0] ?? null;
+      if (matches(path, ['/admin', '/api/admin'])) return locals.writing ? new Response('Forbidden', { status: 403 }) : redirect('/');
+    }
+  }
   // On a venture's own domain, that venture is the company being viewed; people who don't belong to it go to the central address.
   if (locals.site.venture) {
     const mine = locals.companies.find((c) => c.id === locals.site.venture!.id);
     if (!mine) return redirect(`${locals.site.central}/?unavailable=${locals.site.venture.code}`, 302);
     locals.company = mine;
   }
-  // Roles (System → Users); their permissions count only after two-step, like the database's can().
-  locals.access = await loadAccess(serviceClient(), locals.user.id, locals.user.aal === 'aal2');
   const { data: flags } = await locals.supabase.rpc('my_portal_flags').maybeSingle();
   locals.features = {
     // The person's own switches, and the company's (Admin → Companies → Venture settings).
@@ -136,7 +156,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   };
 
   // Anyone with a staff role cannot use the portal until they have enrolled MFA.
-  if (locals.access.staff && !locals.mfaEnrolled && !twoStepOff && !matches(path, MFA_PATHS)) {
+  if (staff && !locals.mfaEnrolled && !twoStepOff && !matches(path, MFA_PATHS)) {
     return redirect('/mfa/setup?required=1');
   }
 

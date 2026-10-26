@@ -3,6 +3,7 @@ import Portal from '../layouts/Portal.astro';
 import PageHeader from '../components/PageHeader.astro';
 import Empty from '../components/Empty.astro';
 import { serviceClient } from '../lib/admin';
+import { ADMIN_KINDS } from '../lib/investor-view';
 
 const { supabase, t, fmt } = Astro.locals;
 if (Astro.request.method === 'POST') {
@@ -14,7 +15,9 @@ if (Astro.request.method === 'POST') {
 }
 // Show which company a notification is from when someone has more than one.
 const companyOf = (id: string | null) => (Astro.locals.companies.length > 1 ? Astro.locals.companies.find((c) => c.id === id)?.display_name : undefined);
-const { data: items } = await supabase.from('notifications').select('id, title, body, link, created_at, read_at, entity_id').order('created_at', { ascending: false }).limit(100);
+const listed = supabase.from('notifications').select('id, title, body, link, created_at, read_at, entity_id').order('created_at', { ascending: false }).limit(100);
+// View as investor: admin notifications stay out of sight.
+const { data: items } = await (Astro.locals.investorView.on ? listed.not('kind', 'in', ADMIN_KINDS) : listed);
 const unread = (items ?? []).filter((n) => !n.read_at).length;
 ---
 
