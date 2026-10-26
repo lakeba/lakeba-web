@@ -7,6 +7,7 @@ import { field } from '../../../lib/forms';
 import { displayName } from '../../../lib/admin-forms';
 import { shortDate } from '../../../lib/format';
 import { brandOf } from '../../../lib/brand';
+import { RESERVED_SLUGS, forgetVentureSites } from '../../../lib/sites';
 import { CLASS_KINDS, PORTAL_ACCESS, POSITIONS, RELATIONSHIPS, amount, changes, classBlocker, fmt, isDate, wholeShares } from '../../../lib/register';
 
 // One company: its details, its share classes (add, edit, remove when
@@ -52,6 +53,7 @@ if (Astro.request.method === 'POST') {
       if (!lines.length) return 'Nothing changed.';
       return { title: 'Save these details?', lines, apply: async () => {
         await svc.from('entities').update(next).eq('id', c.id).throwOnError();
+        forgetVentureSites();
         await log('register_company_updated', { changes: lines });
         return 'Details saved.';
       } };
@@ -70,6 +72,7 @@ if (Astro.request.method === 'POST') {
       if (!isEmail(next.reply_to) || !isEmail(next.contact_email)) return 'Enter the email addresses in full, e.g. investors@mist.com.';
       if (next.slug != null && !/^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$/.test(String(next.slug))) return 'The address name is up to 40 lowercase letters, digits or hyphens, e.g. mist.';
       if (next.custom_domain != null && !/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/.test(String(next.custom_domain))) return 'Enter the domain only, e.g. investors.mist.com.';
+      if (next.slug && RESERVED_SLUGS.includes(String(next.slug))) return `${next.slug} is a page of the portal; choose another address name.`;
       if (next.slug && next.slug !== c.slug && (await svc.from('entities').select('id').eq('slug', next.slug).neq('id', c.id).maybeSingle()).data) return `${next.slug} is already used by another company.`;
       if (next.custom_domain && next.custom_domain !== c.custom_domain && (await svc.from('entities').select('id').eq('custom_domain', next.custom_domain).neq('id', c.id).maybeSingle()).data) return `${next.custom_domain} is already used by another company.`;
       const yesNo = (v: unknown) => (v ? 'On' : 'Off');
@@ -78,6 +81,7 @@ if (Astro.request.method === 'POST') {
       if (!lines.length) return 'Nothing changed.';
       return { title: 'Save these venture settings?', lines, apply: async () => {
         await svc.from('entities').update(next).eq('id', c.id).throwOnError();
+        forgetVentureSites();
         await log('company_venture_settings_saved', { changes: lines });
         return 'Venture settings saved.';
       } };

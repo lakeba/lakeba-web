@@ -9,12 +9,15 @@ export default {
     'The company’s quarterly newsletter for shareholders, by email.': 'El boletín trimestral de la empresa para los accionistas, por correo electrónico.',
     // Sign-in layout
     'Need help?': '¿Necesita ayuda?',
+    'Your account doesn’t have access to that company’s portal. If you think it should, contact the company.': 'Tu cuenta no tiene acceso al portal de esa empresa. Si crees que debería tenerlo, ponte en contacto con la empresa.',
     // Sign in
     'That link has expired or was already used. Please sign in again.': 'Ese enlace ha caducado o ya se utilizó. Vuelva a iniciar sesión.',
     'Too many attempts. Please wait a minute and try again.': 'Demasiados intentos. Espere un minuto y vuelva a intentarlo.',
     'Email or password is incorrect.': 'El correo electrónico o la contraseña no son correctos.',
     'Sign in': 'Iniciar sesión',
     'Lakeba shareholders and directors only.': 'Solo para accionistas y consejeros de Lakeba.',
+    '{company} shareholders and directors only.': 'Solo para accionistas y consejeros de {company}.',
+    'Sign in to {company}': 'Inicia sesión en {company}',
     'If an account exists for {email}, we’ve emailed a sign-in link. It expires in 1 hour.': 'Si existe una cuenta para {email}, le hemos enviado por correo un enlace para iniciar sesión. Caduca en 1 hora.',
     'Sign in with a passkey': 'Iniciar sesión con una llave de acceso',
     'or use your email': 'o use su correo electrónico',
@@ -206,12 +209,15 @@ export default {
     'The company’s quarterly newsletter for shareholders, by email.': 'La newsletter trimestrale della società per gli azionisti, via email.',
     // Sign-in layout
     'Need help?': 'Serve aiuto?',
+    'Your account doesn’t have access to that company’s portal. If you think it should, contact the company.': 'Il tuo account non ha accesso al portale di quella società. Se pensi che dovrebbe averlo, contatta la società.',
     // Sign in
     'That link has expired or was already used. Please sign in again.': 'Il link è scaduto o è già stato usato. Accedi di nuovo.',
     'Too many attempts. Please wait a minute and try again.': 'Troppi tentativi. Aspetta un minuto e riprova.',
     'Email or password is incorrect.': 'Email o password non corrette.',
     'Sign in': 'Accedi',
     'Lakeba shareholders and directors only.': 'Riservato agli azionisti e agli amministratori di Lakeba.',
+    '{company} shareholders and directors only.': 'Riservato agli azionisti e agli amministratori di {company}.',
+    'Sign in to {company}': 'Accedi a {company}',
     'If an account exists for {email}, we’ve emailed a sign-in link. It expires in 1 hour.': 'Se esiste un account per {email}, ti abbiamo inviato via email un link per accedere. Scade tra 1 ora.',
     'Sign in with a passkey': 'Accedi con una passkey',
     'or use your email': 'oppure usa la tua email',
@@ -403,12 +409,15 @@ export default {
     'The company’s quarterly newsletter for shareholders, by email.': '公司面向股东的季度通讯（电子邮件）。',
     // Sign-in layout
     'Need help?': '需要帮助？',
+    'Your account doesn’t have access to that company’s portal. If you think it should, contact the company.': '您的账户无权访问该公司的门户。如您认为应有权限，请联系该公司。',
     // Sign in
     'That link has expired or was already used. Please sign in again.': '该链接已过期或已被使用。请重新登录。',
     'Too many attempts. Please wait a minute and try again.': '尝试次数过多。请等待一分钟后重试。',
     'Email or password is incorrect.': '电子邮件或密码不正确。',
     'Sign in': '登录',
     'Lakeba shareholders and directors only.': '仅限 Lakeba 股东和董事。',
+    '{company} shareholders and directors only.': '仅限 {company} 股东和董事。',
+    'Sign in to {company}': '登录 {company}',
     'If an account exists for {email}, we’ve emailed a sign-in link. It expires in 1 hour.': '如果 {email} 存在账户，我们已向其发送登录链接。链接将在 1 小时后失效。',
     'Sign in with a passkey': '使用通行密钥登录',
     'or use your email': '或使用您的电子邮件',

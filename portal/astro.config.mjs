@@ -18,6 +18,9 @@ export default defineConfig({
       { hostname: '100.117.227.8' }, // this Mac on the Tailscale network
       { hostname: 'giuseppe-macbook-pro.tail21d16f.ts.net', protocol: 'https' }, // same, via Tailscale HTTPS
       { hostname: 'investors.lakeba.com', protocol: 'https' }, // production (Caddy in front, HTTPS only)
+      { hostname: '*.investors.lakeba.com', protocol: 'https' }, // venture addresses (mist.investors.lakeba.com)
+      { hostname: 'investors.lakeba.localhost' }, // venture addresses tested on this Mac (PORTAL_DOMAIN=investors.lakeba.localhost)
+      { hostname: '*.investors.lakeba.localhost' },
     ],
   },
   adapter: node({ mode: 'standalone' }),
@@ -52,6 +55,9 @@ export default defineConfig({
       PUSH_TEST_ENDPOINTS: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Staging tests only: address prefixes the safe fetcher may reach although they aren't public (e.g. a local stand-in).
       FETCH_TEST_PREFIXES: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // Venture addresses: the portal's own domain (investors.lakeba.com). Ventures are reached at
+      // {slug}.<this>, sign-in happens here, and the session is shared across them. Empty: one address, as before.
+      PORTAL_DOMAIN: envField.string({ context: 'server', access: 'secret', optional: true }),
       // The public website (news articles link there; it reads /api/public/news.json when built).
       PUBLIC_SITE_URL: envField.string({ context: 'server', access: 'public', default: 'https://lakeba.github.io/lakeba-web' }),
       // Rebuilds the website when public news changes: a GitHub token that may run the website's deploy workflow.

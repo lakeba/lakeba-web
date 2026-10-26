@@ -16,6 +16,8 @@ const canAdmin = Astro.locals.access.mayOpen('/admin');
 const isGroup = company?.relationship === 'group';
 const brand = brandName(company);
 const contact = brandOf(company).contactEmail;
+// On a venture's own address (sites.ts) the header carries its name; the switcher still reaches the others.
+const onVenture = Astro.locals.site?.kind === 'venture';
 
 const nav: { href: string; label: string; tag?: string }[] = [
   { href: '/', label: t('Dashboard') },
@@ -59,7 +61,7 @@ const { count: unread } = user
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="Lakeba Investors" />
+    <meta name="apple-mobile-web-app-title" content={`${brand} Investors`} />
     <meta name="theme-color" content="#050b16" />
     <ThemeInit />
     <title>{title} · {t('{brand} Investor Portal', { brand })}</title>
@@ -73,16 +75,24 @@ const { count: unread } = user
     </div>
     <header class="sticky top-0 z-40 border-b border-white/5 bg-ink/80 backdrop-blur-xl">
       <div class="container-portal flex h-16 items-center justify-between gap-4">
+        {onVenture && company ? (
+        <a href="/" class="flex min-w-0 shrink items-center gap-2.5">
+          <span class="size-3 shrink-0 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>
+          <span class="truncate font-display text-lg font-bold text-white">{company.display_name}</span>
+          <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">{t('Investors')}</span>
+        </a>
+        ) : (
         <a href="/" class="flex shrink-0 items-center gap-2.5">
           <Mark class="size-7" />
           <span class:list={["font-display text-lg font-bold text-white", company && (companies.length > 1 || !isGroup) && "hidden sm:inline"]}>lakeba</span>
           <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">{t('Investors')}</span>
         </a>
+        )}
         {company && (companies.length > 1 ? (
           <details class="relative mr-auto">
             <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label={t('Switch company')}>
-              <span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>
-              <span class="max-w-[10rem] truncate font-medium">{company.display_name}</span>
+              {!onVenture && <span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>}
+              {onVenture ? <span class="hidden font-medium sm:inline">{t('Your companies')}</span> : <span class="max-w-[10rem] truncate font-medium">{company.display_name}</span>}
               <svg viewBox="0 0 20 20" class="size-4 text-white/45" fill="currentColor" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </summary>
             <div class="glass absolute left-0 mt-2 w-64 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
@@ -96,7 +106,7 @@ const { count: unread } = user
               ))}
             </div>
           </details>
-        ) : !isGroup && (
+        ) : !isGroup && !onVenture && (
           <span class="mr-auto flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm font-medium text-white/85">
             <span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span>{company.display_name}
           </span>

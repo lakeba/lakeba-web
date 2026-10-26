@@ -16,6 +16,10 @@ const userId = Astro.locals.user!.id;
 const role = Astro.locals.profile?.role;
 const { company, companies, t, fmt } = Astro.locals;
 const { aud, audPrecise, longDate, percent, shares, shortDate } = fmt;
+// Sent here from a venture's address this person doesn't belong to.
+const unavailable = Astro.url.searchParams.has('unavailable');
+// "Ask Lakeba", "Ask Ezifin", or the company's own name for it.
+const askLabel = company?.ask_name?.trim() || t('Ask {brand}', { brand: brandName(company) });
 const isGroup = company?.relationship === 'group';
 const entityId = company?.id ?? '00000000-0000-0000-0000-000000000000';
 const [allPositions, holderIds, onBoard, allPrices] = await Promise.all([
@@ -86,6 +90,7 @@ const [noHoldingsBefore, noHoldingsAfter] = t('If you are a shareholder, ask a q
 ---
 
 <Portal title={t('Dashboard')}>
+  {unavailable && <div class="mb-4 rounded-2xl border border-white/10 px-5 py-3.5 text-sm text-white/70">{t('Your account doesn’t have access to that company’s portal. If you think it should, contact the company.')}</div>}
   {(announcements ?? []).map((a) => (
     <div class:list={['mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-5 py-3.5 text-sm', toneStyles[a.tone as keyof typeof toneStyles]]}>
       <p><span class="font-semibold text-white">{a.title}</span>{a.body && <span class="text-white/65"> · {a.body}</span>}</p>
@@ -104,7 +109,7 @@ const [noHoldingsBefore, noHoldingsAfter] = t('If you are a shareholder, ask a q
         <li class="rounded-xl border border-white/10 p-4"><p class="font-semibold text-white">{t('Your holdings')}</p><p class="mt-1 text-white/60">{t('Below: your shares, their indicative value, your holding statement and tax-time pack.')}</p></li>
         <li class="rounded-xl border border-white/10 p-4"><a href="/documents" class="font-semibold text-white hover:underline">{t('Documents')} →</a><p class="mt-1 text-white/60">{t('Annual reports, shareholder updates and meeting papers.')}</p></li>
         <li class="rounded-xl border border-white/10 p-4"><a href="/agm" class="font-semibold text-white hover:underline">{t('Meetings')} →</a><p class="mt-1 text-white/60">{t('Notices of meeting, proxy voting online and results.')}</p></li>
-        {(Astro.locals.features.boardQa || (Astro.locals.features.ask && company)) && <li class="rounded-xl border border-white/10 p-4"><a href={Astro.locals.features.ask && company ? '/ask' : '/board'} class="font-semibold text-white hover:underline">{t('Questions')} →</a><p class="mt-1 text-white/60">{Astro.locals.features.ask && company && Astro.locals.features.boardQa ? t('Ask Lakeba (AI) answers from the documents; Board Q&A reaches the board.') : Astro.locals.features.boardQa ? t('Board Q&A reaches the board.') : t('Ask Lakeba (AI) answers from the documents.')}</p></li>}
+        {(Astro.locals.features.boardQa || (Astro.locals.features.ask && company)) && <li class="rounded-xl border border-white/10 p-4"><a href={Astro.locals.features.ask && company ? '/ask' : '/board'} class="font-semibold text-white hover:underline">{t('Questions')} →</a><p class="mt-1 text-white/60">{Astro.locals.features.ask && company && Astro.locals.features.boardQa ? t('{ask} (AI) answers from the documents; Board Q&A reaches the board.', { ask: askLabel }) : Astro.locals.features.boardQa ? t('Board Q&A reaches the board.') : t('{ask} (AI) answers from the documents.', { ask: askLabel })}</p></li>}
       </ul>
       <p class="mt-4 text-sm text-white/55">{t('Tip: add a passkey for a quicker, safer sign-in')} · <a href="/account/security" class="text-lk-blue hover:underline">{t('Security')}</a></p>
     </section>

@@ -6,6 +6,7 @@ import { safeNext } from '../lib/supabase';
 import { captchaToken, field } from '../lib/forms';
 import { recordSignIn } from '../lib/sign-in';
 import { clientStrings } from '../lib/i18n';
+import { ventureBySlug } from '../lib/sites';
 
 const { t } = Astro.locals;
 // Messages the passkey button can show (from the browser or the passkey-login endpoints).
@@ -22,6 +23,9 @@ const passkeyStrings = clientStrings(t, [
 ]);
 
 const next = safeNext(Astro.url.searchParams.get('next'));
+// From a venture's address: its name in the heading (the layout shows its brand).
+const slug = Astro.url.searchParams.get('venture');
+const venture = slug && /^[a-z0-9-]{1,40}$/.test(slug) ? await ventureBySlug(slug) : null;
 let error = Astro.url.searchParams.get('error') === 'link' ? t('That link has expired or was already used. Please sign in again.') : '';
 let sent = false;
 let email = '';
@@ -57,7 +61,7 @@ if (Astro.request.method === 'POST') {
 }
 ---
 
-<Auth title={t('Sign in')} subtitle={t('Lakeba shareholders and directors only.')}>
+<Auth title={venture ? t('Sign in to {company}', { company: venture.display_name }) : t('Sign in')} subtitle={venture ? t('{company} shareholders and directors only.', { company: venture.display_name }) : t('Lakeba shareholders and directors only.')}>
   {error && <div class="mb-5"><Alert tone="error">{error}</Alert></div>}
   {sent ? (
     <Alert tone="success">{t('If an account exists for {email}, we’ve emailed a sign-in link. It expires in 1 hour.', { email })}</Alert>

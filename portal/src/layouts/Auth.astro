@@ -4,9 +4,15 @@ import Mark from '../../../src/components/Mark.astro';
 import ThemeInit from '../../../src/components/ThemeInit.astro';
 import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 import { HTML_LANG, LANGUAGE_NAMES, LOCALES } from '../lib/i18n';
+import { brandOf } from '../lib/brand';
+import { ventureBySlug } from '../lib/sites';
 interface Props { title: string; subtitle?: string; wide?: boolean }
 const { title, subtitle, wide = false } = Astro.props;
 const { t, locale } = Astro.locals;
+// Arriving from a venture's address (?venture=mist): its name on the page, Lakeba as the provider.
+const slug = Astro.url.searchParams.get('venture');
+const venture = Astro.locals.site?.venture ?? (slug && /^[a-z0-9-]{1,40}$/.test(slug) ? await ventureBySlug(slug) : null);
+const brand = brandOf(venture);
 // Language links for signed-out people: the same page with ?lang=xx (other query params kept).
 const languageLinks = LOCALES.map((l) => {
   const params = new URLSearchParams(Astro.url.search);
@@ -26,10 +32,10 @@ const languageLinks = LOCALES.map((l) => {
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
-    <meta name="apple-mobile-web-app-title" content="Lakeba Investors" />
+    <meta name="apple-mobile-web-app-title" content={`${brand.name} Investors`} />
     <meta name="theme-color" content="#050b16" />
     <ThemeInit />
-    <title>{title} · {t('{brand} Investor Portal', { brand: 'Lakeba' })}</title>
+    <title>{title} · {t('{brand} Investor Portal', { brand: brand.name })}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -42,17 +48,24 @@ const languageLinks = LOCALES.map((l) => {
       <div class="absolute bottom-0 left-1/2 h-[28rem] w-[28rem] rounded-full bg-lk-orange/10 blur-[120px]"></div>
     </div>
     <main class:list={['w-full', wide ? 'max-w-3xl' : 'max-w-md']}>
-      <a href="/" class="mb-8 flex items-center justify-center gap-2.5">
-        <Mark class="size-9" />
-        <span class="font-display text-xl font-bold text-white">lakeba</span>
-        <span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span>
-      </a>
+      {venture ? (
+        <div class="mb-8 text-center">
+          <p class="flex items-center justify-center gap-2.5"><span class="size-3 rounded-full" style={`background:${brand.color}`}></span><span class="font-display text-xl font-bold text-white">{venture.display_name}</span><span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span></p>
+          <p class="mt-2 flex items-center justify-center gap-1.5 text-xs text-white/40"><Mark class="size-3.5" /> {t('{company} Investor Portal, powered by Lakeba', { company: venture.display_name })}</p>
+        </div>
+      ) : (
+        <a href="/" class="mb-8 flex items-center justify-center gap-2.5">
+          <Mark class="size-9" />
+          <span class="font-display text-xl font-bold text-white">lakeba</span>
+          <span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span>
+        </a>
+      )}
       <div class="card">
         <h1 class="text-2xl font-bold">{title}</h1>
         {subtitle && <p class="mt-2 text-sm text-white/55">{subtitle}</p>}
         <div class="mt-6"><slot /></div>
       </div>
-      <p class="mt-6 text-center text-xs text-white/35">{t('Need help?')} <a href="mailto:info@lakeba.com" class="underline hover:text-white">info@lakeba.com</a></p>
+      <p class="mt-6 text-center text-xs text-white/35">{t('Need help?')} <a href={`mailto:${brand.contactEmail}`} class="underline hover:text-white">{brand.contactEmail}</a></p>
       <nav aria-label={t('Language')} class="mt-3 flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs text-white/35">
         {languageLinks.map((l) => (
           <a href={l.href} hreflang={HTML_LANG[l.locale]} lang={HTML_LANG[l.locale]} aria-current={l.locale === locale ? 'true' : undefined} class:list={['hover:text-white', l.locale === locale && 'text-white/60 underline']}>{l.name}</a>

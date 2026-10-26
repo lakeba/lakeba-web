@@ -100,6 +100,25 @@ tar -xzf D/storage.tgz -C /opt/supabase/volumes
 4. **Check**: `scripts/check-entities.mjs` against the server (35 checks; it
    passed on the empty database on 22 October 2026).
 
+## Venture addresses (not live yet)
+
+Each venture with a full portal can have its own address, `{slug}.investors.lakeba.com`
+(the slug is set in Admin → Companies → a company → Venture settings). Sign-in, two-step,
+passkeys and admin stay on `investors.lakeba.com`, and the session cookie is shared by all
+the addresses, so one sign-in counts everywhere. Without `PORTAL_DOMAIN` the portal works
+on one address, as before. To switch it on:
+
+1. **DNS**: a wildcard record `*.investors.lakeba.com` pointing to the server (A `139.180.180.225`).
+2. **Certificate**: a wildcard certificate needs Let's Encrypt's DNS check, so Caddy needs the
+   DNS plugin for Lakeba's DNS provider and an API token for it. Add to the Caddyfile:
+   `*.investors.lakeba.com { tls { dns <provider> {env.DNS_API_TOKEN} } reverse_proxy 127.0.0.1:4321 }`.
+3. **Portal**: `PORTAL_DOMAIN=investors.lakeba.com` in `/etc/lakeba-portal/portal.env`, then
+   restart `lakeba-portal`. Existing sessions move onto the shared cookie on their next visit.
+4. **Check**: signed out, `https://<slug>.investors.lakeba.com/` should send you to
+   `https://investors.lakeba.com/login?venture=<slug>…`.
+
+Passkeys don't need changes: they are only ever used on `investors.lakeba.com`.
+
 ## Rebuilding the server from scratch
 
 1. New Ubuntu server in Sydney with your SSH key; DNS A record to its IP.
