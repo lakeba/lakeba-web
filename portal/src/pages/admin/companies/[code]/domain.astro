@@ -43,7 +43,7 @@ const portalDomain = PORTAL_DOMAIN ?? 'investors.lakeba.com';
 const brand = brandOf(c);
 const [det, place, check, handoffs] = await Promise.all([
   detect(c),
-  c.custom_domain ? placeOf(c.custom_domain) : Promise.resolve(null),
+  c.custom_domain ? placeOf(c.custom_domain) : null,
   c.custom_domain && !c.custom_domain_verified_at ? domainStatus(c.custom_domain) : Promise.resolve(null),
   loadHandoffs(c.id),
 ]);
@@ -104,7 +104,7 @@ const poll = Boolean(c.custom_domain && !c.custom_domain_verified_at) || Boolean
         <summary class="cursor-pointer text-white/75 hover:text-white">Stuck, or want Lakeba to do it with you? Ask Lakeba for help</summary>
         <form method="post" class="mt-2 space-y-2">
           <input type="hidden" name="intent" value="help" />
-          <textarea name="help_message" rows="3" maxlength="2000" class="field" placeholder={c.custom_domain ? 'What’s happening, and a good time to call.' : `For example: we’d like our portal at investors.${det.emailDomain ?? 'ourcompany.com'}.`}></textarea>
+          <textarea name="help_message" rows="3" maxlength="2000" class="field" placeholder="What’s happening, and a good time to call."></textarea>
           <button class="btn-ghost text-sm">Send to Lakeba</button>
         </form>
       </details>
@@ -112,7 +112,7 @@ const poll = Boolean(c.custom_domain && !c.custom_domain_verified_at) || Boolean
   )}
 
   <div class="mt-6 space-y-6">
-    <DomainGuide c={c} place={place} check={check} portalDomain={portalDomain} lakebaAddress={lakebaAddress} suggested={det.emailDomain ? `investors.${det.emailDomain}` : null} admin={true} group={group} />
+    <DomainGuide c={c} place={place ?? (det.dns ? { zone: det.dns.zone, host: det.dns, label: 'investors' } : null)} check={check} portalDomain={portalDomain} lakebaAddress={lakebaAddress} suggested={det.emailDomain ? `investors.${det.emailDomain}` : null} choose={manage} manage={manage} />
     <EmailGuides c={c} det={det} admin={true} manage={manage} testTo={me.email} suggested={suggestedAddress}
       consentUrl={consentUrl} msReady={graphConfigured()} msClientId={MS_CLIENT_ID ?? null}
       serverIp={PORTAL_SERVER_IP} gmailReady={gmailConfigured()} gmailClientId={gmailClientId()} gmailScope={GMAIL_SCOPE} />

@@ -16,8 +16,8 @@ import { handoffByToken, loadSetupCompany, runSetupAction, setupStamp, type Who 
 // The set-up steps a venture's admin sent to whoever looks after its domain or
 // email (Admin → a company → Domain and mail → Send the steps). The link is
 // the only key: no portal account, valid for 7 days, and it opens nothing but
-// these steps. They can approve, check and test; stopping or disconnecting
-// stays with the venture's admins.
+// these steps. They can choose the address, approve, check and test;
+// stopping or disconnecting stays with the venture's admins.
 Astro.response.headers.set('Cache-Control', 'no-store');
 const token = Astro.params.token ?? '';
 const h = await handoffByToken(token);
@@ -49,7 +49,7 @@ if (Astro.request.method === 'POST' && c && who) {
 const portalDomain = PORTAL_DOMAIN ?? 'investors.lakeba.com';
 const [det, place, check] = c ? await Promise.all([
   detect(c),
-  c.custom_domain ? placeOf(c.custom_domain) : Promise.resolve(null),
+  c.custom_domain ? placeOf(c.custom_domain) : null,
   c.custom_domain && !c.custom_domain_verified_at ? domainStatus(c.custom_domain) : Promise.resolve(null),
 ]) : [null, null, null];
 ---
@@ -66,7 +66,7 @@ const [det, place, check] = c ? await Promise.all([
       {(det.emailDomain && det.mail !== 'none') && <p class="rounded-xl bg-white/[0.04] p-3 text-sm text-white/65">{det.emailDomain}’s email runs on <strong class="text-white/85">{det.mail === 'microsoft' ? 'Microsoft 365' : det.mail === 'google' ? 'Google Workspace' : 'another provider'}</strong>{det.dns && <>, and its domain is managed at <strong class="text-white/85">{det.dns.name}</strong></>}. The steps below are for that.</p>}
       {notice && <Alert tone="success">{notice}</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
-      {c.custom_domain && <DomainGuide c={c} place={place} check={check} portalDomain={portalDomain} lakebaAddress={siteOriginFor(Astro.url, { ...c, custom_domain_verified_at: null }).replace(/^https?:\/\//, '')} suggested={null} admin={false} group={false} />}
+      <DomainGuide c={c} place={place ?? (det.dns ? { zone: det.dns.zone, host: det.dns, label: 'investors' } : null)} check={check} portalDomain={portalDomain} lakebaAddress={siteOriginFor(Astro.url, { ...c, custom_domain_verified_at: null }).replace(/^https?:\/\//, '')} suggested={det.emailDomain ? `investors.${det.emailDomain}` : null} choose={true} manage={false} />
       <EmailGuides c={c} det={det} admin={false} manage={false} testTo={h.recipient_email} suggested={`investors@${det.emailDomain ?? 'yourcompany.com'}`}
         consentUrl="" msReady={graphConfigured()} msClientId={MS_CLIENT_ID ?? null}
         serverIp={PORTAL_SERVER_IP} gmailReady={gmailConfigured()} gmailClientId={gmailClientId()} gmailScope={GMAIL_SCOPE} />

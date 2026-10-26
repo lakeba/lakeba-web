@@ -1,9 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
-import { MS_CLIENT_ID, MS_LOGIN_BASE } from 'astro:env/server';
+import { MS_CLIENT_ID, MS_LOGIN_BASE, PORTAL_DOMAIN } from 'astro:env/server';
 import { serviceClient } from './admin';
 import { brandOf } from './brand';
 import { COLUMNS, type Company } from './companies';
-import { domainStatus } from './domains';
+import { domainStatus, placeOf } from './domains';
 import { forgetTenants, sendAs } from './graph';
 import { gmailInboxCount } from './gmail';
 import { sendMail, sendViaGoogle } from './mail';
@@ -30,9 +30,8 @@ export type Who = {
   /** For the audit log and notifications: "Jo Smith (jo@example.com) through the set-up link". */
   label: string;
   handoffId?: string;
-  /** The venture's admin (or a group admin): may stop, disconnect, send the link and ask for help. */
+  /** The venture's admin (or a group admin): may stop, disconnect, send the link and ask for help (and, like the IT person, choose the address). */
   manage: boolean;
-  /** A group admin: may stop using the own domain. */
   group: boolean;
 };
 
@@ -152,8 +151,28 @@ export async function runSetupAction(c: SetupCompany, who: Who, form: FormData, 
       if (!r) return { error: 'There’s no own domain to check yet.' };
       return r.ok ? { notice: `${c.custom_domain} points to the portal. ${c.display_name}’s portal now opens there.` } : { error: r.problem ?? `${c.custom_domain} doesn’t point to the portal yet.` };
     }
+    case 'set-domain': {
+      // The venture's own admins, or the person they sent the steps to, choose the address; it's used only once its DNS points here.
+      if (!who.manage && !who.handoffId) break;
+      const domain = String(form.get('custom_domain') ?? '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/[/:?#].*$/, '').replace(/\.$/, '') || null;
+      if (domain === c.custom_domain) return {};
+      if (domain) {
+        if (!/^([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,}$/.test(domain)) return { error: 'Enter just the address, like investors.mist.com.' };
+        const portal = (PORTAL_DOMAIN ?? 'investors.lakeba.com').toLowerCase();
+        if (/(^|\.)lakeba\.com$/.test(domain) || domain === portal || domain.endsWith(`.${portal}`)) return { error: 'Use an address on your own domain, like investors.mist.com.' };
+        const place = await placeOf(domain);
+        if (place.label === '@') return { error: `${domain} is your main domain, which can’t point to the portal. Use an address like investors.${domain}.` };
+        const { data: taken } = await svc.from('entities').select('id').eq('custom_domain', domain).neq('id', c.id).maybeSingle();
+        if (taken) return { error: `${domain} is already used by another company.` };
+      }
+      await svc.from('entities').update({ custom_domain: domain, custom_domain_verified_at: null }).eq('id', c.id).throwOnError();
+      forgetVentureSites(); await refreshOwnDomains();
+      await audit(c, who, 'company_domain_set', { domain, was: c.custom_domain });
+      if (!who.userId && domain) await tellAdmins(c, central, `${c.display_name}’s web address will be ${domain}`, `${who.label} chose it. Investors move there once its DNS record is in place; the old address keeps working and forwards.`);
+      return { notice: domain ? `Saved. Now add the DNS record below for ${domain}.` : `${c.display_name}’s portal stays on its Lakeba address.` };
+    }
     case 'stop-domain': {
-      if (!who.group) break;
+      if (!who.manage || !who.userId) break;
       await svc.from('entities').update({ custom_domain_verified_at: null }).eq('id', c.id).throwOnError();
       forgetVentureSites();
       await audit(c, who, 'company_domain_stopped', { domain: c.custom_domain });

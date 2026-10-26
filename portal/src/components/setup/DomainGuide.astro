@@ -17,11 +17,12 @@ interface Props {
   portalDomain: string;
   lakebaAddress: string;
   suggested: string | null;
-  /** On the admin page; the IT person's page has no Lakeba-side actions. */
-  admin: boolean;
-  group: boolean;
+  /** May choose the address: the venture's admin, or the person they sent the steps to. */
+  choose: boolean;
+  /** The venture's admin: may also stop using it. */
+  manage: boolean;
 }
-const { c, place, check, portalDomain, lakebaAddress, suggested, admin, group } = Astro.props;
+const { c, place, check, portalDomain, lakebaAddress, suggested, choose, manage } = Astro.props;
 const host = place?.host;
 const zone = place?.zone ?? c.custom_domain?.split('.').slice(-2).join('.');
 const label = place?.label ?? 'investors';
@@ -38,15 +39,20 @@ const label = place?.label ?? 'investors';
     ['Who does it', host ? `Whoever can sign in to ${host.name}, where ${zone} is managed. Often the person who bought the domain, or your web designer.` : `Whoever manages ${zone ?? 'your domain'}’s DNS records. Often the person who bought the domain, or your web designer.`],
   ]} />
 
+  {choose && !c.custom_domain_verified_at && (
+    <form method="post" class="space-y-1">
+      <input type="hidden" name="intent" value="set-domain" />
+      <label class="label" for="custom_domain">{c.custom_domain ? 'The address' : 'Choose the address'}</label>
+      <div class="flex gap-2"><input id="custom_domain" name="custom_domain" value={c.custom_domain ?? suggested ?? ''} placeholder="investors.yourcompany.com" class="field font-mono" /><button class="btn-primary shrink-0 text-sm">{c.custom_domain ? 'Change' : 'Use this address'}</button></div>
+      <p class="text-xs text-white/45">An address on your own domain, usually starting with “investors.”. Nothing changes for investors until its DNS record is in place.</p>
+    </form>
+  )}
   {!c.custom_domain ? (
-    <p class="text-sm text-white/60">
-      Lakeba sets up the address{suggested ? <> (for example <span class="font-mono text-white/85">{suggested}</span>)</> : ''}.
-      {admin && (group ? <> Enter it in <a href={`/admin/companies/${c.code}`} class="text-lk-blue hover:underline">Venture settings</a>.</> : ' Ask for it with “Ask Lakeba for help” above; you’ll then see here exactly what to add.')}
-    </p>
+    <p class="text-sm text-white/60">{choose ? 'Once you choose the address, the DNS record to add appears here.' : 'Not set up yet: the venture’s admins choose the address first.'}</p>
   ) : c.custom_domain_verified_at ? (
     <div class="space-y-2">
       <p class="text-sm">Investors open the portal at <span class="font-mono text-white">{c.custom_domain}</span>, since {dateTime.format(new Date(c.custom_domain_verified_at))}. Nothing else to do.</p>
-      {admin && group && <form method="post"><button name="intent" value="stop-domain" class="btn-ghost text-sm" onclick="return confirm('Go back to the Lakeba address?')">Stop using it</button></form>}
+      {manage && <form method="post"><button name="intent" value="stop-domain" class="btn-ghost text-sm" onclick="return confirm('Go back to the Lakeba address?')">Stop using it</button></form>}
     </div>
   ) : (
     <>
