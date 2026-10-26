@@ -1,7 +1,7 @@
 import type { APIRoute } from 'astro';
 import { serviceClient } from '../../../lib/admin';
 import { EMAIL_PAGE_HEADERS } from '../../../lib/newsletter-design';
-import { composeRelease, loadRelease, pressSettings, sydneyTime } from '../../../lib/press';
+import { composeRelease, loadRelease, sydneyTime, settingsFor } from '../../../lib/press';
 import { embargoOf, pitchByToken, recordPreview } from '../../../lib/press-outreach';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
@@ -20,7 +20,7 @@ export const GET: APIRoute = async ({ params }) => {
   const r = d ? await loadRelease(svc, d.release_id) : null;
   if (!r || !['approved', 'published'].includes(r.status)) return page('<p>This press release is no longer available. Questions: press@lakeba.com.</p>', 410);
   await recordPreview(svc, p);
-  const s = await pressSettings(svc);
+  const s = await settingsFor(svc, r);
   const embargo = embargoOf(r);
   const when = r.published_at ?? r.publish_at ?? new Date().toISOString();
   const kit = r.kit.map((k) => `<figure style="margin:0"><a href="${esc(k.url)}" download><img src="${esc(k.url)}" alt="${esc(k.label)}" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px"></a><figcaption style="font-size:12px;color:#6b7a90">${esc(k.label)}</figcaption></figure>`).join('');

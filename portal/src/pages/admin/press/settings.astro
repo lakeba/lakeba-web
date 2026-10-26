@@ -5,7 +5,7 @@ import Alert from '../../../components/Alert.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { cleanHtml } from '../../../lib/news-cms';
-import { pressAccess, pressSettings } from '../../../lib/press';
+import { pressSettings, pressDesk } from '../../../lib/press';
 import { graphConfigured } from '../../../lib/graph';
 import { pressFrom } from '../../../lib/press-outreach';
 import { dateTime } from '../../../lib/format';
@@ -13,7 +13,8 @@ import { dateTime } from '../../../lib/format';
 // The press office's settings (approvers only): the boilerplate and media
 // contact under every release, and who is on the press team (the marketing
 // people who write releases without being admins).
-const access = pressAccess(Astro.locals);
+const desk = await pressDesk(Astro.locals, serviceClient(), Astro.url);
+const access = desk;
 if (!access?.approver) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const me = Astro.locals.user!;
@@ -38,21 +39,24 @@ if (Astro.request.method === 'POST') {
         wires: field(form, 'wires').split('\n').map((l) => l.split('|').map((x) => x.trim())).filter((x) => x[0]).slice(0, 20)
           .map(([name, email = '', notes = '']) => ({ name: name.slice(0, 80), email: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email) ? email.toLowerCase() : '', notes: notes.slice(0, 300) })),
         reply_tracking: form.get('reply_tracking') === 'on', reply_mailbox: /^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(mailbox) ? mailbox.slice(0, 200) : 'press@lakeba.com',
-        boilerplate_html: cleanHtml(String(form.get('boilerplate_html') ?? '')).slice(0, 5000), about_title: field(form, 'about_title').slice(0, 80) || 'About Lakeba Group',
+        boilerplate_html: cleanHtml(String(form.get('boilerplate_html') ?? '')).slice(0, 5000), about_title: field(form, 'about_title').slice(0, 80) || `About ${desk.venture ? desk.venture.display_name : 'Lakeba Group'}`,
         contact_name: field(form, 'contact_name').slice(0, 120), contact_email: email.slice(0, 200), contact_phone: field(form, 'contact_phone').slice(0, 60), dateline_city: field(form, 'dateline_city').toUpperCase().slice(0, 40) || 'SYDNEY',
       };
-      await svc.from('portal_settings').upsert({ key: 'press', value, updated_at: new Date().toISOString() }).throwOnError();
-      await log('press_settings_saved', {});
+      // Each desk's own settings: Lakeba's ("press"), or a venture's ("press:MIST").
+      await svc.from('portal_settings').upsert({ key: desk.venture ? `press:${desk.venture.code}` : 'press', value, updated_at: new Date().toISOString() }).throwOnError();
+      await log('press_settings_saved', desk.venture ? { company: desk.venture.code } : {});
       notice = 'Saved. New and corrected releases use these.';
     }
   }
 }
-const s = await pressSettings(svc);
+const s = await pressSettings(svc, desk.venture);
 const { data: sync } = await svc.from('email_sync_state').select('last_checked_at, last_error').eq('mailbox', s.reply_mailbox).maybeSingle();
 // Who works on press releases, from their roles (System → Users).
 const { data: grants } = await svc.from('role_permissions').select('role_key, permission').in('permission', ['press.do', 'press.approve']);
 const pressRoles = [...new Set((grants ?? []).map((g) => g.role_key))];
-const { data: holders } = pressRoles.length ? await svc.from('user_roles').select('user_id, role_key, entity_id, expires_at, roles(name), profiles(id, email, first_name, last_name)').in('role_key', pressRoles).or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`) : { data: [] };
+const { data: holders } = pressRoles.length ? await svc.from('user_roles').select('user_id, role_key, entity_id, expires_at, roles(name), profiles(id, email, first_name, last_name)').in('role_key', pressRoles).or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`)
+  // This desk's team: group-wide roles, and on a venture's desk also that venture's own.
+  .or(desk.venture ? `entity_id.is.null,entity_id.eq.${desk.venture.id}` : 'entity_id.is.null') : { data: [] };
 const people = [...new Map(((holders ?? []) as unknown as { user_id: string; role_key: string; roles: { name: string } | null; profiles: { id: string; email: string; first_name: string; last_name: string } }[]).map((h) => [h.user_id, h])).values()].map((h) => ({
   ...h.profiles, writes: (grants ?? []).some((g) => g.permission === 'press.do' && (holders ?? []).some((x) => x.user_id === h.user_id && x.role_key === g.role_key)),
   approves: (grants ?? []).some((g) => g.permission === 'press.approve' && (holders ?? []).some((x) => x.user_id === h.user_id && x.role_key === g.role_key)),
@@ -60,15 +64,15 @@ const people = [...new Map(((holders ?? []) as unknown as { user_id: string; rol
 ---
 
 <Admin title="Press settings">
-  <PressNav />
-  <a href="/admin/press" class="text-sm text-white/50 hover:text-white">← Press releases</a>
+  <PressNav desk={desk} />
+  <a href={`/admin/press${desk.q}`} class="text-sm text-white/50 hover:text-white">← Press releases</a>
   <h1 class="mt-2 font-display text-3xl font-bold">Press settings and team</h1>
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
   <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
     <form method="post" class="card space-y-4">
       <h2 class="font-display text-lg font-bold">Under every release</h2>
       <div><label class="label" for="about_title">Boilerplate heading</label><input id="about_title" name="about_title" value={s.about_title} class="field" /></div>
-      <div><span class="label">Boilerplate (who Lakeba is, in a paragraph; used for the group and the ventures)</span>
+      <div><span class="label">Boilerplate ({desk.venture ? `who ${desk.venture.display_name} is, in a paragraph` : 'who Lakeba is, in a paragraph; used for the group and the controlled ventures'})</span>
         <div class="rounded-xl border border-white/10" data-rich="boilerplate_html" set:html={s.boilerplate_html}></div><input type="hidden" name="boilerplate_html" /></div>
       <div class="grid gap-4 sm:grid-cols-2">
         <div><label class="label" for="contact_name">Media contact</label><input id="contact_name" name="contact_name" value={s.contact_name} class="field" /></div>

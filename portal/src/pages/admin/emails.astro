@@ -37,7 +37,8 @@ if (Astro.request.method === 'POST') {
       const mailbox = field(form, 'mailbox').toLowerCase() || null;
       const mode = ['off', 'review', 'auto'].includes(field(form, 'mode')) ? field(form, 'mode') : 'off';
       const autoCategories = form.getAll('auto_category').map(String).filter((c) => SELF_SERVICE.includes(c as Category));
-      const { error: e } = await svc.from('entities').update({ shareholder_mailbox: mailbox, email_mode: mode, email_auto_categories: autoCategories, email_signature: String(form.get('signature') ?? '').trim().slice(0, 500) }).eq('id', field(form, 'entity_id'));
+      const address = field(form, 'address').toLowerCase() || null;
+      const { error: e } = await svc.from('entities').update({ shareholder_mailbox: mailbox, shareholder_address: address === mailbox ? null : address, email_mode: mode, email_auto_categories: autoCategories, email_signature: String(form.get('signature') ?? '').trim().slice(0, 500) }).eq('id', field(form, 'entity_id'));
       if (e) error = e.message.includes('check') ? 'That doesn’t look like an email address.' : e.message;
       else { await log('admin_saved_mailbox_settings', { entity_id: field(form, 'entity_id'), mailbox, mode, auto_categories: autoCategories }); notice = mode === 'auto' ? `Mailbox settings saved. Automatic replies are on for: ${autoCategories.map((c) => CATEGORIES[c as Category]).join('; ') || 'nothing yet (choose request types)'}.` : 'Mailbox settings saved.'; }
     } else if (intent === 'test-connection') {
@@ -78,7 +79,7 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const { data: companies } = await svc.from('entities').select('id, code, display_name, shareholder_mailbox, email_mode, email_signature, email_auto_categories').neq('portal', 'portfolio').in('id', allowedIds).order('sort');
+const { data: companies } = await svc.from('entities').select('id, code, display_name, shareholder_mailbox, shareholder_address, email_mode, email_signature, email_auto_categories').neq('portal', 'portfolio').in('id', allowedIds).order('sort');
 const { data: sync } = await svc.from('email_sync_state').select('mailbox, last_checked_at, last_error');
 const syncOf = new Map((sync ?? []).map((s) => [s.mailbox, s]));
 const nameOf = new Map((companies ?? []).map((c) => [c.id, c.display_name]));
@@ -284,6 +285,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
                 <fieldset class="sm:col-span-4"><legend class="label">Answered automatically (in Automatic mode)</legend>
                   <div class="flex flex-wrap gap-x-5 gap-y-2 text-sm text-white/75">{SELF_SERVICE.map((cat) => <label class="flex items-center gap-2"><input type="checkbox" name="auto_category" value={cat} checked={(c.email_auto_categories ?? []).includes(cat)} class="size-4 accent-lk-blue" />{CATEGORIES[cat]}</label>)}</div>
                 </fieldset>
+                <div class="sm:col-span-4"><label class="label" for={`addr-${c.id}`}>Its own address on a shared mailbox (optional)</label><input class="field" id={`addr-${c.id}`} name="address" type="email" value={c.shareholder_address ?? ''} placeholder="e.g. mist.shareholders@lakeba.com" /><p class="mt-1 text-xs text-white/40">When several companies use the same mailbox, emails sent to this address are filed to {c.display_name}. In Exchange, add it as an extra address of that mailbox.</p></div>
                 <div class="sm:col-span-4"><label class="label" for={`sig-${c.id}`}>Signature (blank: “{c.display_name === 'Lakeba Group' ? 'Lakeba' : c.display_name} Investor Relations”)</label><textarea class="field text-sm" id={`sig-${c.id}`} name="signature" rows="2">{c.email_signature}</textarea></div>
               </form>
             );

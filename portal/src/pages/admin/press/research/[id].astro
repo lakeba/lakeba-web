@@ -6,21 +6,22 @@ import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { ROLES, validEmail } from '../../../../lib/media';
 import type { Brief, Candidate } from '../../../../lib/media-research';
-import { pressAccess } from '../../../../lib/press';
+import { pressDesk, onDesk, deskKey } from '../../../../lib/press';
 
 // A research run: progress, then the candidates with their sources; the ticked ones are added.
-if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const desk = await pressDesk(Astro.locals, serviceClient(), Astro.url);
+if (!desk) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const me = Astro.locals.user!;
 const id = Astro.params.id!;
-const load = async () => (/^[0-9a-f-]{36}$/.test(id) ? (await svc.from('media_research_runs').select('*').eq('id', id).maybeSingle()).data : null) as null | { id: string; brief: Brief; status: string; candidates: (Candidate & { added?: boolean })[]; note: string; searches: number; created_at: string };
+const load = async () => (/^[0-9a-f-]{36}$/.test(id) ? (await onDesk(desk, svc.from('media_research_runs').select('*').eq('id', id)).maybeSingle()).data : null) as null | { id: string; brief: Brief; status: string; candidates: (Candidate & { added?: boolean })[]; note: string; searches: number; created_at: string };
 let run = await load();
-if (!run) return Astro.redirect('/admin/press/research');
+if (!run) return Astro.redirect(`/admin/press/research${desk.q}`);
 let notice = '';
 if (Astro.request.method === 'POST' && run.status === 'done') {
   const form = await Astro.request.formData();
   const picked = new Set(form.getAll('pick').map(Number));
-  const { data: optouts } = await svc.from('media_optouts').select('email');
+  const { data: optouts } = await onDesk(desk, svc.from('media_optouts').select('email'));
   const out = new Set((optouts ?? []).map((o) => o.email));
   let added = 0, skipped = 0;
   const candidates = [...run.candidates];
@@ -29,14 +30,14 @@ if (Astro.request.method === 'POST' && run.status === 'done') {
     const email = validEmail(c.email) && !out.has(c.email) ? c.email.toLowerCase() : null;
     let outlet_id: string | null = null;
     if (c.outlet) {
-      const { data: o } = await svc.from('media_outlets').select('id').ilike('name', c.outlet.replace(/[%_]/g, '\\$&')).maybeSingle();
-      outlet_id = o?.id ?? (await svc.from('media_outlets').insert({ name: c.outlet, created_by: me.id }).select('id').single()).data?.id ?? null;
+      const { data: o } = await onDesk(desk, svc.from('media_outlets').select('id').ilike('name', c.outlet.replace(/[%_]/g, '\\$&'))).maybeSingle();
+      outlet_id = o?.id ?? (await svc.from('media_outlets').insert({ name: c.outlet, created_by: me.id, entity_id: deskKey(desk) }).select('id').single()).data?.id ?? null;
     }
     const [first, ...rest] = c.name.split(/\s+/);
     const { error } = await svc.from('media_contacts').insert({
       first_name: first, last_name: rest.join(' '), email, outlet_id, role: (ROLES as readonly string[]).includes(c.role) ? c.role : 'journalist', title: c.title.slice(0, 160),
       beats: c.beats, regions: c.region ? [c.region] : [], recent_work: c.recent_title ? `${c.recent_title}${c.recent_url ? ` (${c.recent_url})` : ''}`.slice(0, 1000) : '',
-      notes: c.why, source: 'research', source_url: c.email_source || c.sources[0] || '', consent_basis: 'published_work_address', created_by: me.id,
+      notes: c.why, source: 'research', source_url: c.email_source || c.sources[0] || '', consent_basis: 'published_work_address', created_by: me.id, entity_id: deskKey(desk),
     });
     if (error) skipped++; else { added++; candidates[i] = { ...c, added: true }; }
   }
@@ -49,8 +50,8 @@ const stale = run!.status === 'running' && Date.now() - new Date(run!.created_at
 ---
 
 <Admin title="Find journalists">
-  <PressNav />
-  <a href="/admin/press/research" class="text-sm text-white/50 hover:text-white">← Find journalists</a>
+  <PressNav desk={desk} />
+  <a href={`/admin/press/research${desk.q}`} class="text-sm text-white/50 hover:text-white">← Find journalists</a>
   <h1 class="mt-2 font-display text-3xl font-bold">{run!.brief.beats}</h1>
   <p class="mt-1 text-sm text-white/45">{run!.brief.region || 'Australia'}{run!.brief.kinds && ` · ${run!.brief.kinds}`}{run!.searches ? ` · ${run!.searches} web searches` : ''}</p>
   <div class="mt-5 space-y-3">

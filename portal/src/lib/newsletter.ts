@@ -41,12 +41,26 @@ const fmtDate = (d: string) => new Intl.DateTimeFormat('en-AU', { day: 'numeric'
 const aud = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'AUD', maximumFractionDigits: 0 });
 const num = new Intl.NumberFormat('en-AU');
 
+/**
+ * What an issue may draw on, whoever picked the ids: public news, or for a
+ * shareholder issue also the company's own news; the company's own documents
+ * (for Lakeba Group, also those a venture shared with the group).
+ */
+export async function sourceFilters(svc: Svc, issue: Pick<Issue, 'audience' | 'entity_id'>) {
+  const { data: e } = await svc.from('entities').select('relationship').eq('id', issue.entity_id).maybeSingle();
+  return {
+    posts: issue.audience === 'shareholders' ? `visibility.eq.public,entity_id.eq.${issue.entity_id}` : 'visibility.eq.public',
+    documents: e?.relationship === 'group' ? `entity_id.eq.${issue.entity_id},shared_with_group.eq.true` : `entity_id.eq.${issue.entity_id}`,
+  };
+}
+
 /** The news, documents and meetings an issue shows (the same for everyone). */
 export async function loadParts(svc: Svc, issue: Pick<Issue, 'audience' | 'entity_id' | 'content'>) {
   const c = issue.content;
+  const only = await sourceFilters(svc, issue);
   const [{ data: posts }, { data: docs }, { data: meetings }] = await Promise.all([
-    c.post_ids?.length ? svc.from('posts').select('id, slug, title, excerpt, cover_url, visibility, external, source_url, published_at').in('id', c.post_ids).not('published_at', 'is', null) : Promise.resolve({ data: [] }),
-    issue.audience === 'shareholders' && c.document_ids?.length ? svc.from('documents').select('id, title, category, published_at').in('id', c.document_ids).not('published_at', 'is', null) : Promise.resolve({ data: [] }),
+    c.post_ids?.length ? svc.from('posts').select('id, slug, title, excerpt, cover_url, visibility, external, source_url, published_at').in('id', c.post_ids).or(only.posts).not('published_at', 'is', null) : Promise.resolve({ data: [] }),
+    issue.audience === 'shareholders' && c.document_ids?.length ? svc.from('documents').select('id, title, category, published_at').in('id', c.document_ids).or(only.documents).not('published_at', 'is', null) : Promise.resolve({ data: [] }),
     issue.audience === 'shareholders' && c.meetings ? svc.from('meetings').select('id, title, starts_at, proxy_deadline, location').eq('entity_id', issue.entity_id).gte('starts_at', new Date().toISOString()).order('starts_at').limit(3) : Promise.resolve({ data: [] }),
   ]);
   // The public newsletter only ever shows public news.
@@ -186,12 +200,21 @@ export function composeToHtml(issue: Issue, company: Company, parts: Parts, orig
     b.closing, b.cta, issue.audience === 'shareholders' ? '{{portal_button}}' : ''].filter(Boolean).join('\n\n');
 }
 
+/**
+ * A company's own subscriber list: Lakeba's is the one from before ventures had
+ * lists (no company set); a venture's carries its id.
+ */
+export async function subscriberList<Q extends { is: (c: string, v: null) => Q; eq: (c: string, v: string) => Q }>(svc: Svc, entityId: string, query: Q) {
+  const { data: e } = await svc.from('entities').select('relationship').eq('id', entityId).maybeSingle();
+  return e?.relationship === 'group' ? query.is('entity_id', null) : query.eq('entity_id', entityId);
+}
+
 type Reader = { email: string; name: string; user_id: string | null; subscriber_id: string | null; firstName: string | null; neverSignedIn: boolean };
 
 /** Everyone an issue goes to, after unsubscribes. */
 export async function audienceOf(svc: Svc, issue: Pick<Issue, 'audience' | 'entity_id' | 'segment'>): Promise<Reader[]> {
   if (issue.audience === 'public') {
-    const { data } = await svc.from('newsletter_subscribers').select('id, email, name').eq('status', 'subscribed');
+    const { data } = await subscriberList(svc, issue.entity_id, svc.from('newsletter_subscribers').select('id, email, name').eq('status', 'subscribed'));
     return (data ?? []).map((s) => ({ email: s.email, name: s.name, user_id: null, subscriber_id: s.id, firstName: s.name.split(' ')[0] || null, neverSignedIn: false }));
   }
   let ids = await memberIds(issue.entity_id);

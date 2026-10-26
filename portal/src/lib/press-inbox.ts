@@ -3,6 +3,7 @@ import { getMessage, graphConfigured, newMessages, setCategory, type GraphMessag
 import { optOut } from './media';
 import { notifyMembers } from './notify';
 import { pressSettings } from './press';
+import { deskOfDistribution } from './press-outreach';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -90,7 +91,7 @@ export async function pollPressMailbox(svc: Svc, origin: string) {
       } else {
         // A reply (or a request to stop, which is honoured straight away and permanently).
         await svc.from('press_pitches').update({ replied_at: p.replied_at ?? at, reply_subject: (m.subject ?? '').slice(0, 300), reply_preview: c.text.slice(0, 600), ...(c.kind === 'stop' ? { unsubscribed_at: at } : {}) }).eq('id', p.id);
-        if (c.kind === 'stop') await optOut(svc, p.email, 'asked by reply');
+        if (c.kind === 'stop') await optOut(svc, p.email, 'asked by reply', await deskOfDistribution(svc, p.distribution_id));
         await setCategory(mailbox, m.id, c.kind === 'stop' ? 'Portal: Unsubscribed' : 'Portal: Pitch reply', m.categories).catch(() => null);
         const { data: d } = await svc.from('press_distributions').select('created_by, approved_by, release_id').eq('id', p.distribution_id).maybeSingle();
         if (d && c.kind === 'reply' && !p.replied_at) {

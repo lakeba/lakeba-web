@@ -11,7 +11,7 @@ import { askEnabled, askName, buildMessages, client, coreRules, HOUSE_RULES_MAX,
 import { adminScope } from '../../lib/admin-company';
 import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
-import { DEFAULT_LIMITS, loadLimits, spendToday } from '../../lib/ask-limits';
+import { DEFAULT_LIMITS, loadLimits, spendThisMonth, spendToday } from '../../lib/ask-limits';
 import { ensureIndex, loadRetrieval } from '../../lib/retrieval';
 
 const supabase = Astro.locals.supabase;
@@ -79,8 +79,10 @@ if (Astro.request.method === 'POST') {
     const text = field(form, 'house_rules');
     if (text.length > HOUSE_RULES_MAX) error = `House rules can be at most ${HOUSE_RULES_MAX.toLocaleString()} characters.`;
     else {
-      const { error: e } = await supabase.from('ask_settings').upsert({ key: houseRulesKey(company), value: { text }, updated_by: userId, updated_at: new Date().toISOString() });
-      if (e) error = e.message; else { await log('admin_updated_ask_house_rules', { length: text.length }); notice = 'House rules saved. Ask Lakeba uses them from the next question.'; }
+      // Each company's own rules (its Ask admins may change them); the table itself is group-admin only, hence the service key.
+      if (!Astro.locals.access.can('ask.do', company.id)) return new Response('Forbidden', { status: 403 });
+      const { error: e } = await serviceClient().from('ask_settings').upsert({ key: houseRulesKey(company), value: { text }, updated_by: userId, updated_at: new Date().toISOString() });
+      if (e) error = e.message; else { await log('admin_updated_ask_house_rules', { company: company.code, length: text.length }); notice = `House rules saved. ${askName(company)} uses them from the next question.`; }
     }
   } else if (intent === 'add' || intent === 'save') {
     const values = { question: field(form, 'question'), answer: field(form, 'answer'), review_by: field(form, 'review_by') || plusMonths(6), updated_by: userId, updated_at: new Date().toISOString() };
@@ -135,6 +137,9 @@ const [limits, spent, { data: pauses }, retrieval, { count: unindexed }] = await
   svcRead.from('document_chunks').select('id', { count: 'exact', head: true }).is('embedding', null),
 ]);
 const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD' });
+// This month per company (Lakeba pays; ventures can have their own monthly budget).
+const month = scope.isGroupAdmin ? await spendThisMonth(svcRead) : new Map();
+const { data: budgetRows } = scope.isGroupAdmin ? await svcRead.from('entities').select('id, code, display_name, ask_monthly_budget_usd').eq('portal', 'full').order('sort') : { data: [] };
 const budgetPct = Math.min(100, Math.round((spent / limits.dailyBudgetUsd) * 100));
 const [{ data: answers }, rules, kb, { count: liveCount }, { count: dueCount }] = await Promise.all([
   query,
@@ -192,6 +197,17 @@ const expired = (d: string) => d < today;
     <p class="mt-2 rounded-xl border border-lk-orange/30 bg-lk-orange/10 px-3 py-2 text-xs text-white/80">
       <strong>Hard stop:</strong> also set a monthly spend limit for this API key’s workspace in the Anthropic Console (your organisation’s limits settings), with email alerts. It applies even if something in the portal goes wrong.
     </p>
+
+    <h3 class="mt-6 font-bold">This month by company</h3>
+    <table class="mt-2 w-full text-left text-sm">
+      <thead class="text-xs uppercase tracking-widest text-white/40"><tr><th class="py-2 font-medium">Company</th><th class="py-2 text-right font-medium">Questions</th><th class="py-2 text-right font-medium">Cost</th><th class="py-2 text-right font-medium">Monthly budget</th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {(budgetRows ?? []).map((c) => { const m = month.get(c.id) ?? { cost: 0, questions: 0 }; const b = c.ask_monthly_budget_usd == null ? null : Number(c.ask_monthly_budget_usd); return (
+          <tr><td class="py-2"><a href={`/admin/companies/${c.code}`} class="text-white/85 hover:text-lk-blue">{c.display_name}</a></td><td class="py-2 text-right text-white/70">{m.questions}</td><td class="py-2 text-right text-white/70">{usd.format(m.cost)}</td><td class:list={['py-2 text-right', b != null && m.cost >= b ? 'text-lk-red' : 'text-white/45']}>{b == null ? '—' : usd.format(b)}</td></tr>
+        ); })}
+      </tbody>
+    </table>
+    <p class="mt-1 text-xs text-white/40">Set a company’s own monthly budget in Companies → the company → Venture settings.</p>
 
     <h3 class="mt-6 font-bold">Paused accounts</h3>
     {(pauses ?? []).length ? (

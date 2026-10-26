@@ -56,13 +56,15 @@ export type GraphMessage = {
   subject?: string;
   receivedDateTime: string;
   from?: { emailAddress: { address: string; name?: string } };
+  toRecipients?: { emailAddress: { address: string } }[];
+  ccRecipients?: { emailAddress: { address: string } }[];
   body?: { contentType: string; content: string };
   internetMessageHeaders?: { name: string; value: string }[];
   categories?: string[];
   '@removed'?: unknown;
 };
 
-const SELECT = 'id,internetMessageId,conversationId,subject,receivedDateTime,from,body,internetMessageHeaders,categories';
+const SELECT = 'id,internetMessageId,conversationId,subject,receivedDateTime,from,toRecipients,ccRecipients,body,internetMessageHeaders,categories';
 const TEXT_BODY = 'outlook.body-content-type="text"';
 
 /**

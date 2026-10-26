@@ -15,7 +15,7 @@ async function preview(locals: App.Locals, id: string, origin: string, form: For
   if (!editor) return new Response('Not allowed', { status: 403 });
   const svc = serviceClient();
   const { data: saved } = await svc.from('newsletter_issues').select('*').eq('id', id).maybeSingle();
-  if (!saved || (saved.audience === 'public' ? !editor.seesGroup : !editor.maySee(saved.entity_id))) return new Response('Not found', { status: 404 });
+  if (!saved || !editor.maySee(saved.entity_id)) return new Response('Not found', { status: 404 });
   const design = form ? await designFields(form) : null;
   const issue = (form ? { ...saved, ...issueFields(form, saved.audience), ...(design ? { mjml: design.mjml, design_html: design.design_html } : {}) } : saved) as Issue;
   const { data: company } = await svc.from('entities').select('id, code, display_name, legal_name, brand_color, relationship, shareholder_mailbox').eq('id', issue.entity_id).single();

@@ -9,8 +9,7 @@ import { dateTime } from '../../../lib/format';
 import { cleanHtml } from '../../../lib/news-cms';
 import { notifyMembers, adminIds } from '../../../lib/notify';
 import {
-  isoToSydney, loadRelease, openBrackets, pressAccess, pressSettings, publishRelease, quotesNotInText, requestQuoteApproval, saveVersion,
-  STATUS_LABEL, sydneyTime, sydneyToIso, withdrawRelease, type Quote, type Release,
+  isoToSydney, loadRelease, openBrackets, publishRelease, quotesNotInText, requestQuoteApproval, saveVersion, STATUS_LABEL, sydneyTime, sydneyToIso, withdrawRelease, type Quote, type Release, deskOf, settingsFor,
 } from '../../../lib/press';
 import { checkRelease, draftRelease } from '../../../lib/press-ai';
 import { client as claude } from '../../../lib/ask';
@@ -18,20 +17,23 @@ import { client as claude } from '../../../lib/ask';
 // One press release: write (or draft from head points with Claude), check,
 // get quotes approved, send for approval; group admins approve and publish
 // now or at a time (Sydney), request changes, correct or withdraw.
-const access = pressAccess(Astro.locals);
-if (!access) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const me = Astro.locals.user!;
 let r = await loadRelease(svc, Astro.params.id!);
-if (!r) return Astro.redirect('/admin/press');
+if (!r) return Astro.redirect("/admin/press");
+// The release's press desk (Lakeba's, or a non-controlling venture's own) decides who may work on it.
+const desk = await deskOf(Astro.locals, svc, r.entity_id);
+if (!desk) return new Response('Forbidden', { status: 403 });
+const access = desk;
 let error = '';
 const done = Astro.url.searchParams.get('done') ?? '';
 const notice = ({ saved: 'Saved.', drafted: 'Claude drafted the release from your head points. Read it carefully: check every fact and replace the [square brackets].', checked: 'Check finished.', quote: 'The approval request was emailed.', submitted: 'Sent for approval. The approvers have been told.', approved: 'Approved and scheduled.', published: 'Published on the newsroom. The website updates in a few minutes.', changes: 'Sent back to the writer with your note.', withdrawn: 'Withdrawn from the newsroom.', restored: 'Earlier version restored.', unscheduled: 'Back to waiting for approval.', corrected: 'Correction published.' } as Record<string, string>)[done] ?? '';
-const back = (d: string) => Astro.redirect(`/admin/press/${r!.id}?done=${d}`, 303);
+const back = (d: string) => Astro.redirect(`/admin/press/${r!.id}?done=${d}${desk.q.replace('?', '&')}`, 303);
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { id: r!.id, ...detail } });
 const origin = Astro.url.origin;
 const { data: entityRows } = await svc.from('entities').select('id, display_name, relationship').eq('portal', 'full').order('sort');
-const companies = (entityRows ?? []) as { id: string; display_name: string; relationship: string }[];
+// A release can move between the companies of its own desk only.
+const companies = ((entityRows ?? []) as { id: string; display_name: string; relationship: string }[]).filter((c) => desk.entityIds.includes(c.id));
 const companyName = (id: string | null) => companies.find((c) => c.id === id)?.display_name ?? 'Lakeba Group';
 const tell = (userIds: (string | null)[], title: string, body: string) => notifyMembers({ kind: 'admin_press', title, body, link: `/admin/press/${r!.id}`, origin, userIds: [...new Set(userIds.filter(Boolean) as string[])].filter((u) => u !== me.id) }).catch(() => 0);
 const locked = (x: Release) => x.status === 'published' || x.status === 'withdrawn';
@@ -87,7 +89,7 @@ if (Astro.request.method === 'POST') {
         if (!claude) error = 'Claude needs the API key on the server.';
         else if (r.head_points.trim().length < 20) error = 'Write a few head points first: what happened, who, when, why it matters, and anyone to quote.';
         else {
-          const s = await pressSettings(svc);
+          const s = await settingsFor(svc, r!);
           const company = companies.find((c) => c.id === r!.entity_id);
           const d = await draftRelease({ headPoints: r.head_points, company: company?.display_name ?? 'Lakeba Group', isVenture: Boolean(company && company.relationship !== 'group'), boilerplateTitle: s.about_title, length: field(form, 'length'), spokespeople: field(form, 'spokespeople').slice(0, 400) });
           await saveVersion(svc, r, me.id, 'before AI draft');
@@ -170,7 +172,7 @@ if (Astro.request.method === 'POST') {
     } else if (intent === 'new-distribution' && ['approved', 'published'].includes(r.status)) {
       const { data: d } = await svc.from('press_distributions').insert({ release_id: r.id, intro: 'I thought this might be of interest for your coverage.', created_by: me.id }).select('id').single().throwOnError();
       await log('press_distribution_created', { distribution_id: d!.id });
-      return Astro.redirect(`/admin/press/distribution/${d!.id}`, 303);
+      return Astro.redirect(`/admin/press/distribution/${d!.id}${desk.q}`, 303);
     } else if (intent === 'request-changes' && access.approver && ['in_review', 'approved'].includes(r.status)) {
       await svc.from('press_releases').update({ status: 'changes_requested', review_note: field(form, 'review_note').slice(0, 2000), approved_by: null, approved_at: null }).eq('id', r.id).throwOnError();
       await tell([r.created_by, r.submitted_by], 'Changes requested on your press release', field(form, 'review_note').slice(0, 200) || r.headline);
@@ -196,7 +198,7 @@ if (Astro.request.method === 'POST') {
     } else if (intent === 'delete' && ['draft', 'changes_requested', 'withdrawn'].includes(r.status) && (access.approver || r.created_by === me.id)) {
       await svc.from('press_releases').delete().eq('id', r.id);
       await log('press_deleted', { headline: r.headline });
-      return Astro.redirect('/admin/press', 303);
+      return Astro.redirect(`/admin/press${desk.q}`, 303);
     } else if (!error) error = 'That isn’t possible for this release now.';
   } catch (e) {
     console.error('press release', intent, (e as Error).message);
@@ -205,7 +207,7 @@ if (Astro.request.method === 'POST') {
   r = (await loadRelease(svc, r.id))!;
 }
 
-const settings = await pressSettings(svc);
+const settings = await settingsFor(svc, r!);
 const { data: versions } = await svc.from('press_release_versions').select('id, saved_at, reason, saved_by').eq('release_id', r.id).order('saved_at', { ascending: false }).limit(30);
 const { data: approvals } = await svc.from('press_quote_approvals').select('quote_key, status, comment, responded_at, sent_at').eq('release_id', r.id).neq('status', 'cancelled').order('sent_at', { ascending: false });
 const people = [...new Set([...(versions ?? []).map((v) => v.saved_by), r.created_by, r.submitted_by, r.approved_by].filter(Boolean))] as string[];
@@ -227,18 +229,18 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
 ---
 
 <Admin title={r.headline || 'Press release'}>
-  <PressNav />
-  <a href="/admin/press" class="text-sm text-white/50 hover:text-white">← All press releases</a>
+  <PressNav desk={desk} />
+  <a href={`/admin/press${desk.q}`} class="text-sm text-white/50 hover:text-white">← All press releases</a>
   <div class="mt-2 flex flex-wrap items-end justify-between gap-3">
     <div>
       <h1 class="font-display text-3xl font-bold">{r.headline || 'New press release'}</h1>
       <p class="mt-1 text-sm text-white/45">{STATUS_LABEL[r.status]}{r.status === 'approved' && r.publish_at && ` · publishes ${sydneyTime(r.publish_at)}`}{r.status === 'published' && r.published_at && ` · ${sydneyTime(r.published_at)}`} · {companyName(r.entity_id)} · by {who(r.created_by)}{r.approved_by && ` · approved by ${who(r.approved_by)}`}</p>
     </div>
     <div class="flex flex-wrap gap-2">
-      <a href={`/admin/press/${r.id}/preview`} target="_blank" rel="noopener" class="btn-ghost text-sm">Preview ↗</a>
+      <a href={`/admin/press/${r.id}/preview${desk.q}`} target="_blank" rel="noopener" class="btn-ghost text-sm">Preview ↗</a>
       {post?.slug && r.status === 'published' && <a href={`/api/public/press/${post.slug}.pdf`} target="_blank" rel="noopener" class="btn-ghost text-sm">PDF ↗</a>}
       {websiteUrl && r.status === 'published' && <a href={websiteUrl} target="_blank" rel="noopener" class="btn-ghost text-sm">On the website ↗</a>}
-      {r.status === 'published' && <a href={`/admin/press/${r.id}/report`} class="btn-ghost text-sm">Report</a>}
+      {r.status === 'published' && <a href={`/admin/press/${r.id}/report${desk.q}`} class="btn-ghost text-sm">Report</a>}
     </div>
   </div>
   <div class="mt-5 space-y-3">
@@ -401,9 +403,9 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
 
       {['approved', 'published'].includes(r.status) && (
         <section class="card space-y-3">
-          <div class="flex items-center justify-between gap-2"><h2 class="font-display text-lg font-bold">Send to journalists</h2><a href={`/admin/press/${r.id}/channels`} class="text-xs text-lk-blue hover:underline">Social and wires →</a></div>
+          <div class="flex items-center justify-between gap-2"><h2 class="font-display text-lg font-bold">Send to journalists</h2><a href={`/admin/press/${r.id}/channels${desk.q}`} class="text-xs text-lk-blue hover:underline">Social and wires →</a></div>
           <ul class="divide-y divide-white/5 text-sm">
-            {(distributions ?? []).map((d) => <li class="py-2"><a href={`/admin/press/distribution/${d.id}`} class="text-white/80 hover:text-lk-blue">{d.follow_up_of ? 'Follow-up' : 'Distribution'} · {d.status}</a><span class="block text-xs text-white/45">{dateTime.format(new Date(d.created_at))}</span></li>)}
+            {(distributions ?? []).map((d) => <li class="py-2"><a href={`/admin/press/distribution/${d.id}${desk.q}`} class="text-white/80 hover:text-lk-blue">{d.follow_up_of ? 'Follow-up' : 'Distribution'} · {d.status}</a><span class="block text-xs text-white/45">{dateTime.format(new Date(d.created_at))}</span></li>)}
             {!distributions?.length && <li class="py-2 text-white/45">Not sent to journalists yet.{r.status === 'approved' && ' Pitches before publication go out under embargo, with a private link to the release.'}</li>}
           </ul>
           <button name="intent" value="new-distribution" class="btn-ghost w-full text-sm">New distribution</button>

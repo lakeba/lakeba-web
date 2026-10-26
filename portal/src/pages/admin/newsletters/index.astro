@@ -9,15 +9,21 @@ import { field } from '../../../lib/forms';
 import { dateTime, shortDate } from '../../../lib/format';
 import { newsEditor } from '../../../lib/news-editors';
 import { listTemplates } from '../../../lib/newsletter-template-store';
+import { brandName } from '../../../lib/companies';
 
-// Newsletter issues (shareholders per company; the public newsletter for
-// group admins) and the public newsletter's subscribers.
+// Newsletter issues (for each company's shareholders, and its public newsletter)
+// and the subscriber list of the company being looked at (Lakeba's by default).
 const svc = serviceClient();
 const scope = await adminScope(Astro.locals, Astro.url);
 const group = scope.isGroupAdmin;
 let notice = '';
 let error = '';
 const editor = newsEditor(Astro.locals, 'newsletters', 'view')!;
+// Whose subscriber list is shown: the company chosen, else Lakeba's for group admins, else the only one.
+const listCompany = scope.selected ?? (group ? scope.companies.find((c) => c.relationship === 'group') : scope.companies.length === 1 ? scope.companies[0] : undefined) ?? null;
+const mayList = Boolean(listCompany && editor.mayEdit(listCompany.id));
+// Lakeba's list is the one from before ventures had lists (no company set).
+const inList = <Q extends { is: (c: string, v: null) => Q; eq: (c: string, v: string) => Q }>(q: Q) => (listCompany!.relationship === 'group' ? q.is('entity_id', null) : q.eq('entity_id', listCompany!.id));
 
 const form = Astro.request.method === 'POST' ? await Astro.request.formData() : null;
 if (form && ['rename-template', 'delete-template'].includes(field(form, 'intent'))) {
@@ -32,32 +38,32 @@ if (form && ['rename-template', 'delete-template'].includes(field(form, 'intent'
     await svc.from('newsletter_templates').update({ name: field(form, 'name').slice(0, 80), description: field(form, 'description').slice(0, 300), updated_at: new Date().toISOString() }).eq('id', tpl.id);
     notice = 'Template saved.';
   }
-} else if (form && group) {
+} else if (form && mayList) {
   const intent = field(form, 'intent');
   const email = field(form, 'email').toLowerCase();
   if (intent === 'add-subscriber') {
     if (!/^[^@\s]+@[^@\s]+\.[a-z]{2,}$/i.test(email)) error = 'Enter a valid email address.';
     else if (form.get('consent') !== 'on') error = 'Only add people who asked to receive the newsletter.';
     else {
-      const { data: existing } = await svc.from('newsletter_subscribers').select('id').ilike('email', email).maybeSingle();
+      const { data: existing } = await inList(svc.from('newsletter_subscribers').select('id').ilike('email', email)).maybeSingle();
       const row = { email, name: field(form, 'name'), status: 'subscribed', confirmed_at: new Date().toISOString(), unsubscribed_at: null };
-      const { error: e } = existing ? await svc.from('newsletter_subscribers').update(row).eq('id', existing.id) : await svc.from('newsletter_subscribers').insert({ ...row, source: 'admin' });
+      const { error: e } = existing ? await svc.from('newsletter_subscribers').update(row).eq('id', existing.id) : await svc.from('newsletter_subscribers').insert({ ...row, source: 'admin', entity_id: listCompany!.relationship === 'group' ? null : listCompany!.id });
       if (e) error = e.message;
-      else { await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_added_newsletter_subscriber', event_detail: { email } }); notice = `${email} is subscribed.`; }
+      else { await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_added_newsletter_subscriber', event_detail: { email, company: listCompany!.code } }); notice = `${email} is subscribed.`; }
     }
   } else if (intent === 'unsubscribe') {
-    await svc.from('newsletter_subscribers').update({ status: 'unsubscribed', unsubscribed_at: new Date().toISOString() }).eq('id', field(form, 'id'));
+    await inList(svc.from('newsletter_subscribers').update({ status: 'unsubscribed', unsubscribed_at: new Date().toISOString() }).eq('id', field(form, 'id')));
     await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_unsubscribed_newsletter_subscriber', event_detail: { id: field(form, 'id') } });
     notice = 'Unsubscribed.';
   } else if (intent === 'delete') {
-    await svc.from('newsletter_subscribers').delete().eq('id', field(form, 'id'));
+    await inList(svc.from('newsletter_subscribers').delete().eq('id', field(form, 'id')));
     await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_deleted_newsletter_subscriber', event_detail: { id: field(form, 'id') } });
     notice = 'Removed from the list.';
   }
 }
 
 let query = svc.from('newsletter_issues').select('id, audience, entity_id, subject, status, scheduled_at, sent_at, created_at').order('created_at', { ascending: false }).limit(100);
-query = group && !scope.selected ? query : query.in('entity_id', scope.ids).eq('audience', 'shareholders');
+query = group && !scope.selected ? query : query.in('entity_id', scope.ids);
 const { data: issues } = await query;
 const ids = (issues ?? []).map((i) => i.id);
 const { data: recs } = ids.length ? await svc.from('newsletter_recipients').select('issue_id, status, opened_at, clicked_at').in('issue_id', ids) : { data: [] };
@@ -68,10 +74,10 @@ for (const r of recs ?? []) {
   stats.set(r.issue_id, s);
 }
 const q = Astro.url.searchParams.get('q')?.trim() ?? '';
-let subQuery = svc.from('newsletter_subscribers').select('id, email, name, source, status, confirmed_at, created_at, unsubscribed_at').order('created_at', { ascending: false }).limit(200);
-if (q) subQuery = subQuery.or(`email.ilike.%${q.replace(/[%,()]/g, '')}%,name.ilike.%${q.replace(/[%,()]/g, '')}%`);
-const { data: subs } = group ? await subQuery : { data: [] };
-const counts = group ? await Promise.all(['subscribed', 'pending', 'unsubscribed'].map(async (st) => [st, (await svc.from('newsletter_subscribers').select('id', { count: 'exact', head: true }).eq('status', st)).count ?? 0] as const)) : [];
+let subQuery = !listCompany ? null : inList(svc.from('newsletter_subscribers').select('id, email, name, source, status, confirmed_at, created_at, unsubscribed_at')).order('created_at', { ascending: false }).limit(200);
+if (q && subQuery) subQuery = subQuery.or(`email.ilike.%${q.replace(/[%,()]/g, '')}%,name.ilike.%${q.replace(/[%,()]/g, '')}%`);
+const { data: subs } = mayList && subQuery ? await subQuery : { data: [] };
+const counts = mayList ? await Promise.all(['subscribed', 'pending', 'unsubscribed'].map(async (st) => [st, (await inList(svc.from('newsletter_subscribers').select('id', { count: 'exact', head: true })).eq('status', st)).count ?? 0] as const)) : [];
 const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 const templates = await listTemplates(svc, editor.mayEdit, group);
 const statusTone: Record<string, string> = { draft: 'bg-white/10 text-white/60', scheduled: 'bg-lk-orange/15 text-lk-orange', sending: 'bg-lk-blue/15 text-lk-blue', sent: 'bg-lk-green/15 text-lk-green', cancelled: 'bg-white/5 text-white/40' };
@@ -125,12 +131,12 @@ const statusTone: Record<string, string> = { draft: 'bg-white/10 text-white/60',
     </ul>
   </section>
 
-  {group && (
+  {mayList && (
     <section class="card mt-8">
       <div class="flex flex-wrap items-end justify-between gap-3">
-        <div><h2 class="font-display text-lg font-bold">Public newsletter subscribers</h2>
-          <p class="mt-1 text-sm text-white/55">{counts.map(([st, n]) => `${n} ${st}`).join(' · ')}. People sign up on the website and confirm by email.</p></div>
-        <a href="/admin/newsletters/subscribers.csv" class="btn-ghost text-sm">Export CSV</a>
+        <div><h2 class="font-display text-lg font-bold">{brandName(listCompany)} newsletter subscribers</h2>
+          <p class="mt-1 text-sm text-white/55">{counts.map(([st, n]) => `${n} ${st}`).join(' · ')}. People sign up on {listCompany!.relationship === 'group' ? 'Lakeba’s' : `${listCompany!.display_name}’s`} website and confirm by email.{group && !scope.selected && ' Choose a company above to see its list.'}</p></div>
+        <a href={`/admin/newsletters/subscribers.csv?company=${listCompany!.code}`} class="btn-ghost text-sm">Export CSV</a>
       </div>
       <form method="get" class="mt-4 flex gap-2"><input name="q" value={q} placeholder="Search email or name" class="field max-w-xs" /><button class="btn-ghost">Search</button></form>
       <ul class="mt-4 divide-y divide-white/5 text-sm">

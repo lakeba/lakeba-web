@@ -40,6 +40,24 @@ export async function spendToday(svc: SupabaseClient) {
   return (data ?? []).reduce((a, r) => a + Number(r.cost_usd ?? 0), 0);
 }
 
+/** Start of this month in Sydney, as a UTC ISO timestamp. */
+export function sydneyMonthStart() {
+  const day = Number(new Intl.DateTimeFormat('en-CA', { timeZone: 'Australia/Sydney', day: 'numeric' }).format(new Date()));
+  return sydneyMidnight(day - 1);
+}
+
+/** What each company's shareholder questions have cost this month (USD) and how many there were. */
+export async function spendThisMonth(svc: SupabaseClient, entityId?: string) {
+  let q = svc.from('ask_exchanges').select('entity_id, cost_usd').gte('created_at', sydneyMonthStart());
+  if (entityId) q = q.eq('entity_id', entityId);
+  const byCompany = new Map<string, { cost: number; questions: number }>();
+  for (const r of (await q.range(0, 99999)).data ?? []) {
+    const k = r.entity_id as string; const s = byCompany.get(k) ?? { cost: 0, questions: 0 };
+    s.cost += Number(r.cost_usd ?? 0); s.questions++; byCompany.set(k, s);
+  }
+  return byCompany;
+}
+
 const countEvents = async (svc: SupabaseClient, action: string, since: string, userId?: string, until?: string) => {
   let q = svc.from('audit_log').select('id', { count: 'exact', head: true }).eq('action', action).gte('created_at', since);
   if (userId) q = q.eq('user_id', userId);
@@ -63,7 +81,7 @@ export type Gate =
  * Decides whether this account may ask now. Called before anything is sent
  * to Claude; counts are taken from the server's own records.
  */
-export async function checkAskAllowed(svc: SupabaseClient, userId: string, limits: Limits, origin: string): Promise<Gate> {
+export async function checkAskAllowed(svc: SupabaseClient, userId: string, limits: Limits, origin: string, company?: { id: string; code: string; display_name: string; ask_monthly_budget_usd?: number | string | null }): Promise<Gate> {
   const { data: paused } = await svc.from('ask_user_pauses').select('user_id').eq('user_id', userId).maybeSingle();
   if (paused) return { ok: false, status: 403, error: 'Ask Lakeba is paused for your account. Please contact info@lakeba.com.' };
 
@@ -100,6 +118,16 @@ export async function checkAskAllowed(svc: SupabaseClient, userId: string, limit
     await alertAdminsOnce(svc, 'ask_budget_reached', 'Ask Lakeba reached today’s budget',
       `Shareholder questions have used USD ${spent.toFixed(2)} today (budget USD ${limits.dailyBudgetUsd}). Until midnight Sydney time, Ask shows matching passages instead of AI answers.`, origin);
     return { ok: true, budgetReached: true };
+  }
+  // A venture's own monthly budget (Admin → Companies → Venture settings).
+  const budget = company?.ask_monthly_budget_usd == null ? null : Number(company.ask_monthly_budget_usd);
+  if (company && budget != null) {
+    const used = (await spendThisMonth(svc, company.id)).get(company.id)?.cost ?? 0;
+    if (used >= budget) {
+      await alertAdminsOnce(svc, `ask_budget_reached_${company.code.toLowerCase()}`, `Ask reached ${company.display_name}’s monthly budget`,
+        `${company.display_name}’s shareholder questions have used USD ${used.toFixed(2)} this month (budget USD ${budget.toFixed(2)}). Until the 1st, Ask shows matching passages instead of AI answers for ${company.display_name}.`, origin);
+      return { ok: true, budgetReached: true };
+    }
   }
   return { ok: true, budgetReached: false };
 }

@@ -14,6 +14,15 @@ const me = Astro.locals.user!.id;
 let error = '';
 let notice = '';
 
+/** Who can answer this company's questions: people whose roles include "do" for Board Q&A, for the whole group or for that company. */
+async function answerers(entityId: string) {
+  const svc = serviceClient();
+  const { data: r } = await svc.from('role_permissions').select('role_key').eq('permission', 'inbox.do');
+  const { data } = await svc.from('user_roles').select('user_id, profiles(id, first_name, last_name, email)').in('role_key', (r ?? []).map((x) => x.role_key))
+    .or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`).or(`entity_id.is.null,entity_id.eq.${entityId}`);
+  return [...new Map(((data ?? []) as unknown as { user_id: string; profiles: { id: string; first_name: string; last_name: string; email: string } }[]).map((x) => [x.user_id, x.profiles])).values()];
+}
+
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = field(form, 'intent');
@@ -34,6 +43,8 @@ if (Astro.request.method === 'POST') {
   } else if (intent === 'update') {
     const status = field(form, 'status');
     const assigned = field(form, 'assigned_to') || null;
+    const { data: owner } = await supabase.from('queries').select('entity_id').eq('id', id!).single();
+    if (assigned && !(await answerers(owner!.entity_id)).some((p) => p.id === assigned)) return new Response('Not allowed', { status: 403 });
     await supabase.from('queries').update({ status, assigned_to: assigned, updated_at: new Date().toISOString() }).eq('id', id!).throwOnError();
     await supabase.rpc('log_event', { event_action: 'admin_updated_query', event_detail: { query_id: id, status, assigned_to: assigned } });
     notice = 'Question updated.';
@@ -43,10 +54,7 @@ if (Astro.request.method === 'POST') {
 const [{ data: q }, { data: messages }, { data: staff }] = await Promise.all([
   supabase.from('queries').select('id, subject, status, due_at, created_at, assigned_to, owner:profiles!queries_user_id_fkey(first_name, last_name, email, phone)').eq('id', id!).single(),
   supabase.from('query_messages').select('id, body, internal, created_at, author_id, author:profiles(first_name, last_name, email, role)').eq('query_id', id!).order('created_at'),
-  // Who can answer: people whose roles include "do" for Board Q&A.
-  serviceClient().from('role_permissions').select('role_key').eq('permission', 'inbox.do')
-    .then(async ({ data: r }) => serviceClient().from('user_roles').select('user_id, profiles(id, first_name, last_name, email)').in('role_key', (r ?? []).map((x) => x.role_key)).or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`))
-    .then(({ data }) => ({ data: [...new Map(((data ?? []) as unknown as { user_id: string; profiles: { id: string; first_name: string; last_name: string; email: string } }[]).map((x) => [x.user_id, x.profiles])).values()].sort((a, b) => (a.first_name ?? '').localeCompare(b.first_name ?? '')) })),
+  supabase.from('queries').select('entity_id').eq('id', id!).maybeSingle().then(async ({ data: e }) => ({ data: e ? (await answerers(e.entity_id)).sort((x, y) => (x.first_name ?? '').localeCompare(y.first_name ?? '')) : [] })),
 ]);
 // Messages from anyone with a role show as Lakeba's.
 const authorIds = [...new Set((messages ?? []).map((m) => m.author_id).filter(Boolean))] as string[];

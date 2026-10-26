@@ -1,6 +1,7 @@
 import { serviceClient } from './admin';
 import { client as claude } from './ask';
 import { getMessage, graphConfigured, newMessages, sendReply, setCategory, type GraphMessage } from './graph';
+import { companyFor } from './mail-routing';
 import { notifyAdmins } from './notify';
 import { createSignInLink } from './sign-in-links';
 
@@ -391,13 +392,16 @@ export async function pollMailboxes(origin: string) {
   const svc = serviceClient();
   let checked = 0, emails = 0;
   try {
-    const { data: companies } = await svc.from('entities').select('id, shareholder_mailbox').neq('email_mode', 'off').not('shareholder_mailbox', 'is', null);
-    for (const c of companies ?? []) {
-      const mailbox = c.shareholder_mailbox!.toLowerCase();
+    const { data: companies } = await svc.from('entities').select('id, shareholder_mailbox, shareholder_address').neq('email_mode', 'off').not('shareholder_mailbox', 'is', null);
+    // Several companies can share one mailbox, each with its own address on it
+    // (mist.shareholders@lakeba.com, an alias of shareholders@): each mailbox is read
+    // once, and every email is filed to the company it was sent to.
+    for (const [mailbox, sharing] of Map.groupBy(companies ?? [], (c) => c.shareholder_mailbox!.toLowerCase())) {
       const { data: state } = await svc.from('email_sync_state').select('delta_link').eq('mailbox', mailbox).maybeSingle();
       try {
         const { messages, deltaLink } = await newMessages(mailbox, state?.delta_link ?? null);
         for (const m of messages.sort((a, b) => a.receivedDateTime.localeCompare(b.receivedDateTime))) {
+          const c = companyFor(m, mailbox, sharing);
           if (await ingest(svc, c.id, mailbox, m, origin)) emails++;
         }
         await svc.from('email_sync_state').upsert({ mailbox, delta_link: deltaLink, last_checked_at: new Date().toISOString(), last_error: null });

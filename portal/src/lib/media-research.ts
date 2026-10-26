@@ -1,6 +1,7 @@
 import { client as claude } from './ask';
 import type { serviceClient } from './admin';
 import { fullName, validEmail, type Contact } from './media';
+import { onDesk, type Desk } from './press';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -52,13 +53,14 @@ function searchedUrls(blocks: Block[]) {
   return urls;
 }
 
-export async function research(svc: Svc, brief: Brief) {
+export async function research(svc: Svc, brief: Brief, desk: Pick<Desk, 'venture'> = { venture: null }) {
   if (!claude) throw new Error('Claude needs the API key on the server.');
-  const { data: known } = await svc.from('media_contacts').select('first_name, last_name, email').limit(3000);
+  // People already on this desk's list are left out.
+  const { data: known } = await onDesk(desk, svc.from('media_contacts').select('first_name, last_name, email')).limit(3000);
   const knownNames = ((known ?? []) as Pick<Contact, 'first_name' | 'last_name' | 'email'>[]).map((c) => fullName(c)).filter(Boolean);
   const count = Math.min(Math.max(brief.count || 10, 3), 20);
   const system = [
-    'You are a media researcher for the press office of Lakeba Group, a Sydney-based technology investment and venture-building company (fintech, proptech, AI, digital services).',
+    desk.venture ? `You are a media researcher for the press office of ${desk.venture.display_name}, an Australian company.` : 'You are a media researcher for the press office of Lakeba Group, a Sydney-based technology investment and venture-building company (fintech, proptech, AI, digital services).',
     `Find up to ${count} journalists, editors or producers who currently cover the beats below${brief.region ? ` in ${brief.region}` : ' in Australia'}, using web search. Prefer people with relevant articles in the last 12 months, at ${brief.kinds || 'any kind of outlet (newspapers, online, trade press, newsletters, TV and radio, podcasts)'}.`,
     'For each person: their outlet, role and title, beats, region, one recent relevant article (title and its URL), and the pages that show they work there and cover this beat.',
     'Email: give a professional email address only if you saw it published (on the outlet\'s site, their author page or their public profile) and say on which page. Never guess an address from a name pattern; leave it empty if you didn\'t see it.',
@@ -112,10 +114,10 @@ export async function research(svc: Svc, brief: Brief) {
 }
 
 /** Runs the research in the background and records the result on the run. */
-export function researchInBackground(svc: Svc, runId: string, brief: Brief, log: (detail: Record<string, unknown>) => unknown) {
+export function researchInBackground(svc: Svc, runId: string, brief: Brief, log: (detail: Record<string, unknown>) => unknown, desk: Pick<Desk, 'venture'> = { venture: null }) {
   void (async () => {
     try {
-      const r = await research(svc, brief);
+      const r = await research(svc, brief, desk);
       await svc.from('media_research_runs').update({ status: 'done', candidates: r.candidates, searches: r.searches, note: r.dropped ? `${r.dropped} result${r.dropped > 1 ? 's' : ''} left out (no verifiable source, or already in the list).` : '', finished_at: new Date().toISOString() }).eq('id', runId);
       await log({ run_id: runId, candidates: r.candidates.length, searches: r.searches, input_tokens: r.input, output_tokens: r.output });
     } catch (e) {

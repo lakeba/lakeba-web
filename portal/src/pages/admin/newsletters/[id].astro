@@ -6,6 +6,7 @@ import Alert from '../../../components/Alert.astro';
 import CompanySelect from '../../../components/CompanySelect.astro';
 import NewsletterEditor from '../../../components/NewsletterEditor.astro';
 import { serviceClient } from '../../../lib/admin';
+import { brandName } from '../../../lib/companies';
 import { adminScope, formCompany, withCompany } from '../../../lib/admin-company';
 import { parseLocal } from '../../../lib/admin-forms';
 import { field } from '../../../lib/forms';
@@ -33,7 +34,8 @@ type Row = Issue & { started_at: string | null; updated_at: string; mode: 'compo
 const load = async (id: string) => (await svc.from('newsletter_issues').select('*').eq('id', id).maybeSingle()).data as Row | null;
 let issue = isNew ? null : await load(Astro.params.id!);
 const groupEntity = scope.companies.find((c) => c.relationship === 'group') ?? null;
-const mayManage = (i: { audience: string; entity_id: string }) => (i.audience === 'public' ? editor.group : editor.mayEdit(i.entity_id));
+// A company's editors manage its newsletters, the public one (to its own subscribers) included.
+const mayManage = (i: { audience: string; entity_id: string }) => editor.mayEdit(i.entity_id);
 if (!isNew && (!issue || !mayManage(issue))) return Astro.redirect(withCompany(scope, '/admin/newsletters'));
 const editable = !issue || issue.status === 'draft' || issue.status === 'scheduled';
 const back = (id: string, done: string, extra = '') => Astro.redirect(withCompany(scope, `/admin/newsletters/${id}?done=${done}${extra}`), 303);
@@ -47,14 +49,13 @@ if (Astro.request.method === 'POST') {
   const intent = field(form, 'intent');
   if (isNew && intent === 'from-template') {
     const t = templates.find((x) => x.id === field(form, 'template_id'));
-    const audience = (t?.audience === 'public' || ((!t || t.audience === 'any') && field(form, 'audience') === 'public' && editor.group)) ? 'public' : 'shareholders';
-    const company = audience === 'public' ? groupEntity : formCompany(scope, field(form, 'entity_id'));
-    if (!t && field(form, 'template_id') !== 'blank') error = 'That template isn’t available to you. Only group admins can send the public newsletter.';
-    else if (audience === 'public' && !editor.group) error = 'Only group admins can send the public newsletter.';
-    else if (!company) error = 'Choose the company.';
+    const audience = (t?.audience === 'public' || ((!t || t.audience === 'any') && field(form, 'audience') === 'public')) ? 'public' : 'shareholders';
+    const company = formCompany(scope, field(form, 'entity_id')) ?? (audience === 'public' && editor.group ? groupEntity : null);
+    if (!t && field(form, 'template_id') !== 'blank') error = 'That template isn’t available to you.';
+    else if (!company || !editor.mayEdit(company.id)) error = 'Choose the company.';
     else {
       const base = t ?? { subject: '', preheader: '', mode: 'compose' as const, content: { meetings: audience === 'shareholders', holding: audience === 'shareholders' }, html_body: '', mjml: '', design_json: null };
-      const filled = await issueFromTemplate(base, { name: audience === 'public' ? 'Lakeba' : company.display_name, color: company.brand_color }, Astro.url.origin);
+      const filled = await issueFromTemplate(base, { name: brandName(company), color: company.brand_color }, Astro.url.origin);
       // News and documents published since the last issue start ticked.
       const { data: last } = await svc.from('newsletter_issues').select('sent_at').eq('audience', audience).eq('entity_id', company.id).eq('status', 'sent').order('sent_at', { ascending: false }).limit(1).maybeSingle();
       const since = last?.sent_at ?? new Date(Date.now() - 92 * 86_400_000).toISOString();
@@ -71,8 +72,10 @@ if (Astro.request.method === 'POST') {
       }
     }
   } else if (issue && editable && ['save', 'test', 'schedule', 'send', 'to-html', 'to-compose', 'to-design', 'save-template'].includes(intent)) {
-    const company = issue.audience === 'public' ? groupEntity : formCompany(scope, field(form, 'entity_id')) ?? scope.companies.find((c) => c.id === issue!.entity_id) ?? null;
+    const company = scope.companies.find((c) => c.id === issue!.entity_id) ?? null;
     const fields = issueFields(form, issue.audience);
+    // A share-class filter must be one of this company's classes.
+    if (fields.segment.segment === 'class' && !(await svc.from('share_classes').select('id').eq('id', fields.segment.share_class_id).eq('entity_id', issue.entity_id).maybeSingle()).data) fields.segment = { segment: 'all' };
     const design = await designFields(form);
     if (!company) error = 'Choose the company.';
     else {
@@ -90,7 +93,7 @@ if (Astro.request.method === 'POST') {
         // First time: a design with the same words as the composed issue. Later: keep the design.
         if (!issue.mjml.trim()) {
           const c = merged.content;
-          row.mjml = composeToMjml({ audience: issue.audience, company: issue.audience === 'public' ? 'Lakeba' : company.display_name, color: company.brand_color ?? '#276ae7', intro: c.intro_html ?? '', sections: c.sections ?? [], closing: c.closing_html ?? '', cta: c.cta_label && c.cta_url ? { label: c.cta_label, url: c.cta_url } : null, holding: Boolean(c.holding), documents: Boolean(c.document_ids?.length), meetings: Boolean(c.meetings) });
+          row.mjml = composeToMjml({ audience: issue.audience, company: brandName(company), color: company.brand_color ?? '#276ae7', intro: c.intro_html ?? '', sections: c.sections ?? [], closing: c.closing_html ?? '', cta: c.cta_label && c.cta_url ? { label: c.cta_label, url: c.cta_url } : null, holding: Boolean(c.holding), documents: Boolean(c.document_ids?.length), meetings: Boolean(c.meetings) });
           row.design_json = null;
           row.design_html = (await compileMjml(String(row.mjml))).html;
         }
@@ -211,7 +214,7 @@ const issueApproval = issue ? await getApproval(svc, 'newsletter', issue.id) : n
           <div class="mt-4 grid gap-3 lg:grid-cols-[2fr_1fr] lg:items-end">
             <textarea name="brief" rows="5" required minlength="15" class="field" placeholder={"- Signed three new bank partners this quarter\n- FY26 results are out: revenue up 40% (see the annual report)\n- AGM on 20 November, please vote online\n- Thank shareholders for their support"}></textarea>
             <div class="space-y-3">
-              {editor.group && <select name="audience" class="field text-sm" aria-label="Newsletter"><option value="shareholders">For shareholders</option><option value="public">Public newsletter</option></select>}
+              <select name="audience" class="field text-sm" aria-label="Newsletter"><option value="shareholders">For shareholders</option><option value="public">Public newsletter (website subscribers)</option></select>
               <CompanySelect scope={scope} id="c-ai" value={entityId} />
               <button class="btn-primary w-full">Continue</button>
             </div>
@@ -224,9 +227,9 @@ const issueApproval = issue ? await getApproval(svc, 'newsletter', issue.id) : n
             <h2 class="mt-2 font-display text-lg font-bold">{t.name}</h2>
             <p class="mt-1 flex-1 text-sm text-white/55">{t.description}</p>
             <div class="mt-4 space-y-3">
-              {t.audience === 'any' && editor.group && <select name="audience" class="field text-sm" aria-label="Newsletter"><option value="shareholders">For shareholders</option><option value="public">Public newsletter</option></select>}
-              {t.audience !== 'public' && <CompanySelect scope={scope} id={`c-${t.id}`} value={t.entity_id ?? entityId} />}
-              {t.audience === 'public' && <p class="text-xs text-white/45">For website subscribers.</p>}
+              {t.audience === 'any' && <select name="audience" class="field text-sm" aria-label="Newsletter"><option value="shareholders">For shareholders</option><option value="public">Public newsletter (website subscribers)</option></select>}
+              <CompanySelect scope={scope} id={`c-${t.id}`} value={t.entity_id ?? entityId} />
+              {t.audience === 'public' && <p class="text-xs text-white/45">For the company’s website subscribers.</p>}
               <div class="flex gap-2"><button class="btn-primary flex-1">Use this template</button>{t.id !== 'blank' && <a href={withCompany(scope, `/admin/newsletters/templates/${t.id}`)} class="btn-ghost">Edit</a>}</div>
             </div>
           </form>

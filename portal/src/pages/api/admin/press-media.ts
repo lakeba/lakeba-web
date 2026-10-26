@@ -2,13 +2,13 @@ import type { APIRoute } from 'astro';
 import { randomUUID } from 'node:crypto';
 import { serviceClient } from '../../../lib/admin';
 import { IMAGE_TYPES, MEDIA_PREFIX } from '../../../lib/news-cms';
-import { pressAccess } from '../../../lib/press';
 
 const MAX = 8 * 1024 * 1024;
 
 /** Uploads an image for a press release (cover or press kit) to the newsroom's image store. */
 export const POST: APIRoute = async ({ request, locals }) => {
-  if (!pressAccess(locals)?.writer) return Response.json({ error: 'Not allowed.' }, { status: 403 });
+  // Anyone who writes releases on some desk (images go into a release's kit).
+  if (!locals.user || locals.user.aal !== 'aal2' || !locals.access.canAny('press.do')) return Response.json({ error: 'Not allowed.' }, { status: 403 });
   const file = (await request.formData()).get('file');
   if (!(file instanceof File)) return Response.json({ error: 'No image.' }, { status: 400 });
   const ext = IMAGE_TYPES[file.type];

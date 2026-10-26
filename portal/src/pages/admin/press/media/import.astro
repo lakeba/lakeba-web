@@ -5,12 +5,13 @@ import Alert from '../../../../components/Alert.astro';
 import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { CONSENT, FIELDS, guessColumns, importContacts, listOf, readTable, type Contact, type Field } from '../../../../lib/media';
-import { pressAccess } from '../../../../lib/press';
+import { pressDesk } from '../../../../lib/press';
 
 // Importing a media list (CSV or Excel): 1. upload, 2. confirm which column
 // is which (guessed from the headings) and why we may email these people,
 // 3. import: outlets by name, contacts once per email, opt-outs skipped.
-if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const desk = await pressDesk(Astro.locals, serviceClient(), Astro.url);
+if (!desk) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const me = Astro.locals.user!;
 let error = '';
@@ -37,7 +38,7 @@ if (Astro.request.method === 'POST') {
       if (!map.includes('email')) error = 'Choose which column holds the email address.';
       else {
         const consent = (field(form, 'consent') in CONSENT ? field(form, 'consent') : 'published_work_address') as Contact['consent_basis'];
-        result = await importContacts(svc, table!.rows, map, { consent, tags: listOf(field(form, 'tags')), by: me.id });
+        result = await importContacts(svc, table!.rows, map, { consent, tags: listOf(field(form, 'tags')), by: me.id, desk });
         await Astro.locals.supabase.rpc('log_event', { event_action: 'press_contacts_imported', event_detail: { file: field(form, 'file_name'), rows: table!.rows.length, ...result, problems: undefined } });
         table = null;
       }
@@ -49,8 +50,8 @@ const encoded = table ? Buffer.from(JSON.stringify(table)).toString('base64') : 
 ---
 
 <Admin title="Import a media list">
-  <PressNav />
-  <a href="/admin/press/media" class="text-sm text-white/50 hover:text-white">← Media database</a>
+  <PressNav desk={desk} />
+  <a href={`/admin/press/media${desk.q}`} class="text-sm text-white/50 hover:text-white">← Media database</a>
   <h1 class="mt-2 font-display text-3xl font-bold">Import a media list</h1>
   <p class="mt-1 max-w-3xl text-sm text-white/55">A spreadsheet of journalists and outlets in any layout: you confirm which column is which. Contacts are kept once per email address (new details fill in what’s missing, without overwriting), outlets are created by name, and addresses that opted out are skipped.</p>
   <div class="mt-5 space-y-3">{error && <Alert tone="error">{error}</Alert>}</div>
@@ -60,7 +61,7 @@ const encoded = table ? Buffer.from(JSON.stringify(table)).toString('base64') : 
       <h2 class="font-display text-lg font-bold">Imported</h2>
       <p class="text-sm text-white/75">{result.added} added · {result.updated} updated · {result.outlets} new outlets · {result.skipped} skipped{result.optedOut ? ` · ${result.optedOut} opted out (not added)` : ''}</p>
       {result.problems.length > 0 && <ul class="list-disc pl-5 text-xs text-lk-orange">{result.problems.map((p) => <li>{p}</li>)}</ul>}
-      <a href="/admin/press/media" class="btn-primary inline-flex">Open the media database</a>
+      <a href={`/admin/press/media${desk.q}`} class="btn-primary inline-flex">Open the media database</a>
     </section>
   )}
 
@@ -90,7 +91,7 @@ const encoded = table ? Buffer.from(JSON.stringify(table)).toString('base64') : 
           <p class="mt-1 text-xs text-white/40">Australia’s Spam Act allows emails to an address someone publishes for their work, about their work (and every email has an unsubscribe link).</p></div>
         <div><label class="label" for="tags">Tag everyone in this list (optional)</label><input id="tags" name="tags" placeholder="e.g. 2026 list, tier 1" class="field" /></div>
       </section>
-      <div class="flex gap-2"><button class="btn-primary">Import {table.rows.length} rows</button><a href="/admin/press/media/import" class="btn-ghost">Start again</a></div>
+      <div class="flex gap-2"><button class="btn-primary">Import {table.rows.length} rows</button><a href={`/admin/press/media/import${desk.q}`} class="btn-ghost">Start again</a></div>
     </form>
   )}
 </Admin>

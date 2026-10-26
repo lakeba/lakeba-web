@@ -183,9 +183,11 @@ const [{ data: rowData }, { data: members }, { data: notes }, blocker] = await P
   svc.from('holding_notes').select('share_class_id, note').eq('holder_id', id),
   rights.group ? holderBlocker(svc, id) : Promise.resolve(null),
 ]);
-const rows = (rowData ?? []) as Row[];
+// Only the companies this person may see: a holder can also hold shares in other companies.
+const viewable = (classId: string) => { const e = classById.get(classId)?.entity_id; return Boolean(e) && Astro.locals.access.can('investors.view', e!); };
+const rows = ((rowData ?? []) as Row[]).filter((r) => viewable(r.share_class_id));
 const byClass = [...Map.groupBy(rows, (r) => r.share_class_id)].sort((a, b) => classLabel(a[0]).localeCompare(classLabel(b[0])));
-const noteOf = new Map((notes ?? []).map((n) => [n.share_class_id, n.note]));
+const noteOf = new Map((notes ?? []).filter((n) => viewable(n.share_class_id)).map((n) => [n.share_class_id, n.note]));
 const editableClasses = classes.filter((c) => rights.company(c.entity_id));
 const companyNames = [...new Set(rows.map((r) => classById.get(r.share_class_id)?.entities?.display_name).filter(Boolean))];
 const self = Astro.url.pathname;

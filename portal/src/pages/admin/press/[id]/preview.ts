@@ -1,17 +1,17 @@
 import type { APIRoute } from 'astro';
 import { serviceClient } from '../../../../lib/admin';
 import { EMAIL_PAGE_HEADERS } from '../../../../lib/newsletter-design';
-import { composeRelease, loadRelease, pressAccess, pressSettings } from '../../../../lib/press';
+import { composeRelease, loadRelease, deskOf, settingsFor } from '../../../../lib/press';
 
 const esc = (s: string) => s.replace(/[&<>"']/g, (c) => `&#${c.charCodeAt(0)};`);
 
 /** The release as it will read on the newsroom (dateline, boilerplate, contact), with its kit. */
 export const GET: APIRoute = async ({ params, locals }) => {
-  if (!pressAccess(locals)) return new Response('Forbidden', { status: 403 });
   const svc = serviceClient();
   const r = await loadRelease(svc, params.id!);
   if (!r) return new Response('Not found', { status: 404 });
-  const s = await pressSettings(svc);
+  if (!(await deskOf(locals, svc, r.entity_id))) return new Response('Forbidden', { status: 403 });
+  const s = await settingsFor(svc, r);
   const when = r.published_at ?? r.publish_at ?? r.embargo_until;
   const kit = r.kit.map((k) => `<figure style="margin:0"><img src="${esc(k.url)}" alt="" style="width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:8px"><figcaption style="font-size:12px;color:#6b7a90">${esc(k.label)}</figcaption></figure>`).join('');
   const html = `<!doctype html><html lang="en-AU"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${esc(r.headline || 'Press release')}</title>

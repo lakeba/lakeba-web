@@ -47,7 +47,7 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   // Admins may pick the mode per question, for comparing the two.
   const admin = locals.access.groupAdmin;
   let mode: 'full' | 'retrieval' = admin && ['full', 'retrieval'].includes(body?.mode) ? body.mode : retrieval.enabled ? 'retrieval' : 'full';
-  const gate = await checkAskAllowed(svc, locals.user!.id, limits, url.origin);
+  const gate = await checkAskAllowed(svc, locals.user!.id, limits, url.origin, company);
   if (!gate.ok) return Response.json({ error: t(gate.error, gate.vars) }, { status: gate.status });
   await supabase.rpc('log_event', { event_action: 'ask_question', event_detail: { length: turns.at(-1)!.content.length, turn: Math.ceil(turns.length / 2) } });
 

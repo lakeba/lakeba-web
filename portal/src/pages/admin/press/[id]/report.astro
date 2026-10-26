@@ -6,7 +6,7 @@ import Alert from '../../../../components/Alert.astro';
 import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { dateTime } from '../../../../lib/format';
-import { loadRelease, pressAccess, sydneyTime } from '../../../../lib/press';
+import { loadRelease, sydneyTime, deskOf } from '../../../../lib/press';
 import { articleUrl, channelName } from '../../../../lib/press-channels';
 import { searchRelease } from '../../../../lib/press-coverage';
 import { coverageCsv, pct, releaseStats } from '../../../../lib/press-report';
@@ -14,10 +14,11 @@ import { client as claude } from '../../../../lib/ask';
 
 // One release's results: journalists reached, coverage, social and wires, cost.
 // Printable (Save as PDF) and as CSV; “Check for coverage now” searches the web.
-const access = pressAccess(Astro.locals);
-if (!access) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const r = await loadRelease(svc, Astro.params.id!);
+const desk = r ? await deskOf(Astro.locals, svc, r.entity_id) : null;
+if (r && !desk) return new Response('Forbidden', { status: 403 });
+const access = desk!;
 if (!r || r.status !== 'published') return Astro.redirect(r ? `/admin/press/${r.id}` : '/admin/press');
 const { data: company } = r.entity_id ? await svc.from('entities').select('display_name').eq('id', r.entity_id).maybeSingle() : { data: null };
 let notice = '', error = '';
@@ -42,15 +43,15 @@ const { count: searches } = await svc.from('press_monitor_log').select('id', { c
 
 <Admin title={`Report: ${r.headline}`}>
   <ReportPrint />
-  <div class="no-print"><PressNav /></div>
+  <div class="no-print"><PressNav desk={desk} /></div>
   <div class="press-report">
-    <a href={`/admin/press/${r.id}`} class="no-print text-sm text-white/50 hover:text-white">← The release</a>
+    <a href={`/admin/press/${r.id}${desk.q}`} class="no-print text-sm text-white/50 hover:text-white">← The release</a>
     <p class="mt-2 text-xs uppercase tracking-[0.2em] text-white/45">Press release report · {company?.display_name ?? 'Lakeba Group'}</p>
     <h1 class="mt-1 font-display text-3xl font-bold">{r.headline}</h1>
     <p class="mt-1 text-sm text-white/55">Published {sydneyTime(r.published_at!)}{post?.slug && <> · <a href={articleUrl(post.slug)} class="text-lk-blue">{articleUrl(post.slug)}</a></>} · report of {dateTime.format(new Date())}</p>
     <div class="no-print mt-4 flex flex-wrap gap-2">
       <button type="button" class="btn-ghost text-sm" onclick="window.print()">Print or save as PDF</button>
-      <a href={`/admin/press/${r.id}/report?format=csv`} class="btn-ghost text-sm">Coverage as CSV</a>
+      <a href={`/admin/press/${r.id}/report?format=csv${desk.q.replace('?', '&')}`} class="btn-ghost text-sm">Coverage as CSV</a>
       <form method="post"><button name="intent" value="search" class="btn-ghost text-sm" onclick="this.disabled=true;this.textContent='Searching (about a minute)…';this.form.submit()">Check for coverage now</button></form>
     </div>
     <div class="no-print mt-4 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>

@@ -1,7 +1,11 @@
 ---
-// Tabs across the press office pages.
+import type { Desk } from '../lib/press';
+// Tabs across the press office pages, and the desk being worked on (Lakeba's,
+// or a non-controlling venture's own) when this person has more than one.
+interface Props { desk: Desk }
+const { desk } = Astro.props;
 const path = Astro.url.pathname;
-const approver = Astro.locals.access.can('press.approve', null);
+const q = desk.q;
 const tabs = [
   { href: '/admin/press', label: 'Releases', on: path === '/admin/press' || (/^\/admin\/press\/([0-9a-f-]{36}|distribution)/.test(path) && !/\/report$/.test(path)) },
   { href: '/admin/press/media', label: 'Media database', on: path.startsWith('/admin/press/media') },
@@ -9,9 +13,16 @@ const tabs = [
   { href: '/admin/press/research', label: 'Find journalists', on: path.startsWith('/admin/press/research') },
   { href: '/admin/press/coverage', label: 'Coverage', on: path.startsWith('/admin/press/coverage') },
   { href: '/admin/press/report', label: 'Reports', on: path.startsWith('/admin/press/report') || /\/report$/.test(path) },
-  ...(approver ? [{ href: '/admin/press/settings', label: 'Settings and team', on: path.startsWith('/admin/press/settings') }] : []),
+  ...(desk.approver ? [{ href: '/admin/press/settings', label: 'Settings and team', on: path.startsWith('/admin/press/settings') }] : []),
 ];
+const deskHref = (code: string | null) => `${path.match(/^\/admin\/press(\/(media|outlets|research|coverage|report|settings))?/)?.[0] ?? '/admin/press'}${code ? `?desk=${code}` : ''}`;
 ---
+{desk.desks.length > 1 && (
+  <div class="mb-4 flex flex-wrap items-center gap-2 text-sm">
+    <span class="text-white/45">Press office:</span>
+    {desk.desks.map((d) => <a href={deskHref(d.code)} aria-current={d.code === (desk.venture?.code ?? null) ? 'page' : undefined} class:list={['rounded-full px-3 py-1', d.code === (desk.venture?.code ?? null) ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{d.name}</a>)}
+  </div>
+)}
 <nav class="mb-6 flex flex-wrap gap-1 border-b border-white/10 text-sm" aria-label="Press office">
-  {tabs.map((t) => <a href={t.href} aria-current={t.on ? 'page' : undefined} class:list={['-mb-px border-b-2 px-3 py-2', t.on ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{t.label}</a>)}
+  {tabs.map((t) => <a href={`${t.href}${q}`} aria-current={t.on ? 'page' : undefined} class:list={['-mb-px border-b-2 px-3 py-2', t.on ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{t.label}</a>)}
 </nav>

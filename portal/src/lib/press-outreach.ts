@@ -4,7 +4,7 @@ import { client as claude } from './ask';
 import type { serviceClient } from './admin';
 import { sendRaw } from './mail';
 import { audience, optOut, type Filters } from './media';
-import { pressSettings, sydneyTime, type PressSettings, type Release } from './press';
+import { deskVentureOf, onDesk, pressSettings, settingsFor, sydneyTime, type DeskVenture, type PressSettings, type Release } from './press';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -34,6 +34,18 @@ const site = () => PUBLIC_SITE_URL.replace(/\/$/, '');
 /** Pitches come from the press office's shared mailbox (press@lakeba.com), never from no-reply. */
 export const pressFrom = () => PRESS_MAIL_FROM;
 const fromDomain = () => /@([^>\s]+)/.exec(PRESS_MAIL_FROM)?.[1] ?? 'lakeba.com';
+
+/** Whose press office a pitch comes from: Lakeba's, or a non-controlling venture's own. */
+type Org = { name: string; legal: string; place: string };
+const LAKEBA_ORG: Org = { name: 'Lakeba Group', legal: 'Lakeba Group Limited', place: 'Sydney, Australia' };
+async function orgOf(svc: Svc, r: Pick<Release, 'entity_id'>): Promise<Org> {
+  const v = await deskVentureOf(svc, r.entity_id);
+  if (!v) return LAKEBA_ORG;
+  const { data } = await svc.from('entities').select('legal_name, country').eq('id', v.id).maybeSingle();
+  return { name: v.display_name, legal: data?.legal_name || v.display_name, place: data?.country || 'Australia' };
+}
+/** The press address with the desk's media contact as the name ("MIST Media Relations" <press@…>). */
+const fromNamed = (name: string) => { const address = PRESS_MAIL_FROM.match(/<([^>]+)>/)?.[1] ?? PRESS_MAIL_FROM.trim(); return `"${name.replace(/["\\<>\r\n]/g, '')}" <${address}>`; };
 
 /** The release's embargo for journalists: its embargo, or its scheduled time while not yet published. */
 export const embargoOf = (r: Release) => (r.status === 'published' ? null : r.embargo_until ?? r.publish_at);
@@ -67,7 +79,7 @@ async function personalIntro(r: Release, p: { first_name: string; outlet: string
 export async function prepareDistribution(svc: Svc, d: Distribution, r: Release) {
   await svc.from('press_distributions').update({ status: 'preparing' }).eq('id', d.id);
   try {
-    let people = await audience(svc, d.filters);
+    let people = await audience(svc, d.filters, { venture: await deskVentureOf(svc, r.entity_id) });
     if (d.follow_up_of) {
       // A follow-up goes only to people who received the first pitch and didn't open, click, read, reply or opt out.
       const { data: first } = await svc.from('press_pitches').select('email').eq('distribution_id', d.follow_up_of).eq('status', 'sent').is('opened_at', null).is('clicked_at', null).is('previewed_at', null).is('replied_at', null).is('unsubscribed_at', null).is('bounced_at', null);
@@ -103,7 +115,7 @@ export function prepareInBackground(svc: Svc, d: Distribution, r: Release) {
 }
 
 /** The pitch email for one journalist. */
-export function renderPitch(o: { r: Release; s: PressSettings; d: Pick<Distribution, 'subject' | 'availability' | 'follow_up_of'>; intro: string; firstName: string; token: string; origin: string; slug: string | null; beats: string[] }) {
+export function renderPitch(o: { r: Release; s: PressSettings; d: Pick<Distribution, 'subject' | 'availability' | 'follow_up_of'>; intro: string; firstName: string; token: string; origin: string; slug: string | null; beats: string[]; org?: Org }) {
   const { r, s } = o;
   const embargo = embargoOf(r);
   const preview = `${o.origin}/press/view/${o.token}`;
@@ -114,8 +126,9 @@ export function renderPitch(o: { r: Release; s: PressSettings; d: Pick<Distribut
   const subject = (o.d.subject || `${embargo ? `EMBARGOED until ${sydneyTime(embargo)}: ` : ''}${r.headline}`).slice(0, 200);
   const hello = o.firstName ? `Hi ${o.firstName},` : 'Hello,';
   const embargoLine = embargo ? `This news is under embargo until ${sydneyTime(embargo)} (Sydney). Please don’t publish or share it before then.` : '';
-  const why = `You’re receiving this because you cover ${o.beats.length ? o.beats.slice(0, 3).join(', ') : 'this area'}. If you’d rather not hear from Lakeba’s press office, unsubscribe here: ${unsub}`;
-  const sign = [s.contact_name, 'Lakeba Group', s.contact_email, s.contact_phone].filter(Boolean);
+  const org = o.org ?? LAKEBA_ORG;
+  const why = `You’re receiving this because you cover ${o.beats.length ? o.beats.slice(0, 3).join(', ') : 'this area'}. If you’d rather not hear from ${org.name}’s press office, unsubscribe here: ${unsub}`;
+  const sign = [s.contact_name, org.name, s.contact_email, s.contact_phone].filter(Boolean);
   const html = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;padding:24px 16px;font-family:Arial,Helvetica,sans-serif;font-size:15px;line-height:1.6;color:#1a1a1a;background:#ffffff">
 <div style="max-width:600px">
 <p>${esc(hello)}</p>
@@ -127,16 +140,17 @@ ${r.summary || r.subheadline ? `<p>${esc(r.summary || r.subheadline)}</p>` : ''}
 ${o.d.availability.trim() ? `<p>${esc(o.d.availability.trim())}</p>` : ''}
 <p>${o.d.follow_up_of ? 'Happy to help with anything you need for a story.' : 'Happy to arrange an interview or provide more detail.'}</p>
 <p>Kind regards,<br>${sign.map(esc).join('<br>')}</p>
-<p style="margin-top:28px;font-size:12px;color:#6b7280">${esc(why).replace(esc(unsub), `<a href="${esc(unsub)}" style="color:#6b7280">${esc(unsub)}</a>`)}<br>Lakeba Group Limited, Sydney, Australia.</p>
+<p style="margin-top:28px;font-size:12px;color:#6b7280">${esc(why).replace(esc(unsub), `<a href="${esc(unsub)}" style="color:#6b7280">${esc(unsub)}</a>`)}<br>${esc(org.legal)}, ${esc(org.place)}.</p>
 <img src="${esc(`${o.origin}/press/o/${o.token}`)}" width="1" height="1" alt="" style="display:block;border:0">
 </div></body></html>`;
-  const text = [hello, '', o.intro.trim(), embargoLine && `\n${embargoLine}`, '', r.headline, r.summary || r.subheadline, '', `Read the full release: ${tracked(article)}`, o.d.availability.trim(), '', 'Kind regards,', ...sign, '', why, 'Lakeba Group Limited, Sydney, Australia.'].filter((x) => x !== undefined && x !== false).join('\n');
+  const text = [hello, '', o.intro.trim(), embargoLine && `\n${embargoLine}`, '', r.headline, r.summary || r.subheadline, '', `Read the full release: ${tracked(article)}`, o.d.availability.trim(), '', 'Kind regards,', ...sign, '', why, `${org.legal}, ${org.place}.`].filter((x) => x !== undefined && x !== false).join('\n');
   return { subject, html, text, unsub };
 }
 
 /** An approver sends: every pitch gets its links and is queued; the worker sends them. */
 export async function sendDistribution(svc: Svc, d: Distribution, r: Release, origin: string, by: string) {
-  const s = await pressSettings(svc);
+  const s = await settingsFor(svc, r);
+  const org = await orgOf(svc, r);
   const { data: post } = r.post_id ? await svc.from('posts').select('slug').eq('id', r.post_id).maybeSingle() : { data: null };
   const { data: pitches } = await svc.from('press_pitches').select('id, email, name, contact_id, intro').eq('distribution_id', d.id).eq('status', 'draft');
   const ids = (pitches ?? []).map((p) => p.contact_id).filter(Boolean) as string[];
@@ -145,7 +159,7 @@ export async function sendDistribution(svc: Svc, d: Distribution, r: Release, or
   for (const p of pitches ?? []) {
     const token = randomBytes(24).toString('base64url');
     const c = p.contact_id ? byId.get(p.contact_id) : null;
-    const m = renderPitch({ r, s, d, intro: p.intro, firstName: c?.first_name ?? '', token, origin, slug: post?.slug ?? null, beats: c?.beats ?? [] });
+    const m = renderPitch({ r, s, d, intro: p.intro, firstName: c?.first_name ?? '', token, origin, slug: post?.slug ?? null, beats: c?.beats ?? [], org });
     await svc.from('press_pitches').update({ token_hash: hash(token), subject: m.subject, html: m.html, text_body: m.text, status: 'queued' }).eq('id', p.id);
   }
   await svc.from('press_distributions').update({ status: 'sending', approved_by: by }).eq('id', d.id);
@@ -157,10 +171,16 @@ export async function sendDistribution(svc: Svc, d: Distribution, r: Release, or
 export async function sendQueuedPitches(svc: Svc, origin: string) {
   const { data } = await svc.from('press_pitches').select('id, distribution_id, email, subject, html, text_body').eq('status', 'queued').limit(3);
   if (!data?.length) return;
-  const s = await pressSettings(svc);
-  const { data: optouts } = await svc.from('media_optouts').select('email').in('email', data.map((p) => p.email));
-  const out = new Set((optouts ?? []).map((o) => o.email));
+  // Each pitch in its desk's name, checked against that desk's opt-outs.
+  const desks = new Map<string, { s: PressSettings; venture: DeskVenture | null; out: Set<string> }>();
+  for (const id of new Set(data.map((p) => p.distribution_id))) {
+    const { data: dist } = await svc.from('press_distributions').select('press_releases(entity_id)').eq('id', id).maybeSingle();
+    const venture = await deskVentureOf(svc, (dist?.press_releases as unknown as { entity_id: string | null } | null)?.entity_id ?? null);
+    const { data: optouts } = await onDesk({ venture }, svc.from('media_optouts').select('email').in('email', data.map((p) => p.email)));
+    desks.set(id, { s: await pressSettings(svc, venture), venture, out: new Set((optouts ?? []).map((o) => o.email)) });
+  }
   for (const p of data) {
+    const { s, venture, out } = desks.get(p.distribution_id)!;
     const { data: claimed } = await svc.from('press_pitches').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', p.id).eq('status', 'queued').select('id');
     if (!claimed?.length) continue;
     if (out.has(p.email)) { await svc.from('press_pitches').update({ status: 'skipped', error: 'opted out', sent_at: null }).eq('id', p.id); continue; }
@@ -169,7 +189,7 @@ export async function sendQueuedPitches(svc: Svc, origin: string) {
     const messageId = `<pitch.${p.id}.${randomBytes(6).toString('hex')}@${fromDomain()}>`;
     await svc.from('press_pitches').update({ message_id: messageId }).eq('id', p.id);
     try {
-      const ok = await sendRaw({ to: p.email, subject: p.subject, html: p.html, text: p.text_body, from: pressFrom(), replyTo: s.contact_email, messageId, headers: { 'List-Unsubscribe': `<${unsub}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } });
+      const ok = await sendRaw({ to: p.email, subject: p.subject, html: p.html, text: p.text_body, from: venture ? fromNamed(s.contact_name || `${venture.display_name} press office`) : pressFrom(), replyTo: s.contact_email, messageId, headers: { 'List-Unsubscribe': `<${unsub}>`, 'List-Unsubscribe-Post': 'List-Unsubscribe=One-Click' } });
       if (!ok) throw new Error('email is not configured');
     } catch (e) {
       await svc.from('press_pitches').update({ status: 'failed', error: (e as Error).message.slice(0, 300), sent_at: null }).eq('id', p.id);
@@ -180,6 +200,12 @@ export async function sendQueuedPitches(svc: Svc, origin: string) {
     const { count } = await svc.from('press_pitches').select('id', { count: 'exact', head: true }).eq('distribution_id', id).eq('status', 'queued');
     if (!count) await svc.from('press_distributions').update({ status: 'sent', sent_at: new Date().toISOString() }).eq('id', id).eq('status', 'sending');
   }
+}
+
+/** The desk a distribution's release belongs to (its opt-outs and list). */
+export async function deskOfDistribution(svc: Svc, distributionId: string) {
+  const { data: dist } = await svc.from('press_distributions').select('press_releases(entity_id)').eq('id', distributionId).maybeSingle();
+  return { venture: await deskVentureOf(svc, (dist?.press_releases as unknown as { entity_id: string | null } | null)?.entity_id ?? null) };
 }
 
 export async function pitchByToken(svc: Svc, token: string) {
@@ -205,5 +231,5 @@ export async function recordPreview(svc: Svc, p: Pitch) {
 }
 export async function unsubscribePitch(svc: Svc, p: Pitch) {
   await svc.from('press_pitches').update({ unsubscribed_at: p.unsubscribed_at ?? new Date().toISOString() }).eq('id', p.id);
-  await optOut(svc, p.email, 'unsubscribed from a pitch');
+  await optOut(svc, p.email, 'unsubscribed from a pitch', await deskOfDistribution(svc, p.distribution_id));
 }

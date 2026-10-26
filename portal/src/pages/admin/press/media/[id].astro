@@ -6,15 +6,16 @@ import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { dateTime } from '../../../../lib/format';
 import { CONSENT, fullName, listOf, optOut, ROLES, STATUS, validEmail, type Contact } from '../../../../lib/media';
-import { pressAccess } from '../../../../lib/press';
+import { pressDesk, onDesk, deskKey } from '../../../../lib/press';
 
 // One media contact: add or edit, why we may email them, and their pitches.
-if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const desk = await pressDesk(Astro.locals, serviceClient(), Astro.url);
+if (!desk) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const me = Astro.locals.user!;
 const isNew = Astro.params.id === 'new';
-let c: Contact | null = isNew ? null : /^[0-9a-f-]{36}$/.test(Astro.params.id!) ? (await svc.from('media_contacts').select('*').eq('id', Astro.params.id!).maybeSingle()).data as Contact | null : null;
-if (!isNew && !c) return Astro.redirect('/admin/press/media');
+let c: Contact | null = isNew ? null : /^[0-9a-f-]{36}$/.test(Astro.params.id!) ? (await onDesk(desk, svc.from('media_contacts').select('*').eq('id', Astro.params.id!)).maybeSingle()).data as Contact | null : null;
+if (!isNew && !c) return Astro.redirect(`/admin/press/media${desk.q}`);
 let error = '';
 const notice = Astro.url.searchParams.get('done') === 'saved' ? 'Saved.' : '';
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
@@ -23,22 +24,22 @@ if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = field(form, 'intent');
   if (intent === 'delete' && c) {
-    await svc.from('media_contacts').delete().eq('id', c.id);
+    await onDesk(desk, svc.from('media_contacts').delete().eq('id', c.id));
     await log('press_contact_deleted', { email: c.email });
-    return Astro.redirect('/admin/press/media', 303);
+    return Astro.redirect(`/admin/press/media${desk.q}`, 303);
   }
   const email = field(form, 'email').toLowerCase().replace(/^mailto:/, '');
   let outlet_id: string | null = field(form, 'outlet_id') || null;
   const newOutlet = field(form, 'new_outlet').slice(0, 120);
-  const { data: optedOut } = email ? await svc.from('media_optouts').select('email').eq('email', email).maybeSingle() : { data: null };
+  const { data: optedOut } = email ? await onDesk(desk, svc.from('media_optouts').select('email').eq('email', email)).maybeSingle() : { data: null };
   const status = field(form, 'status') as Contact['status'];
   if (email && !validEmail(email)) error = 'That email address doesn’t look right.';
   else if (!field(form, 'first_name') && !field(form, 'last_name') && !email) error = 'Give at least a name or an email address.';
   else if (optedOut && status === 'active') error = 'This address opted out of our press emails: it can’t be made active again. (They can contact us to opt back in.)';
   else {
     if (newOutlet) {
-      const { data: existing } = await svc.from('media_outlets').select('id').ilike('name', newOutlet.replace(/[%_]/g, '\\$&')).maybeSingle();
-      outlet_id = existing?.id ?? (await svc.from('media_outlets').insert({ name: newOutlet, created_by: me.id }).select('id').single()).data?.id ?? null;
+      const { data: existing } = await onDesk(desk, svc.from('media_outlets').select('id').ilike('name', newOutlet.replace(/[%_]/g, '\\$&'))).maybeSingle();
+      outlet_id = existing?.id ?? (await svc.from('media_outlets').insert({ name: newOutlet, created_by: me.id, entity_id: deskKey(desk) }).select('id').single()).data?.id ?? null;
     }
     const row = {
       first_name: field(form, 'first_name').slice(0, 80), last_name: field(form, 'last_name').slice(0, 80), email: email || null, outlet_id,
@@ -49,28 +50,28 @@ if (Astro.request.method === 'POST') {
       source_url: field(form, 'source_url').slice(0, 500), updated_at: new Date().toISOString(),
     };
     if (isNew) {
-      const { data, error: e } = await svc.from('media_contacts').insert({ ...row, source: 'manual', created_by: me.id }).select('id').single();
+      const { data, error: e } = await svc.from('media_contacts').insert({ ...row, source: 'manual', created_by: me.id, entity_id: deskKey(desk) }).select('id').single();
       if (e) error = /duplicate|unique/i.test(e.message) ? 'A contact with that email address is already in the database.' : e.message;
-      else { await log('press_contact_added', { email }); return Astro.redirect(`/admin/press/media/${data.id}?done=saved`, 303); }
+      else { await log('press_contact_added', { email }); return Astro.redirect(`/admin/press/media/${data.id}?done=saved${desk.q.replace('?', '&')}`, 303); }
     } else {
-      const { error: e } = await svc.from('media_contacts').update(row).eq('id', c!.id);
+      const { error: e } = await onDesk(desk, svc.from('media_contacts').update(row).eq('id', c!.id));
       if (e) error = /duplicate|unique/i.test(e.message) ? 'Another contact already has that email address.' : e.message;
       else {
-        if (row.status === 'opted_out' && email) await optOut(svc, email, 'marked by the press office');
+        if (row.status === 'opted_out' && email) await optOut(svc, email, 'marked by the press office', desk);
         await log('press_contact_saved', { id: c!.id });
-        return Astro.redirect(`/admin/press/media/${c!.id}?done=saved`, 303);
+        return Astro.redirect(`/admin/press/media/${c!.id}?done=saved${desk.q.replace('?', '&')}`, 303);
       }
     }
   }
 }
-const { data: outlets } = await svc.from('media_outlets').select('id, name').order('name');
+const { data: outlets } = await onDesk(desk, svc.from('media_outlets').select('id, name')).order('name');
 const { data: pitches } = c ? await svc.from('press_pitches').select('id, distribution_id, status, sent_at, opened_at, clicked_at, previewed_at, replied_at, press_distributions(release_id, press_releases(headline))').eq('contact_id', c.id).neq('status', 'draft').order('sent_at', { ascending: false }).limit(50) : { data: [] };
 const v = c ?? ({ first_name: '', last_name: '', email: '', outlet_id: null, role: 'journalist', title: '', beats: [], regions: [], tags: [], phone: '', social_url: '', notes: '', recent_work: '', consent_basis: 'published_work_address', status: 'active', source: 'manual', source_url: '' } as unknown as Contact);
 ---
 
 <Admin title={isNew ? 'New contact' : fullName(v) || v.email || 'Contact'}>
-  <PressNav />
-  <a href="/admin/press/media" class="text-sm text-white/50 hover:text-white">← Media database</a>
+  <PressNav desk={desk} />
+  <a href={`/admin/press/media${desk.q}`} class="text-sm text-white/50 hover:text-white">← Media database</a>
   <h1 class="mt-2 font-display text-3xl font-bold">{isNew ? 'New contact' : fullName(v) || v.email}</h1>
   {!isNew && <p class="mt-1 text-sm text-white/45">Added by {v.source}{v.source_url && <> · <a href={v.source_url} target="_blank" rel="noopener noreferrer" class="text-lk-blue hover:underline">source ↗</a></>} · {STATUS[v.status]}</p>}
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
@@ -105,7 +106,7 @@ const v = c ?? ({ first_name: '', last_name: '', email: '', outlet_id: null, rol
           <ul class="mt-2 divide-y divide-white/5 text-sm">
             {(pitches ?? []).map((p) => {
               const d = p.press_distributions as unknown as { release_id: string; press_releases: { headline: string } } | null;
-              return <li class="py-2"><a href={`/admin/press/distribution/${p.distribution_id}`} class="text-white/80 hover:text-lk-blue">{d?.press_releases?.headline ?? 'Release'}</a><span class="block text-xs text-white/45">{p.sent_at ? dateTime.format(new Date(p.sent_at)) : p.status}{p.opened_at && ' · opened'}{p.previewed_at && ' · read the release'}{p.clicked_at && ' · clicked'}{p.replied_at && ' · replied'}</span></li>;
+              return <li class="py-2"><a href={`/admin/press/distribution/${p.distribution_id}${desk.q}`} class="text-white/80 hover:text-lk-blue">{d?.press_releases?.headline ?? 'Release'}</a><span class="block text-xs text-white/45">{p.sent_at ? dateTime.format(new Date(p.sent_at)) : p.status}{p.opened_at && ' · opened'}{p.previewed_at && ' · read the release'}{p.clicked_at && ' · clicked'}{p.replied_at && ' · replied'}</span></li>;
             })}
             {!pitches?.length && <li class="py-3 text-white/45">Not pitched yet.</li>}
           </ul>

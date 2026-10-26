@@ -6,23 +6,25 @@ import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { dateTime } from '../../../../lib/format';
 import { audience, listOf, ROLES, type Filters } from '../../../../lib/media';
-import { loadRelease, pressAccess, pressSettings, sydneyTime } from '../../../../lib/press';
+import { loadRelease, sydneyTime, deskOf, onDesk, settingsFor } from '../../../../lib/press';
 import { embargoOf, loadDistribution, prepareInBackground, pressFrom, renderPitch, sendDistribution, type Pitch } from '../../../../lib/press-outreach';
 
 // Sending a release to journalists: 1. who (filters) and the shared words,
 // 2. prepare (Claude writes each a personal opening), 3. review and edit,
 // 4. an approver sends; then opens, reads, clicks, replies, and one follow-up.
-const access = pressAccess(Astro.locals);
-if (!access) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const me = Astro.locals.user!;
 let d = await loadDistribution(svc, Astro.params.id!);
-if (!d) return Astro.redirect('/admin/press');
+if (!d) return Astro.redirect("/admin/press");
 let r = (await loadRelease(svc, d.release_id))!;
+// The release's desk: its own media list and approvers.
+const desk = await deskOf(Astro.locals, svc, r.entity_id);
+if (!desk) return new Response('Forbidden', { status: 403 });
+const access = desk;
 let error = '';
 const done = Astro.url.searchParams.get('done') ?? '';
 const notice = ({ saved: 'Saved.', preparing: 'Preparing the pitches…', sent: 'Sending: a few pitches a minute. This page shows their progress.', reviewed: 'Changes saved.', marked: 'Updated.', followup: 'Follow-up created: it goes only to people who didn’t open, read or reply.' } as Record<string, string>)[done] ?? '';
-const back = (x: string, id = d!.id) => Astro.redirect(`/admin/press/distribution/${id}?done=${x}`, 303);
+const back = (x: string, id = d!.id) => Astro.redirect(`/admin/press/distribution/${id}?done=${x}${desk.q.replace('?', '&')}`, 303);
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { distribution_id: d!.id, ...detail } });
 const releaseOk = ['approved', 'published'].includes(r.status);
 
@@ -68,7 +70,7 @@ if (Astro.request.method === 'POST') {
   } else if (intent === 'cancel' && ['draft', 'ready', 'preparing'].includes(d.status)) {
     await svc.from('press_distributions').delete().eq('id', d.id);
     await log('press_distribution_cancelled', {});
-    return Astro.redirect(`/admin/press/${r.id}`, 303);
+    return Astro.redirect(`/admin/press/${r.id}${desk.q}`, 303);
   } else if (['mark-replied', 'mark-bounced'].includes(intent)) {
     const p = (await svc.from('press_pitches').select('id, contact_id, email').eq('id', field(form, 'pitch')).eq('distribution_id', d.id).maybeSingle()).data;
     if (p) {
@@ -79,7 +81,7 @@ if (Astro.request.method === 'POST') {
     }
   } else if (intent === 'follow-up' && d.status === 'sent' && !d.follow_up_of) {
     const { data: existing } = await svc.from('press_distributions').select('id').eq('follow_up_of', d.id).maybeSingle();
-    if (existing) return Astro.redirect(`/admin/press/distribution/${existing.id}`, 303);
+    if (existing) return Astro.redirect(`/admin/press/distribution/${existing.id}${desk.q}`, 303);
     const { data: f } = await svc.from('press_distributions').insert({
       release_id: r.id, follow_up_of: d.id, filters: d.filters, personalise: false, availability: d.availability, created_by: me.id,
       subject: `Following up: ${r.headline}`.slice(0, 200), intro: 'Just following up on my note below, in case it’s useful for your coverage.',
@@ -94,9 +96,9 @@ if (Astro.request.method === 'POST') {
 const { data: pitchRows } = await svc.from('press_pitches').select('*').eq('distribution_id', d.id).order('name');
 const pitches = (pitchRows ?? []) as Pitch[];
 const embargo = embargoOf(r);
-const count = d.status === 'draft' && releaseOk ? (await audience(svc, d.filters)).length : 0;
-const { data: outlets } = await svc.from('media_outlets').select('id, name').order('name');
-const s = await pressSettings(svc);
+const count = d.status === 'draft' && releaseOk ? (await audience(svc, d.filters, desk)).length : 0;
+const { data: outlets } = await onDesk(desk, svc.from('media_outlets').select('id, name')).order('name');
+const s = await settingsFor(svc, r);
 const sample = pitches[0] ?? null;
 const preview = sample || d.status === 'draft' ? renderPitch({ r, s, d, intro: sample?.intro ?? d.intro, firstName: sample?.name.split(' ')[0] ?? 'Alex', token: 'preview-only-link-not-real-000', origin: Astro.url.origin, slug: null, beats: ['your beat'] }) : null;
 const sent = pitches.filter((p) => p.status === 'sent');
@@ -106,8 +108,8 @@ const stale = d.status === 'preparing';
 ---
 
 <Admin title={`Distribution: ${r.headline}`}>
-  <PressNav />
-  <a href={`/admin/press/${r.id}`} class="text-sm text-white/50 hover:text-white">← {r.headline}</a>
+  <PressNav desk={desk} />
+  <a href={`/admin/press/${r.id}${desk.q}`} class="text-sm text-white/50 hover:text-white">← {r.headline}</a>
   <h1 class="mt-2 font-display text-3xl font-bold">{d.follow_up_of ? 'Follow-up to journalists' : 'Send to journalists'}</h1>
   <p class="mt-1 text-sm text-white/45">{d.status}{d.sent_at && ` · finished ${dateTime.format(new Date(d.sent_at))}`} · from {pressFrom()}{embargo && ` · embargoed until ${sydneyTime(embargo)}`}</p>
   <div class="mt-5 space-y-3">

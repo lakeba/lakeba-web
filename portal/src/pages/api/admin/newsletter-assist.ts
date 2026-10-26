@@ -1,6 +1,7 @@
 import type { APIRoute } from 'astro';
 import { client as claude } from '../../../lib/ask';
 import { serviceClient } from '../../../lib/admin';
+import { sourceFilters } from '../../../lib/newsletter';
 import { cleanHtml, plainText } from '../../../lib/news-cms';
 import { newsEditor } from '../../../lib/news-editors';
 import { BLOCKS_SCHEMA, WRITING_RULES, blocksToHtml, type Block } from '../../../lib/newsletter-ai';
@@ -28,16 +29,19 @@ export const POST: APIRoute = async ({ request, locals }) => {
   const isPublic = b?.audience === 'public';
   const entityId = String(b?.entity_id ?? '');
   if (action === 'rewrite') return rewrite(b!, locals);
+  // Only a company this person edits newsletters for (the public newsletter is the group's).
+  if (isPublic && !entityId ? !editor.group : !/^[0-9a-f-]{36}$/.test(entityId) || !editor.mayEdit(entityId)) return Response.json({ error: 'Not allowed.' }, { status: 403 });
   const { data: company } = entityId ? await svc.from('entities').select('display_name').eq('id', entityId).maybeSingle() : { data: null };
-  const companyName = isPublic ? 'Lakeba Group' : company?.display_name ?? 'Lakeba Group';
+  const only = isPublic ? { posts: 'visibility.eq.public', documents: '' } : await sourceFilters(svc, { audience: 'shareholders', entity_id: entityId });
+  const companyName = company?.display_name ?? 'Lakeba Group';
   const ids = (k: string) => (Array.isArray(b?.[k]) ? (b![k] as unknown[]).map(String).filter((x) => /^[0-9a-f-]{36}$/.test(x)).slice(0, 12) : []);
   const [{ data: posts }, { data: docs }] = await Promise.all([
-    ids('post_ids').length ? svc.from('posts').select('title, excerpt, published_at').in('id', ids('post_ids')) : Promise.resolve({ data: [] }),
-    !isPublic && ids('document_ids').length ? svc.from('documents').select('title, published_at').in('id', ids('document_ids')) : Promise.resolve({ data: [] }),
+    ids('post_ids').length ? svc.from('posts').select('title, excerpt, published_at').in('id', ids('post_ids')).or(only.posts).not('published_at', 'is', null) : Promise.resolve({ data: [] }),
+    !isPublic && ids('document_ids').length ? svc.from('documents').select('title, published_at').in('id', ids('document_ids')).or(only.documents).not('published_at', 'is', null) : Promise.resolve({ data: [] }),
   ]);
   const items = [...(posts ?? []).map((p) => `News (${p.published_at?.slice(0, 10)}): ${p.title}: ${p.excerpt}`), ...(docs ?? []).map((d) => `Document (${d.published_at?.slice(0, 10)}): ${d.title}`)].join('\n') || '(nothing selected)';
   const written = plainText(`${String(b?.intro_html ?? '')} ${String(b?.closing_html ?? '')}`).slice(0, 8000);
-  const readers = isPublic ? 'people who follow Lakeba (prospective investors and website visitors)' : `${companyName} shareholders`;
+  const readers = isPublic ? `people who follow ${companyName === 'Lakeba Group' ? 'Lakeba' : companyName} (prospective investors and website visitors)` : `${companyName} shareholders`;
   const task = {
     draft: `Write the introduction of the quarterly newsletter of ${companyName} for ${readers}: 2 to 4 short paragraphs, warm but factual, highlighting what the selected items mean for readers. Don't start with a greeting (the email adds "Dear <name>,"), don't sign off, don't list every item (they appear below the introduction). No forecasts, no performance promises, no financial advice, no hype or exclamation marks. Australian English.`,
     subjects: `Suggest 3 email subject lines (at most 60 characters, specific, no clickbait, no emojis, no all-caps) for the ${companyName} quarterly newsletter for ${readers}, each with a preview text of at most 90 characters that adds to the subject.`,

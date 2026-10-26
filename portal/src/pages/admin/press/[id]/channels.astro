@@ -6,7 +6,7 @@ import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { dateTime } from '../../../../lib/format';
 import { sendRaw } from '../../../../lib/mail';
-import { loadRelease, pressAccess, pressSettings, sydneyTime } from '../../../../lib/press';
+import { loadRelease, sydneyTime, deskOf, settingsFor } from '../../../../lib/press';
 import { articleUrl, blueskyConfigured, channelName, linkedinShareUrl, postBluesky, postX, socialText, wirePackage, xConfigured } from '../../../../lib/press-channels';
 import { pressFrom } from '../../../../lib/press-outreach';
 
@@ -14,20 +14,21 @@ import { pressFrom } from '../../../../lib/press-outreach';
 // portal; LinkedIn shared by a page admin, its link recorded) and wire
 // services (the package downloaded or emailed to the wire's desk; the cost and
 // the wire's link recorded). Writers prepare the texts; approvers post.
-const access = pressAccess(Astro.locals);
-if (!access) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const me = Astro.locals.user!;
 let r = await loadRelease(svc, Astro.params.id!);
+const desk = r ? await deskOf(Astro.locals, svc, r.entity_id) : null;
+if (r && !desk) return new Response('Forbidden', { status: 403 });
+const access = desk!;
 if (!r || !['approved', 'published'].includes(r.status)) return Astro.redirect(r ? `/admin/press/${r.id}` : '/admin/press');
-const s = await pressSettings(svc);
+const s = await settingsFor(svc, r);
 const { data: post } = r.post_id ? await svc.from('posts').select('slug').eq('id', r.post_id).maybeSingle() : { data: null };
 const published = r.status === 'published' && post?.slug;
 const link = published ? articleUrl(post!.slug) : '';
 let error = '';
 const done = Astro.url.searchParams.get('done') ?? '';
 const notice = ({ saved: 'Saved.', bluesky: 'Posted on Bluesky.', x: 'Posted on X.', recorded: 'Recorded.', emailed: 'The package was emailed to the wire’s desk and recorded.', removed: 'Removed.' } as Record<string, string>)[done] ?? '';
-const back = (d: string) => Astro.redirect(`/admin/press/${r!.id}/channels?done=${d}`, 303);
+const back = (d: string) => Astro.redirect(`/admin/press/${r!.id}/channels?done=${d}${desk.q.replace('?', '&')}`, 303);
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { id: r!.id, ...detail } });
 const record = (row: Record<string, unknown>) => svc.from('press_channel_posts').insert({ release_id: r!.id, posted_by: me.id, ...row });
 
@@ -98,8 +99,8 @@ const bskyDefault = r.social.bluesky || r.social.x || r.summary || r.headline;
 ---
 
 <Admin title={`Social and wires: ${r.headline}`}>
-  <PressNav />
-  <a href={`/admin/press/${r.id}`} class="text-sm text-white/50 hover:text-white">← {r.headline}</a>
+  <PressNav desk={desk} />
+  <a href={`/admin/press/${r.id}${desk.q}`} class="text-sm text-white/50 hover:text-white">← {r.headline}</a>
   <h1 class="mt-2 font-display text-3xl font-bold">Social and wires</h1>
   <p class="mt-1 text-sm text-white/45">{published ? <>Published · <a href={link} target="_blank" rel="noopener" class="text-lk-blue hover:underline">{link}</a></> : `Approved, publishes ${r.publish_at ? sydneyTime(r.publish_at) : 'soon'}: social posts wait until it’s public; wires can take it now, under embargo.`}</p>
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
@@ -131,7 +132,7 @@ const bskyDefault = r.social.bluesky || r.social.x || r.summary || r.headline;
 
   <section class="card mt-6 space-y-4">
     <div class="flex flex-wrap items-center justify-between gap-2"><h2 class="font-display text-lg font-bold">Wire services</h2>
-      <a href={`/admin/press/${r.id}/wire-package`} class="btn-ghost text-sm">Download the wire package (.zip)</a></div>
+      <a href={`/admin/press/${r.id}/wire-package${desk.q}`} class="btn-ghost text-sm">Download the wire package (.zip)</a></div>
     <p class="text-sm text-white/55">The package has what wires ask for: the release as text ({r.status === 'published' ? '“for immediate release”' : 'marked EMBARGOED with its time'}), a copy for Word, the PDF and the images. Upload it on the wire’s website, or email it to a wire’s desk below. Record each submission with its cost and the wire’s link to it.</p>
     <ul class="divide-y divide-white/5 text-sm">
       {s.wires.map((w) => (

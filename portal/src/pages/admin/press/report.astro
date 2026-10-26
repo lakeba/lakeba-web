@@ -4,13 +4,14 @@ import PressNav from '../../../components/PressNav.astro';
 import ReportPrint from '../../../components/ReportPrint.astro';
 import { serviceClient } from '../../../lib/admin';
 import { dateTime } from '../../../lib/format';
-import { pressAccess, sydneyTime, sydneyToIso, type Release } from '../../../lib/press';
+import { sydneyTime, sydneyToIso, type Release, pressDesk, releasesOnDesk } from '../../../lib/press';
 import { type Coverage } from '../../../lib/press-coverage';
 import { coverageCsv, pct, releaseStats } from '../../../lib/press-report';
 
 // The press office's results for a period (a quarter by default), for the
 // board: releases, coverage and its tone, top outlets, journalists, costs.
-if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const desk = await pressDesk(Astro.locals, serviceClient(), Astro.url);
+if (!desk) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const now = new Date();
 const syd = new Date(now.toLocaleString('en-US', { timeZone: 'Australia/Sydney' }));
@@ -19,11 +20,11 @@ const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart
 const from = /^\d{4}-\d{2}-\d{2}$/.test(Astro.url.searchParams.get('from') ?? '') ? Astro.url.searchParams.get('from')! : ymd(qStart);
 const to = /^\d{4}-\d{2}-\d{2}$/.test(Astro.url.searchParams.get('to') ?? '') ? Astro.url.searchParams.get('to')! : ymd(syd);
 const fromIso = sydneyToIso(`${from}T00:00`)!, toIso = new Date(new Date(sydneyToIso(`${to}T00:00`)!).getTime() + 86_400_000).toISOString();
-const { data: rels } = await svc.from('press_releases').select('*').eq('status', 'published').gte('published_at', fromIso).lt('published_at', toIso).order('published_at');
+const { data: rels } = await releasesOnDesk(desk, svc.from('press_releases').select('*').eq('status', 'published')).gte('published_at', fromIso).lt('published_at', toIso).order('published_at');
 const releases = (rels ?? []) as Release[];
 const stats = await releaseStats(svc, releases.map((r) => r.id));
 // All confirmed coverage in the period (also mentions not tied to a release).
-const { data: covRows } = await svc.from('press_coverage').select('*').eq('status', 'confirmed').gte('published_at', fromIso).lt('published_at', toIso).order('published_at', { ascending: false });
+const { data: covRows } = await releasesOnDesk(desk, svc.from('press_coverage').select('*').eq('status', 'confirmed')).gte('published_at', fromIso).lt('published_at', toIso).order('published_at', { ascending: false });
 const coverage = (covRows ?? []) as Coverage[];
 const headline = new Map(releases.map((r) => [r.id, r.headline]));
 if (Astro.url.searchParams.get('format') === 'csv') {
@@ -42,16 +43,16 @@ const companyOf = (id: string | null) => (ents ?? []).find((e) => e.id === id)?.
 
 <Admin title="Press report">
   <ReportPrint />
-  <div class="no-print"><PressNav /></div>
+  <div class="no-print"><PressNav desk={desk} /></div>
   <div class="press-report">
     <p class="text-xs uppercase tracking-[0.2em] text-white/45">Lakeba Group · press office report</p>
     <h1 class="mt-1 font-display text-3xl font-bold">{new Date(fromIso).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' })} to {new Date(new Date(toIso).getTime() - 1).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' })}</h1>
-    <form method="get" class="no-print mt-4 flex flex-wrap items-end gap-2">
+    <form method="get" class="no-print mt-4 flex flex-wrap items-end gap-2">{desk.venture && <input type="hidden" name="desk" value={desk.venture.code} />}
       <div><label class="label" for="from">From</label><input id="from" name="from" type="date" value={from} class="field py-2" /></div>
       <div><label class="label" for="to">To</label><input id="to" name="to" type="date" value={to} class="field py-2" /></div>
       <button class="btn-ghost py-2">Show</button>
       <button type="button" class="btn-ghost py-2" onclick="window.print()">Print or save as PDF</button>
-      <a href={`/admin/press/report?from=${from}&to=${to}&format=csv`} class="btn-ghost py-2">Coverage as CSV</a>
+      <a href={`/admin/press/report?from=${from}&to=${to}&format=csv${desk.q.replace('?', '&')}`} class="btn-ghost py-2">Coverage as CSV</a>
     </form>
 
     <section class="mt-6 grid gap-3 sm:grid-cols-3 lg:grid-cols-6">
@@ -67,7 +68,7 @@ const companyOf = (id: string | null) => (ents ?? []).find((e) => e.id === id)?.
         <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-2">Release</th><th class="px-5 py-2">Published</th><th class="px-5 py-2">Pitched</th><th class="px-5 py-2">Read</th><th class="px-5 py-2">Replied</th><th class="px-5 py-2">Coverage</th><th class="px-5 py-2">Social / wires</th></tr></thead>
         <tbody class="divide-y divide-white/5">
           {releases.map((r) => { const s = stats.get(r.id)!; return (
-            <tr><td class="px-5 py-2"><a href={`/admin/press/${r.id}/report`} class="text-white hover:text-lk-blue">{r.headline}</a><span class="block text-xs text-white/45">{companyOf(r.entity_id)}</span></td>
+            <tr><td class="px-5 py-2"><a href={`/admin/press/${r.id}/report${desk.q}`} class="text-white hover:text-lk-blue">{r.headline}</a><span class="block text-xs text-white/45">{companyOf(r.entity_id)}</span></td>
               <td class="px-5 py-2 text-xs text-white/60">{sydneyTime(r.published_at!)}</td><td class="px-5 py-2">{s.pitches}</td><td class="px-5 py-2">{pct(s.read, s.pitches)}</td><td class="px-5 py-2">{pct(s.replied, s.pitches)}</td>
               <td class="px-5 py-2">{s.coverage.length}</td><td class="px-5 py-2">{s.social.length} / {s.wires.length}</td></tr>); })}
           {!releases.length && <tr><td colspan="7" class="px-5 py-6 text-center text-white/45">No releases published in this period.</td></tr>}

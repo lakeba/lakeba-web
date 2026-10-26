@@ -1,13 +1,15 @@
 import JSZip from 'jszip';
 import Papa from 'papaparse';
 import type { serviceClient } from './admin';
+import { deskKey, onDesk, type Desk } from './press';
 
 type Svc = ReturnType<typeof serviceClient>;
 
 // The media database: outlets and journalists. Lists come in as CSV or Excel
 // (any column layout; the columns are matched to fields, then confirmed);
 // contacts are kept once per email address (stored in lower case), and opted-out addresses are
-// never contacted again, whatever is imported later.
+// never contacted again, whatever is imported later. Each press desk keeps its own list
+// (press.ts: Lakeba's, or a non-controlling venture's).
 
 export type Outlet = { id: string; name: string; kind: string; country: string; region: string; website: string; tipline_email: string; beats: string[]; reach: string; notes: string };
 export type Contact = {
@@ -109,11 +111,11 @@ const roleOf = (s: string): Contact['role'] => {
 const kindOf = (s: string) => (OUTLET_KINDS.find((k) => s.toLowerCase().includes(k)) ?? (/paper|daily/.test(s.toLowerCase()) ? 'newspaper' : /tv|television/.test(s.toLowerCase()) ? 'tv' : 'online'));
 
 /** Imports the rows with the confirmed columns: outlets by name, contacts once per email; opted-out addresses are skipped. */
-export async function importContacts(svc: Svc, rows: string[][], map: (Field | '')[], o: { consent: Contact['consent_basis']; tags: string[]; by: string }) {
+export async function importContacts(svc: Svc, rows: string[][], map: (Field | '')[], o: { consent: Contact['consent_basis']; tags: string[]; by: string; desk: Pick<Desk, 'venture'> }) {
   const at = (row: string[], f: Field) => { const i = map.indexOf(f); return i < 0 ? '' : (row[i] ?? '').trim(); };
-  const { data: optouts } = await svc.from('media_optouts').select('email');
+  const { data: optouts } = await onDesk(o.desk, svc.from('media_optouts').select('email'));
   const out = new Set((optouts ?? []).map((x) => x.email));
-  const { data: outlets } = await svc.from('media_outlets').select('id, name');
+  const { data: outlets } = await onDesk(o.desk, svc.from('media_outlets').select('id, name'));
   const outletIds = new Map((outlets ?? []).map((x) => [x.name.toLowerCase(), x.id as string]));
   const result = { added: 0, updated: 0, skipped: 0, optedOut: 0, outlets: 0, problems: [] as string[] };
   for (const [n, row] of rows.entries()) {
@@ -128,7 +130,7 @@ export async function importContacts(svc: Svc, rows: string[][], map: (Field | '
     if (outletName) {
       outlet_id = outletIds.get(outletName.toLowerCase()) ?? null;
       if (!outlet_id) {
-        const { data } = await svc.from('media_outlets').insert({ name: outletName, kind: kindOf(at(row, 'outlet_kind')), website: at(row, 'outlet_website').slice(0, 300), created_by: o.by }).select('id').single();
+        const { data } = await svc.from('media_outlets').insert({ name: outletName, kind: kindOf(at(row, 'outlet_kind')), website: at(row, 'outlet_website').slice(0, 300), created_by: o.by, entity_id: deskKey(o.desk) }).select('id').single();
         if (data) { outlet_id = data.id; outletIds.set(outletName.toLowerCase(), data.id); result.outlets++; }
       }
     }
@@ -137,7 +139,7 @@ export async function importContacts(svc: Svc, rows: string[][], map: (Field | '
       beats: listOf(at(row, 'beats')), regions: listOf(at(row, 'regions')), phone: at(row, 'phone').slice(0, 60), social_url: at(row, 'social_url').slice(0, 300), notes: at(row, 'notes').slice(0, 2000),
       tags: [...new Set([...listOf(at(row, 'tags')), ...o.tags])],
     };
-    const existing = email ? (await svc.from('media_contacts').select('*').eq('email', email).maybeSingle()).data as Contact | null : null;
+    const existing = email ? (await onDesk(o.desk, svc.from('media_contacts').select('*').eq('email', email)).maybeSingle()).data as Contact | null : null;
     if (existing) {
       // Fill in what's missing; never overwrite what someone already entered.
       const patch: Record<string, unknown> = {};
@@ -148,27 +150,27 @@ export async function importContacts(svc: Svc, rows: string[][], map: (Field | '
       }
       if (Object.keys(patch).length) { await svc.from('media_contacts').update({ ...patch, updated_at: new Date().toISOString() }).eq('id', existing.id); result.updated++; } else result.skipped++;
     } else {
-      const { error } = await svc.from('media_contacts').insert({ ...fields, email: email || null, source: 'import', consent_basis: o.consent, created_by: o.by });
+      const { error } = await svc.from('media_contacts').insert({ ...fields, email: email || null, source: 'import', consent_basis: o.consent, created_by: o.by, entity_id: deskKey(o.desk) });
       if (error) { result.skipped++; if (result.problems.length < 10) result.problems.push(`Row ${n + 2}: ${error.message}`); } else result.added++;
     }
   }
   return result;
 }
 
-/** Records an opt-out by address (permanent) and marks the contact. */
-export async function optOut(svc: Svc, email: string, reason = 'unsubscribed') {
+/** Records an opt-out by address from one desk's press office (permanent) and marks the contact on that desk's list. */
+export async function optOut(svc: Svc, email: string, reason = 'unsubscribed', desk: Pick<Desk, 'venture'> = { venture: null }) {
   const e = email.trim().toLowerCase();
-  await svc.from('media_optouts').upsert({ email: e, reason });
-  await svc.from('media_contacts').update({ status: 'opted_out', updated_at: new Date().toISOString() }).eq('email', e);
+  if (!(await onDesk(desk, svc.from('media_optouts').select('email').eq('email', e)).maybeSingle()).data) await svc.from('media_optouts').insert({ email: e, reason, entity_id: deskKey(desk) });
+  await onDesk(desk, svc.from('media_contacts').update({ status: 'opted_out', updated_at: new Date().toISOString() }).eq('email', e));
 }
 
 export type Filters = { beats?: string[]; outlets?: string[]; roles?: string[]; regions?: string[]; tags?: string[]; q?: string; contact_ids?: string[]; tiplines?: boolean };
 
 /** Who a distribution goes to: active contacts with an email address that match, minus opt-outs; plus outlets' tip-lines if asked. */
-export async function audience(svc: Svc, f: Filters) {
-  const { data } = await svc.from('media_contacts').select('*').eq('status', 'active').not('email', 'is', null).limit(5000);
-  const { data: outs } = await svc.from('media_outlets').select('*');
-  const { data: optouts } = await svc.from('media_optouts').select('email');
+export async function audience(svc: Svc, f: Filters, desk: Pick<Desk, 'venture'>) {
+  const { data } = await onDesk(desk, svc.from('media_contacts').select('*').eq('status', 'active').not('email', 'is', null)).limit(5000);
+  const { data: outs } = await onDesk(desk, svc.from('media_outlets').select('*'));
+  const { data: optouts } = await onDesk(desk, svc.from('media_optouts').select('email'));
   const out = new Set((optouts ?? []).map((x) => x.email));
   const outletById = new Map(((outs ?? []) as Outlet[]).map((x) => [x.id, x]));
   const lc = (xs?: string[]) => (xs ?? []).map((x) => x.toLowerCase()).filter(Boolean);

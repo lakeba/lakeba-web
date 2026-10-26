@@ -5,22 +5,23 @@ import Alert from '../../../../components/Alert.astro';
 import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { listOf, OUTLET_KINDS, validEmail, type Outlet } from '../../../../lib/media';
-import { pressAccess } from '../../../../lib/press';
+import { pressDesk, onDesk, deskKey } from '../../../../lib/press';
 
 // One outlet: add or edit.
-if (!pressAccess(Astro.locals)) return new Response('Forbidden', { status: 403 });
+const desk = await pressDesk(Astro.locals, serviceClient(), Astro.url);
+if (!desk) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const isNew = Astro.params.id === 'new';
-const o = isNew ? null : /^[0-9a-f-]{36}$/.test(Astro.params.id!) ? (await svc.from('media_outlets').select('*').eq('id', Astro.params.id!).maybeSingle()).data as Outlet | null : null;
-if (!isNew && !o) return Astro.redirect('/admin/press/outlets');
+const o = isNew ? null : /^[0-9a-f-]{36}$/.test(Astro.params.id!) ? (await onDesk(desk, svc.from('media_outlets').select('*').eq('id', Astro.params.id!)).maybeSingle()).data as Outlet | null : null;
+if (!isNew && !o) return Astro.redirect(`/admin/press/outlets${desk.q}`);
 let error = '';
 const REACH = ['', 'national', 'metro', 'regional', 'trade', 'niche', 'international'];
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   if (field(form, 'intent') === 'delete' && o) {
-    await svc.from('media_outlets').delete().eq('id', o.id);
+    await onDesk(desk, svc.from('media_outlets').delete().eq('id', o.id));
     await Astro.locals.supabase.rpc('log_event', { event_action: 'press_outlet_deleted', event_detail: { name: o.name } });
-    return Astro.redirect('/admin/press/outlets', 303);
+    return Astro.redirect(`/admin/press/outlets${desk.q}`, 303);
   }
   const tip = field(form, 'tipline_email').toLowerCase();
   const row = {
@@ -31,17 +32,17 @@ if (Astro.request.method === 'POST') {
   if (row.name.length < 2) error = 'Give the outlet a name.';
   else if (tip && !validEmail(tip)) error = 'The tip-line address doesn’t look right.';
   else {
-    const res = isNew ? await svc.from('media_outlets').insert(row).select('id').single() : await svc.from('media_outlets').update(row).eq('id', o!.id).select('id').single();
+    const res = isNew ? await svc.from('media_outlets').insert({ ...row, entity_id: deskKey(desk) }).select('id').single() : await onDesk(desk, svc.from('media_outlets').update(row).eq('id', o!.id)).select('id').single();
     if (res.error) error = /duplicate|unique/i.test(res.error.message) ? 'An outlet with that name already exists.' : res.error.message;
-    else { await Astro.locals.supabase.rpc('log_event', { event_action: 'press_outlet_saved', event_detail: { name: row.name } }); return Astro.redirect('/admin/press/outlets', 303); }
+    else { await Astro.locals.supabase.rpc('log_event', { event_action: 'press_outlet_saved', event_detail: { name: row.name } }); return Astro.redirect(`/admin/press/outlets${desk.q}`, 303); }
   }
 }
 const v = o ?? ({ name: '', kind: 'online', country: 'AU', region: '', website: '', tipline_email: '', beats: [], reach: '', notes: '' } as unknown as Outlet);
 ---
 
 <Admin title={isNew ? 'New outlet' : v.name}>
-  <PressNav />
-  <a href="/admin/press/outlets" class="text-sm text-white/50 hover:text-white">← Outlets</a>
+  <PressNav desk={desk} />
+  <a href={`/admin/press/outlets${desk.q}`} class="text-sm text-white/50 hover:text-white">← Outlets</a>
   <h1 class="mt-2 font-display text-3xl font-bold">{isNew ? 'New outlet' : v.name}</h1>
   {error && <div class="mt-5"><Alert tone="error">{error}</Alert></div>}
   <form method="post" class="card mt-6 grid max-w-3xl gap-4 sm:grid-cols-2">

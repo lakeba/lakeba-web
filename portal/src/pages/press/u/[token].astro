@@ -2,9 +2,9 @@
 import Auth from '../../../layouts/Auth.astro';
 import Alert from '../../../components/Alert.astro';
 import { serviceClient } from '../../../lib/admin';
-import { pitchByToken, unsubscribePitch } from '../../../lib/press-outreach';
+import { deskOfDistribution, pitchByToken, unsubscribePitch } from '../../../lib/press-outreach';
 
-// Unsubscribe from Lakeba's press office. Opening the page doesn't unsubscribe
+// Unsubscribe from the press office that sent the pitch (Lakeba's, or a venture's own). Opening the page doesn't unsubscribe
 // (mail scanners open links); the button does, and so does a mail app's
 // built-in "Unsubscribe" (a one-click POST, RFC 8058). It's permanent.
 const svc = serviceClient();
@@ -16,14 +16,15 @@ if (p && Astro.request.method === 'POST') {
   done = true;
 }
 Astro.response.headers.set('Cache-Control', 'no-store');
+const org = (p ? (await deskOfDistribution(svc, p.distribution_id)).venture?.display_name : null) ?? 'Lakeba';
 ---
 
-<Auth title="Lakeba press office">
+<Auth title={`${org} press office`}>
   {!p ? <Alert tone="error">This link is not valid.</Alert> : done ? (
-    <Alert tone="success">Done: {p.email} won’t receive emails from Lakeba’s press office any more.</Alert>
+    <Alert tone="success">Done: {p.email} won’t receive emails from {org}’s press office any more.</Alert>
   ) : (
     <form method="post" class="space-y-4">
-      <p class="text-sm text-white/65">Stop press releases and pitches from Lakeba to <strong class="text-white">{p.email}</strong>?</p>
+      <p class="text-sm text-white/65">Stop press releases and pitches from {org} to <strong class="text-white">{p.email}</strong>?</p>
       <button class="btn-primary w-full">Unsubscribe</button>
     </form>
   )}

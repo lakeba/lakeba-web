@@ -6,16 +6,19 @@ import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { dateTime } from '../../../lib/format';
 import { addByHand, checkFeeds, checkGdelt, type Coverage } from '../../../lib/press-coverage';
-import { pressAccess, pressSettings } from '../../../lib/press';
+import { pressSettings, pressDesk, releasesOnDesk } from '../../../lib/press';
 
 // Coverage: what the monitor found (or someone added), to confirm or dismiss,
 // with the release it's about and the journalist pitched, and how the monitor is doing.
-const access = pressAccess(Astro.locals);
+const desk = await pressDesk(Astro.locals, serviceClient(), Astro.url);
+const access = desk;
 if (!access) return new Response('Forbidden', { status: 403 });
 const svc = serviceClient();
 const me = Astro.locals.user!;
 const tab = (['new', 'confirmed', 'dismissed'] as const).find((t) => t === Astro.url.searchParams.get('tab')) ?? 'new';
 const release = Astro.url.searchParams.get('release') ?? '';
+// The desk on links that already have a query string.
+const dq = desk.venture ? `&desk=${desk.venture.code}` : '';
 let error = '', notice = '';
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
 
@@ -26,12 +29,14 @@ if (Astro.request.method === 'POST') {
     const url = field(form, 'url');
     if (!/^https?:\/\/\S+\.\S+/.test(url)) error = 'Paste the article’s full address (https://…).';
     else {
-      const n = await addByHand(svc, url, /^[0-9a-f-]{36}$/.test(field(form, 'release_id')) ? field(form, 'release_id') : null);
+      const rid = /^[0-9a-f-]{36}$/.test(field(form, 'release_id')) ? field(form, 'release_id') : null;
+      const onThisDesk = !rid || Boolean((await releasesOnDesk(desk, svc.from('press_releases').select('id').eq('id', rid))).data?.length);
+      const n = onThisDesk ? await addByHand(svc, url, rid, desk.venture) : 0;
       await log('press_coverage_added', { url });
       notice = n ? 'Added. Confirm it below.' : 'That article is already in the list.';
     }
   } else if (intent === 'check') {
-    const n = (await checkFeeds(svc, true)) + (await checkGdelt(svc, true));
+    const n = (await checkFeeds(svc, true, desk.venture)) + (await checkGdelt(svc, true, desk.venture));
     notice = `Checked: ${n} new article${n === 1 ? '' : 's'}.`;
   } else if (['confirm', 'dismiss', 'reopen', 'save'].includes(intent)) {
     const id = field(form, 'id');
@@ -39,28 +44,30 @@ if (Astro.request.method === 'POST') {
       ? { release_id: /^[0-9a-f-]{36}$/.test(field(form, 'release_id')) ? field(form, 'release_id') : null, sentiment: ['positive', 'neutral', 'negative', 'mixed'].includes(field(form, 'sentiment')) ? field(form, 'sentiment') : 'neutral', summary: field(form, 'summary').slice(0, 300) }
       : { status: intent === 'confirm' ? 'confirmed' : intent === 'dismiss' ? 'dismissed' : 'new', reviewed_by: me.id, reviewed_at: new Date().toISOString() };
     if (intent === 'save' && patch.release_id) patch.relevance = 'release';
-    await svc.from('press_coverage').update(patch).eq('id', id);
+    if (patch.release_id && !(await releasesOnDesk(desk, svc.from('press_releases').select('id').eq('id', String(patch.release_id)))).data?.length) patch.release_id = null;
+    await releasesOnDesk(desk, svc.from('press_coverage').update(patch).eq('id', id));
     await log(`press_coverage_${intent}`, { id });
     notice = intent === 'save' ? 'Saved.' : intent === 'confirm' ? 'Confirmed.' : intent === 'dismiss' ? 'Dismissed.' : 'Back in the list to review.';
   }
 }
 let q = svc.from('press_coverage').select('*').eq('status', tab).order('published_at', { ascending: false, nullsFirst: false }).order('found_at', { ascending: false }).limit(200);
 if (release) q = q.eq('release_id', release);
+q = releasesOnDesk(desk, q);
 const { data: rows } = await q;
 const items = (rows ?? []) as Coverage[];
-const { data: counts } = await svc.from('press_coverage').select('status');
+const { data: counts } = await releasesOnDesk(desk, svc.from('press_coverage').select('status'));
 const count = (s: string) => (counts ?? []).filter((c) => c.status === s).length;
-const { data: releases } = await svc.from('press_releases').select('id, headline').in('status', ['published', 'approved']).order('published_at', { ascending: false, nullsFirst: false }).limit(60);
+const { data: releases } = await releasesOnDesk(desk, svc.from('press_releases').select('id, headline').in('status', ['published', 'approved'])).order('published_at', { ascending: false, nullsFirst: false }).limit(60);
 const contactIds = [...new Set(items.map((c) => c.contact_id).filter(Boolean))] as string[];
 const { data: contacts } = contactIds.length ? await svc.from('media_contacts').select('id, first_name, last_name').in('id', contactIds) : { data: [] };
-const s = await pressSettings(svc);
+const s = await pressSettings(svc, desk.venture);
 const { data: runs } = await svc.from('press_monitor_log').select('kind, target, found, added, error, at').order('at', { ascending: false }).limit(40);
 const lastOf = (kind: string, target: string) => (runs ?? []).find((r) => r.kind === kind && r.target === target);
 const tone: Record<string, string> = { positive: 'text-lk-green', neutral: 'text-white/55', negative: 'text-lk-red', mixed: 'text-lk-orange' };
 ---
 
 <Admin title="Coverage">
-  <PressNav />
+  <PressNav desk={desk} />
   <div class="flex flex-wrap items-end justify-between gap-4">
     <div><h1 class="font-display text-3xl font-bold">Coverage</h1>
       <p class="mt-1 max-w-3xl text-sm text-white/55">Articles about Lakeba and the ventures, found by the monitor or added by hand. Claude sorts each one (about a release, a mention, or unrelated) and notes its tone; confirm the real coverage so it counts in the reports.</p></div>
@@ -75,8 +82,8 @@ const tone: Record<string, string> = { positive: 'text-lk-green', neutral: 'text
   </form>
 
   <nav class="mt-6 flex flex-wrap items-center gap-2 text-sm">
-    {(['new', 'confirmed', 'dismissed'] as const).map((t) => <a href={`/admin/press/coverage?tab=${t}${release ? `&release=${release}` : ''}`} class:list={['rounded-full px-3 py-1', tab === t ? 'bg-white/10 text-white' : 'text-white/55']}>{t === 'new' ? 'To review' : t === 'confirmed' ? 'Confirmed' : 'Dismissed'} ({count(t)})</a>)}
-    {release && <a href={`/admin/press/coverage?tab=${tab}`} class="text-xs text-lk-blue">all releases ×</a>}
+    {(['new', 'confirmed', 'dismissed'] as const).map((t) => <a href={`/admin/press/coverage?tab=${t}${release ? `&release=${release}` : ''}${dq}`} class:list={['rounded-full px-3 py-1', tab === t ? 'bg-white/10 text-white' : 'text-white/55']}>{t === 'new' ? 'To review' : t === 'confirmed' ? 'Confirmed' : 'Dismissed'} ({count(t)})</a>)}
+    {release && <a href={`/admin/press/coverage?tab=${tab}${dq}${desk.q.replace('?', '&')}`} class="text-xs text-lk-blue">all releases ×</a>}
   </nav>
   <ul class="mt-3 space-y-3">
     {items.map((c) => (

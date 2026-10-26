@@ -32,17 +32,76 @@ export const STATUS_LABEL: Record<Release['status'], string> = {
   draft: 'Draft', in_review: 'Waiting for approval', changes_requested: 'Changes requested', approved: 'Approved, scheduled', published: 'Published', withdrawn: 'Withdrawn',
 };
 
-/** What this person may do: write (the press team and group admins) and approve (group admins). Both after two-step. */
-export function pressAccess(locals: App.Locals) {
-  if (!locals.user || locals.user.aal !== 'aal2') return null;
+/*
+ * Press desks. Lakeba's press office (venture null) handles Lakeba and its
+ * controlled ventures, with Lakeba's media list. A non-controlling venture
+ * (MIST) has a desk of its own: its releases, its own media list, settings,
+ * opt-outs and coverage, reached with ?desk=CODE. People work on a desk when
+ * their press roles cover it (Lakeba's: group-wide roles; a venture's: roles
+ * for that company or group-wide).
+ */
+export type DeskVenture = { id: string; code: string; display_name: string };
+export type Desk = {
+  venture: DeskVenture | null; name: string; writer: boolean; approver: boolean;
+  /** Companies whose releases are written here. */
+  entityIds: string[];
+  /** "?desk=MIST" for links (empty for Lakeba's), and the desks this person may switch to. */
+  q: string; desks: { code: string | null; name: string }[];
+};
+
+async function desksFor(locals: App.Locals, svc: Svc) {
+  if (!locals.user || locals.user.aal !== 'aal2') return [];
   const a = locals.access;
-  if (!a.can('press.view', null)) return null;
-  return { writer: a.can('press.do', null), approver: a.can('press.approve', null), viewer: true };
+  const { data } = await svc.from('entities').select('id, code, display_name, relationship').eq('portal', 'full').order('sort');
+  const all = (data ?? []) as (DeskVenture & { relationship: string })[];
+  const out: Desk[] = [];
+  const lakeba = all.filter((e) => e.relationship !== 'portfolio').map((e) => e.id);
+  if (a.can('press.view', null)) out.push({ venture: null, name: 'Lakeba', writer: a.can('press.do', null), approver: a.can('press.approve', null), entityIds: lakeba, q: '', desks: [] });
+  for (const v of all.filter((e) => e.relationship === 'portfolio' && a.can('press.view', e.id))) {
+    out.push({ venture: { id: v.id, code: v.code, display_name: v.display_name }, name: v.display_name, writer: a.can('press.do', v.id), approver: a.can('press.approve', v.id), entityIds: [v.id], q: `?desk=${v.code}`, desks: [] });
+  }
+  for (const d of out) d.desks = out.map((x) => ({ code: x.venture?.code ?? null, name: x.name }));
+  return out;
 }
 
-export async function pressSettings(svc: Svc): Promise<PressSettings> {
-  const { data } = await svc.from('portal_settings').select('value').eq('key', 'press').maybeSingle();
+/** The desk a press page works on (?desk=CODE; Lakeba's otherwise), or null if this person can't use it. */
+export async function pressDesk(locals: App.Locals, svc: Svc, url: URL) {
+  const desks = await desksFor(locals, svc);
+  const code = url.searchParams.get('desk')?.toUpperCase();
+  return (code ? desks.find((d) => d.venture?.code === code) : desks.find((d) => !d.venture) ?? desks[0]) ?? null;
+}
+
+/** The desk a release (or anything else of a company) belongs to, if this person may use it. */
+export async function deskOf(locals: App.Locals, svc: Svc, entityId: string | null) {
+  const desks = await desksFor(locals, svc);
+  return desks.find((d) => (entityId ? d.entityIds.includes(entityId) : !d.venture)) ?? null;
+}
+
+/** Only this desk's media list, opt-outs and research (Lakeba's has no company set). */
+export const onDesk = <Q extends { is: (c: string, v: null) => Q; eq: (c: string, v: string) => Q }>(desk: Pick<Desk, 'venture'>, q: Q) =>
+  (desk.venture ? q.eq('entity_id', desk.venture.id) : q.is('entity_id', null));
+/** Only this desk's releases (Lakeba's also has older ones with no company set). */
+export const releasesOnDesk = <Q extends { or: (f: string) => Q; eq: (c: string, v: string) => Q }>(desk: Pick<Desk, 'venture' | 'entityIds'>, q: Q) =>
+  (desk.venture ? q.eq('entity_id', desk.venture.id) : q.or(`entity_id.is.null,entity_id.in.(${desk.entityIds.join(',')})`));
+/** The media list key for new rows. */
+export const deskKey = (desk: Pick<Desk, 'venture'>) => desk.venture?.id ?? null;
+
+/** The venture whose desk a company's releases belong to: itself when non-controlling, else none (Lakeba's). */
+export async function deskVentureOf(svc: Svc, entityId: string | null): Promise<DeskVenture | null> {
+  if (!entityId) return null;
+  const { data } = await svc.from('entities').select('id, code, display_name, relationship').eq('id', entityId).maybeSingle();
+  return data?.relationship === 'portfolio' ? { id: data.id, code: data.code, display_name: data.display_name } : null;
+}
+/** A release's desk settings (boilerplate, media contact, sender). */
+export const settingsFor = async (svc: Svc, r: Pick<Release, 'entity_id'>) => pressSettings(svc, await deskVentureOf(svc, r.entity_id));
+
+/** A desk's settings: Lakeba's ("press"), or a venture's own ("press:MIST", starting from its name). */
+export async function pressSettings(svc: Svc, venture: DeskVenture | null = null): Promise<PressSettings> {
+  const { data } = await svc.from('portal_settings').select('value').eq('key', venture ? `press:${venture.code}` : 'press').maybeSingle();
   const v = (data?.value ?? {}) as Partial<PressSettings>;
+  if (venture) return { boilerplate_html: v.boilerplate_html ?? '', about_title: v.about_title || `About ${venture.display_name}`, contact_name: v.contact_name ?? `${venture.display_name} Media Relations`, contact_email: v.contact_email || 'press@lakeba.com',
+    contact_phone: v.contact_phone ?? '', dateline_city: v.dateline_city || 'SYDNEY', reply_tracking: v.reply_tracking === true, reply_mailbox: v.reply_mailbox || 'press@lakeba.com', wires: Array.isArray(v.wires) ? v.wires : [],
+    monitor_terms: Array.isArray(v.monitor_terms) ? v.monitor_terms : [venture.display_name], feeds: Array.isArray(v.feeds) ? v.feeds : [], gdelt: v.gdelt === true, search_after_release: v.search_after_release === true };
   return { boilerplate_html: v.boilerplate_html ?? '', about_title: v.about_title || 'About Lakeba Group', contact_name: v.contact_name ?? 'Lakeba Media Relations', contact_email: v.contact_email || 'press@lakeba.com', contact_phone: v.contact_phone ?? '', dateline_city: v.dateline_city || 'SYDNEY', reply_tracking: v.reply_tracking === true, reply_mailbox: v.reply_mailbox || 'press@lakeba.com', wires: Array.isArray(v.wires) ? v.wires : [],
     monitor_terms: Array.isArray(v.monitor_terms) ? v.monitor_terms : ['Lakeba'], feeds: Array.isArray(v.feeds) ? v.feeds : [], gdelt: v.gdelt === true, search_after_release: v.search_after_release === true };
 }
@@ -96,7 +155,7 @@ async function uniqueSlug(svc: Svc, headline: string, postId: string | null) {
 
 /** Publishes (or republishes, after a correction) the release as a public news post. */
 export async function publishRelease(svc: Svc, r: Release, by: string | null) {
-  const s = await pressSettings(svc);
+  const s = await settingsFor(svc, r);
   const when = r.published_at ?? r.publish_at ?? new Date().toISOString();
   // Releases are about the group unless a venture was chosen.
   const { data: company } = r.entity_id ? await svc.from('entities').select('id, display_name, relationship').eq('id', r.entity_id).maybeSingle() : await svc.from('entities').select('id, display_name, relationship').eq('relationship', 'group').limit(1).maybeSingle();
@@ -146,10 +205,14 @@ export async function requestQuoteApproval(svc: Svc, r: Release, q: Quote, by: s
   const token = randomBytes(24).toString('base64url');
   await svc.from('press_quote_approvals').update({ status: 'cancelled' }).eq('release_id', r.id).eq('quote_key', q.key).eq('status', 'pending');
   await svc.from('press_quote_approvals').insert({ release_id: r.id, quote_key: q.key, name: q.name, email: q.email, token_hash: hash(token), original: q.text, sent_by: by }).throwOnError();
+  // In the name of the desk's company: Lakeba, or a non-controlling venture's own press office.
+  const venture = await deskVentureOf(svc, r.entity_id);
+  const org = venture?.display_name ?? 'Lakeba';
+  const contact = (await pressSettings(svc, venture)).contact_email;
   await sendMail({
-    to: q.email, subject: `Please approve your quote: ${r.headline || 'Lakeba press release'}`,
-    text: `Hello ${q.name.split(' ')[0]},\n\nLakeba is preparing a press release, “${r.headline || 'untitled'}”, which quotes you:\n\n“${q.text}”\n\nPlease approve the quote, or change it, using the button below. The link works for 21 days and doesn't need a portal account.`,
-    link: `${origin}/press/quote/${token}`, linkLabel: 'Review my quote', footer: 'You receive this because a Lakeba press release quotes you. Questions: press@lakeba.com.',
+    to: q.email, subject: `Please approve your quote: ${r.headline || `${org} press release`}`,
+    text: `Hello ${q.name.split(' ')[0]},\n\n${org} is preparing a press release, “${r.headline || 'untitled'}”, which quotes you:\n\n“${q.text}”\n\nPlease approve the quote, or change it, using the button below. The link works for 21 days and doesn't need a portal account.`,
+    link: `${origin}/press/quote/${token}`, linkLabel: 'Review my quote', footer: `You receive this because a${/^[AEIOU]/i.test(org) ? 'n' : ''} ${org} press release quotes you. Questions: ${contact}.`,
   });
 }
 

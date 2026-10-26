@@ -2,7 +2,7 @@ import { PUBLIC_SITE_URL } from 'astro:env/server';
 import { client as claude } from './ask';
 import type { serviceClient } from './admin';
 import { safeGet } from './newsletter-import';
-import { pressSettings, type Release } from './press';
+import { deskVentureOf, onDesk, pressSettings, settingsFor, type DeskVenture, type Release } from './press';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -87,7 +87,9 @@ async function classify(cands: Candidate[], releases: { headline: string; summar
 }
 
 /** Stores new articles (once per address): sorted, linked to a release and to the journalist pitched at that outlet. */
-export async function addCandidates(svc: Svc, list: Candidate[], o: { releaseId?: string | null } = {}) {
+export async function addCandidates(svc: Svc, list: Candidate[], o: { releaseId?: string | null; venture?: DeskVenture | null } = {}) {
+  // Only this desk's releases, companies and outlets (Lakeba's, or a non-controlling venture's own).
+  const venture = o.releaseId ? await deskVentureOf(svc, (await svc.from('press_releases').select('entity_id').eq('id', o.releaseId).maybeSingle()).data?.entity_id ?? null) : o.venture ?? null;
   const fresh: Candidate[] = [];
   const keys = new Set<string>();
   for (const c of list) {
@@ -103,12 +105,14 @@ export async function addCandidates(svc: Svc, list: Candidate[], o: { releaseId?
   const todo = fresh.filter((c) => !have.has(urlKey(c.url))).slice(0, 40);
   if (!todo.length) return 0;
   const since = new Date(Date.now() - 120 * 86_400_000).toISOString();
-  const { data: rels } = await svc.from('press_releases').select('id, headline, summary, entity_id, published_at').eq('status', 'published').gte('published_at', since).order('published_at', { ascending: false }).limit(30);
-  const { data: ents } = await svc.from('entities').select('id, display_name').eq('portal', 'full');
-  const companies = (ents ?? []).map((e) => e.display_name);
-  const releases = (rels ?? []).map((r) => ({ ...r, company: (ents ?? []).find((e) => e.id === r.entity_id)?.display_name ?? 'Lakeba Group' }));
+  const { data: allRels } = await svc.from('press_releases').select('id, headline, summary, entity_id, published_at').eq('status', 'published').gte('published_at', since).order('published_at', { ascending: false }).limit(30);
+  const { data: allEnts } = await svc.from('entities').select('id, display_name, relationship').eq('portal', 'full');
+  const ents = (allEnts ?? []).filter((e) => (venture ? e.id === venture.id : e.relationship !== 'portfolio'));
+  const rels = (allRels ?? []).filter((x) => (venture ? x.entity_id === venture.id : !x.entity_id || ents.some((e) => e.id === x.entity_id)));
+  const companies = ents.map((e) => e.display_name);
+  const releases = rels.map((r) => ({ ...r, company: ents.find((e) => e.id === r.entity_id)?.display_name ?? 'Lakeba Group' }));
   const sorted = await classify(todo, releases.map((r) => ({ headline: r.headline, summary: r.summary, company: r.company })), companies).catch(() => todo.map(() => ({ relevance: 'mention' as const, release: -1, company: '', sentiment: 'neutral' as const, summary: '' })));
-  const { data: outlets } = await svc.from('media_outlets').select('id, name, website');
+  const { data: outlets } = await onDesk({ venture }, svc.from('media_outlets').select('id, name, website'));
   let added = 0;
   for (const [i, c] of todo.entries()) {
     const s = sorted[i];
@@ -124,7 +128,7 @@ export async function addCandidates(svc: Svc, list: Candidate[], o: { releaseId?
     const { error } = await svc.from('press_coverage').insert({
       url: c.url.slice(0, 1000), url_key: urlKey(c.url).slice(0, 1000), title: c.title.slice(0, 300), outlet: (c.outlet || outlet?.name || domain).slice(0, 120), domain, published_at: c.published_at, snippet: c.snippet.slice(0, 600), source: c.source,
       relevance: o.releaseId ? 'release' : s.relevance, sentiment: s.sentiment, summary: s.summary.slice(0, 300), release_id: release?.id ?? null,
-      entity_id: release?.entity_id ?? (ents ?? []).find((e) => e.display_name === s.company)?.id ?? null,
+      entity_id: release?.entity_id ?? ents.find((e) => e.display_name === s.company)?.id ?? venture?.id ?? null,
       status: !o.releaseId && s.relevance === 'unrelated' ? 'dismissed' : 'new', pitch_id, contact_id,
     });
     if (!error) added++;
@@ -139,8 +143,8 @@ async function lastRun(svc: Svc, kind: string, target: string) {
 }
 
 /** The press office's feeds (hourly): items mentioning one of the monitored names. */
-export async function checkFeeds(svc: Svc, force = false) {
-  const s = await pressSettings(svc);
+export async function checkFeeds(svc: Svc, force = false, venture: DeskVenture | null = null) {
+  const s = await pressSettings(svc, venture);
   let added = 0;
   for (const f of s.feeds) {
     if (!force && Date.now() - (await lastRun(svc, 'feed', f.url)) < 55 * 60_000) continue;
@@ -150,7 +154,7 @@ export async function checkFeeds(svc: Svc, force = false) {
       const terms = s.monitor_terms.map((t) => t.toLowerCase());
       // Alerts feeds already match our names; other feeds are filtered by them.
       const hits = items.filter((it) => !terms.length || terms.some((t) => `${it.title} ${it.snippet}`.toLowerCase().includes(t)) || /google\.|talkwalker/i.test(f.url));
-      const n = await addCandidates(svc, hits);
+      const n = await addCandidates(svc, hits, { venture });
       added += n;
       await log(svc, 'feed', f.url, hits.length, n);
     } catch (e) { await log(svc, 'feed', f.url, 0, 0, (e as Error).message); }
@@ -159,19 +163,20 @@ export async function checkFeeds(svc: Svc, force = false) {
 }
 
 /** GDELT (every 6 hours, best effort: it covers mostly larger outlets and limits requests). */
-export async function checkGdelt(svc: Svc, force = false) {
-  const s = await pressSettings(svc);
-  if (!s.gdelt || !s.monitor_terms.length || (!force && Date.now() - (await lastRun(svc, 'gdelt', 'gdelt')) < 6 * 3600_000)) return 0;
+export async function checkGdelt(svc: Svc, force = false, venture: DeskVenture | null = null) {
+  const s = await pressSettings(svc, venture);
+  const target = venture ? `gdelt:${venture.code}` : 'gdelt';
+  if (!s.gdelt || !s.monitor_terms.length || (!force && Date.now() - (await lastRun(svc, 'gdelt', target)) < 6 * 3600_000)) return 0;
   const q = s.monitor_terms.slice(0, 8).map((t) => `"${t.replace(/"/g, '')}"`).join(' OR ');
   try {
     const res = await safeGet(`https://api.gdeltproject.org/api/v2/doc/doc?query=${encodeURIComponent(s.monitor_terms.length > 1 ? `(${q})` : q)}&mode=artlist&maxrecords=50&format=json&timespan=3days&sort=datedesc`, 2 * 1024 * 1024);
     const text = res.data.toString('utf8');
     if (!text.trim().startsWith('{')) throw new Error(text.slice(0, 120));
     const arts = ((JSON.parse(text) as { articles?: { url: string; title: string; seendate: string; domain: string }[] }).articles ?? []);
-    const n = await addCandidates(svc, arts.map((a) => ({ url: a.url, title: a.title, snippet: '', outlet: a.domain, published_at: /^\d{8}T\d{6}Z$/.test(a.seendate) ? `${a.seendate.slice(0, 4)}-${a.seendate.slice(4, 6)}-${a.seendate.slice(6, 8)}T${a.seendate.slice(9, 11)}:${a.seendate.slice(11, 13)}:00Z` : null, source: 'gdelt' as const })));
-    await log(svc, 'gdelt', 'gdelt', arts.length, n);
+    const n = await addCandidates(svc, arts.map((a) => ({ url: a.url, title: a.title, snippet: '', outlet: a.domain, published_at: /^\d{8}T\d{6}Z$/.test(a.seendate) ? `${a.seendate.slice(0, 4)}-${a.seendate.slice(4, 6)}-${a.seendate.slice(6, 8)}T${a.seendate.slice(9, 11)}:${a.seendate.slice(11, 13)}:00Z` : null, source: 'gdelt' as const })), { venture });
+    await log(svc, 'gdelt', target, arts.length, n);
     return n;
-  } catch (e) { await log(svc, 'gdelt', 'gdelt', 0, 0, (e as Error).message); return 0; }
+  } catch (e) { await log(svc, 'gdelt', target, 0, 0, (e as Error).message); return 0; }
 }
 
 /** Claude web search for one release's coverage (only pages the search returned are kept). */
@@ -213,12 +218,12 @@ export async function searchRelease(svc: Svc, r: Release, company: string) {
 
 /** Releases due a search: 1, 3, 7 and 14 days after publication. */
 async function dueSearches(svc: Svc) {
-  const s = await pressSettings(svc);
-  if (!s.search_after_release || !claude) return;
+  if (!claude) return;
   const { data } = await svc.from('press_releases').select('*').eq('status', 'published').gte('published_at', new Date(Date.now() - 16 * 86_400_000).toISOString());
   const { data: ents } = await svc.from('entities').select('id, display_name');
   for (const r of (data ?? []) as Release[]) {
     const { count } = await svc.from('press_monitor_log').select('id', { count: 'exact', head: true }).eq('kind', 'search').eq('target', r.id);
+    if (!(await settingsFor(svc, r)).search_after_release) continue;
     const next = SEARCH_DAYS[count ?? 0];
     if (next === undefined || Date.now() - new Date(r.published_at!).getTime() < next * 86_400_000) continue;
     await searchRelease(svc, r, (ents ?? []).find((e) => e.id === r.entity_id)?.display_name ?? 'Lakeba Group').catch((e) => log(svc, 'search', r.id, 0, 0, (e as Error).message));
@@ -231,11 +236,18 @@ let busy = false;
 export async function monitorJobs(svc: Svc) {
   if (busy) return;
   busy = true;
-  try { await checkFeeds(svc); await checkGdelt(svc); await dueSearches(svc); } finally { busy = false; }
+  try {
+    // Lakeba's press office, then each venture that set up its own (press:CODE settings).
+    const { data: own } = await svc.from('portal_settings').select('key').like('key', 'press:%');
+    const codes = (own ?? []).map((x) => x.key.slice(6));
+    const { data: vs } = codes.length ? await svc.from('entities').select('id, code, display_name').in('code', codes).eq('relationship', 'portfolio') : { data: [] };
+    for (const v of [null, ...((vs ?? []) as DeskVenture[])]) { await checkFeeds(svc, false, v); await checkGdelt(svc, false, v); }
+    await dueSearches(svc);
+  } finally { busy = false; }
 }
 
 /** An article added by hand: its title, outlet and date read from the page. */
-export async function addByHand(svc: Svc, url: string, releaseId: string | null) {
+export async function addByHand(svc: Svc, url: string, releaseId: string | null, venture: DeskVenture | null = null) {
   let title = '', outlet = '', published_at: string | null = null, snippet = '';
   try {
     const res = await safeGet(url, 2 * 1024 * 1024);
@@ -247,5 +259,5 @@ export async function addByHand(svc: Svc, url: string, releaseId: string | null)
     const d = meta('article:published_time') || meta('datePublished') || /"datePublished"\s*:\s*"([^"]+)"/.exec(html)?.[1] || '';
     published_at = d && !Number.isNaN(Date.parse(d)) ? new Date(d).toISOString() : null;
   } catch { /* still recorded, with the address only */ }
-  return addCandidates(svc, [{ url, title: title || url, outlet, published_at, snippet, source: 'manual' }], { releaseId });
+  return addCandidates(svc, [{ url, title: title || url, outlet, published_at, snippet, source: 'manual' }], { releaseId, venture });
 }

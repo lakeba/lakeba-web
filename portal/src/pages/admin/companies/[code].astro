@@ -7,6 +7,7 @@ import { field } from '../../../lib/forms';
 import { displayName } from '../../../lib/admin-forms';
 import { shortDate } from '../../../lib/format';
 import { brandOf } from '../../../lib/brand';
+import { spendThisMonth } from '../../../lib/ask-limits';
 import { RESERVED_SLUGS, forgetVentureSites } from '../../../lib/sites';
 import { CLASS_KINDS, PORTAL_ACCESS, POSITIONS, RELATIONSHIPS, amount, changes, classBlocker, fmt, isDate, wholeShares } from '../../../lib/register';
 
@@ -67,6 +68,9 @@ if (Astro.request.method === 'POST') {
         ask_enabled: form.get('ask_enabled') === 'on', board_qa_enabled: form.get('board_qa_enabled') === 'on',
       };
       // The addresses decide where the venture's portal is reached, so they stay with people who manage the whole register.
+      // Lakeba pays for Ask: its monthly cap per company is set by people who manage the whole register.
+      if (mayGroup) { const b = field(form, 'ask_monthly_budget_usd').trim(); Object.assign(next, { ask_monthly_budget_usd: b === '' ? null : Number(b) }); }
+      if (next.ask_monthly_budget_usd != null && !(Number(next.ask_monthly_budget_usd) >= 0 && Number(next.ask_monthly_budget_usd) <= 100000)) return 'The Ask budget is an amount in USD, e.g. 100.';
       if (mayGroup && c.relationship !== 'group') Object.assign(next, { slug: field(form, 'slug').trim().toLowerCase() || null, custom_domain: field(form, 'custom_domain').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '') || null });
       const isEmail = (v: unknown) => v == null || /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(String(v));
       if (!isEmail(next.reply_to) || !isEmail(next.contact_email)) return 'Enter the email addresses in full, e.g. investors@mist.com.';
@@ -76,7 +80,7 @@ if (Astro.request.method === 'POST') {
       if (next.slug && next.slug !== c.slug && (await svc.from('entities').select('id').eq('slug', next.slug).neq('id', c.id).maybeSingle()).data) return `${next.slug} is already used by another company.`;
       if (next.custom_domain && next.custom_domain !== c.custom_domain && (await svc.from('entities').select('id').eq('custom_domain', next.custom_domain).neq('id', c.id).maybeSingle()).data) return `${next.custom_domain} is already used by another company.`;
       const yesNo = (v: unknown) => (v ? 'On' : 'Off');
-      const lines = changes(c, next, { slug: 'Lakeba address', custom_domain: 'Own domain', sender_name: 'Sender name', reply_to: 'Replies go to', contact_email: 'Contact email', ask_name: 'Name of Ask', email_footer: 'Email footer', document_footer: 'Document footer', ask_enabled: 'Ask', board_qa_enabled: 'Board Q&A' },
+      const lines = changes(c, next, { slug: 'Lakeba address', custom_domain: 'Own domain', sender_name: 'Sender name', reply_to: 'Replies go to', contact_email: 'Contact email', ask_name: 'Name of Ask', email_footer: 'Email footer', document_footer: 'Document footer', ask_enabled: 'Ask', board_qa_enabled: 'Board Q&A', ask_monthly_budget_usd: 'Ask budget a month (USD)' },
         (k, v) => (k === 'ask_enabled' || k === 'board_qa_enabled' ? yesNo(v) : fmt(v)));
       if (!lines.length) return 'Nothing changed.';
       return { title: 'Save these venture settings?', lines, apply: async () => {
@@ -176,6 +180,7 @@ const latest = new Map<string, { as_at: string; shares: number; cls: string }>()
 for (const h of holdings ?? []) { const k = `${h.holder_id}|${h.share_class_id}`; if (!latest.has(k) || latest.get(k)!.as_at < h.as_at) latest.set(k, { as_at: h.as_at, shares: Number(h.shares), cls: h.share_class_id }); }
 const heldIn = (cid: string) => [...latest.values()].filter((x) => x.cls === cid).reduce((a, x) => a + x.shares, 0);
 const self = Astro.url.pathname;
+const askUsed = (await spendThisMonth(svc, c.id)).get(c.id) ?? { cost: 0, questions: 0 };
 const sel = 'field !py-1.5 text-sm';
 ---
 
@@ -310,6 +315,7 @@ const sel = 'field !py-1.5 text-sm';
         <div><label class="label" for="ask_name">Name of Ask</label><input id="ask_name" name="ask_name" value={c.ask_name ?? ''} maxlength="40" placeholder={`Ask ${brandOf(c).name}`} class="field" disabled={!mayEdit} /></div>
         <div><label class="label" for="email_footer">Email footer</label><textarea id="email_footer" name="email_footer" rows="2" maxlength="500" placeholder={`You receive this as a ${brandOf(c).name} shareholder…`} class="field text-sm" disabled={!mayEdit}>{c.email_footer ?? ''}</textarea></div>
         <div><label class="label" for="document_footer">Holding statement footer</label><textarea id="document_footer" name="document_footer" rows="2" maxlength="300" placeholder="Nothing extra" class="field text-sm" disabled={!mayEdit}>{c.document_footer ?? ''}</textarea></div>
+        <div><label class="label" for="ask_monthly_budget_usd">Ask budget a month (USD)</label><input id="ask_monthly_budget_usd" name="ask_monthly_budget_usd" inputmode="decimal" value={c.ask_monthly_budget_usd ?? ''} placeholder="No limit of its own" class="field" disabled={!mayEdit || !mayGroup} /><p class="mt-1 text-xs text-white/40">Used this month: USD {askUsed.cost.toFixed(2)} for {askUsed.questions} question{askUsed.questions === 1 ? '' : 's'}. When the budget is reached, Ask shows matching passages until the 1st.</p></div>
         <div class="space-y-2 text-sm">
           <label class="flex items-center gap-3"><input type="checkbox" name="ask_enabled" checked={c.ask_enabled} class="size-4 accent-lk-blue" disabled={!mayEdit} /> Ask is on for {c.display_name}’s investors</label>
           <label class="flex items-center gap-3"><input type="checkbox" name="board_qa_enabled" checked={c.board_qa_enabled} class="size-4 accent-lk-blue" disabled={!mayEdit} /> Board Q&amp;A is on for {c.display_name}’s investors</label>

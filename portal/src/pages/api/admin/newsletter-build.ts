@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { PUBLIC_SITE_URL } from 'astro:env/server';
 import { client as claude } from '../../../lib/ask';
 import { serviceClient } from '../../../lib/admin';
+import { sourceFilters } from '../../../lib/newsletter';
 import { markdownToHtml, plainText } from '../../../lib/news-cms';
 import { newsEditor } from '../../../lib/news-editors';
 import { BLOCKS_SCHEMA, LENGTHS, TONES, WRITING_RULES, blocksToHtml, type Block } from '../../../lib/newsletter-ai';
@@ -35,9 +36,9 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
   if (breakdown.length < 15) return Response.json({ error: 'Write a few points about what you want to say first.' }, { status: 400 });
   const svc = serviceClient();
   const { data: issue } = await svc.from('newsletter_issues').select('id, audience, entity_id').eq('id', String(b?.issue_id ?? '')).maybeSingle();
-  if (!issue || (issue.audience === 'public' ? !editor.group : !editor.mayEdit(issue.entity_id))) return Response.json({ error: 'Not found.' }, { status: 404 });
+  if (!issue || !editor.mayEdit(issue.entity_id)) return Response.json({ error: 'Not found.' }, { status: 404 });
   const { data: company } = await svc.from('entities').select('display_name, relationship').eq('id', issue.entity_id).single();
-  const companyName = issue.audience === 'public' ? 'Lakeba Group' : company!.display_name;
+  const companyName = company!.relationship === 'group' ? 'Lakeba Group' : company!.display_name;
   const isShareholders = issue.audience === 'shareholders';
   const useSources = b?.use_sources !== false;
   const ids = (k: string) => (Array.isArray(b?.[k]) ? (b![k] as unknown[]).map(String).filter((x) => /^[0-9a-f-]{36}$/.test(x)).slice(0, 12) : []);
@@ -45,11 +46,12 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
 
   // Sources: the ticked news in full, recent news to choose from, documents and meetings.
   const since = new Date(Date.now() - 120 * 86_400_000).toISOString();
+  const only = await sourceFilters(svc, issue);
   const [{ data: candidates }, { data: ticked }, { data: docs }, { data: meetings }] = await Promise.all([
     svc.from('posts').select('id, slug, title, excerpt, published_at, visibility').not('published_at', 'is', null).gte('published_at', since).lte('published_at', new Date().toISOString())
       .or(isShareholders ? `visibility.eq.public,entity_id.eq.${issue.entity_id}` : 'visibility.eq.public').order('published_at', { ascending: false }).limit(15),
-    useSources && ids('post_ids').length ? svc.from('posts').select('id, slug, title, excerpt, body_html, body_md, published_at, visibility').in('id', ids('post_ids')) : Promise.resolve({ data: [] }),
-    useSources && isShareholders && ids('document_ids').length ? svc.from('documents').select('id, title, summary, published_at').in('id', ids('document_ids')) : Promise.resolve({ data: [] }),
+    useSources && ids('post_ids').length ? svc.from('posts').select('id, slug, title, excerpt, body_html, body_md, published_at, visibility').in('id', ids('post_ids')).or(only.posts).not('published_at', 'is', null) : Promise.resolve({ data: [] }),
+    useSources && isShareholders && ids('document_ids').length ? svc.from('documents').select('id, title, summary, published_at').in('id', ids('document_ids')).or(only.documents).not('published_at', 'is', null) : Promise.resolve({ data: [] }),
     useSources && isShareholders && b?.meetings ? svc.from('meetings').select('id, title, starts_at, proxy_deadline, location').eq('entity_id', issue.entity_id).gte('starts_at', new Date().toISOString()).order('starts_at').limit(3) : Promise.resolve({ data: [] }),
   ]);
   const postUrl = (p: { slug: string; visibility: string }) => (p.visibility === 'public' ? `${site}/news/${p.slug}/` : `${url.origin}/news/${p.slug}`);

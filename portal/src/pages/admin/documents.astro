@@ -65,6 +65,7 @@ if (Astro.request.method === 'POST') {
     else if (!(file instanceof File) || !file.size) error = 'Choose a file to upload.';
     else if (!title || !categories.includes(category) || !(audience in audiences)) error = 'Fill in the title, category and audience.';
     else if (audience === 'holder' && !holderId) error = 'Choose the holder this document is for.';
+    else if (audience === 'holder' && !(await serviceClient().rpc('holder_in_entity', { target_holder: holderId, target_entity: company.id })).data) error = 'That holder has no shares in this company.';
     else {
       // Optional approval: the document waits as a draft until it's approved.
       const needsApproval = form.get('needs_approval') === 'on';
