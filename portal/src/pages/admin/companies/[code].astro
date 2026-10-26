@@ -87,7 +87,8 @@ if (Astro.request.method === 'POST') {
       if (!lines.length) return 'Nothing changed.';
       return { title: 'Save these venture settings?', lines, apply: async () => {
         await svc.from('entities').update(next).eq('id', c.id).throwOnError();
-        if ('custom_domain' in next && next.custom_domain !== c.custom_domain) await svc.from('entities').update({ custom_domain_verified_at: null }).eq('id', c.id);
+        // A group admin setting the address approves it too (Domain and mail).
+        if ('custom_domain' in next && next.custom_domain !== c.custom_domain) await svc.from('entities').update({ custom_domain_verified_at: null, custom_domain_approved_at: next.custom_domain ? new Date().toISOString() : null }).eq('id', c.id);
         forgetVentureSites();
         await log('company_venture_settings_saved', { changes: lines });
         return 'Venture settings saved.';

@@ -121,7 +121,9 @@ Passkeys don't need changes: they are only ever used on `investors.lakeba.com`.
 
 **A venture's own domain** (`investors.mist.com`, in Admin → Companies → a company → Domain and mail):
 the venture adds a CNAME to `investors.lakeba.com` (or, where its DNS provider can't, an A record with the
-server's address, `PORTAL_SERVER_IP`), and the check puts it in use. If the server's address ever changes,
+server's address, `PORTAL_SERVER_IP`), and the check puts it in use once a Lakeba group admin has
+approved the address. A sign-in pass goes there only for that venture's investors (never staff, who stay
+on its Lakeba address) and only while the domain still points here. If the server's address ever changes,
 ventures with an A record must update it: look for `company_domain_verified` entries whose `found` starts with `A`. Sign-in still happens
 on `investors.lakeba.com`; a one-time pass carries it to the venture's domain. Its certificate comes
 from Caddy's on-demand TLS, allowed only for verified domains:

@@ -42,6 +42,9 @@ async function accessToken(tenant = MS_TENANT_ID!) {
   return data.access_token;
 }
 
+/** Whether the portal's app is approved in a Microsoft 365 (Microsoft only signs it in where it was approved). */
+export const approvedIn = async (tenant: string) => { try { await accessToken(tenant); return true; } catch { return false; } };
+
 // Which Microsoft 365 a mailbox is in: a venture's (its shareholder mailbox or sending address) or Lakeba's.
 let tenants = new Map<string, string>();
 let tenantsAt = 0;

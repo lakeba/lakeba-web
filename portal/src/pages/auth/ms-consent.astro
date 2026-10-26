@@ -3,12 +3,16 @@ import Auth from '../../layouts/Auth.astro';
 import Alert from '../../components/Alert.astro';
 import { createHash } from 'node:crypto';
 import { serviceClient } from '../../lib/admin';
-import { forgetTenants } from '../../lib/graph';
+import { MS_TENANT_ID } from 'astro:env/server';
+import { approvedIn, forgetTenants } from '../../lib/graph';
 import { adminIds, notifyMembers } from '../../lib/notify';
 
 // Where Microsoft sends a venture's Microsoft 365 administrator back after they
 // approved (or declined) the portal's app in their organisation. The "state"
-// says which company asked; it is used once.
+// says which company asked; it is used once. Microsoft doesn't sign this
+// address, so whoever holds the state could type it with any tenant: the
+// tenant is accepted only if it isn't Lakeba's own, isn't another company's,
+// and the app really is approved there.
 const svc = serviceClient();
 const q = Astro.url.searchParams;
 const state = q.get('state') ?? '';
@@ -21,7 +25,12 @@ if (!problem) {
     : { data: null };
   if (!req) problem = 'This approval link has expired or was already used. Ask for a new one in the portal.';
   else if (q.get('admin_consent') !== 'True' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/.test(tenant)) problem = 'Microsoft didn’t confirm the approval.';
-  else {
+  else if (tenant === (MS_TENANT_ID ?? '').toLowerCase()
+    || (await svc.from('entities').select('id').eq('ms_tenant_id', tenant).neq('id', req.entity_id).limit(1)).data?.length
+    || !(await approvedIn(tenant))) {
+    await svc.from('audit_log').insert({ action: 'company_microsoft365_refused', entity_id: req.entity_id, detail: { tenant } });
+    problem = 'This Microsoft 365 can’t be connected to this company. Ask Lakeba for help.';
+  } else {
     const { data: e } = await svc.from('entities').update({ ms_tenant_id: tenant, ms_connected_at: new Date().toISOString(), mail_from_verified_at: null }).eq('id', req.entity_id).select('code, display_name').single();
     forgetTenants();
     const { data: h } = req.handoff_id ? await svc.from('setup_handoffs').select('recipient_name, recipient_email').eq('id', req.handoff_id).maybeSingle() : { data: null };

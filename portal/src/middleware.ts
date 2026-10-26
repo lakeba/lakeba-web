@@ -72,7 +72,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
       return redirect(`${locals.site.central}${path}?${params}`, 302);
     }
     // A venture with its own domain is opened there (old links on its Lakeba address keep working).
-    if (!site.own && venture.custom_domain_verified_at && venture.custom_domain) return redirect(`${siteOriginFor(url, venture)}${path}${url.search}`, 302);
+    // People already signed in stay here: staff never get a pass to a venture's own domain (auth/pass).
+    if (!site.own && venture.custom_domain_verified_at && venture.custom_domain && !/(^|;\s*)sb-[^=;]*-auth-token(\.0)?=/.test(context.request.headers.get('cookie') ?? '')) return redirect(`${siteOriginFor(url, venture)}${path}${url.search}`, 302);
   }
   // investors.lakeba.com/mist → mist.investors.lakeba.com
   if (site.kind === 'central' && context.request.method === 'GET') {
