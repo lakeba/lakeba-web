@@ -78,7 +78,8 @@ function ownSender(c: BrandSource | null | undefined): Pick<Brand, 'sendFrom' | 
   const from = clean(c?.mail_from);
   if (!c || !from || !c.mail_from_verified_at) return { sendFrom: null, sendVia: null };
   if (c.mail_via === 'google') return { sendFrom: from, sendVia: 'google' };
-  if (c.mail_via === 'microsoft' && c.ms_tenant_id) return { sendFrom: from, sendVia: 'microsoft' };
+  // Its own Microsoft 365 (ms_tenant_id), or Lakeba's when its domain is there (no tenant of its own).
+  if (c.mail_via === 'microsoft') return { sendFrom: from, sendVia: 'microsoft' };
   return { sendFrom: null, sendVia: null };
 }
 

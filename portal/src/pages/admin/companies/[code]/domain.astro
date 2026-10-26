@@ -48,8 +48,8 @@ const [det, place, check, handoffs] = await Promise.all([
   loadHandoffs(c.id),
 ]);
 const lakebaAddress = siteOriginFor(Astro.url, { ...c, custom_domain_verified_at: null }).replace(/^https?:\/\//, '');
-const suggestedAddress = `investors@${det.emailDomain ?? 'yourcompany.com'}`;
-const providerName = { microsoft: 'Microsoft 365 (Outlook)', google: 'Google Workspace (Gmail)', other: 'another provider', none: '' }[det.mail];
+const suggestedAddress = `shareholders@${det.emailDomain ?? 'yourcompany.com'}`;
+const providerName = det.lakebaMicrosoft ? 'Lakeba’s own Microsoft 365' : { microsoft: 'Microsoft 365 (Outlook)', google: 'Google Workspace (Gmail)', other: 'another provider', none: '' }[det.mail];
 const now = Date.now();
 const poll = Boolean(c.custom_domain && !c.custom_domain_verified_at) || Boolean(consentUrl) || handoffs.some((h) => !h.revoked_at && new Date(h.expires_at).getTime() > now);
 ---
@@ -113,7 +113,7 @@ const poll = Boolean(c.custom_domain && !c.custom_domain_verified_at) || Boolean
 
   <div class="mt-6 space-y-6">
     <DomainGuide c={c} place={place ?? (det.dns ? { zone: det.dns.zone, host: det.dns, label: 'investors' } : null)} check={check} portalDomain={portalDomain} lakebaAddress={lakebaAddress} suggested={det.emailDomain ? `investors.${det.emailDomain}` : null} choose={manage} manage={manage} />
-    <EmailGuides c={c} det={det} admin={true} manage={manage} testTo={me.email} suggested={suggestedAddress}
+    <EmailGuides c={c} det={det} admin={true} manage={manage} group={group} testTo={me.email} suggested={suggestedAddress}
       consentUrl={consentUrl} msReady={graphConfigured()} msClientId={MS_CLIENT_ID ?? null}
       serverIp={PORTAL_SERVER_IP} gmailReady={gmailConfigured()} gmailClientId={gmailClientId()} gmailScope={GMAIL_SCOPE} />
   </div>

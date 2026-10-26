@@ -1,6 +1,7 @@
 import { promises as dns } from 'node:dns';
 import { readFileSync } from 'node:fs';
 import { DNS_TEST_FILE, DNS_TEST_RECORDS, PORTAL_DOMAIN, PORTAL_SERVER_IP } from 'astro:env/server';
+import { inLakebaMicrosoft } from './graph';
 
 /*
  * DNS for a venture's set-up. Its own domain (investors.mist.com) is used once
@@ -78,6 +79,8 @@ export type Detected = {
   mailHost: string | null;
   /** Where the email domain's DNS is managed. */
   dns: (DnsHost & { zone: string }) | null;
+  /** Its Microsoft 365 is Lakeba's own (e.g. a controlled venture's domain added there). */
+  lakebaMicrosoft: boolean;
 };
 
 const FREE_MAIL = /^(gmail|googlemail|outlook|hotmail|live|yahoo|icloud|me|bigpond|proton|protonmail)\.(com|com\.au|net|me)$|^lakeba\.com$/;
@@ -95,7 +98,7 @@ const detected = new Map<string, { at: number; value: Detected }>();
 export async function detect(c: { mail_from?: string | null; shareholder_mailbox?: string | null; contact_email?: string | null; reply_to?: string | null; website?: string | null; custom_domain?: string | null }): Promise<Detected> {
   const custom = c.custom_domain ? (await zoneOf(c.custom_domain))?.zone ?? null : null;
   const candidates = [...new Set([c.mail_from, c.shareholder_mailbox, c.contact_email, c.reply_to, c.website].map(domainOf).concat(custom).filter(Boolean) as string[])];
-  if (!candidates.length) return { emailDomain: null, mail: 'none', mailHost: null, dns: null };
+  if (!candidates.length) return { emailDomain: null, mail: 'none', mailHost: null, dns: null, lakebaMicrosoft: false };
   const key = candidates.join(',');
   const hit = detected.get(key);
   if (hit && Date.now() - hit.at < 600_000) return hit.value;
@@ -115,7 +118,7 @@ export async function detect(c: { mail_from?: string | null; shareholder_mailbox
   else if (mx.length) mail = /include:spf\.protection\.outlook\.com/i.test(spf) ? 'microsoft' : /include:_spf\.google\.com/i.test(spf) ? 'google' : 'other';
   const host = zone ? hostOf(zone.ns) : null;
   const value: Detected = {
-    emailDomain, mail, mailHost: mx[0] ?? null,
+    emailDomain, mail, mailHost: mx[0] ?? null, lakebaMicrosoft: mail === 'microsoft' && (await inLakebaMicrosoft(emailDomain)),
     dns: zone ? { zone: zone.zone, ...(host ?? { name: zone.ns[0]?.split('.').slice(-2).join('.') ?? 'its DNS provider' }) } : null,
   };
   detected.set(key, { at: Date.now(), value });

@@ -1,0 +1,49 @@
+---
+import Copy from './Copy.astro';
+import Facts from './Facts.astro';
+import Step from './Step.astro';
+import { dateTime } from '../../lib/format';
+import type { SetupCompany } from '../../lib/setup';
+
+// A venture whose email domain is in Lakeba's own Microsoft 365 (a controlled
+// venture like Ezifin): no approval of its own. Lakeba's IT makes its
+// shareholders@ mailbox, a group admin sends a test from it, and it becomes
+// the shareholder mailbox too (Shareholder emails).
+interface Props { c: SetupCompany; group: boolean; testTo: string; suggested: string }
+const { c, group, testTo, suggested } = Astro.props;
+const sending = c.mail_via === 'microsoft' && !c.ms_tenant_id && Boolean(c.mail_from_verified_at);
+const address = sending ? c.mail_from! : suggested;
+const receiving = c.shareholder_mailbox?.toLowerCase() === address.toLowerCase();
+---
+<section id="lakeba-microsoft" class="card space-y-4">
+  <div class="flex flex-wrap items-baseline justify-between gap-2">
+    <h2 class="font-display text-lg font-bold">Email in Lakeba’s Microsoft 365</h2>
+    {sending ? <span class="text-sm text-lk-green">✓ Emails come from {c.mail_from}</span> : <span class="text-sm text-white/45">Not set up · optional</span>}
+  </div>
+  <Facts items={[
+    ['What changes', `Investors get the portal’s emails from ${address} instead of Lakeba’s address, and write to it; the portal reads it and drafts the answers.`],
+    ['What stays the same', 'Everyone’s own email. Newsletters still go through Lakeba, in its name.'],
+    ['Time', 'About 10 minutes.'],
+    ['Who does it', `Lakeba’s IT and a Lakeba group admin: ${c.display_name}’s email is in Lakeba’s Microsoft 365, so nobody at ${c.display_name} has to approve anything.`],
+  ]} />
+  <ol class="space-y-5">
+    <Step n={1} title="Lakeba’s IT makes the mailbox" done={sending}>
+      <p>In <a href="https://admin.microsoft.com" target="_blank" rel="noopener" class="text-lk-blue hover:underline">admin.microsoft.com</a> → Teams &amp; groups → Shared mailboxes → Add a shared mailbox: <Copy value={address} /> (free, no licence).</p>
+      <p>Then add it to the mailboxes the portal’s app may use, the same list as Lakeba’s shareholder mailboxes.</p>
+    </Step>
+    <Step n={2} title="Send a test email from it" done={sending}>
+      {group ? (
+        <form method="post" class="space-y-2">
+          <input type="hidden" name="intent" value="lakeba-send" />
+          <label class="label" for="l_mail_from">Emails to investors come from</label>
+          <div class="flex gap-2"><input id="l_mail_from" name="mail_from" type="email" required value={address} class="field" /><button class="btn-ghost shrink-0 text-sm">Send a test</button></div>
+          <p class="text-xs text-white/45">{sending ? `In use since ${dateTime.format(new Date(c.mail_from_verified_at!))}.` : `The test goes to ${testTo}. As soon as it goes through, this address is used.`}</p>
+        </form>
+      ) : <p>A Lakeba group admin does this step.</p>}
+    </Step>
+    <Step n={3} title="Read investors’ emails there too" done={receiving}>
+      <p>{c.display_name}’s shareholder mailbox is {c.shareholder_mailbox ? <span class="font-mono text-white/85">{c.shareholder_mailbox}</span> : 'not set'}.{!receiving && <> Change it to <span class="font-mono text-white/85">{address}</span> in {group ? <a href="/admin/emails" class="text-lk-blue hover:underline">Shareholder emails</a> : 'Shareholder emails (a Lakeba group admin)'}, and press “Test connection”.</>}</p>
+    </Step>
+  </ol>
+  {group && sending && <form method="post"><button name="intent" value="lakeba-stop" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Send from Lakeba’s address again?')">Stop sending from {c.mail_from}</button></form>}
+</section>

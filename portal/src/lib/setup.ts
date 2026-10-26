@@ -3,8 +3,8 @@ import { MS_CLIENT_ID, MS_LOGIN_BASE, PORTAL_DOMAIN } from 'astro:env/server';
 import { serviceClient } from './admin';
 import { brandOf } from './brand';
 import { COLUMNS, type Company } from './companies';
-import { domainStatus, placeOf } from './domains';
-import { forgetTenants, sendAs } from './graph';
+import { detect, domainStatus, placeOf } from './domains';
+import { forgetTenants, inLakebaMicrosoft, sendAs } from './graph';
 import { gmailInboxCount } from './gmail';
 import { sendMail, sendViaGoogle } from './mail';
 import { forgetMailboxes } from './mailboxes';
@@ -210,7 +210,7 @@ export async function runSetupAction(c: SetupCompany, who: Who, form: FormData, 
     }
     case 'send-from': {
       if (!c.ms_tenant_id) return { error: 'Approve the portal in Microsoft 365 first (step 2).' };
-      if (!EMAIL.test(from)) return { error: 'Enter the address emails should come from, e.g. investors@mist.com.' };
+      if (!EMAIL.test(from)) return { error: 'Enter the address emails should come from, e.g. shareholders@mist.com.' };
       const notMine = await senderProblem(c, from);
       if (notMine) return { error: notMine };
       // Saved first, so the mailbox is known to be in this venture's Microsoft 365; used once a test email went through.
@@ -226,8 +226,35 @@ export async function runSetupAction(c: SetupCompany, who: Who, form: FormData, 
       if (!who.userId) await tellAdmins(c, central, `${c.display_name}’s emails now come from ${from}`, `${who.label} connected it. Emails from the portal to ${c.display_name}’s investors now come from ${from}, through its Microsoft 365.`);
       return { notice: `A test email went from ${from} to ${who.email}. ${c.display_name}’s emails now come from there.` };
     }
+    case 'lakeba-send': {
+      // A venture whose email is in Lakeba's own Microsoft 365 (Ezifin): Lakeba's group admins set
+      // its address there, on the venture's own domain, after a test email.
+      if (!who.group || !who.userId) break;
+      if (!EMAIL.test(from)) return { error: 'Enter the address emails should come from, e.g. shareholders@ezifin.com.' };
+      const notMine = await senderProblem(c, from);
+      if (notMine) return { error: notMine };
+      const fromDomain = from.split('@')[1];
+      const own = [(await detect(c)).emailDomain, c.custom_domain ? (await placeOf(c.custom_domain)).zone : null].filter(Boolean);
+      if (!own.includes(fromDomain)) return { error: `${from} isn’t on ${c.display_name}’s own domain (${own.join(' or ') || 'none found'}).` };
+      if (!(await inLakebaMicrosoft(fromDomain))) return { error: `${fromDomain} isn’t in Lakeba’s Microsoft 365. Use the steps for ${c.display_name}’s own Microsoft 365 or Google instead.` };
+      try {
+        await sendAs(from, { to: who.email, subject, html: `<p>This test email came from ${from} through Lakeba’s Microsoft 365. Emails from the portal to ${c.display_name}’s investors now come from this address.</p>` });
+      } catch (e) {
+        return { error: plainError('microsoft', (e as Error).message, from) };
+      }
+      await svc.from('entities').update({ mail_from: from, mail_via: 'microsoft', mail_from_verified_at: new Date().toISOString() }).eq('id', c.id).throwOnError();
+      forgetTenants();
+      await audit(c, who, 'company_send_from_verified', { address: from, via: 'lakeba-microsoft' });
+      return { notice: `A test email went from ${from} to ${who.email}. ${c.display_name}’s emails now come from there.` };
+    }
+    case 'lakeba-stop': {
+      if (!who.group || !who.userId) break;
+      await svc.from('entities').update({ mail_via: null, mail_from_verified_at: null }).eq('id', c.id).throwOnError();
+      await audit(c, who, 'company_send_from_stopped', { address: c.mail_from });
+      return { notice: `Emails to ${c.display_name}’s investors come from Lakeba’s address again, in its name.` };
+    }
     case 'google-send': {
-      if (!EMAIL.test(from)) return { error: 'Enter the address emails should come from, e.g. investors@mist.com.' };
+      if (!EMAIL.test(from)) return { error: 'Enter the address emails should come from, e.g. shareholders@mist.com.' };
       const notMine = await senderProblem(c, from);
       if (notMine) return { error: notMine };
       try {

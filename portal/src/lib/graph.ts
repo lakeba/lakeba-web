@@ -42,6 +42,25 @@ async function accessToken(tenant = MS_TENANT_ID!) {
   return data.access_token;
 }
 
+const domainTenants = new Map<string, { at: number; tenant: string | null }>();
+/**
+ * Whether a domain's email is in Lakeba's own Microsoft 365 (Microsoft publishes
+ * which organisation a domain belongs to). Ventures there, like Ezifin, send and
+ * receive through the portal's app as Lakeba does: no approval of their own.
+ */
+export async function inLakebaMicrosoft(domain: string) {
+  if (!MS_TENANT_ID || !domain) return false;
+  const key = domain.toLowerCase();
+  let hit = domainTenants.get(key);
+  if (!hit || Date.now() - hit.at > 3_600_000) {
+    const res = await fetch(`${MS_LOGIN_BASE}/${encodeURIComponent(key)}/v2.0/.well-known/openid-configuration`).catch(() => null);
+    const issuer = res?.ok ? ((await res.json().catch(() => ({}))) as { issuer?: string }).issuer ?? '' : '';
+    hit = { at: Date.now(), tenant: issuer.match(/\/([^/]+)\/v2\.0\/?$/)?.[1]?.toLowerCase() ?? null };
+    domainTenants.set(key, hit);
+  }
+  return hit.tenant === MS_TENANT_ID.toLowerCase();
+}
+
 /** Whether the portal's app is approved in a Microsoft 365 (Microsoft only signs it in where it was approved). */
 export const approvedIn = async (tenant: string) => { try { await accessToken(tenant); return true; } catch { return false; } };
 

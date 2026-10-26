@@ -1,14 +1,17 @@
 ---
 import GoogleGuide from './GoogleGuide.astro';
+import LakebaGuide from './LakebaGuide.astro';
 import MicrosoftGuide from './MicrosoftGuide.astro';
 import type { Detected } from '../../lib/domains';
 import type { SetupCompany } from '../../lib/setup';
 
 // The email part of the set-up: the steps for the provider the venture uses
 // first (from what's connected, else from its domain's mail records), the
-// other one folded away.
+// other one folded away. Email in Lakeba's own Microsoft 365 has its own steps.
 interface Props {
   c: SetupCompany; det: Detected; admin: boolean; manage: boolean; testTo: string; suggested: string;
+  /** A Lakeba group admin (sets up email in Lakeba's own Microsoft 365). */
+  group?: boolean;
   consentUrl: string; msReady: boolean; msClientId: string | null;
   serverIp: string; gmailReady: boolean; gmailClientId: string | null; gmailScope: string;
 }
@@ -19,7 +22,9 @@ const ms = { c, admin: p.admin, manage: p.manage, consentUrl: p.consentUrl, read
 const google = { c, admin: p.admin, manage: p.manage, serverIp: p.serverIp, gmailReady: p.gmailReady, clientId: p.gmailClientId, scope: p.gmailScope, suggested: p.suggested, testTo: p.testTo };
 const fold = 'card cursor-pointer list-none font-semibold text-white/75 hover:text-white before:mr-2 before:inline-block before:content-["▸"] [details[open]>&]:before:rotate-90';
 ---
-{provider === 'microsoft' ? (
+{(det.lakebaMicrosoft || (c.mail_via === 'microsoft' && !c.ms_tenant_id)) ? (
+  <LakebaGuide c={c} group={Boolean(p.group)} testTo={p.testTo} suggested={p.suggested} />
+) : provider === 'microsoft' ? (
   <>
     <MicrosoftGuide {...ms} />
     <details><summary class={fold}>Uses Gmail (Google Workspace) instead? Show those steps</summary><div class="mt-3"><GoogleGuide {...google} /></div></details>

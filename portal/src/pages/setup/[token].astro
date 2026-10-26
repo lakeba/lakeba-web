@@ -67,7 +67,7 @@ const [det, place, check] = c ? await Promise.all([
       {notice && <Alert tone="success">{notice}</Alert>}
       {error && <Alert tone="error">{error}</Alert>}
       <DomainGuide c={c} place={place ?? (det.dns ? { zone: det.dns.zone, host: det.dns, label: 'investors' } : null)} check={check} portalDomain={portalDomain} lakebaAddress={siteOriginFor(Astro.url, { ...c, custom_domain_verified_at: null }).replace(/^https?:\/\//, '')} suggested={det.emailDomain ? `investors.${det.emailDomain}` : null} choose={true} manage={false} />
-      <EmailGuides c={c} det={det} admin={false} manage={false} testTo={h.recipient_email} suggested={`investors@${det.emailDomain ?? 'yourcompany.com'}`}
+      <EmailGuides c={c} det={det} admin={false} manage={false} testTo={h.recipient_email} suggested={`shareholders@${det.emailDomain ?? 'yourcompany.com'}`}
         consentUrl="" msReady={graphConfigured()} msClientId={MS_CLIENT_ID ?? null}
         serverIp={PORTAL_SERVER_IP} gmailReady={gmailConfigured()} gmailClientId={gmailClientId()} gmailScope={GMAIL_SCOPE} />
       <p class="text-center text-xs text-white/40">This link works until {dateTime.format(new Date(h.expires_at))}. It only opens these steps.</p>

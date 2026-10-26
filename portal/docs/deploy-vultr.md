@@ -158,6 +158,15 @@ address (after a test email). Before the first venture does this, in Azure (Entr
 and **Mail.Send**. Each venture can then limit the app to its own mailboxes in Exchange, as Lakeba does.
 Newsletters still go through Lakeba's mail, in the venture's name.
 
+**A venture whose email is in Lakeba's own Microsoft 365** (a controlled venture whose domain was added
+there, like `ezifin.com`; the page tells from Microsoft's public record of the domain): nothing to approve.
+- Its shareholder address is `shareholders@<venture domain>`. Lakeba's IT makes it a shared mailbox and
+  adds it to the mailboxes the portal's app may use (the same list as Lakeba's shareholder mailboxes).
+- A Lakeba group admin then sends a test from it on Domain and mail. Only addresses on the venture's own
+  domain, in Lakeba's Microsoft 365, are accepted. From then on the portal's emails to its investors come
+  from it.
+- A group admin sets it as the venture's mailbox in Shareholder emails, so the portal reads it too.
+
 **A venture on Google Workspace** (same page, "on Google Workspace"):
 - *Sending from its own address* needs nothing from Lakeba: the venture's Google administrator turns on
   Gmail's SMTP relay for the server's address (`PORTAL_SERVER_IP`, 139.180.180.225), only for addresses
