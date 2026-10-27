@@ -224,6 +224,7 @@ const keepLater = r?.choices.later === 'keep';
           </dl>
           <ul class="space-y-1 text-sm">
             <li class="text-lk-green">✓ Every holding’s movements add up to the register’s own balances.</li>
+            {rd.facts.notes.map((n) => <li class="text-white/65">ⓘ {n}</li>)}
             <li class="text-lk-green">✓ {rd.facts.transfers.paired} transfer{rd.facts.transfers.paired === 1 ? '' : 's'} between members pair up (out on one member’s page, in on the other’s).</li>
             {rd.facts.transfers.fromElsewhere.length > 0 && (
               <li class="text-white/65"><details><summary class="cursor-pointer">{rd.facts.transfers.fromElsewhere.length} transfer{rd.facts.transfers.fromElsewhere.length === 1 ? '' : 's'} in from people no longer on this register (they sold everything, so this “current” register leaves them out).</summary>

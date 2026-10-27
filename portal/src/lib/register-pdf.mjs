@@ -187,6 +187,23 @@ export async function readRegister(data) {
   const members = holders.filter((h) => h.classes.length);
   if (!members.length && !problems.length) problems.push('No members were found in this PDF.');
 
+  // One class entered twice for a member (the same code under two names, e.g. "ORD - ORDINARY
+  // SHARES" and "ORD - ORD SHARES"): one holding, its movements in date order, the balance after
+  // each the two together. Each part was checked on its own above.
+  const notes = [];
+  for (const h of members) {
+    for (const [code, parts] of Map.groupBy(h.classes, (c) => c.code)) {
+      if (parts.length < 2) continue;
+      const moves = parts.flatMap((c) => c.movements).sort((a, b) => a.date.localeCompare(b.date));
+      let bal = 0;
+      for (const m of moves) { bal += m.shares; m.balance = bal; }
+      const merged = { ...parts[0], entered_on: parts.map((c) => c.entered_on).filter(Boolean).sort()[0] ?? null, ceased_on: parts.every((c) => c.ceased_on) ? parts[0].ceased_on : null, balance: bal, movements: moves };
+      h.classes = [...h.classes.filter((c) => c.code !== code), merged];
+      holdings -= parts.length - 1;
+      notes.push(`${h.register_name}: ${code} is listed twice (${parts.map((c) => `“${c.name}”, ${c.balance.toLocaleString('en-AU')}`).join(' and ')}), counted as one holding of ${bal.toLocaleString('en-AU')}.`);
+    }
+  }
+
   // Transfers: an out on one member's page, the matching in on the other's.
   const transfers = { paired: 0, fromElsewhere: [], toElsewhere: [] };
   const flat = members.flatMap((h) => h.classes.flatMap((c) => c.movements.filter((m) => /^transfer (in|out)$/i.test(m.type)).map((m) => ({ h, code: c.code, m }))));
@@ -199,7 +216,7 @@ export async function readRegister(data) {
   }
   for (const i of flat.filter((t) => t.m.shares > 0 && !used.has(t))) transfers.fromElsewhere.push({ holder: i.h.name, code: i.code, date: i.m.date, shares: i.m.shares, party: i.m.party ?? '' });
 
-  return { company, asAt, holders: members, problems, facts: { pages, holdings, movements, types, totals, transfers } };
+  return { company, asAt, holders: members, problems, facts: { pages, holdings, movements, types, totals, transfers, notes } };
 }
 
-const emptyFacts = (pages) => ({ pages, holdings: 0, movements: 0, types: {}, totals: {}, transfers: { paired: 0, fromElsewhere: [], toElsewhere: [] } });
+const emptyFacts = (pages) => ({ pages, holdings: 0, movements: 0, types: {}, totals: {}, transfers: { paired: 0, fromElsewhere: [], toElsewhere: [] }, notes: [] });
