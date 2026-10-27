@@ -5,7 +5,7 @@
 type Row = { key: string; register_name: string; name: string; newName: string; trust: string | null; acn: string | null; kind: string; classes: { code: string; shares: number }[]; how: string; why: string; holderId: string | null; holderName: string | null };
 interface Props { rows: Row[] }
 const { rows } = Astro.props;
-const HOW: Record<string, string> = { name: 'Same name', saved: 'Matched before', chosen: 'Your choice', 'chosen-new': 'Your choice', suggested: 'Suggested', new: 'No match' };
+const HOW: Record<string, string> = { register: 'Same holder', name: 'Same name', saved: 'Matched before', chosen: 'Your choice', 'chosen-new': 'Your choice', suggested: 'Suggested', new: 'No match' };
 const TONE: Record<string, string> = { suggested: 'text-lk-orange', new: 'text-white/55', 'chosen-new': 'text-white/55' };
 const KIND: Record<string, string> = { individual: 'individual', company: 'company', trust: 'trust', super_fund: 'super fund' };
 ---
@@ -22,7 +22,7 @@ const KIND: Record<string, string> = { individual: 'individual', company: 'compa
               {m.holderId && <option value={m.holderId} selected>{m.holderName}</option>}
               <option value="new" selected={!m.holderId}>New holder: {m.newName} ({KIND[m.kind] ?? m.kind})</option>
             </select>
-            <span class:list={['mt-1 block text-xs', TONE[m.how] ?? 'text-white/40']}>{HOW[m.how] ?? m.how}{m.why && m.how === 'suggested' ? `: ${m.why}. Check it’s the same holder.` : ''}</span>
+            <span class:list={['mt-1 block text-xs', TONE[m.how] ?? 'text-white/40']}>{HOW[m.how] ?? m.how}{m.why && m.how === 'suggested' ? `: ${m.why}. Check it’s the same holder.` : m.how === 'register' ? `: ${m.why}` : ''}</span>
           </td>
         </tr>
       ))}

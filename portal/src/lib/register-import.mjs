@@ -10,9 +10,13 @@
 // holdings change, never another company's.
 //
 // Matching, in order: what the admin chose; a name matched on an earlier
-// register of this company (register_names); the same name (and trust) in the
-// portal; else a suggestion: a holder with the same number of shares in the
-// same class, or a similar name. The rest are new holders. Group Admins may
+// register of this company (register_names); the identical entry (name, trust
+// and ACN) on another company's register, which is how one investor in Lakeba
+// and its ventures stays one holder; the same name (and trust) in the portal;
+// else a suggestion: a holder of this company with the same number of shares
+// in the same class or a similar name, or another holder with the same names
+// in another order. The rest are new holders; one named "Lakeba …" on a
+// venture's register is Lakeba's own stake (it represents the group). Group Admins may
 // match a name to any holder; a venture's own admins to holders of their
 // company only. Choices are remembered when the register is applied.
 //
@@ -54,12 +58,15 @@ function classSettings(code, name) {
  */
 export async function compareRegister({ svc, register, entityId, groupWide, choices = null, apply = false, actorId = null, file = null }) {
   const all = async (q) => { const { data, error } = await q; if (error) throw error; return data ?? []; };
-  const [[entity], classes, savedNames, savedClasses] = await Promise.all([
-    all(svc.from('entities').select('id, code, display_name, legal_name, company_number').eq('id', entityId)),
+  const [[entity], classes, savedNames, savedClasses, [group]] = await Promise.all([
+    all(svc.from('entities').select('id, code, display_name, legal_name, company_number, relationship').eq('id', entityId)),
     all(svc.from('share_classes').select('id, code, name, kind, voting, counts_toward_pct, official_on_issue, official_as_at').eq('entity_id', entityId)),
     all(svc.from('register_names').select('name_key, holder_id').eq('entity_id', entityId)),
     all(svc.from('register_classes').select('register_code, share_class_id').eq('entity_id', entityId)),
+    all(svc.from('entities').select('id, code, display_name').eq('relationship', 'group').limit(1)),
   ]);
+  // On a venture's register, a holder named after the group ("Lakeba Ventures Pty Ltd") is the group's own stake.
+  const groupStake = (h) => Boolean(group && entity.relationship !== 'group' && tidyName(h.name).split(' ')[0] === tidyName(group.display_name).split(' ')[0]);
   if (!entity) throw new Error('Company not found');
   const holdings = classes.length ? await all(svc.from('holdings').select('id, holder_id, share_class_id, shares, as_at').in('share_class_id', classes.map((c) => c.id)).range(0, 199999)) : [];
   const inCompany = new Set(holdings.map((h) => h.holder_id));
@@ -129,6 +136,14 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
     if (chosen && candidate(chosen)) { take(row, chosen, 'chosen'); continue; }
     if (savedName.has(row.h.key) && candidate(savedName.get(row.h.key))) take(row, savedName.get(row.h.key), 'saved', 'matched on an earlier register');
   }
+  // The identical entry on another company's register: the same holder.
+  const open = rows.filter((r) => r.how === 'new');
+  const elsewhere = groupWide && open.length ? await all(svc.from('register_names').select('name_key, holder_id, entities(code)').neq('entity_id', entityId).in('name_key', open.map((r) => r.h.key))) : [];
+  for (const row of open) {
+    const found = elsewhere.filter((n) => n.name_key === row.h.key);
+    const ids = [...new Set(found.map((n) => n.holder_id))];
+    if (ids.length === 1 && candidate(ids[0]) && !taken.has(ids[0])) take(row, ids[0], 'register', `the same entry on ${[...new Set(found.map((n) => n.entities?.code))].join(' and ')}’s register`);
+  }
   // The same name and trust; then the same name where the portal doesn't name the trust.
   for (const test of [(n, t, rn, rt) => n === rn && t === rt, (n, t, rn) => n === rn && !t]) {
     for (const row of rows.filter((r) => r.how === 'new')) { const p = named(row, test); if (p) take(row, p.id, 'name', 'same name'); }
@@ -140,11 +155,16 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
     // The same shares in the same class, in this company.
     const byShares = free.filter((p) => inCompany.has(p.id) && row.h.classes.some((c) => c.balance > 0 && Number(latestByHolderClass.get(`${p.id}|${classIdOf(c.code)}`)?.shares) === c.balance));
     if (byShares.length === 1) { take(row, byShares[0].id, 'suggested', 'same shares in the same class'); continue; }
-    // A similar name (a distinctive word in common), this company's holders first.
+    // A similar name (a distinctive word in common) among this company's holders; among
+    // other companies' holders only the same names in another order ("Vidya Devadasan and
+    // Vinuraj Koliyat" and "Vinuraj Koliyat & Vidya Devadasan"), too many share a word.
     const mine = words(`${row.h.name} ${row.h.beneficially_for ?? ''}`);
+    const own = words(row.h.name);
     if (!mine.size) continue;
-    const scored = free.map((p) => ({ p, n: [...words(p.name)].filter((w) => mine.has(w)).length, here: inCompany.has(p.id) })).filter((s) => s.n).sort((a, b) => b.n - a.n || Number(b.here) - Number(a.here));
-    if (scored.length && (scored.length === 1 || scored[0].n > scored[1].n || (scored[0].here && !scored[1].here))) take(row, scored[0].p.id, 'suggested', 'similar name');
+    const sameWords = (a, b) => a.size >= 2 && a.size === b.size && [...a].every((w) => b.has(w));
+    const scored = free.map((p) => ({ p, n: [...words(p.name)].filter((w) => mine.has(w)).length, here: inCompany.has(p.id), same: sameWords(own, words(portalPairs(p.name)[1][0])) }))
+      .filter((s) => (s.here ? s.n : s.same)).sort((a, b) => Number(b.same) - Number(a.same) || b.n - a.n || Number(b.here) - Number(a.here));
+    if (scored.length && (scored.length === 1 || scored[0].n > scored[1].n || scored[0].same !== scored[1].same || (scored[0].here && !scored[1].here))) take(row, scored[0].p.id, 'suggested', scored[0].same ? 'the same names in another order' : 'similar name');
   }
   for (const [id, list] of taken) if (list.length > 1) problems.push(`${list.map((r) => r.h.register_name).join(' and ')} are all matched to ${holderById.get(id).name}. Each register name needs its own holder: choose another, or “New holder”.`);
 
@@ -153,7 +173,7 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
   for (const row of rows) for (const c of row.h.classes) final.set(`${row.holderId ?? `new:${row.h.key}`}|${classIdOf(c.code)}`, { shares: c.balance, row, code: c.code });
   const nameOf = (row) => (row.holderId ? holderById.get(row.holderId).name : newHolderName(row.h));
   for (const row of rows) {
-    if (!row.holderId) changes.push({ sheet: 'Holders', action: 'add', item: newHolderName(row.h), details: [`New holder (${row.h.kind.replace('_', ' ')})${row.h.acn ? `, ACN ${row.h.acn}` : ''}`] });
+    if (!row.holderId) changes.push({ sheet: 'Holders', action: 'add', item: newHolderName(row.h), details: [`New holder (${row.h.kind.replace('_', ' ')})${row.h.acn ? `, ACN ${row.h.acn}` : ''}${groupStake(row.h) ? `: ${group.display_name}’s own stake, counted as its share of ${entity.display_name}` : ''}`] });
     for (const c of row.h.classes) {
       const cid = classIdOf(c.code);
       const was = row.holderId ? latestByHolderClass.get(`${row.holderId}|${cid}`) : null;
@@ -250,7 +270,9 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
   const idOfRow = new Map();
   for (const row of rows) {
     if (row.holderId) { idOfRow.set(row, row.holderId); continue; }
-    const { data } = await svc.from('holders').insert({ name: newHolderName(row.h), kind: row.h.kind, registry_ref: `${prefix}${String(next++).padStart(4, '0')}` }).select('id, name, registry_ref').single().throwOnError();
+    // The group's own stake has the group's reference (LKB-GROUP), as in the investor data workbook.
+    const stake = groupStake(row.h) && !(await svc.from('holders').select('id').eq('registry_ref', `${group.code}-GROUP`).maybeSingle()).data;
+    const { data } = await svc.from('holders').insert({ name: newHolderName(row.h), kind: row.h.kind, registry_ref: stake ? `${group.code}-GROUP` : `${prefix}${String(next++).padStart(4, '0')}`, represents_entity_id: groupStake(row.h) ? group.id : null }).select('id, name, registry_ref').single().throwOnError();
     holderById.set(data.id, data);
     idOfRow.set(row, data.id);
   }
@@ -316,16 +338,17 @@ export function newHolderName(h) { return `${nameCase(h.name)}${h.beneficially_f
 // Only words in capitals change (a name already in mixed case is kept); words without a vowel
 // stay as they are, being initials (KTF, WSN), except the usual abbreviations.
 const SMALL = new Set(['and', 'of', 'the', 'atf', 'for', 'as']);
+const INITIALS = new Set(['USA', 'UK', 'NZ', 'UAE', 'EU', 'AU', 'IT', 'AI', 'IP', 'IO', 'SFO']);
 const ABBREVIATIONS = { LTD: 'Ltd', PTY: 'Pty', MR: 'Mr', MRS: 'Mrs', MS: 'Ms', DR: 'Dr', ST: 'St', JR: 'Jr', SR: 'Sr' };
 export function nameCase(name) {
   return String(name).split(/(\s+)/).map((word, i) => {
-    if (!/[A-Z]/.test(word) || /[a-z]/.test(word)) return word;
+    if (!/[A-Z]/.test(word) || /[a-z]/.test(word) || /[\d/]/.test(word)) return word;
     const bare = word.replace(/[^A-Z]/g, '');
     if (i > 0 && SMALL.has(bare.toLowerCase()) && bare === word) return bare.toLowerCase();
     if (ABBREVIATIONS[bare]) return word.replace(bare, ABBREVIATIONS[bare]);
-    if (!/[AEIOUY]/.test(bare)) return word;
+    if (!(bare.length > 3 ? /[AEIOUY]/ : /[AEIOU]/).test(bare) || INITIALS.has(bare)) return word;
     // Each part after a hyphen or apostrophe starts with a capital: Kalinowski-Weaver, O'Hara; and McIntosh.
-    return word.toLowerCase().replace(/(^|[-'’(])([a-z])/g, (m, a, b) => a + b.toUpperCase()).replace(/\bMc([a-z])/g, (m, c) => `Mc${c.toUpperCase()}`);
+    return word.toLowerCase().replace(/(^|[-'’(&])([a-z])/g, (m, a, b) => a + b.toUpperCase()).replace(/\bMc([a-z])/g, (m, c) => `Mc${c.toUpperCase()}`);
   }).join('');
 }
 
