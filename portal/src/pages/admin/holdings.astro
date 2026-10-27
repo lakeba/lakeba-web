@@ -79,6 +79,9 @@ const latestOf = (rows: H[]) => Object.values(rows.reduce<Record<string, H>>((ac
   if (!acc[r.share_class_id] || acc[r.share_class_id].as_at < r.as_at) acc[r.share_class_id] = r;
   return acc;
 }, {}));
+// For the selection total under the table: each class's label and shares on issue.
+const classInfo = Object.fromEntries(onIssue.map((c: { share_class_id: string; code: string; total: number }) => [c.share_class_id, { label: classCode(c.share_class_id, c.code), onIssue: Number(c.total) }]));
+const selectable = (h: (typeof holders)[number]) => latestOf(h.holdings as unknown as H[]).filter((r) => classCompany.has(r.share_class_id) && r.shares > 0).map((r) => ({ c: r.share_class_id, s: Number(r.shares) }));
 const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 'Changed', unchanged: 'Unchanged' };
 ---
 
@@ -171,11 +174,12 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
   </details>}
 
   <div class="card overflow-x-auto !p-0">
-    <table class="w-full text-left text-sm">
-      <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-3 font-medium">Holder</th><th class="px-5 py-3 font-medium">Type</th><th class="px-5 py-3 font-medium">Latest holdings</th></tr></thead>
+    <table class="w-full text-left text-sm" data-holdings-table data-classes={JSON.stringify(classInfo)}>
+      <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="w-10 py-3 pl-5"><input type="checkbox" data-select-all aria-label="Select all holders" class="size-4 accent-lk-blue" /></th><th class="px-5 py-3 font-medium">Holder</th><th class="px-5 py-3 font-medium">Type</th><th class="px-5 py-3 font-medium">Latest holdings</th></tr></thead>
       <tbody class="divide-y divide-white/5">
         {(holders ?? []).map((h) => (
           <tr>
+            <td class="w-10 py-3 pl-5 align-top">{selectable(h).length > 0 && <input type="checkbox" data-holder-select data-holdings={JSON.stringify(selectable(h))} aria-label={`Select ${h.name}`} class="mt-0.5 size-4 accent-lk-blue" />}</td>
             <td class="px-5 py-3"><a href={`/admin/holders/${h.id}`} class="font-medium text-white hover:text-lk-blue">{h.name}</a><span class="block text-xs text-white/40">{h.registry_ref ?? 'No registry ref'}</span></td>
             <td class="px-5 py-3 text-white/60">{holderKinds[h.kind]}</td>
             <td class="px-5 py-3 text-white/70">
@@ -187,4 +191,46 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
       </tbody>
     </table>
   </div>
+
+  <div data-selection-bar hidden class="sticky bottom-4 z-20 mt-4 rounded-2xl border border-lk-blue/30 bg-ink/95 px-5 py-4 shadow-xl backdrop-blur">
+    <div class="flex flex-wrap items-start justify-between gap-3">
+      <div>
+        <p class="text-sm font-semibold text-white" data-selection-count></p>
+        <ul class="mt-1 space-y-0.5 text-sm text-white/75" data-selection-totals></ul>
+      </div>
+      <button type="button" class="btn-ghost px-3 py-1.5 text-xs" data-selection-clear>Clear</button>
+    </div>
+  </div>
 </Admin>
+
+<script>
+  // Selected holders: shares per class and their share of that class on issue.
+  const table = document.querySelector<HTMLTableElement>('[data-holdings-table]');
+  const bar = document.querySelector<HTMLElement>('[data-selection-bar]');
+  if (table && bar) {
+    const classes: Record<string, { label: string; onIssue: number }> = JSON.parse(table.dataset.classes ?? '{}');
+    const boxes = [...table.querySelectorAll<HTMLInputElement>('[data-holder-select]')];
+    const all = table.querySelector<HTMLInputElement>('[data-select-all]')!;
+    const fmt = new Intl.NumberFormat('en-AU');
+    const pct = new Intl.NumberFormat('en-AU', { style: 'percent', minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const update = () => {
+      const chosen = boxes.filter((b) => b.checked);
+      const sums = new Map<string, number>();
+      for (const b of chosen) for (const h of JSON.parse(b.dataset.holdings ?? '[]') as { c: string; s: number }[]) sums.set(h.c, (sums.get(h.c) ?? 0) + h.s);
+      bar.hidden = chosen.length === 0;
+      all.checked = chosen.length > 0 && chosen.length === boxes.length;
+      all.indeterminate = chosen.length > 0 && chosen.length < boxes.length;
+      bar.querySelector('[data-selection-count]')!.textContent = `${chosen.length} holder${chosen.length === 1 ? '' : 's'} selected`;
+      const list = bar.querySelector('[data-selection-totals]')!;
+      list.replaceChildren(...[...sums].filter(([c]) => classes[c]).sort((a, b) => classes[a[0]].label.localeCompare(classes[b[0]].label)).map(([c, n]) => {
+        const li = document.createElement('li');
+        const on = classes[c].onIssue;
+        li.textContent = `${classes[c].label}: ${fmt.format(n)} shares${on ? ` · ${pct.format(n / on)} of ${fmt.format(on)} on issue` : ''}`;
+        return li;
+      }));
+    };
+    for (const b of boxes) b.addEventListener('change', update);
+    all.addEventListener('change', () => { for (const b of boxes) b.checked = all.checked; update(); });
+    bar.querySelector('[data-selection-clear]')!.addEventListener('click', () => { for (const b of boxes) b.checked = false; update(); });
+  }
+</script>
