@@ -53,7 +53,15 @@ if (central && central !== Astro.url.origin) return Astro.redirect(`${central}/d
       --scalar-sidebar-search-color: color-mix(in oklab, var(--color-white) 45%, transparent);
       --scalar-radius: 0.5rem; --scalar-radius-lg: 0.75rem; --scalar-radius-xl: 1rem;
       --scalar-font: var(--font-sans); --scalar-font-code: var(--font-mono);
+      /* The guide's sizes and weights: small text (0.875rem), bold headings. */
+      --scalar-paragraph: 0.875rem; --scalar-font-size-3: 0.875rem; --scalar-font-size-4: 0.8125rem;
+      --scalar-heading-1: 1.5rem; --scalar-heading-2: 1.25rem; --scalar-heading-3: 1rem;
+      --scalar-bold: 700;
     }
+    .scalar-api-reference .markdown :is(p, li) { font-size: 0.875rem; line-height: 1.625; color: color-mix(in oklab, var(--color-white) 75%, transparent); }
+    .scalar-api-reference .markdown :is(strong, b) { font-weight: 700; color: var(--color-white); }
+    .scalar-api-reference .markdown code { font-size: 0.75rem; }
+    .scalar-api-reference :is(h1, h2, h3) { font-weight: 700; }
     .scalar-api-reference h1, .scalar-api-reference h2, .section-header { font-family: var(--font-display); }
   `;
   const config = {
@@ -87,9 +95,32 @@ if (central && central !== Astro.url.origin) return Astro.redirect(`${central}/d
   /* Scalar sits in the page like the guide's content: its own full-height frame becomes part of the page. */
   .lk-reference { --scalar-custom-header-height: 0px; }
   .lk-reference .scalar-app, .lk-reference .scalar-api-reference { min-height: 0; }
-  /* A compact menu, as wide as the guide's (14rem). */
-  .lk-reference .scalar-app { --scalar-sidebar-width: 14rem; --scalar-sidebar-padding: 4px; --scalar-sidebar-indent: 12px; }
-  .lk-reference .scalar-app aside ul { gap: 0; }
-  .lk-reference .scalar-app aside li > div > :is(a, button) { padding: 5px 8px; font-size: 13px; line-height: 18px; }
-  .lk-reference .scalar-app aside li > div > :is(a, button) > .scalar-sidebar-indent { margin-top: -5px; margin-bottom: -5px; }
+  /* The page's own background shows through, as on the guide. */
+  .lk-reference .scalar-app, .lk-reference .scalar-app aside, .lk-reference .references-rendered { background: transparent; }
+  /* The menu, like the guide's: as wide (14rem), no frame, rounded rows, the one being read highlighted. */
+  .lk-reference .scalar-app { --scalar-sidebar-width: 14rem; --scalar-sidebar-padding: 0px; --scalar-sidebar-indent: 12px; }
+  .lk-reference .scalar-app aside { border: 0; padding-top: 0; }
+  .lk-reference .scalar-app aside > div:first-child { padding: 0 0 0.75rem; }
+  .lk-reference .scalar-app aside > div:first-child > button { height: 2.25rem; border-radius: 0.75rem; }
+  .lk-reference .scalar-app aside ul { gap: 2px; }
+  .lk-reference .scalar-app aside > div:last-child:not(:first-child) { display: none; }
+  .lk-reference .scalar-app aside li > div > :is(a, button) { padding: 7px 12px; border-radius: 0.5rem; font-size: 0.875rem; line-height: 1.25rem; }
+  .lk-reference .scalar-app aside li > div > :is(a, button) > .scalar-sidebar-indent { margin-top: -7px; margin-bottom: -7px; }
+  /* The content in tiles, like the guide's cards: the introduction, each group and each request on its own. */
+  .lk-reference .references-container { display: flex; flex-direction: column; gap: 1rem; padding-left: 2rem; }
+  .lk-reference .section-container { padding: 0; border: 0; display: contents; }
+  .lk-reference .section-container > section.section,
+  .lk-reference .section-container > .contents > div {
+    background: linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
+    border: 1px solid var(--color-line); border-radius: 1.5rem; backdrop-filter: blur(14px);
+    padding: 1.75rem 2rem; margin: 0;
+  }
+  .lk-reference .section-container > .contents { display: contents; }
+  .lk-reference .section-container .section { padding-top: 0; padding-bottom: 0; border: 0; }
+  .lk-reference .section-flare { display: none; }
+  @media (max-width: 1000px) {
+    .lk-reference .references-container { padding: 1rem 0 0; }
+    .lk-reference .section-container > section.section,
+    .lk-reference .section-container > .contents > div { padding: 1.25rem; }
+  }
 </style>
