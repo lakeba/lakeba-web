@@ -1,0 +1,329 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import HolderRows from '../../../components/RegisterHolderRows.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { importScope } from '../../../lib/import-scope';
+import { readRegister } from '../../../lib/register-pdf.mjs';
+import { compareRegister } from '../../../lib/register-import.mjs';
+import { createHash } from 'node:crypto';
+
+/*
+ * Import the company secretary's register of members (the PDF report) for one
+ * company. Upload → the portal reads it and checks it adds up → match its names
+ * and classes to the portal's (most match by themselves; suggestions and new
+ * holders are shown first) → preview of every change → confirm → the
+ * register's figures at its date (lib/register-import.mjs). The PDF is kept in
+ * private storage between the steps (imports/register-<id>.pdf) and, once
+ * applied, as the record of that register (registers/<company>/<import>.pdf).
+ * If the portal changes between the preview and the confirmation, nothing is
+ * applied and the new preview is shown instead.
+ */
+const svc = serviceClient();
+const supabase = Astro.locals.supabase;
+const MAX_BYTES = 20 * 1024 * 1024;
+const me = Astro.locals.user!.id;
+const { scope, company, choices: companies, error: scopeError } = importScope(Astro);
+const q = company ? `?company=${company.code}` : '';
+const log = (action: string, detail: Record<string, unknown>) => supabase.rpc('log_event', { event_action: action, event_detail: { ...(company ? { company: company.code } : {}), ...detail } });
+type Read = Awaited<ReturnType<typeof readRegister>>;
+type Result = Awaited<ReturnType<typeof compareRegister>>;
+let error = '';
+let read: Read | null = null;
+let result: Result | null = null;
+let uploadId = '';
+let fileName = '';
+let fingerprint = '';
+let applied = false;
+const fingerprintOf = (r: Result) => createHash('sha256').update(JSON.stringify({ c: r.changes, m: r.choices })).digest('hex');
+const pathOf = (id: string) => `imports/register-${id}.pdf`;
+const groupWide = Astro.locals.access.groupAdmin;
+
+async function compare(data: Uint8Array, choices: Record<string, unknown> | null, apply = false, sha = '') {
+  read = await readRegister(data);
+  if (read.problems.length) return null;
+  return compareRegister({ svc, register: read, entityId: scope!.entityId, groupWide, choices, apply, actorId: me, file: apply ? { name: fileName, sha256: sha, path: null } : null });
+}
+
+if (scopeError) error = scopeError;
+else if (!scope) error = 'Choose the company whose register this is.';
+else if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (intent === 'check') {
+      const file = form.get('file');
+      if (!(file instanceof File) || !file.size) error = 'Choose the register (PDF) to check.';
+      else if (file.size > MAX_BYTES) error = 'That file is larger than 20 MB.';
+      else if (!/\.pdf$/i.test(file.name)) error = 'Upload the register as a PDF.';
+      else {
+        const data = new Uint8Array(await file.arrayBuffer());
+        fileName = file.name;
+        result = await compare(data, null);
+        if (result) {
+          uploadId = crypto.randomUUID();
+          await svc.storage.from('documents').upload(pathOf(uploadId), data, { contentType: 'application/pdf' });
+          fingerprint = fingerprintOf(result);
+        }
+        await log('admin_checked_register', { file: file.name, as_at: read?.asAt ?? null, problems: (read?.problems.length ?? 0) + (result?.problems.length ?? 0) });
+      }
+    } else if (intent === 'preview' || intent === 'apply') {
+      uploadId = field(form, 'upload_id');
+      fileName = field(form, 'file_name');
+      const { data: blob } = /^[0-9a-f-]{36}$/.test(uploadId) ? await svc.storage.from('documents').download(pathOf(uploadId)) : { data: null };
+      if (!blob) { error = 'That upload has expired. Upload the register again.'; uploadId = ''; }
+      else {
+        const data = new Uint8Array(await blob.arrayBuffer());
+        let choices: Record<string, unknown>;
+        if (intent === 'preview') {
+          const holders: Record<string, string> = {}, classes: Record<string, string> = {};
+          for (const [k, v] of form) {
+            if (k.startsWith('h:')) holders[k.slice(2)] = String(v);
+            if (k.startsWith('c:')) classes[k.slice(2)] = String(v);
+          }
+          choices = { holders, classes, later: field(form, 'later') === 'keep' ? 'keep' : 'remove' };
+        } else {
+          try { choices = JSON.parse(field(form, 'choices')); } catch { choices = {}; }
+        }
+        const fresh = await compare(data, choices);
+        result = fresh;
+        if (fresh) fingerprint = fingerprintOf(fresh);
+        if (intent === 'apply' && fresh) {
+          if (!form.get('reviewed')) error = 'Tick that you’ve reviewed the changes.';
+          else if (fingerprint !== field(form, 'fingerprint')) error = 'The portal changed since this preview, so nothing was imported. Here are the changes as they are now: review them and confirm again.';
+          else if (fresh.problems.length) error = 'Nothing was imported: fix the problems below first.';
+          else {
+            const sha = createHash('sha256').update(data).digest('hex');
+            const done = await compare(data, choices, true, sha);
+            if (done?.applied) {
+              const keep = `registers/${scope.entityId}/${done.importId}.pdf`;
+              const { error: moveError } = await svc.storage.from('documents').move(pathOf(uploadId), keep);
+              if (!moveError) await svc.from('register_imports').update({ file_path: keep }).eq('id', done.importId!);
+              result = done; applied = true; uploadId = '';
+              await log('admin_applied_register', { file: fileName, as_at: done.asAt, import_id: done.importId, changed_holders: done.changedHolders.length });
+            } else error = 'Nothing was imported.';
+          }
+        }
+      }
+    }
+  } catch (e) {
+    error = `Something went wrong: ${e instanceof Error ? e.message : String(e)}`;
+  }
+}
+
+const show = (n: number) => Number(n).toLocaleString('en-AU');
+const day = (d: string | null | undefined) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
+const r = result as Result | null;
+const rd = read as Read | null;
+const look = r ? r.matching.filter((m) => m.how === 'suggested' || m.how === 'new') : [];
+const matched = r ? r.matching.filter((m) => !(m.how === 'suggested' || m.how === 'new')) : [];
+const changes = r?.changes ?? [];
+const SHEETS = ['Company', 'Share classes', 'Holders', 'Holdings', 'Later figures'];
+const LABEL = { add: 'New', update: 'Changed', remove: 'Removed', same: 'Unchanged' } as const;
+const TONE = { add: 'text-lk-green', update: 'text-lk-blue', remove: 'text-lk-red', same: 'text-white/50' } as const;
+const count = (sheet: string, action: string) => changes.filter((c) => c.sheet === sheet && c.action === action).length;
+const later = changes.filter((c) => c.sheet === 'Later figures');
+const keepLater = r?.choices.later === 'keep';
+---
+
+<Admin title="Import a register of members">
+  <PageHeader title={company ? `Register of members: ${company.display_name}` : 'Register of members'} subtitle="Import the company secretary’s register of members (the PDF report). The portal reads it, checks it adds up, and updates this company’s holdings to the register’s figures at its date. People, access, boards and prices don’t change." />
+  <p class="-mt-4 mb-6 text-sm"><a href={`/admin/import${q}`} class="text-lk-blue hover:underline">← Import data</a></p>
+  {companies.length > 1 && (
+    <form method="get" class="mb-6 flex flex-wrap items-end gap-2 text-sm">
+      <div><label class="label" for="company">Company</label><select id="company" name="company" class="field">
+        {!company && <option value="" selected>Choose…</option>}
+        {companies.map((c) => <option value={c.code} selected={company?.code === c.code}>{c.display_name}</option>)}
+      </select></div>
+      <button class="btn-ghost text-sm">Open</button>
+    </form>
+  )}
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+
+  {applied && r && (
+    <div class="mb-6 space-y-4">
+      <Alert tone="success">Imported the register as at {day(r.asAt)}. {company!.display_name}’s holdings now follow it; its names and classes are remembered for the next register. No emails were sent.</Alert>
+      {r.changedHolders.length > 0 && (
+        <form method="post" action={`/admin/import${q}`} class="card flex flex-wrap items-center justify-between gap-4">
+          <input type="hidden" name="refs" value={JSON.stringify(r.changedHolders)} />
+          <input type="hidden" name="as_at" value={r.asAt ?? ''} />
+          <p class="text-sm text-white/75"><span class="font-semibold text-white">{r.changedHolders.length} holder{r.changedHolders.length === 1 ? '' : 's'}</span> have new or changed holdings. Tell their people that their holding statement is ready?</p>
+          <button name="intent" value="notify-statements" class="btn-primary" onclick="return confirm('Send “your holding statement is ready” now?')">Tell them</button>
+        </form>
+      )}
+    </div>
+  )}
+
+  {scope && !applied && (
+    <section class="card mb-6">
+      <h2 class="text-lg font-bold">1. Check a register</h2>
+      <p class="mt-1 text-sm text-white/55">Nothing changes at this step. The portal reads the PDF, checks every holding adds up to the register’s balances, and shows how it matches {company!.display_name}’s holders.</p>
+      <form method="post" enctype="multipart/form-data" class="mt-4 flex flex-wrap items-end gap-3">
+        <div class="grow"><label class="label" for="file">Register of members (.pdf)</label><input class="field" id="file" name="file" type="file" accept=".pdf,application/pdf" required /></div>
+        <button name="intent" value="check" class="btn-primary">Check</button>
+      </form>
+      <p class="mt-3 text-xs text-white/40">The “Current register of members as at …” report from the company secretary, as a PDF they produced (not a scan).</p>
+    </section>
+  )}
+
+  {rd && (
+    <section class="card mb-6 space-y-4">
+      <div class="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 class="text-lg font-bold">What the register says{fileName && <span class="font-normal text-white/50"> · {fileName}</span>}</h2>
+        {rd.asAt && <p class="text-sm text-white/60">As at <span class="text-white">{day(rd.asAt)}</span></p>}
+      </div>
+      {rd.problems.length > 0 ? (
+        <Alert tone="error"><strong>The portal couldn’t read this register reliably, so it can’t be used.</strong>
+          <ul class="mt-2 list-disc pl-5 text-sm">{rd.problems.slice(0, 40).map((p) => <li>{p}</li>)}</ul>{rd.problems.length > 40 && <p class="mt-1 text-sm">…and {rd.problems.length - 40} more.</p>}</Alert>
+      ) : (
+        <>
+          <dl class="grid gap-3 text-sm sm:grid-cols-4">
+            <div><dt class="text-white/45">Company</dt><dd class="text-white">{rd.company.name ?? '—'}{rd.company.number && <span class="block text-xs text-white/50">No. {rd.company.number}</span>}</dd></div>
+            <div><dt class="text-white/45">Members</dt><dd class="text-white tabular-nums">{rd.holders.length}<span class="block text-xs text-white/50">{rd.facts.holdings} holdings · {rd.facts.pages} pages</span></dd></div>
+            <div><dt class="text-white/45">Movements</dt><dd class="text-white tabular-nums">{rd.facts.movements}<span class="block text-xs text-white/50">{Object.entries(rd.facts.types).map(([t, n]) => `${n} ${t.toLowerCase()}`).join(' · ')}</span></dd></div>
+            <div><dt class="text-white/45">On issue</dt><dd class="text-white">{Object.entries(rd.facts.totals).map(([code, t]) => <span class="block tabular-nums">{code} {show(t.shares)}</span>)}</dd></div>
+          </dl>
+          <ul class="space-y-1 text-sm">
+            <li class="text-lk-green">✓ Every holding’s movements add up to the register’s own balances.</li>
+            <li class="text-lk-green">✓ {rd.facts.transfers.paired} transfer{rd.facts.transfers.paired === 1 ? '' : 's'} between members pair up (out on one member’s page, in on the other’s).</li>
+            {rd.facts.transfers.fromElsewhere.length > 0 && (
+              <li class="text-white/65"><details><summary class="cursor-pointer">{rd.facts.transfers.fromElsewhere.length} transfer{rd.facts.transfers.fromElsewhere.length === 1 ? '' : 's'} in from people no longer on this register (they sold everything, so this “current” register leaves them out).</summary>
+                <ul class="mt-1 space-y-0.5 pl-4 text-xs text-white/55">{rd.facts.transfers.fromElsewhere.map((t) => <li>{day(t.date)}: {show(t.shares)} {t.code} to {t.holder}, from {t.party}</li>)}</ul></details></li>
+            )}
+          </ul>
+        </>
+      )}
+    </section>
+  )}
+
+  {r && !applied && (
+    <>
+      {r.problems.length > 0 && <div class="mb-6"><Alert tone="error"><strong>{r.problems.length} problem{r.problems.length === 1 ? '' : 's'} to sort out before importing.</strong><ul class="mt-2 list-disc pl-5 text-sm">{r.problems.map((p) => <li>{p}</li>)}</ul></Alert></div>}
+      {r.warnings.length > 0 && <div class="mb-6"><Alert tone="info"><ul class="list-disc pl-5 text-sm">{r.warnings.map((w) => <li>{w}</li>)}</ul></Alert></div>}
+
+      <form method="post" class="card mb-6 space-y-6" id="matching">
+        <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} />
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 class="text-lg font-bold">2. Match the register to the portal</h2>
+          <p class="text-sm text-white/50">Remembered when you import, so the next register matches by itself.</p>
+        </div>
+
+        <div>
+          <h3 class="text-sm font-semibold text-white/80">Classes</h3>
+          <table class="mt-2 w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="py-2 pr-4">On the register</th><th class="px-3 py-2 text-right">On issue</th><th class="py-2 pl-3">In the portal</th></tr></thead>
+            <tbody class="divide-y divide-white/5">{r.classes.map((c) => (
+              <tr><td class="py-2 pr-4"><span class="font-mono text-white/85">{c.code}</span> <span class="text-white/55">{c.newName}</span></td><td class="px-3 py-2 text-right tabular-nums">{show(c.total)}</td>
+                <td class="py-2 pl-3"><select name={`c:${c.code}`} class="field py-1 text-sm">
+                  {r.allClasses.map((p) => <option value={p.id} selected={c.id === p.id}>{p.code} · {p.name}</option>)}
+                  <option value="new" selected={!c.id}>New class {c.newCode} · {c.newName}</option>
+                </select></td></tr>
+            ))}</tbody>
+          </table>
+        </div>
+
+        <div>
+          <h3 class="text-sm font-semibold text-white/80">Holders to look at <span class="font-normal text-white/45">· {look.length} suggested or new</span></h3>
+          {look.length ? <HolderRows rows={look} /> : <p class="mt-2 text-sm text-white/55">Every name on the register matches a holder in the portal.</p>}
+        </div>
+
+        {matched.length > 0 && (
+          <details class="rounded-xl border border-white/10">
+            <summary class="cursor-pointer px-4 py-3 text-sm"><span class="font-semibold text-white/85">Matched</span> <span class="text-white/45">· {matched.length}: same name, matched before, or your choice</span></summary>
+            <div class="border-t border-white/5 px-4 pb-3"><HolderRows rows={matched} /></div>
+          </details>
+        )}
+
+        {later.length > 0 && (
+          <fieldset class="space-y-2 rounded-xl border border-white/10 p-4 text-sm">
+            <legend class="px-1 font-semibold text-white/85">Figures in the portal dated after the register</legend>
+            <p class="text-white/55">{later.length} holding{later.length === 1 ? ' has' : 's have'} a figure dated after {day(r.asAt)} that the register doesn’t support (listed in the preview). Left there, {later.length === 1 ? 'it stays' : 'they stay'} the current figure.</p>
+            <label class="flex items-start gap-3"><input type="radio" name="later" value="remove" checked={!keepLater} class="mt-1 accent-lk-blue" /><span><span class="text-white">Use the register’s figures</span><span class="block text-white/50">Remove those later figures.</span></span></label>
+            <label class="flex items-start gap-3"><input type="radio" name="later" value="keep" checked={keepLater} class="mt-1 accent-lk-blue" /><span><span class="text-white">Keep the later figures</span><span class="block text-white/50">For example a transfer agreed after the register’s date.</span></span></label>
+          </fieldset>
+        )}
+        <button name="intent" value="preview" class="btn-ghost">Update the preview</button>
+      </form>
+
+      <select id="holder-options" hidden disabled aria-hidden="true">
+        {r.candidates.some((c) => c.here) && <optgroup label={`Holders in ${company!.display_name}`}>{r.candidates.filter((c) => c.here).map((c) => <option value={c.id}>{c.name}{c.ref ? ` (${c.ref})` : ''}</option>)}</optgroup>}
+        {r.candidates.some((c) => !c.here) && <optgroup label="Other holders in the portal">{r.candidates.filter((c) => !c.here).map((c) => <option value={c.id}>{c.name}{c.ref ? ` (${c.ref})` : ''}</option>)}</optgroup>}
+      </select>
+
+      <section class="card mb-6 space-y-5">
+        <div class="flex flex-wrap items-baseline justify-between gap-2">
+          <h2 class="text-lg font-bold">3. Preview of the changes</h2>
+          <p class="text-sm text-white/50">Nothing has changed yet.</p>
+        </div>
+        <table class="w-full text-left text-sm">
+          <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="py-2 pr-4">Class</th><th class="px-3 py-2 text-right">Register</th><th class="px-3 py-2 text-right">Portal now</th><th class="px-3 py-2 text-right">After</th></tr></thead>
+          <tbody class="divide-y divide-white/5">{r.totals.map((t) => (
+            <tr><td class="py-2 pr-4 text-white/85">{t.portal} <span class="text-white/45">{t.name}</span></td><td class="px-3 py-2 text-right tabular-nums">{show(t.register)}</td>
+              <td class:list={['px-3 py-2 text-right tabular-nums', t.now !== t.register && 'text-lk-orange']}>{show(t.now)}</td>
+              <td class:list={['px-3 py-2 text-right tabular-nums', t.after === t.register ? 'text-lk-green' : 'text-lk-orange']}>{show(t.after)}</td></tr>
+          ))}</tbody>
+        </table>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left text-sm">
+            <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="py-2 pr-4"></th>{(['add', 'update', 'remove', 'same'] as const).map((a) => <th class="px-3 py-2 text-right">{LABEL[a]}</th>)}</tr></thead>
+            <tbody class="divide-y divide-white/5">{SHEETS.filter((s) => changes.some((c) => c.sheet === s)).map((sheet) => (
+              <tr><td class="py-2 pr-4 text-white/80">{sheet}</td>{(['add', 'update', 'remove', 'same'] as const).map((a) => <td class:list={['px-3 py-2 text-right tabular-nums', count(sheet, a) ? TONE[a] : 'text-white/25']}>{count(sheet, a)}</td>)}</tr>
+            ))}</tbody>
+          </table>
+        </div>
+        {(['add', 'update', 'remove', 'same'] as const).map((a) => {
+          const list = changes.filter((c) => c.action === a);
+          return list.length > 0 && (
+            <details class="rounded-xl border border-white/10" open={a !== 'same' && list.length <= 40}>
+              <summary class="cursor-pointer px-4 py-3 text-sm"><span class:list={['font-semibold', TONE[a]]}>{a === 'remove' ? (keepLater ? 'Later figures (kept: you chose to keep them)' : 'Removed: later figures the register doesn’t support') : LABEL[a]}</span> <span class="text-white/45">· {list.length}</span></summary>
+              <div class="max-h-[28rem] overflow-y-auto border-t border-white/5 px-4 py-2">
+                {SHEETS.filter((s) => list.some((c) => c.sheet === s)).map((sheet) => (
+                  <div class="py-2">
+                    <p class="text-xs font-semibold uppercase tracking-wider text-white/40">{sheet}</p>
+                    <ul class="mt-1 space-y-1 text-sm">{list.filter((c) => c.sheet === sheet).map((c) => <li><span class="text-white/85">{c.item}</span>{c.details.length > 0 && <span class="block text-xs text-white/50">{c.details.join(' · ')}</span>}</li>)}</ul>
+                  </div>
+                ))}
+              </div>
+            </details>
+          );
+        })}
+
+        {!r.problems.length && uploadId && (
+          <form method="post" class="space-y-4 rounded-2xl border border-lk-green/30 bg-lk-green/[0.06] p-5" onsubmit="return confirm('Import this register? Holdings change to its figures.')">
+            <p class="font-semibold text-white">4. Confirm</p>
+            <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} /><input type="hidden" name="fingerprint" value={fingerprint} />
+            <input type="hidden" name="choices" value={JSON.stringify(r.choices)} />
+            <p class="text-sm text-white/60">{company!.display_name}’s holdings take the register’s figures as at {day(r.asAt)}{later.length > 0 && !keepLater ? `, and ${later.length} later figure${later.length === 1 ? ' is' : 's are'} removed` : ''}. If you changed a match above, press “Update the preview” first.</p>
+            <label class="flex items-center gap-3 text-sm text-white/80"><input type="checkbox" name="reviewed" required class="size-4 accent-lk-blue" /> I’ve reviewed the matches and the changes above.</label>
+            <button name="intent" value="apply" class="btn-primary">Import the register</button>
+          </form>
+        )}
+      </section>
+    </>
+  )}
+</Admin>
+
+<script>
+  // Each holder list fills in from one shared list when opened, so the page stays light.
+  const all = document.getElementById('holder-options');
+  const fill = (s: HTMLSelectElement) => {
+    if (!all || s.dataset.filled) return;
+    s.dataset.filled = '1';
+    const keep = s.value;
+    for (const g of Array.from(all.children)) s.append(g.cloneNode(true));
+    s.querySelectorAll(`optgroup option[value="${CSS.escape(keep)}"]`).forEach((o) => o.remove());
+    s.value = keep;
+  };
+  document.querySelectorAll<HTMLSelectElement>('select[data-holders]').forEach((s) => {
+    s.addEventListener('focus', () => fill(s), { once: true });
+    s.addEventListener('pointerdown', () => fill(s), { once: true });
+  });
+  // A changed match isn't in the confirmation until the preview is updated.
+  const matching = document.getElementById('matching');
+  matching?.addEventListener('change', () => {
+    const btn = document.querySelector<HTMLButtonElement>('form [value="apply"]');
+    if (btn) { btn.disabled = true; btn.textContent = 'Update the preview first'; }
+  });
+</script>

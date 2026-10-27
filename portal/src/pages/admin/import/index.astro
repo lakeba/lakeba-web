@@ -174,6 +174,11 @@ const bigRemoval = Object.entries(portalRows).filter(([sheet, n]) => n && countO
     </form>
   )}
 
+  <a href={`/admin/import/register${q}`} class="card mb-6 flex flex-wrap items-center justify-between gap-3 hover:border-lk-blue/50">
+    <span><span class="font-semibold text-white">Got the company secretary’s register of members?</span><span class="block text-sm text-white/55">Import the PDF to bring {company ? `${company.display_name}’s` : 'a company’s'} holdings up to its figures. People, access and boards stay as they are.</span></span>
+    <span class="text-sm text-lk-blue">Import a register →</span>
+  </a>
+
   <section class="card mb-6">
     <h2 class="text-lg font-bold">1. Check a workbook</h2>
     <p class="mt-1 text-sm text-white/55">Nothing changes at this step. You get a preview of every change: what’s new, what’s updated (old → new), and what the portal has that the file doesn’t. Then you confirm.</p>
