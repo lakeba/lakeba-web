@@ -16,9 +16,11 @@
 // match a name to any holder; a venture's own admins to holders of their
 // company only. Choices are remembered when the register is applied.
 //
-// Figures dated after the register in the portal that the register doesn't
-// support would stay "current": they are listed, and removed unless the admin
-// chooses to keep them.
+// The register's movements are each holding's history: they are kept
+// (register_movements) and give a dated balance after each movement day. Other
+// figures in the portal the register doesn't support (dated after it, which
+// would stay "current", or between its movements) are listed, and removed
+// unless the admin chooses to keep them.
 import { tidyName } from './register-pdf.mjs';
 
 /** @typedef {{ sheet: string, action: 'add' | 'update' | 'remove' | 'same', item: string, details: string[] }} Change */
@@ -164,16 +166,40 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
     final.set(k, { shares: 0, row: null, code: classById.get(h.share_class_id).code });
     changes.push({ sheet: 'Holdings', action: 'update', item: `${holderById.get(h.holder_id)?.name ?? 'A holder'} · ${classById.get(h.share_class_id).code}`, details: [`${show(h.shares)} (as at ${day(h.as_at)}) → 0 as at ${day(asAt)}: not on the register`] });
   }
-  // Later figures the register doesn't support.
-  const later = holdings.filter((h) => mapped.has(h.share_class_id) && h.as_at > asAt && Number(final.get(`${h.holder_id}|${h.share_class_id}`)?.shares ?? 0) !== Number(h.shares));
-  for (const h of later) changes.push({ sheet: 'Later figures', action: 'remove', item: `${holderById.get(h.holder_id)?.name ?? 'A holder'} · ${classById.get(h.share_class_id).code}`, details: [`${show(h.shares)} as at ${day(h.as_at)}; the register has ${show(final.get(`${h.holder_id}|${h.share_class_id}`)?.shares ?? 0)} at ${day(asAt)}`] });
+  // History: the balance at the end of each day with movements, for each holding on the register.
+  const rowsByKey = Map.groupBy(holdings, (h) => `${h.holder_id}|${h.share_class_id}`);
+  const historyOf = (c) => { const m = new Map(); for (const mv of c.movements) m.set(mv.date, mv.balance); return m; };
+  const balanceAt = (c, d) => { let b = 0; for (const mv of c.movements) if (mv.date <= d) b = mv.balance; return b; };
+  let datedRows = 0;
+  for (const row of rows) for (const c of row.h.classes) {
+    const hist = historyOf(c);
+    const have = row.holderId ? new Map((rowsByKey.get(`${row.holderId}|${classIdOf(c.code)}`) ?? []).map((h) => [h.as_at, Number(h.shares)])) : new Map();
+    const missing = [...hist].filter(([d, b]) => d !== asAt && have.get(d) !== b).length;
+    datedRows += hist.size;
+    if (missing) changes.push({ sheet: 'History', action: 'add', item: `${nameOf(row)} · ${classById.get(classIdOf(c.code))?.code ?? c.code}`, details: [`${missing} dated balance${missing === 1 ? '' : 's'} from ${c.movements.length} movement${c.movements.length === 1 ? '' : 's'}, ${c.movements[0].date === c.movements.at(-1).date ? `on ${day(c.movements[0].date)}` : `${day(c.movements[0].date)} to ${day(c.movements.at(-1).date)}`}`] });
+  }
+  // Other figures the register doesn't support: after its date, or between its movements.
+  const onRegister = new Map(rows.filter((r) => r.holderId).flatMap((r) => r.h.classes.map((c) => [`${r.holderId}|${classIdOf(c.code)}`, c])));
+  const later = holdings.filter((h) => {
+    if (!mapped.has(h.share_class_id)) return false;
+    const k = `${h.holder_id}|${h.share_class_id}`;
+    if (h.as_at > asAt) return Number(final.get(k)?.shares ?? 0) !== Number(h.shares);
+    const c = onRegister.get(k);
+    return Boolean(c) && h.as_at < asAt && !historyOf(c).has(h.as_at) && balanceAt(c, h.as_at) !== Number(h.shares);
+  });
+  for (const h of later) {
+    const k = `${h.holder_id}|${h.share_class_id}`;
+    const said = h.as_at > asAt ? `${show(final.get(k)?.shares ?? 0)} at ${day(asAt)}` : `${show(balanceAt(onRegister.get(k), h.as_at))} at that date`;
+    changes.push({ sheet: 'Other figures', action: 'remove', item: `${holderById.get(h.holder_id)?.name ?? 'A holder'} · ${classById.get(h.share_class_id).code}`, details: [`${show(h.shares)} as at ${day(h.as_at)}; the register has ${said}`] });
+  }
   const keepLater = choices?.later === 'keep';
-  if (later.length && keepLater) warnings.push(`You chose to keep ${later.length} later figure${later.length === 1 ? '' : 's'}: they stay the current figure for those holdings, not the register’s.`);
+  const after = later.filter((h) => h.as_at > asAt).length;
+  if (later.length && keepLater) warnings.push(`You chose to keep ${later.length} figure${later.length === 1 ? '' : 's'} the register doesn’t support${after ? `: ${after === 1 ? 'the one' : `the ${after}`} dated after it stay${after === 1 ? 's' : ''} the current figure, not the register’s` : ''}.`);
 
   // Totals per class: the portal now, and after.
   const totals = classMap.map((c) => {
     const now = c.id ? latestOf(holdings.filter((h) => h.share_class_id === c.id)).reduce((a, h) => a + Number(h.shares), 0) : 0;
-    const keptLater = keepLater ? later.filter((h) => h.share_class_id === c.id) : [];
+    const keptLater = keepLater ? later.filter((h) => h.share_class_id === c.id && h.as_at > asAt) : [];
     const after = [...final.entries()].filter(([k]) => k.endsWith(`|${classIdOf(c.code)}`)).reduce((a, [k, v]) => a + (keptLater.find((h) => `${h.holder_id}|${h.share_class_id}` === k)?.shares ?? v.shares), 0);
     return { code: c.code, name: c.newName, portal: classById.get(c.id)?.code ?? c.newCode, register: c.total, now, after: Number(after) };
   });
@@ -181,7 +207,7 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
   const matching = rows.map((r) => ({ key: r.h.key, register_name: r.h.register_name, name: r.h.name, trust: r.h.beneficially_for, acn: r.h.acn, kind: r.h.kind, classes: r.h.classes.map((c) => ({ code: c.code, shares: c.balance })), how: r.how, why: r.why, holderId: r.holderId, holderName: r.holderId ? holderById.get(r.holderId).name : null }));
   const candidates = holders.map((h) => ({ id: h.id, name: h.name, ref: h.registry_ref, here: inCompany.has(h.id) })).sort((a, b) => Number(b.here) - Number(a.here) || a.name.localeCompare(b.name));
   const resolved = { holders: Object.fromEntries(rows.map((r) => [r.h.key, r.holderId ?? 'new'])), classes: Object.fromEntries(classMap.map((c) => [c.code, c.id ?? 'new'])), later: keepLater ? 'keep' : 'remove' };
-  const out = { entity, asAt, problems, warnings, changes, classes: classMap.map(({ settings, ...c }) => ({ ...c, portal: c.id ? classById.get(c.id).code : null })), allClasses: classes.map((c) => ({ id: c.id, code: c.code, name: c.name })), matching, candidates, totals, choices: resolved, applied: false, changedHolders: /** @type {string[]} */ ([]), importId: null };
+  const out = { entity, asAt, datedRows, problems, warnings, changes, classes: classMap.map(({ settings, ...c }) => ({ ...c, portal: c.id ? classById.get(c.id).code : null })), allClasses: classes.map((c) => ({ id: c.id, code: c.code, name: c.name })), matching, candidates, totals, choices: resolved, applied: false, changedHolders: /** @type {string[]} */ ([]), importId: null };
   if (!apply || problems.length) return out;
 
   // ---------------------------------------------------------------------------
@@ -212,15 +238,43 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
 
   if (later.length && !keepLater) await svc.from('holdings').delete().in('id', later.map((h) => h.id)).throwOnError();
   const resolveClass = (cid) => (cid.startsWith('new:') ? classIds.get(cid.slice(4)) : cid);
-  const writes = [];
-  for (const row of rows) for (const c of row.h.classes) writes.push({ holder_id: idOfRow.get(row), share_class_id: resolveClass(classIdOf(c.code)), shares: c.balance, as_at: asAt });
-  for (const [k, v] of final) if (!v.row) { const [holder_id, share_class_id] = k.split('|'); writes.push({ holder_id, share_class_id, shares: 0, as_at: asAt }); }
-  for (let i = 0; i < writes.length; i += 500) await svc.from('holdings').upsert(writes.slice(i, i + 500), { onConflict: 'holder_id,share_class_id,as_at' }).throwOnError();
+  // Each holding at the register's date, and its balance after each day with movements.
+  const writes = new Map();
+  const put = (holder_id, share_class_id, as_at, shares) => writes.set(`${holder_id}|${share_class_id}|${as_at}`, { holder_id, share_class_id, shares, as_at });
+  for (const row of rows) for (const c of row.h.classes) {
+    const cid = resolveClass(classIdOf(c.code));
+    for (const [d, b] of historyOf(c)) put(idOfRow.get(row), cid, d, b);
+    put(idOfRow.get(row), cid, asAt, c.balance);
+  }
+  for (const [k, v] of final) if (!v.row) { const [holder_id, share_class_id] = k.split('|'); put(holder_id, share_class_id, asAt, 0); }
+  const list = [...writes.values()];
+  for (let i = 0; i < list.length; i += 500) await svc.from('holdings').upsert(list.slice(i, i + 500), { onConflict: 'holder_id,share_class_id,as_at' }).throwOnError();
 
   const { data: imp } = await svc.from('register_imports').insert({
     entity_id: entityId, as_at: asAt, company_name: register.company.name, company_number: regNumber, file_name: file?.name ?? null, file_path: file?.path ?? null, file_sha256: file?.sha256 ?? '',
     holders: rows.length, holdings: register.facts.holdings, movements: register.facts.movements, totals: Object.fromEntries(totals.map((t) => [t.code, t.register])), imported_by: actorId,
   }).select('id').single().throwOnError();
+
+  // The movements, replacing those of the holdings on this register (others keep theirs).
+  const pairs = rows.flatMap((row) => row.h.classes.map((c) => ({ row, c, holder_id: idOfRow.get(row), share_class_id: resolveClass(classIdOf(c.code)) })));
+  for (let i = 0; i < pairs.length; i += 25) {
+    const or = pairs.slice(i, i + 25).map((p) => `and(holder_id.eq.${p.holder_id},share_class_id.eq.${p.share_class_id})`).join(',');
+    await svc.from('register_movements').delete().eq('entity_id', entityId).or(or).throwOnError();
+  }
+  // The other side of a transfer, when they're on this register too.
+  const byName = Map.groupBy(rows, (r) => tidyName(r.h.name));
+  const partyOf = (party, mv, code) => {
+    const named = byName.get(tidyName(party)) ?? [];
+    // Two entries of the same name (e.g. with and without a trust): the one with the opposite movement that day.
+    const m = named.length > 1 ? named.filter((r) => r.h.classes.some((c) => c.code === code && c.movements.some((o) => o.date === mv.date && o.shares === -mv.shares))) : named;
+    return m.length === 1 ? idOfRow.get(m[0]) : null;
+  };
+  const moves = pairs.flatMap((p) => p.c.movements.map((mv, seq) => ({
+    entity_id: entityId, import_id: imp.id, holder_id: p.holder_id, share_class_id: p.share_class_id, seq, moved_on: mv.date, kind: mv.type, shares: mv.shares, balance: mv.balance,
+    party: mv.party, party_holder_id: mv.party ? partyOf(mv.party, mv, p.c.code) : null, consideration: mv.consideration, unique_numbers: mv.unique, certificate: mv.certificate,
+    paid_per_share: mv.paid, unpaid_per_share: mv.unpaid, beneficial: mv.beneficial,
+  })));
+  for (let i = 0; i < moves.length; i += 500) await svc.from('register_movements').insert(moves.slice(i, i + 500)).throwOnError();
 
   const changedIds = new Set();
   for (const row of rows) for (const c of row.h.classes) {

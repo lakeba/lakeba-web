@@ -120,11 +120,11 @@ const rd = read as Read | null;
 const look = r ? r.matching.filter((m) => m.how === 'suggested' || m.how === 'new') : [];
 const matched = r ? r.matching.filter((m) => !(m.how === 'suggested' || m.how === 'new')) : [];
 const changes = r?.changes ?? [];
-const SHEETS = ['Company', 'Share classes', 'Holders', 'Holdings', 'Later figures'];
+const SHEETS = ['Company', 'Share classes', 'Holders', 'Holdings', 'History', 'Other figures'];
 const LABEL = { add: 'New', update: 'Changed', remove: 'Removed', same: 'Unchanged' } as const;
 const TONE = { add: 'text-lk-green', update: 'text-lk-blue', remove: 'text-lk-red', same: 'text-white/50' } as const;
 const count = (sheet: string, action: string) => changes.filter((c) => c.sheet === sheet && c.action === action).length;
-const later = changes.filter((c) => c.sheet === 'Later figures');
+const later = changes.filter((c) => c.sheet === 'Other figures');
 const keepLater = r?.choices.later === 'keep';
 ---
 
@@ -238,10 +238,10 @@ const keepLater = r?.choices.later === 'keep';
 
         {later.length > 0 && (
           <fieldset class="space-y-2 rounded-xl border border-white/10 p-4 text-sm">
-            <legend class="px-1 font-semibold text-white/85">Figures in the portal dated after the register</legend>
-            <p class="text-white/55">{later.length} holding{later.length === 1 ? ' has' : 's have'} a figure dated after {day(r.asAt)} that the register doesn’t support (listed in the preview). Left there, {later.length === 1 ? 'it stays' : 'they stay'} the current figure.</p>
-            <label class="flex items-start gap-3"><input type="radio" name="later" value="remove" checked={!keepLater} class="mt-1 accent-lk-blue" /><span><span class="text-white">Use the register’s figures</span><span class="block text-white/50">Remove those later figures.</span></span></label>
-            <label class="flex items-start gap-3"><input type="radio" name="later" value="keep" checked={keepLater} class="mt-1 accent-lk-blue" /><span><span class="text-white">Keep the later figures</span><span class="block text-white/50">For example a transfer agreed after the register’s date.</span></span></label>
+            <legend class="px-1 font-semibold text-white/85">Figures in the portal the register doesn’t support</legend>
+            <p class="text-white/55">{later.length} figure{later.length === 1 ? '' : 's'} in the portal {later.length === 1 ? 'differs' : 'differ'} from the register at {later.length === 1 ? 'its' : 'their'} date (listed in the preview). Any dated after {day(r.asAt)} would stay the current figure.</p>
+            <label class="flex items-start gap-3"><input type="radio" name="later" value="remove" checked={!keepLater} class="mt-1 accent-lk-blue" /><span><span class="text-white">Use the register’s figures</span><span class="block text-white/50">Remove those figures.</span></span></label>
+            <label class="flex items-start gap-3"><input type="radio" name="later" value="keep" checked={keepLater} class="mt-1 accent-lk-blue" /><span><span class="text-white">Keep them</span><span class="block text-white/50">For example a transfer agreed after the register’s date.</span></span></label>
           </fieldset>
         )}
         <button name="intent" value="preview" class="btn-ghost">Update the preview</button>
@@ -277,7 +277,7 @@ const keepLater = r?.choices.later === 'keep';
           const list = changes.filter((c) => c.action === a);
           return list.length > 0 && (
             <details class="rounded-xl border border-white/10" open={a !== 'same' && list.length <= 40}>
-              <summary class="cursor-pointer px-4 py-3 text-sm"><span class:list={['font-semibold', TONE[a]]}>{a === 'remove' ? (keepLater ? 'Later figures (kept: you chose to keep them)' : 'Removed: later figures the register doesn’t support') : LABEL[a]}</span> <span class="text-white/45">· {list.length}</span></summary>
+              <summary class="cursor-pointer px-4 py-3 text-sm"><span class:list={['font-semibold', TONE[a]]}>{a === 'remove' ? (keepLater ? 'Figures the register doesn’t support (kept: you chose to keep them)' : 'Removed: figures the register doesn’t support') : LABEL[a]}</span> <span class="text-white/45">· {list.length}</span></summary>
               <div class="max-h-[28rem] overflow-y-auto border-t border-white/5 px-4 py-2">
                 {SHEETS.filter((s) => list.some((c) => c.sheet === s)).map((sheet) => (
                   <div class="py-2">
@@ -295,7 +295,7 @@ const keepLater = r?.choices.later === 'keep';
             <p class="font-semibold text-white">4. Confirm</p>
             <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} /><input type="hidden" name="fingerprint" value={fingerprint} />
             <input type="hidden" name="choices" value={JSON.stringify(r.choices)} />
-            <p class="text-sm text-white/60">{company!.display_name}’s holdings take the register’s figures as at {day(r.asAt)}{later.length > 0 && !keepLater ? `, and ${later.length} later figure${later.length === 1 ? ' is' : 's are'} removed` : ''}. If you changed a match above, press “Update the preview” first.</p>
+            <p class="text-sm text-white/60">{company!.display_name}’s holdings take the register’s figures as at {day(r.asAt)}, with their history ({r.datedRows} dated balances from {rd?.facts.movements ?? 0} movements){later.length > 0 && !keepLater ? `, and ${later.length} figure${later.length === 1 ? ' the register doesn’t support is' : 's the register doesn’t support are'} removed` : ''}. If you changed a match above, press “Update the preview” first.</p>
             <label class="flex items-center gap-3 text-sm text-white/80"><input type="checkbox" name="reviewed" required class="size-4 accent-lk-blue" /> I’ve reviewed the matches and the changes above.</label>
             <button name="intent" value="apply" class="btn-primary">Import the register</button>
           </form>

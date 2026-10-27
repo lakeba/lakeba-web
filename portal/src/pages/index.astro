@@ -29,7 +29,9 @@ const [allPositions, holderIds, onBoard, allPrices] = await Promise.all([
 const positions = inCompany(allPositions, company?.id);
 const classIds = [...new Set(positions.filter(isShareClass).map((p) => p.row.share_class_id))];
 
-const [priceSeries, { data: announcements }, { data: settings }, { data: docs }, posts, { data: meetings }, { data: video }, { count: openQueries }] = await Promise.all([
+const [{ data: moveData }, priceSeries, { data: announcements }, { data: settings }, { data: docs }, posts, { data: meetings }, { data: video }, { count: openQueries }] = await Promise.all([
+  // Each holding's movements on its company's register (imported from the company secretary's register).
+  positions.length ? supabase.from('register_movements').select('holder_id, share_class_id, seq, moved_on, kind, shares, balance, party').in('holder_id', [...new Set(positions.map((p) => p.holder.id))]).order('seq') : Promise.resolve({ data: [] }),
   Promise.all(classIds.map(async (id) => [id, await loadPrices(supabase, id)] as const)),
   supabase.from('announcements').select('id, title, body, link_url, link_label, tone').eq('entity_id', entityId).order('starts_at', { ascending: false }).limit(2),
   isGroup ? supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle() : Promise.resolve({ data: null }),
@@ -40,6 +42,9 @@ const [priceSeries, { data: announcements }, { data: settings }, { data: docs },
   supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').eq('user_id', userId).eq('entity_id', entityId),
 ]);
 
+type Move = { holder_id: string; share_class_id: string; moved_on: string; kind: string; shares: number; balance: number; party: string | null };
+const movesOf = Map.groupBy((moveData ?? []) as Move[], (m) => `${m.holder_id}|${m.share_class_id}`);
+const KINDS: Record<string, string> = { Allotment: 'Allotment', 'Transfer in': 'Transfer in', 'Transfer out': 'Transfer out' };
 // Each share class is valued at its own latest reference price, if it has one.
 // Options and similar have no price here (their value depends on exercise terms).
 const valueAt = (p: (typeof positions)[number]) => {
@@ -167,6 +172,23 @@ const [noHoldingsBefore, noHoldingsAfter] = t('If you are a shareholder, ask a q
           <div><dt class="text-xs uppercase tracking-widest text-white/40">{t('Indicative')}</dt><dd class="mt-1 font-display text-lg font-bold text-white sm:text-xl xl:text-2xl">{value(p) !== null ? aud.format(value(p)!) : '—'}</dd></div>
         </dl>
         <p class="mt-6 border-t border-white/5 pt-4 text-xs text-white/40">{t('As at {date}', { date: longDate.format(new Date(p.row.as_at)) })} · {t('{n} {class} on issue', { n: shares.format(p.total), class: p.row.share_classes?.name.toLowerCase() ?? '' })}{p.row.exercise_price != null && ` · ${t('exercise price {price}', { price: audPrecise.format(Number(p.row.exercise_price)) })}`}{p.row.expires_on && ` · ${t('expires {date}', { date: longDate.format(new Date(p.row.expires_on)) })}`}{!isShareClass(p) && ` · ${t('not included in ownership %')}`}</p>
+        {movesOf.get(`${p.holder.id}|${p.row.share_class_id}`) && (() => { const moves = movesOf.get(`${p.holder.id}|${p.row.share_class_id}`)!; return (
+          <details class="mt-3 text-sm">
+            <summary class="cursor-pointer text-white/60 hover:text-white">{moves.length === 1 ? t('History (1 movement)') : t('History ({n} movements)', { n: moves.length })}</summary>
+            <div class="mt-2 overflow-x-auto">
+              <table class="w-full text-left">
+                <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="py-1.5 pr-3 font-normal">{t('Date')}</th><th class="pr-3 font-normal">{t('Movement')}</th><th class="pr-3 text-right font-normal">{isShareClass(p) ? t('Shares') : t('Options')}</th><th class="text-right font-normal">{t('Balance')}</th></tr></thead>
+                <tbody class="divide-y divide-white/5">{[...moves].reverse().map((m) => (
+                  <tr><td class="whitespace-nowrap py-1.5 pr-3 text-white/70">{shortDate.format(new Date(m.moved_on))}</td>
+                    <td class="pr-3">{KINDS[m.kind] ? t(KINDS[m.kind]) : m.kind}{m.party && <span class="block text-xs text-white/45">{Number(m.shares) < 0 ? t('to {name}', { name: m.party }) : t('from {name}', { name: m.party })}</span>}</td>
+                    <td class:list={['pr-3 text-right tabular-nums', Number(m.shares) < 0 ? 'text-lk-red' : 'text-lk-green']}>{Number(m.shares) > 0 ? '+' : ''}{shares.format(Number(m.shares))}</td>
+                    <td class="text-right tabular-nums">{shares.format(Number(m.balance))}</td></tr>
+                ))}</tbody>
+              </table>
+              <p class="mt-1 text-xs text-white/35">{t('From the company secretary’s register of members.')}</p>
+            </div>
+          </details>
+        ); })()}
       </article>
     )) : (
       <div class="card lg:col-span-2">

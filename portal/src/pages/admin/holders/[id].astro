@@ -12,7 +12,8 @@ import { HOLDER_KINDS, amount, changes, companiesOfHolder, fmt, holderBlocker, h
 // One holder (the legal owner on the register): its details, its holdings
 // history per class (add, correct or delete a dated row), who can see it, and
 // the notes next to its holdings. Every change is checked first (old → new),
-// then saved and recorded in the audit log.
+// then saved and recorded in the audit log. Holdings imported from a company's
+// register of members also show its movements, and how it names the holder.
 const svc = serviceClient();
 const access = Astro.locals.access;
 const me = Astro.locals.user!.id;
@@ -177,16 +178,23 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const [{ data: rowData }, { data: members }, { data: notes }, blocker] = await Promise.all([
+const [{ data: rowData }, { data: members }, { data: notes }, blocker, { data: moveData }, { data: regNames }] = await Promise.all([
   svc.from('holdings').select('id, share_class_id, shares, as_at, exercise_price, expires_on').eq('holder_id', id).order('as_at'),
   svc.from('holder_members').select('user_id, access, profiles(id, email, first_name, last_name)').eq('holder_id', id),
   svc.from('holding_notes').select('share_class_id, note').eq('holder_id', id),
   rights.group ? holderBlocker(svc, id) : Promise.resolve(null),
+  svc.from('register_movements').select('share_class_id, seq, moved_on, kind, shares, balance, party, party_holder_id, consideration, certificate, paid_per_share').eq('holder_id', id).order('seq'),
+  svc.from('register_names').select('entity_id, register_name, beneficially_for, acn, address, entered_on, entities(display_name)').eq('holder_id', id),
 ]);
 // Only the companies this person may see: a holder can also hold shares in other companies.
 const viewable = (classId: string) => { const e = classById.get(classId)?.entity_id; return Boolean(e) && Astro.locals.access.can('investors.view', e!); };
 const rows = ((rowData ?? []) as Row[]).filter((r) => viewable(r.share_class_id));
 const byClass = [...Map.groupBy(rows, (r) => r.share_class_id)].sort((a, b) => classLabel(a[0]).localeCompare(classLabel(b[0])));
+type Move = { share_class_id: string; seq: number; moved_on: string; kind: string; shares: number; balance: number; party: string | null; party_holder_id: string | null; consideration: number | null; certificate: string | null; paid_per_share: number | null };
+const movesOf = Map.groupBy(((moveData ?? []) as Move[]).filter((m) => viewable(m.share_class_id)), (m) => m.share_class_id);
+type RegName = { entity_id: string; register_name: string; beneficially_for: string | null; acn: string | null; address: string | null; entered_on: string | null; entities: { display_name: string } | null };
+const onRegisters = ((regNames ?? []) as unknown as RegName[]).filter((n) => Astro.locals.access.can('investors.view', n.entity_id));
+const money = (n: number | null) => (n == null ? '—' : `$${Number(n).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`);
 const noteOf = new Map((notes ?? []).filter((n) => viewable(n.share_class_id)).map((n) => [n.share_class_id, n.note]));
 const editableClasses = classes.filter((c) => rights.company(c.entity_id));
 const companyNames = [...new Set(rows.map((r) => classById.get(r.share_class_id)?.entities?.display_name).filter(Boolean))];
@@ -233,6 +241,23 @@ const btn = 'text-xs text-white/55 hover:text-white';
             </div>
             <p class="px-5 pt-1 text-[11px] text-white/35"><span class="text-lk-green">●</span> current balance</p>
           </div>
+          {movesOf.get(cid) && (
+            <details class="mt-2 border-t border-white/5">
+              <summary class="cursor-pointer px-5 py-3 text-sm text-white/75">On the register: {movesOf.get(cid)!.length} movement{movesOf.get(cid)!.length === 1 ? '' : 's'}</summary>
+              <div class="overflow-x-auto px-5 pb-3">
+                <table class="w-full text-left text-sm">
+                  <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="py-1.5 pr-3">Date</th><th class="pr-3">Movement</th><th class="pr-3 text-right">Shares</th><th class="pr-3 text-right">Balance</th><th class="pr-3">To / from</th><th class="pr-3 text-right">Paid per share</th><th class="text-right">Certificate</th></tr></thead>
+                  <tbody class="divide-y divide-white/5">{movesOf.get(cid)!.map((m) => (
+                    <tr><td class="whitespace-nowrap py-1.5 pr-3">{shortDate.format(new Date(m.moved_on))}</td><td class="pr-3">{m.kind}</td>
+                      <td class:list={['pr-3 text-right tabular-nums', Number(m.shares) < 0 ? 'text-lk-red' : 'text-lk-green']}>{Number(m.shares) > 0 ? '+' : ''}{fmt(Number(m.shares))}</td>
+                      <td class="pr-3 text-right tabular-nums">{fmt(Number(m.balance))}</td>
+                      <td class="pr-3 text-white/70">{m.party ? (m.party_holder_id ? <a href={`/admin/holders/${m.party_holder_id}`} class="hover:text-lk-blue">{m.party}</a> : m.party) : '—'}{m.consideration != null && <span class="block text-xs text-white/45">at {money(m.consideration)} a share</span>}</td>
+                      <td class="pr-3 text-right tabular-nums text-white/70">{money(m.paid_per_share)}</td><td class="text-right text-white/55">{m.certificate && m.certificate !== '0' ? m.certificate : '—'}</td></tr>
+                  ))}</tbody>
+                </table>
+              </div>
+            </details>
+          )}
           {mayEditClass(cid) && (
             <form method="post" class="flex flex-wrap items-end gap-2 border-t border-white/5 px-5 py-3">
               <input type="hidden" name="op" value="note" /><input type="hidden" name="class_id" value={cid} />
@@ -258,6 +283,20 @@ const btn = 'text-xs text-white/55 hover:text-white';
     </section>
 
     <aside class="space-y-4">
+      {onRegisters.length > 0 && (
+        <section class="card space-y-3">
+          <h2 class="font-display text-lg font-bold">On the register</h2>
+          {onRegisters.map((n) => (
+            <div class="text-sm">
+              {onRegisters.length > 1 && <p class="text-xs uppercase tracking-wider text-white/40">{n.entities?.display_name}</p>}
+              <p class="text-white/85">{n.register_name}</p>
+              <p class="text-xs text-white/50">{[n.acn && `ACN ${n.acn}`, n.entered_on && `on the register since ${shortDate.format(new Date(n.entered_on))}`].filter(Boolean).join(' · ')}</p>
+              {n.address && <p class="mt-1 text-xs text-white/50">{n.address}</p>}
+            </div>
+          ))}
+          <p class="text-xs text-white/40">From the company secretary’s register of members (Admin → Import data).</p>
+        </section>
+      )}
       <section class="card space-y-3">
         <h2 class="font-display text-lg font-bold">Details</h2>
         {rights.group ? (
