@@ -169,7 +169,7 @@ export function initNewsEditor() {
   suggest.disabled = locked;
   suggest.addEventListener('click', async () => {
     if ((excerpt.value.trim() || seo.value.trim()) && !confirm('Replace the current excerpt and search description with suggestions?')) return;
-    suggest.disabled = true; suggestStatus.textContent = 'Claude is reading the article…';
+    suggest.disabled = true; suggestStatus.textContent = 'Lakeba AI is reading the article…';
     try {
       const company = $<HTMLSelectElement>('#entity_id');
       const names = JSON.parse(form.dataset.companyNames ?? '{}') as Record<string, string>;
@@ -178,7 +178,7 @@ export function initNewsEditor() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? 'No suggestion.');
       excerpt.value = json.excerpt; seo.value = json.description; count(); dirty = true;
-      suggestStatus.textContent = 'Suggested by Claude: check and edit before saving.';
+      suggestStatus.textContent = 'Suggested by Lakeba AI: check and edit before saving.';
     } catch (e) { suggestStatus.textContent = (e as Error).message; }
     finally { suggest.disabled = false; }
   });

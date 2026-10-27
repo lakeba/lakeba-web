@@ -40,7 +40,7 @@ const textOf = (res: { content: { type: string; text?: string }[] }) => res.cont
 
 /** A full release from the writer's head points (Sonnet). */
 export async function draftRelease(o: { headPoints: string; company: string; isVenture: boolean; boilerplateTitle: string; length: string; spokespeople: string }) {
-  if (!claude) throw new Error('Claude needs the API key on the server.');
+  if (!claude) throw new Error('Lakeba AI needs the API key on the server.');
   const system = [
     `You are a senior press officer writing a press release for ${o.company}${o.isVenture ? ', a venture of Lakeba Group' : ''}, from the writer's head points.`,
     'Professional news-wire style, as a journalist would want it: an informative headline in sentence case (no clickbait, at most 110 characters; give 3 options, the best first), a sub-headline of one sentence, then the text as an inverted pyramid: the lead paragraph answers who, what, when, where and why in at most 35 words; then the details in order of importance; short paragraphs of 1 to 3 sentences.',
@@ -79,7 +79,7 @@ export async function draftRelease(o: { headPoints: string; company: string; isV
 
 /** The compliance check before approval (Sonnet, low effort): what a careful approver would flag. */
 export async function checkRelease(o: { company: string; headline: string; subheadline: string; body_html: string; summary: string }): Promise<{ issues: Check[]; usage: { input_tokens: number; output_tokens: number } }> {
-  if (!claude) throw new Error('Claude needs the API key on the server.');
+  if (!claude) throw new Error('Lakeba AI needs the API key on the server.');
   const system = [
     `You review a press release by ${o.company} (part of Lakeba Group, whose shares are unlisted) before it is approved, as an experienced Australian communications and legal reviewer would.`,
     'Flag, quoting the exact words (short quotes):',

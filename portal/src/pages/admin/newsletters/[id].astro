@@ -204,13 +204,13 @@ const issueApproval = issue ? await getApproval(svc, 'newsletter', issue.id) : n
 
   {isNew ? (
     <>
-      <p class="mt-6 text-white/65">Start from a template, or let Claude draft it. Everything stays editable, and news and documents published since the last issue are ticked for you.</p>
+      <p class="mt-6 text-white/65">Start from a template, or let Lakeba AI draft it. Everything stays editable, and news and documents published since the last issue are ticked for you.</p>
       <div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
         <form method="post" class="card flex flex-col border border-lk-blue/40 bg-gradient-to-br from-lk-blue/15 to-transparent md:col-span-2 xl:col-span-3">
           <input type="hidden" name="intent" value="from-template" /><input type="hidden" name="template_id" value="blank" />
           <p class="text-xs uppercase tracking-widest text-lk-blue">✨ Build with AI</p>
           <h2 class="mt-2 font-display text-lg font-bold">Start from what you want to say</h2>
-          <p class="mt-1 text-sm text-white/60">List the points to communicate, as rough notes. Claude drafts the whole issue from your notes and the recent news; you review and edit everything before it goes out. (To have it in a designed layout, start from a designed template below and use Build with AI there.)</p>
+          <p class="mt-1 text-sm text-white/60">List the points to communicate, as rough notes. Lakeba AI drafts the whole issue from your notes and the recent news; you review and edit everything before it goes out. (To have it in a designed layout, start from a designed template below and use Build with AI there.)</p>
           <div class="mt-4 grid gap-3 lg:grid-cols-[2fr_1fr] lg:items-end">
             <textarea name="brief" rows="5" required minlength="15" class="field" placeholder={"- Signed three new bank partners this quarter\n- FY26 results are out: revenue up 40% (see the annual report)\n- AGM on 20 November, please vote online\n- Thank shareholders for their support"}></textarea>
             <div class="space-y-3">

@@ -87,7 +87,7 @@ const people = [...new Map(((holders ?? []) as unknown as { user_id: string; rol
           <div><label class="label" for="feeds">Feeds to read (one per line: Name | address)</label><textarea id="feeds" name="feeds" rows="5" class="field font-mono text-xs" placeholder={"Google Alert: Lakeba | https://www.google.com/alerts/feeds/…"}>{s.feeds.map((f) => `${f.name} | ${f.url}`).join('\n')}</textarea>
             <p class="mt-1 text-xs text-white/40">Google Alerts: create an alert for each name, “Show options” → Deliver to: RSS feed, then copy the feed’s address here. Read hourly.</p></div>
         </div>
-        <label class="flex gap-2 text-sm text-white/75"><input type="checkbox" name="search_after_release" checked={s.search_after_release} class="mt-1 accent-lk-blue" /> <span>Search the web for each release’s coverage 1, 3, 7 and 14 days after it’s published (Claude with web search; a few searches each time)</span></label>
+        <label class="flex gap-2 text-sm text-white/75"><input type="checkbox" name="search_after_release" checked={s.search_after_release} class="mt-1 accent-lk-blue" /> <span>Search the web for each release’s coverage 1, 3, 7 and 14 days after it’s published (Lakeba AI with web search; a few searches each time)</span></label>
         <label class="flex gap-2 text-sm text-white/75"><input type="checkbox" name="gdelt" checked={s.gdelt} class="mt-1 accent-lk-blue" /> <span>Also check GDELT every 6 hours (free and open; covers mostly larger outlets)</span></label>
       </div>
       <div class="space-y-3 border-t border-white/5 pt-4">

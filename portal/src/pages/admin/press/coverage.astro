@@ -70,14 +70,14 @@ const tone: Record<string, string> = { positive: 'text-lk-green', neutral: 'text
   <PressNav desk={desk} />
   <div class="flex flex-wrap items-end justify-between gap-4">
     <div><h1 class="font-display text-3xl font-bold">Coverage</h1>
-      <p class="mt-1 max-w-3xl text-sm text-white/55">Articles about Lakeba and the ventures, found by the monitor or added by hand. Claude sorts each one (about a release, a mention, or unrelated) and notes its tone; confirm the real coverage so it counts in the reports.</p></div>
+      <p class="mt-1 max-w-3xl text-sm text-white/55">Articles about Lakeba and the ventures, found by the monitor or added by hand. Lakeba AI sorts each one (about a release, a mention, or unrelated) and notes its tone; confirm the real coverage so it counts in the reports.</p></div>
     <form method="post"><button name="intent" value="check" class="btn-ghost">Check the feeds now</button></form>
   </div>
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
 
   <form method="post" class="card mt-6 grid gap-3 p-4 sm:grid-cols-[1fr_18rem_auto] sm:items-end">
     <div><label class="label" for="url">Add an article by hand</label><input id="url" name="url" type="url" placeholder="https://…" class="field" /></div>
-    <div><label class="label" for="release_id">About</label><select id="release_id" name="release_id" class="field"><option value="">(let Claude decide)</option>{(releases ?? []).map((r) => <option value={r.id}>{r.headline}</option>)}</select></div>
+    <div><label class="label" for="release_id">About</label><select id="release_id" name="release_id" class="field"><option value="">(let Lakeba AI decide)</option>{(releases ?? []).map((r) => <option value={r.id}>{r.headline}</option>)}</select></div>
     <button name="intent" value="add" class="btn-primary py-2">Add</button>
   </form>
 

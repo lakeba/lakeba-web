@@ -62,7 +62,7 @@ if (Astro.request.method === 'POST') {
           if (v.how === 'designer') ai = { from: 'html', source: source_html };
         }
       }
-      if (ai && !claude) throw new Error('Converting with Claude needs the API key on the server. Choose “Keep it as HTML”, or import MJML.');
+      if (ai && !claude) throw new Error('Converting with Lakeba AI needs the API key on the server. Choose “Keep it as HTML”, or import MJML.');
       const holdingOn = v.audience === 'shareholders';
       const { data: t, error: e } = await svc.from('newsletter_templates').insert({
         name: v.name, description: `Imported: ${src.label}`.slice(0, 300), audience: v.audience, entity_id: v.audience === 'public' ? null : company?.id ?? null,
@@ -108,11 +108,11 @@ if (Astro.request.method === 'POST') {
 
       <h2 class="border-t border-white/5 pt-5 font-display text-lg font-bold">2. How to import it</h2>
       <div class="space-y-2 text-sm">
-        <label class="flex gap-3"><input type="radio" name="how" value="designer" checked={v.how === 'designer'} class="mt-1 accent-lk-blue" /><span><strong class="text-white">Convert to the designer</strong> (recommended)<span class="block text-white/55">Claude rebuilds it for drag-and-drop editing. Usually looks very close to the original; check the details. Screenshots are always converted. Takes a minute or two and costs a few cents.</span></span></label>
+        <label class="flex gap-3"><input type="radio" name="how" value="designer" checked={v.how === 'designer'} class="mt-1 accent-lk-blue" /><span><strong class="text-white">Convert to the designer</strong> (recommended)<span class="block text-white/55">Lakeba AI rebuilds it for drag-and-drop editing. Usually looks very close to the original; check the details. Screenshots are always converted. Takes a minute or two and costs a few cents.</span></span></label>
         <label class="flex gap-3"><input type="radio" name="how" value="html" checked={v.how === 'html'} class="mt-1 accent-lk-blue" /><span><strong class="text-white">Keep it exactly as it is</strong> (HTML)<span class="block text-white/55">Looks the same as the original; you edit it as code. No AI. (MJML always opens in the designer.)</span></span></label>
       </div>
       <label class="flex gap-3 text-sm"><input type="checkbox" name="personalise" checked={v.personalise} class="mt-1 accent-lk-blue" /><span><strong class="text-white">Personalise for us</strong><span class="block text-white/55">With the designer: their logo and colours become the company's, their words become [prompts] to fill in, photos become placeholders, and the portal's blocks (greeting, holding, news, documents, meetings, sign-in) are added.</span></span></label>
-      <div><label class="label" for="instructions">Anything else for Claude? (optional)</label>
+      <div><label class="label" for="instructions">Anything else for Lakeba AI? (optional)</label>
         <textarea id="instructions" name="instructions" rows="2" maxlength="1500" class="field text-sm" placeholder="e.g. keep their three-column product section for our ventures; make the header dark navy">{v.instructions}</textarea></div>
     </section>
 

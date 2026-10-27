@@ -272,7 +272,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
 
       {isGroupAdmin && <details class="card mt-6">
         <summary class="cursor-pointer text-lg font-bold">Mailbox settings</summary>
-        <p class="mt-2 text-sm text-white/55">Each company’s shareholder mailbox. <strong>Review</strong>: read and prepare drafts; a person sends. <strong>Automatic</strong>: the chosen request types are answered by themselves, {AUTO_DELAY_MS / 60000} minutes after arrival (cancel in that time), only for verified, registered shareholders (colleagues too), never for forwarded emails, when Claude is at least {Math.round(AUTO_CONFIDENCE * 100)}% sure, at most {AUTO_PER_DAY} a day per shareholder and not twice for the same request. Everything else stays for a person.</p>
+        <p class="mt-2 text-sm text-white/55">Each company’s shareholder mailbox. <strong>Review</strong>: read and prepare drafts; a person sends. <strong>Automatic</strong>: the chosen request types are answered by themselves, {AUTO_DELAY_MS / 60000} minutes after arrival (cancel in that time), only for verified, registered shareholders (colleagues too), never for forwarded emails, when Lakeba AI is at least {Math.round(AUTO_CONFIDENCE * 100)}% sure, at most {AUTO_PER_DAY} a day per shareholder and not twice for the same request. Everything else stays for a person.</p>
         <div class="mt-4 space-y-4">
           {(companies ?? []).map((c) => {
             const s = c.shareholder_mailbox ? syncOf.get(c.shareholder_mailbox) : undefined;

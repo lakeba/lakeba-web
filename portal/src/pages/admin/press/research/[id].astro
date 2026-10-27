@@ -56,7 +56,7 @@ const stale = run!.status === 'running' && Date.now() - new Date(run!.created_at
   <p class="mt-1 text-sm text-white/45">{run!.brief.region || 'Australia'}{run!.brief.kinds && ` · ${run!.brief.kinds}`}{run!.searches ? ` · ${run!.searches} web searches` : ''}</p>
   <div class="mt-5 space-y-3">
     {notice && <Alert tone="success">{notice}</Alert>}
-    {run!.status === 'running' && !stale && <Alert tone="info">Claude is searching the web (usually one to two minutes). This page updates by itself.</Alert>}
+    {run!.status === 'running' && !stale && <Alert tone="info">Lakeba AI is searching the web (usually one to two minutes). This page updates by itself.</Alert>}
     {(run!.status === 'failed' || stale) && <Alert tone="error">The search didn’t finish{run!.note ? `: ${run!.note}` : '.'} Please try again.</Alert>}
     {run!.status === 'done' && run!.note && <Alert tone="info">{run!.note}</Alert>}
   </div>

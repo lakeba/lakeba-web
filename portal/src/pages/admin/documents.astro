@@ -157,7 +157,7 @@ const docApprovals = await approvalsFor(serviceClient(), 'document', (docs ?? []
   <section class="card mb-6 !p-5">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h2 class="text-lg font-bold">{askName(kbCompany)} knowledge base</h2>
-      <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', askEnabled ? 'bg-lk-green/15 text-lk-green' : 'bg-lk-orange/15 text-lk-orange']}>{askEnabled ? 'AI answers on (Claude Opus 5.5)' : 'AI answers off: ANTHROPIC_API_KEY not set'}</span>
+      <span class:list={['rounded-full px-3 py-1 text-xs font-semibold', askEnabled ? 'bg-lk-green/15 text-lk-green' : 'bg-lk-orange/15 text-lk-orange']}>{askEnabled ? 'Lakeba AI answers on' : 'AI answers off: ANTHROPIC_API_KEY not set'}</span>
     </div>
     <p class="mt-2 text-sm text-white/60">
       Facts sheet + {kb.documentCount} documents + {kb.articleCount} news articles (from {NEWS_FROM.slice(0, 4)}) · about {Math.round(kb.approxTokens / 1000)}k tokens, sent in full and cached for an hour.

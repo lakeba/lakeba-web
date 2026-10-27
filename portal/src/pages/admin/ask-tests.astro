@@ -196,7 +196,7 @@ const running = run?.status === 'running';
       <form method="post" class="mt-4 space-y-3">
         <CompanySelect scope={scope} />
         <input name="question" maxlength="1000" placeholder="Question" class="field" />
-        <textarea name="expected_answer" rows="4" maxlength="8000" placeholder="Expected answer (optional; Claude grades the answer against it)" class="field"></textarea>
+        <textarea name="expected_answer" rows="4" maxlength="8000" placeholder="Expected answer (optional; Lakeba AI grades the answer against it)" class="field"></textarea>
         <div class="grid gap-3 sm:grid-cols-2">
           <input name="must_include" placeholder="Must mention (comma-separated)" class="field" />
           <input name="must_not_include" placeholder="Must not mention (comma-separated)" class="field" />

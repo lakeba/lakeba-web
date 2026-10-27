@@ -21,7 +21,7 @@ const SCHEMAS = {
 export const POST: APIRoute = async ({ request, locals }) => {
   const editor = newsEditor(locals, 'newsletters');
   if (!editor) return Response.json({ error: 'Not allowed.' }, { status: 403 });
-  if (!claude) return Response.json({ error: 'Claude needs the API key on the server.' }, { status: 503 });
+  if (!claude) return Response.json({ error: 'Lakeba AI needs the API key on the server.' }, { status: 503 });
   const b = await request.json().catch(() => null) as Record<string, unknown> | null;
   const action = String(b?.action ?? '') as keyof typeof SCHEMAS;
   if (!(action in SCHEMAS)) return Response.json({ error: 'Unknown request.' }, { status: 400 });
@@ -62,7 +62,7 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return Response.json(out);
   } catch (e) {
     console.error('newsletter assist', (e as Error).message);
-    return Response.json({ error: 'Claude couldn’t help just now. Please try again.' }, { status: 502 });
+    return Response.json({ error: 'Lakeba AI couldn’t help just now. Please try again.' }, { status: 502 });
   }
 };
 
@@ -94,6 +94,6 @@ async function rewrite(b: Record<string, unknown>, locals: App.Locals) {
     return Response.json({ html: blocksToHtml(out.blocks, allowed) });
   } catch (e) {
     console.error('newsletter rewrite', (e as Error).message);
-    return Response.json({ error: 'Claude couldn’t rewrite it just now. Please try again.' }, { status: 502 });
+    return Response.json({ error: 'Lakeba AI couldn’t rewrite it just now. Please try again.' }, { status: 502 });
   }
 }

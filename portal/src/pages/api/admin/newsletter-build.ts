@@ -30,7 +30,7 @@ const SCHEMA = {
 export const POST: APIRoute = async ({ request, locals, url }) => {
   const editor = newsEditor(locals, 'newsletters');
   if (!editor) return Response.json({ error: 'Not allowed.' }, { status: 403 });
-  if (!claude) return Response.json({ error: 'Claude needs the API key on the server.' }, { status: 503 });
+  if (!claude) return Response.json({ error: 'Lakeba AI needs the API key on the server.' }, { status: 503 });
   const b = await request.json().catch(() => null) as Record<string, unknown> | null;
   const breakdown = String(b?.breakdown ?? '').trim().slice(0, 6000);
   if (breakdown.length < 15) return Response.json({ error: 'Write a few points about what you want to say first.' }, { status: 400 });
@@ -108,6 +108,6 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
     });
   } catch (e) {
     console.error('newsletter build', (e as Error).message);
-    return Response.json({ error: 'Claude couldn’t build the issue just now. Please try again.' }, { status: 502 });
+    return Response.json({ error: 'Lakeba AI couldn’t build the issue just now. Please try again.' }, { status: 502 });
   }
 };

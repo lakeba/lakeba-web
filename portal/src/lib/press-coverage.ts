@@ -181,7 +181,7 @@ export async function checkGdelt(svc: Svc, force = false, venture: DeskVenture |
 
 /** Claude web search for one release's coverage (only pages the search returned are kept). */
 export async function searchRelease(svc: Svc, r: Release, company: string) {
-  if (!claude) throw new Error('Claude needs the API key on the server.');
+  if (!claude) throw new Error('Lakeba AI needs the API key on the server.');
   const since = (r.published_at ?? new Date().toISOString()).slice(0, 10);
   const messages: { role: 'user' | 'assistant'; content: unknown }[] = [{ role: 'user', content: `<release>\nCompany: ${company}\nPublished: ${since}\nHeadline: ${r.headline}\nSummary: ${r.summary || r.subheadline}\n</release>\n\nFind news articles, blog posts and newsletters published on or after ${since} that report this news or mention it. Not the company's own website or press release copies on wire sites. For each give the title, the outlet, the date and the article's address.` }];
   const blocks: { type: string; text?: string; content?: unknown }[] = [];

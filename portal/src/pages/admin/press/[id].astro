@@ -27,7 +27,7 @@ if (!desk) return new Response('Forbidden', { status: 403 });
 const access = desk;
 let error = '';
 const done = Astro.url.searchParams.get('done') ?? '';
-const notice = ({ saved: 'Saved.', drafted: 'Claude drafted the release from your head points. Read it carefully: check every fact and replace the [square brackets].', checked: 'Check finished.', quote: 'The approval request was emailed.', submitted: 'Sent for approval. The approvers have been told.', approved: 'Approved and scheduled.', published: 'Published on the newsroom. The website updates in a few minutes.', changes: 'Sent back to the writer with your note.', withdrawn: 'Withdrawn from the newsroom.', restored: 'Earlier version restored.', unscheduled: 'Back to waiting for approval.', corrected: 'Correction published.' } as Record<string, string>)[done] ?? '';
+const notice = ({ saved: 'Saved.', drafted: 'Lakeba AI drafted the release from your head points. Read it carefully: check every fact and replace the [square brackets].', checked: 'Check finished.', quote: 'The approval request was emailed.', submitted: 'Sent for approval. The approvers have been told.', approved: 'Approved and scheduled.', published: 'Published on the newsroom. The website updates in a few minutes.', changes: 'Sent back to the writer with your note.', withdrawn: 'Withdrawn from the newsroom.', restored: 'Earlier version restored.', unscheduled: 'Back to waiting for approval.', corrected: 'Correction published.' } as Record<string, string>)[done] ?? '';
 const back = (d: string) => Astro.redirect(`/admin/press/${r!.id}?done=${d}${desk.q.replace('?', '&')}`, 303);
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { id: r!.id, ...detail } });
 const origin = Astro.url.origin;
@@ -86,7 +86,7 @@ if (Astro.request.method === 'POST') {
 
       if (intent === 'save') return back('saved');
       if (intent === 'draft-ai') {
-        if (!claude) error = 'Claude needs the API key on the server.';
+        if (!claude) error = 'Lakeba AI needs the API key on the server.';
         else if (r.head_points.trim().length < 20) error = 'Write a few head points first: what happened, who, when, why it matters, and anyone to quote.';
         else {
           const s = await settingsFor(svc, r!);
@@ -102,7 +102,7 @@ if (Astro.request.method === 'POST') {
         }
       }
       if (intent === 'check') {
-        if (!claude) error = 'Claude needs the API key on the server.';
+        if (!claude) error = 'Lakeba AI needs the API key on the server.';
         else if (!r.headline.trim() || !r.body_html.trim()) error = 'Write the headline and the text first.';
         else {
           const c = await checkRelease({ company: companyName(r.entity_id), headline: r.headline, subheadline: r.subheadline, body_html: r.body_html, summary: r.summary });
@@ -202,7 +202,7 @@ if (Astro.request.method === 'POST') {
     } else if (!error) error = 'That isn’t possible for this release now.';
   } catch (e) {
     console.error('press release', intent, (e as Error).message);
-    error = /Claude|API/.test((e as Error).message) ? 'Claude couldn’t help just now. Please try again.' : 'Something went wrong. Please try again.';
+    error = /Lakeba AI|API/.test((e as Error).message) ? 'Lakeba AI couldn’t help just now. Please try again.' : 'Something went wrong. Please try again.';
   }
   r = (await loadRelease(svc, r.id))!;
 }
@@ -261,7 +261,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
         <div class="grid gap-3 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
           <div><label class="label" for="spokespeople">Who may be quoted (optional)</label><input id="spokespeople" name="spokespeople" class="field text-sm" placeholder="e.g. Jane Smith, CEO, Lakeba Group" /></div>
           <div><label class="label" for="length">Length</label><select id="length" name="length" class="field text-sm"><option value="short">Short (~250 words)</option><option value="standard" selected>Standard (~450)</option><option value="long">Long (~700)</option></select></div>
-          <button name="intent" value="draft-ai" class="btn-primary" onclick={r.body_html.trim() ? "return confirm('Replace the headline, text, quotes and summary with a new draft? The current version is kept.')" : undefined} data-busy="Claude is writing…">✨ Draft with AI</button>
+          <button name="intent" value="draft-ai" class="btn-primary" onclick={r.body_html.trim() ? "return confirm('Replace the headline, text, quotes and summary with a new draft? The current version is kept.')" : undefined} data-busy="Lakeba AI is writing…">✨ Draft with AI</button>
         </div>
       </section>
 

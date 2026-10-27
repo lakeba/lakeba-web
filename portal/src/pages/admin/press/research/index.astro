@@ -19,7 +19,7 @@ let error = '';
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const brief: Brief = { beats: field(form, 'beats').slice(0, 300), region: field(form, 'region').slice(0, 100), kinds: field(form, 'kinds').slice(0, 200), count: Math.min(20, Math.max(3, Number(field(form, 'count')) || 10)), notes: field(form, 'notes').slice(0, 1000) };
-  if (!claude) error = 'Research needs the Claude API key on the server.';
+  if (!claude) error = 'Research needs the Lakeba AI key on the server.';
   else if (brief.beats.length < 3) error = 'Say which beats or topics the journalists should cover.';
   else {
     const { data: running } = await onDesk(desk, svc.from('media_research_runs').select('id').eq('status', 'running')).gte('created_at', new Date(Date.now() - 10 * 60_000).toISOString());
@@ -38,7 +38,7 @@ const { data: runs } = await onDesk(desk, svc.from('media_research_runs').select
 <Admin title="Find journalists">
   <PressNav desk={desk} />
   <h1 class="font-display text-3xl font-bold">Find journalists with AI</h1>
-  <p class="mt-1 max-w-3xl text-sm text-white/55">Claude searches the web for journalists who currently cover your topics, with a recent article and the pages that show it. Emails are included only when published (it never guesses them). You review each candidate before anything is added. A search takes a minute or two; its web searches and usage are recorded in the audit log.</p>
+  <p class="mt-1 max-w-3xl text-sm text-white/55">Lakeba AI searches the web for journalists who currently cover your topics, with a recent article and the pages that show it. Emails are included only when published (it never guesses them). You review each candidate before anything is added. A search takes a minute or two; its web searches and usage are recorded in the audit log.</p>
   {error && <div class="mt-5"><Alert tone="error">{error}</Alert></div>}
   <form method="post" class="card mt-6 grid max-w-4xl gap-4 sm:grid-cols-2">
     <div class="sm:col-span-2"><label class="label" for="beats">Beats or topics</label><input id="beats" name="beats" required placeholder="e.g. fintech and SME lending; proptech and fractional property investment" class="field" /></div>

@@ -190,7 +190,7 @@ const postApproval = post ? await getApproval(svc, 'post', post.id) : null;
         <div class="flex items-end justify-between gap-3"><label class="label" for="excerpt">Excerpt (on the news card)</label>
           <button type="button" class="mb-1.5 rounded-lg border border-lk-blue/40 px-2.5 py-1 text-xs text-lk-blue hover:bg-lk-blue/10" data-suggest>✨ Suggest excerpt and description</button></div>
         <textarea id="excerpt" name="excerpt" rows="2" maxlength="600" class="field">{post?.excerpt}</textarea>
-        <p class="mt-1 text-xs text-white/40" data-suggest-status>About 40 words. Claude can suggest it from the text; check it before saving.</p>
+        <p class="mt-1 text-xs text-white/40" data-suggest-status>About 40 words. Lakeba AI can suggest it from the text; check it before saving.</p>
       </div>
     </fieldset>
 

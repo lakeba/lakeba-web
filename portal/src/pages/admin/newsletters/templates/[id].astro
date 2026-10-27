@@ -26,7 +26,7 @@ let t = await loadTemplate(svc, Astro.params.id!);
 if (!t || !mayManageTemplate(t, editor.mayEdit, editor.group)) return Astro.redirect(withCompany(scope, '/admin/newsletters'));
 let error = '';
 let designErrors: string[] = [];
-const notice = ({ saved: 'Template saved. New issues use it from now on; existing issues don’t change.', restored: 'Restored.', original: 'Back to the original built-in version.', copy: 'Saved as a new template.', converting: 'Converting again with Claude.', html: 'Now in HTML mode.', compose: 'Back in compose mode.', design: 'Now in the designer.' } as Record<string, string>)[Astro.url.searchParams.get('done') ?? ''] ?? '';
+const notice = ({ saved: 'Template saved. New issues use it from now on; existing issues don’t change.', restored: 'Restored.', original: 'Back to the original built-in version.', copy: 'Saved as a new template.', converting: 'Converting again with Lakeba AI.', html: 'Now in HTML mode.', compose: 'Back in compose mode.', design: 'Now in the designer.' } as Record<string, string>)[Astro.url.searchParams.get('done') ?? ''] ?? '';
 const back = (id: string, done: string) => Astro.redirect(withCompany(scope, `/admin/newsletters/templates/${id}?done=${done}`), 303);
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
 const audience = t.audience === 'public' ? 'public' : 'shareholders';
@@ -75,7 +75,7 @@ if (Astro.request.method === 'POST') {
     }
   } else if (intent === 'ai-convert' && t.source_html && t.import_status !== 'converting') {
     // Convert (again) from the original kept at import, as a design, optionally personalised.
-    if (!claude) error = 'Converting with Claude needs the API key on the server.';
+    if (!claude) error = 'Converting with Lakeba AI needs the API key on the server.';
     else {
       const shot = /alt="The screenshot this template was made from"/.test(t.source_html) ? /src="[^"]*?\/news-media\/([^"]+)"/.exec(t.source_html)?.[1] : null;
       let screenshot: string | undefined;
@@ -137,7 +137,7 @@ const record = { id: t.id, audience, entity_id: t.entity_id, subject: t.subject,
   <div class="mt-5 space-y-3">
     {notice && <Alert tone="success">{notice}</Alert>}
     {error && <Alert tone="error">{error}</Alert>}
-    {converting && <Alert tone="info">Claude is turning this template into a design (usually one to two minutes). This page updates by itself; meanwhile the preview shows {t.mode === 'html' && t.html_body ? 'the imported HTML' : 'the original'}.</Alert>}
+    {converting && <Alert tone="info">Lakeba AI is turning this template into a design (usually one to two minutes). This page updates by itself; meanwhile the preview shows {t.mode === 'html' && t.html_body ? 'the imported HTML' : 'the original'}.</Alert>}
     {convertFailed && <Alert tone="error">The conversion didn’t finish{t.import_note ? `: ${t.import_note}` : '.'} You can try again from “Imported template” on the right{t.mode === 'html' && t.html_body ? ', or keep editing it as HTML' : ''}.</Alert>}
     {!t.import_status && t.import_note && <Alert tone="info"><strong>Imported. Worth checking:</strong>{t.import_note.split('\n').map((n) => <span class="mt-1 block">• {n}</span>)}</Alert>}
   </div>
@@ -168,12 +168,12 @@ const record = { id: t.id, audience, entity_id: t.entity_id, subject: t.subject,
             <p class="text-sm text-white/55">{t.source_label}</p>
             <a href={`/admin/newsletters/templates/${t.id}/original`} target="_blank" rel="noopener" class="btn-ghost w-full text-sm">View the original ↗</a>
             <details class="border-t border-white/5 pt-3">
-              <summary class="cursor-pointer text-sm text-lk-blue">Convert again with Claude</summary>
+              <summary class="cursor-pointer text-sm text-lk-blue">Convert again with Lakeba AI</summary>
               <div class="mt-3 space-y-3">
                 <p class="text-xs text-white/50">Rebuilds the design from the original. The current version is kept in “Earlier versions”.</p>
                 <label class="flex gap-2 text-sm text-white/75"><input type="checkbox" name="import_personalise" checked class="accent-lk-blue" /> Personalise for us</label>
-                <textarea name="import_instructions" rows="2" maxlength="1500" class="field text-sm" placeholder="Anything else for Claude (optional)"></textarea>
-                <button name="intent" value="ai-convert" class="btn-ghost w-full text-sm" disabled={converting} onclick="return confirm('Rebuild this template from the original with Claude? The current version is kept in Earlier versions.')">Convert again</button>
+                <textarea name="import_instructions" rows="2" maxlength="1500" class="field text-sm" placeholder="Anything else for Lakeba AI (optional)"></textarea>
+                <button name="intent" value="ai-convert" class="btn-ghost w-full text-sm" disabled={converting} onclick="return confirm('Rebuild this template from the original with Lakeba AI? The current version is kept in Earlier versions.')">Convert again</button>
               </div>
             </details>
           </section>

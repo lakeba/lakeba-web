@@ -12,7 +12,7 @@ import { DESIGN_RULES, EDITS_SCHEMA, checkEdits, type Edit } from '../../../lib/
  */
 export const POST: APIRoute = async ({ request, locals, url }) => {
   if (!newsEditor(locals, 'newsletters')) return Response.json({ error: 'Not allowed.' }, { status: 403 });
-  if (!claude) return Response.json({ error: 'Claude needs the API key on the server.' }, { status: 503 });
+  if (!claude) return Response.json({ error: 'Lakeba AI needs the API key on the server.' }, { status: 503 });
   const b = await request.json().catch(() => null) as Record<string, unknown> | null;
   const instruction = String(b?.instruction ?? '').trim().slice(0, 1000);
   const outline = String(b?.outline ?? '').slice(0, 60000);
@@ -53,6 +53,6 @@ export const POST: APIRoute = async ({ request, locals, url }) => {
     return Response.json({ message: String(out.message ?? '').slice(0, 600), edits, dropped });
   } catch (e) {
     console.error('newsletter design ai', (e as Error).message);
-    return Response.json({ error: 'Claude couldn’t change the design just now. Please try again.' }, { status: 502 });
+    return Response.json({ error: 'Lakeba AI couldn’t change the design just now. Please try again.' }, { status: 502 });
   }
 };

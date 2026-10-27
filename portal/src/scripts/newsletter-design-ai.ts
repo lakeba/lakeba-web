@@ -106,7 +106,7 @@ export function initDesignAi(form: HTMLFormElement, editor: Editor, sync: () => 
   async function ask(instruction: string, isQuick: boolean, target?: Component) {
     if (busy || !instruction.trim()) return;
     busy = true; askBtn.disabled = true; quick.disabled = true;
-    say(isQuick ? 'Claude is working on it…' : 'Claude is working on it (this can take a few seconds)…');
+    say(isQuick ? 'Lakeba AI is working on it…' : 'Lakeba AI is working on it (this can take a few seconds)…');
     try {
       const o = outline(editor);
       const sel = target ?? selectedMj(editor);
@@ -120,7 +120,7 @@ export function initDesignAi(form: HTMLFormElement, editor: Editor, sync: () => 
         }),
       });
       const json = await res.json().catch(() => ({}));
-      if (!res.ok) { say(json.error ?? 'Claude couldn’t change the design just now.'); return; }
+      if (!res.ok) { say(json.error ?? 'Lakeba AI couldn’t change the design just now.'); return; }
       const edits = (json.edits ?? []) as Edit[];
       const note = json.dropped?.length ? ` (${json.dropped.length} unsafe or invalid change${json.dropped.length > 1 ? 's were' : ' was'} left out.)` : '';
       if (!edits.length) { say(`${json.message || 'Nothing to change.'}${note}`); return; }
@@ -134,7 +134,7 @@ export function initDesignAi(form: HTMLFormElement, editor: Editor, sync: () => 
       sync(); onChange();
       say(`${json.message || 'Done.'}${note}`);
       if (!list.classList.contains('hidden')) check();
-    } catch { say('Claude couldn’t change the design just now. Please try again.'); }
+    } catch { say('Lakeba AI couldn’t change the design just now. Please try again.'); }
     finally { busy = false; askBtn.disabled = false; quick.disabled = false; }
   }
 

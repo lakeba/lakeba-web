@@ -9,7 +9,7 @@ import { newsEditor } from '../../../lib/news-editors';
  */
 export const POST: APIRoute = async ({ request, locals }) => {
   if (!newsEditor(locals)) return Response.json({ error: 'Not allowed.' }, { status: 403 });
-  if (!claude) return Response.json({ error: 'Suggestions need the Claude API key on the server.' }, { status: 503 });
+  if (!claude) return Response.json({ error: 'Suggestions need the Lakeba AI key on the server.' }, { status: 503 });
   const body = await request.json().catch(() => null) as { title?: string; html?: string; venture?: string } | null;
   const title = String(body?.title ?? '').trim().slice(0, 300);
   const text = plainText(String(body?.html ?? '')).slice(0, 12_000);
@@ -37,6 +37,6 @@ export const POST: APIRoute = async ({ request, locals }) => {
     return Response.json({ excerpt: out.excerpt.trim(), description: out.description.trim().slice(0, 160) });
   } catch (e) {
     console.error('news suggestion', (e as Error).message);
-    return Response.json({ error: 'Claude couldn’t suggest anything just now. Please try again.' }, { status: 502 });
+    return Response.json({ error: 'Lakeba AI couldn’t suggest anything just now. Please try again.' }, { status: 502 });
   }
 };

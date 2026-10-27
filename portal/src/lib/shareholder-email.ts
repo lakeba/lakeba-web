@@ -119,7 +119,7 @@ type Reading = { category: Category; confidence: number; summary: string; docume
 export const stripSignOff = (text: string) => text.replace(/\s*\n\s*(kind regards|best regards|warm regards|regards|best wishes|many thanks|thanks|thank you|cheers|sincerely|yours sincerely|un cordiale saluto|cordiali saluti)[,.!]?\s*$/i, '').trim();
 
 export async function classify(input: { company: string; fromName: string; firstName: string | null; subject: string; body: string; docs: Doc[]; statements: number; verified: boolean }): Promise<Reading & { costUsd: number }> {
-  if (!claude) throw new Error('AI is not configured (no Claude API key).');
+  if (!claude) throw new Error('AI is not configured (no Lakeba AI key).');
   const docList = input.docs.map((d) => `${d.id} | ${d.title} | ${d.category} | ${d.published_at.slice(0, 10)}`).join('\n') || '(none)';
   const res = await claude.beta.messages.create({
     model: 'claude-haiku-5-5',
@@ -275,7 +275,7 @@ async function autoDecision(svc: Svc, e: { id: string; entity_id: string; user_i
   const no = (reason: string) => ({ auto: false, reason });
   if (!(company.email_auto_categories ?? []).includes(reading.category)) return no('This request type isn’t answered automatically.');
   if (!e.sender_verified || !e.user_id) return no('Not a verified, registered shareholder.');
-  if (reading.confidence < AUTO_CONFIDENCE) return no(`Claude wasn’t sure enough (${Math.round(reading.confidence * 100)}%).`);
+  if (reading.confidence < AUTO_CONFIDENCE) return no(`Lakeba AI wasn’t sure enough (${Math.round(reading.confidence * 100)}%).`);
   const { data: mailboxes } = await svc.from('entities').select('shareholder_mailbox').not('shareholder_mailbox', 'is', null);
   if ((mailboxes ?? []).some((m) => m.shareholder_mailbox!.toLowerCase() === e.from_address)) return no('From one of our shareholder mailboxes.');
   if (isForwarded(e.subject, e.body_text)) return no('Forwarded: usually on behalf of someone else.');

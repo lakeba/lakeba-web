@@ -54,7 +54,7 @@ function searchedUrls(blocks: Block[]) {
 }
 
 export async function research(svc: Svc, brief: Brief, desk: Pick<Desk, 'venture'> = { venture: null }) {
-  if (!claude) throw new Error('Claude needs the API key on the server.');
+  if (!claude) throw new Error('Lakeba AI needs the API key on the server.');
   // People already on this desk's list are left out.
   const { data: known } = await onDesk(desk, svc.from('media_contacts').select('first_name, last_name, email')).limit(3000);
   const knownNames = ((known ?? []) as Pick<Contact, 'first_name' | 'last_name' | 'email'>[]).map((c) => fullName(c)).filter(Boolean);

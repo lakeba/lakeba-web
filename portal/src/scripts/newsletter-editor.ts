@@ -98,7 +98,7 @@ export function initNewsletterEditor() {
   const assist = async (action: string, btn: HTMLButtonElement) => {
     const out = form.querySelector<HTMLElement>(`[data-assist-out="${action}"]`)!;
     const fd = new FormData(form);
-    btn.disabled = true; out.textContent = 'Claude is working…';
+    btn.disabled = true; out.textContent = 'Lakeba AI is working…';
     try {
       const text = [fd.get('intro_html'), ...fd.getAll('section_html'), fd.get('closing_html'), fd.get('html_body')].filter(Boolean).join(' ');
       const res = await fetch('/api/admin/newsletter-assist', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, audience: form.querySelector<HTMLInputElement>('[name="segment"]') ? 'shareholders' : 'public', entity_id: fd.get('entity_id'), subject: fd.get('subject'), intro_html: text, closing_html: '', post_ids: fd.getAll('post_ids'), document_ids: fd.getAll('document_ids') }) });
@@ -108,7 +108,7 @@ export function initNewsletterEditor() {
         editors.get('intro_html')?.commands.setContent(json.intro_html);
         const input = form.querySelector<HTMLInputElement>('input[name="intro_html"]');
         if (input) input.value = json.intro_html;
-        out.textContent = 'Drafted by Claude: read it through and make it yours before sending.';
+        out.textContent = 'Drafted by Lakeba AI: read it through and make it yours before sending.';
         refresh();
       }
       if (action === 'subjects') {
@@ -137,7 +137,7 @@ export function initNewsletterEditor() {
       if (!bar || bar.querySelector('[data-rewrite]')) continue;
       const sel = document.createElement('select');
       sel.dataset.rewrite = '';
-      sel.setAttribute('aria-label', 'Rewrite with Claude');
+      sel.setAttribute('aria-label', 'Rewrite with Lakeba AI');
       sel.className = 'ml-auto rounded-md border border-lk-blue/40 bg-transparent px-1.5 py-0.5 text-xs text-lk-blue';
       sel.innerHTML = '<option value="">✨ Rewrite…</option><option value="improve">Improve</option><option value="shorter">Shorter</option><option value="friendlier">Friendlier</option><option value="formal">More formal</option><option value="expand">Expand my notes</option>';
       sel.addEventListener('change', async () => {
@@ -151,7 +151,7 @@ export function initNewsletterEditor() {
           const json = await res.json();
           if (!res.ok) throw new Error(json.error ?? 'No answer.');
           ed.commands.setContent(json.html, { emitUpdate: true });
-          box.title = 'Rewritten by Claude: Ctrl/Cmd+Z in the box undoes it';
+          box.title = 'Rewritten by Lakeba AI: Ctrl/Cmd+Z in the box undoes it';
         } catch (e) { alert((e as Error).message); }
         finally { sel.disabled = false; }
       });
@@ -203,7 +203,7 @@ export function initNewsletterEditor() {
     const hasText = designer || current.intro.replace(/<[^>]+>/g, '').trim() || current.sections.length || current.closing.replace(/<[^>]+>/g, '').trim();
     if (hasText && !confirm(designer ? 'Replace the subject and the content area of the design with a new draft? You can undo it.' : 'Replace the subject, introduction, sections and closing with a new draft? You can undo it.')) return;
     const fd = new FormData(form);
-    buildBtn.disabled = true; aiStatus!.textContent = 'Claude is writing the issue… (about half a minute)';
+    buildBtn.disabled = true; aiStatus!.textContent = 'Lakeba AI is writing the issue… (about half a minute)';
     try {
       const res = await fetch('/api/admin/newsletter-build', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({
         issue_id: issueId, breakdown: brief, tone: form.querySelector<HTMLSelectElement>('[data-ai-tone]')!.value, length: form.querySelector<HTMLSelectElement>('[data-ai-length]')!.value,

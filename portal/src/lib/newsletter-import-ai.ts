@@ -71,7 +71,7 @@ export function cleanMjmlDocument(mjml: string, origin: string) {
 
 /** Asks Claude for the design, checks it and compiles it. */
 export async function convertTemplate(o: ConvertOptions) {
-  if (!claude) throw new Error('Claude needs the API key on the server.');
+  if (!claude) throw new Error('Lakeba AI needs the API key on the server.');
   const assets = `Company: ${o.company.name}\nBrand colour: ${o.company.color}\nCompany logo: ${o.company.logo || 'none'}\nAudience: ${o.audience === 'public' ? 'the public newsletter (prospective investors and website visitors)' : 'shareholders'}`;
   const ask = o.instructions ? `\n\n<instructions>\n${o.instructions.slice(0, 1500)}\n</instructions>` : '';
   const content = o.from === 'image'
@@ -85,7 +85,7 @@ export async function convertTemplate(o: ConvertOptions) {
   });
   const out = JSON.parse(res.content.flatMap((c) => (c.type === 'text' ? [c.text] : [])).join('')) as { mjml: string; notes: string[] };
   const mjml = cleanMjmlDocument(out.mjml ?? '', o.origin);
-  if (!/<mjml[\s>]/i.test(mjml) || !/<mj-body/i.test(mjml)) throw new Error('Claude didn’t return a design.');
+  if (!/<mjml[\s>]/i.test(mjml) || !/<mj-body/i.test(mjml)) throw new Error('Lakeba AI didn’t return a design.');
   const { html, errors } = await compileMjml(mjml);
   if (!html) throw new Error(errors[0] ?? 'The design couldn’t be compiled.');
   return { mjml, design_html: html, notes: (out.notes ?? []).slice(0, 5).map((n) => String(n).slice(0, 300)), usage: res.usage };

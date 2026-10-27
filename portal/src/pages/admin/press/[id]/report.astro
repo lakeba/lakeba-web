@@ -23,7 +23,7 @@ if (!r || r.status !== 'published') return Astro.redirect(r ? `/admin/press/${r.
 const { data: company } = r.entity_id ? await svc.from('entities').select('display_name').eq('id', r.entity_id).maybeSingle() : { data: null };
 let notice = '', error = '';
 if (Astro.request.method === 'POST' && field(await Astro.request.formData(), 'intent') === 'search') {
-  if (!claude) error = 'Searching needs the Claude API key on the server.';
+  if (!claude) error = 'Searching needs the Lakeba AI key on the server.';
   else {
     try { const n = await searchRelease(svc, r, company?.display_name ?? 'Lakeba Group'); notice = n ? `${n} new article${n === 1 ? '' : 's'} found: review them on the Coverage page.` : 'Nothing new found.'; }
     catch (e) { error = (e as Error).message; }
