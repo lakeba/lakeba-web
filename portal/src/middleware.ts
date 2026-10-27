@@ -16,12 +16,12 @@ import { NO_VIEW, VIEW_COOKIE, investorCompanyIds, wantsInvestorView } from './l
 startNotificationWorker();
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/setup', '/go', '/passkey-login', '/e', '/room', '/news-media', '/company-logo', '/api/public', '/api/v1', '/embed', '/n', '/favicon.ico'];
+const PUBLIC_PATHS = ['/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/setup', '/go', '/passkey-login', '/e', '/room', '/news-media', '/company-logo', '/api/public', '/api/v1', '/api/hooks', '/developers', '/oauth/token', '/embed', '/n', '/favicon.ico'];
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 
 /** On a venture's own domain, these open on the central address (sign-in, two-step, passkeys and admin live there). */
-const CENTRAL_PATHS = ['/login', '/forgot-password', '/passkey-login', '/mfa', '/account/security', '/api/passkeys', '/admin', '/auth/pass'];
+const CENTRAL_PATHS = ['/login', '/forgot-password', '/passkey-login', '/mfa', '/account/security', '/api/passkeys', '/admin', '/auth/pass', '/oauth'];
 
 /** Staging on this Mac only: staff can try the portal without an authenticator app. Never on another database. */
 const twoStepOff = TWO_STEP_OFF_FOR_TESTING && /^http:\/\/(127\.0\.0\.1|localhost):54321$/.test(SUPABASE_URL);

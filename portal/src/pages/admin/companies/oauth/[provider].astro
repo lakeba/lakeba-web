@@ -1,0 +1,58 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { hashSecret } from '../../../../lib/api/core';
+import { isCompanyAdmin } from '../../../../lib/integrations/admin';
+import { finishConnect, PROVIDERS, type Provider } from '../../../../lib/integrations/connections';
+import { hubspotAccount } from '../../../../lib/integrations/hubspot';
+import { xeroTenants } from '../../../../lib/integrations/xero';
+
+// Where HubSpot and Xero send the company's Admin back after "Connect": the
+// one-time code becomes the connection's tokens. Only an Admin of that company
+// can finish it.
+const provider = Astro.params.provider as Provider;
+if (!(provider in PROVIDERS)) return new Response('Not found', { status: 404 });
+const svc = serviceClient();
+const central = Astro.locals.site?.central ?? Astro.url.origin;
+const code = Astro.url.searchParams.get('code') ?? '';
+const state = Astro.url.searchParams.get('state') ?? '';
+const denied = Astro.url.searchParams.get('error');
+let error = '';
+
+const { data: pending } = state ? await svc.from('connections').select('id, entity_id, entities(code, display_name)').eq('provider', provider).eq('state_hash', hashSecret(state)).maybeSingle() : { data: null };
+const company = pending?.entities as unknown as { code: string; display_name: string } | undefined;
+if (!pending || !company) error = 'This approval has already been used or has expired. Start again from the company’s Integrations page.';
+else if (!isCompanyAdmin(Astro.locals.access, pending.entity_id)) error = 'Only an Admin of this company can connect it.';
+else if (denied) {
+  await svc.from('connections').update({ status: 'disconnected', state_hash: null, last_error: `${PROVIDERS[provider].name} said: ${Astro.url.searchParams.get('error_description') ?? denied}` }).eq('id', pending.id);
+  return Astro.redirect(`/admin/companies/${company.code}/integrations?tab=${provider}&notice=${encodeURIComponent(`${PROVIDERS[provider].name} wasn’t connected (approval was declined).`)}`, 303);
+} else {
+  try {
+    const { connection, tokens } = await finishConnect(svc, provider, code, state, central);
+    let account: { id: string; name: string } | null = null;
+    const settings: Record<string, unknown> = { ...(connection.settings ?? {}) };
+    if (provider === 'hubspot') account = await hubspotAccount(tokens.access_token);
+    else {
+      const tenants = await xeroTenants(tokens.access_token);
+      if (!tenants.length) throw new Error('No Xero organisation was shared with the portal.');
+      account = tenants[0];
+      Object.assign(settings, { tenant_id: tenants[0].id, tenants });
+    }
+    // Activity notes start from now, not from the past month.
+    const { data: last } = await svc.from('integration_events').select('id').eq('entity_id', pending.entity_id).order('id', { ascending: false }).limit(1).maybeSingle();
+    await svc.from('connections').update({ account_id: account.id, account_name: account.name, settings, cursor: { event_id: last?.id ?? 0, sync_now: true } }).eq('id', connection.id).throwOnError();
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_connected_integration', event_detail: { company: company.code, provider, account: account.name } });
+    return Astro.redirect(`/admin/companies/${company.code}/integrations?tab=${provider}&notice=${encodeURIComponent(`${PROVIDERS[provider].name} is connected (${account.name}). The first sync starts within a minute.`)}`, 303);
+  } catch (e) {
+    error = `${PROVIDERS[provider].name} couldn’t be connected: ${(e as Error).message}`;
+    await svc.from('connections').update({ status: 'disconnected', state_hash: null, last_error: error }).eq('id', pending.id);
+  }
+}
+---
+
+<Admin title={`Connect ${PROVIDERS[provider].name}`}>
+  <h1 class="font-display text-3xl font-bold">Connect {PROVIDERS[provider].name}</h1>
+  <div class="mt-5"><Alert tone="error">{error}</Alert></div>
+  {company && <p class="mt-4 text-sm"><a class="text-lk-blue hover:underline" href={`/admin/companies/${company.code}/integrations?tab=${provider}`}>← Back to {company.display_name}’s integrations</a></p>}
+</Admin>

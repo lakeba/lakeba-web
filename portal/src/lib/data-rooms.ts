@@ -1,6 +1,9 @@
 import { createHash, randomBytes } from 'node:crypto';
 import { PDFDocument, StandardFonts, degrees, rgb } from 'pdf-lib';
 import type { serviceClient } from './admin';
+import { brandOf } from './brand';
+import { shortDate } from './format';
+import { sendMail } from './mail';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -58,4 +61,30 @@ export async function watermarkPdf(bytes: Uint8Array, guest: { name: string; ema
   }
   pdf.setProducer('Lakeba investor portal');
   return pdf.save();
+}
+
+/**
+ * Invites a guest: a personal link (only its hash is kept) and, unless `send` is false, the email.
+ * Used by the Data rooms page, the company API and HubSpot data room requests.
+ */
+export async function inviteGuest(svc: Svc, a: {
+  room: { id: string; entity_id: string; name: string }; company: { display_name: string; relationship: string; brand_color?: string | null } | null;
+  guest: { name: string; email: string; organisation: string }; days: number; origin: string; invitedBy: string | null; send?: boolean;
+  log: (action: string, detail: Record<string, unknown>) => Promise<unknown>;
+}) {
+  const { token, tokenHash } = newGuestToken();
+  const expires = new Date(Date.now() + a.days * 86_400_000).toISOString();
+  const { data: row, error } = await svc.from('data_room_guests').insert({ room_id: a.room.id, ...a.guest, token_hash: tokenHash, expires_at: expires, invited_by: a.invitedBy }).select('id').single();
+  if (error || !row) return { error: error?.message ?? 'Could not add the guest.' };
+  const link = `${a.origin}/room/${token}`;
+  if (a.send !== false) {
+    await sendMail({
+      to: a.guest.email, subject: `${a.company?.display_name ?? 'Lakeba'}: confidential data room – ${a.room.name}`, brand: brandOf(a.company as never),
+      text: `Hello ${a.guest.name},\n\nYou have been invited to the ${a.room.name} data room. It holds confidential documents for you to review. Please read and agree to the confidentiality terms when you open it.\n\nThis link is personal to you; please don't forward it. It works until ${shortDate.format(new Date(expires))}.`,
+      link, linkLabel: 'Open the data room',
+      footer: 'You receive this because you were invited to a confidential data room. Documents you open are marked with your name.',
+    });
+  }
+  await a.log('data_room_guest_invited', { room_id: a.room.id, guest_id: row.id, email: a.guest.email, name: a.guest.name, days: a.days, emailed: a.send !== false });
+  return { link, guestId: row.id };
 }

@@ -10,6 +10,9 @@ import { sendQueuedPitches } from './press-outreach';
 import { pollPressMailbox } from './press-inbox';
 import { monitorJobs } from './press-coverage';
 import { createSignInLink } from './sign-in-links';
+import { cleanupIntegrations, deliverWebhooks } from './integrations/events';
+import { syncConnections } from './integrations/worker';
+import { processInbound } from './integrations/inbound';
 
 // The notification worker inside the portal process: sends queued pushes and
 // runs the scheduled notifications. Each scheduled job claims a key in
@@ -120,6 +123,7 @@ export async function newsJobs(now = new Date()) {
   for (const p of due ?? []) {
     const { data: claimed } = await svc.from('posts').update({ notified_at: now.toISOString() }).eq('id', p.id).is('notified_at', null).select('id');
     if (!claimed?.length) continue;
+    await svc.from('audit_log').insert({ action: 'news_published', detail: { post_id: p.id, slug: p.slug, title: p.title } });
     await notifyMembers({ kind: 'news', entityId: p.entity_id, title: p.title, body: p.excerpt || 'A new update is available in the investor portal.', link: `/news/${p.slug}`, origin: lastOrigin, pushDetail: p.title });
   }
 
@@ -156,6 +160,7 @@ async function cleanup(now = new Date()) {
   // Ask Lakeba conversations are kept for 12 months (people can reopen them on the Ask page).
   const year = new Date(now.getTime() - 365 * 24 * 3600_000).toISOString();
   await svc.from('ask_exchanges').delete().lt('created_at', year);
+  await cleanupIntegrations(svc);
 }
 
 declare global { var __lakebaNotifyWorker: ReturnType<typeof setInterval> | undefined }
@@ -167,10 +172,12 @@ export function startNotificationWorker() {
   const run = async () => {
     try {
       if (pushEnabled()) await processOutbox();
-      if (ticks % 4 === 0) { await pollMailboxes(lastOrigin); await pollPressMailbox(serviceClient(), lastOrigin); await newsJobs(); await monitorJobs(serviceClient()); } // mailboxes (shareholders@, press@) and news, every minute
+      if (ticks % 4 === 0) { await pollMailboxes(lastOrigin); await pollPressMailbox(serviceClient(), lastOrigin); await newsJobs(); await monitorJobs(serviceClient()); await syncConnections(lastOrigin); } // mailboxes (shareholders@, press@) and news, every minute
       await sendDueAutoReplies(lastOrigin); // automatic replies whose 5-minute undo window has passed
       await newsletterJobs();
       await sendQueuedPitches(serviceClient(), lastOrigin); // press pitches to journalists, a few at a time
+      await deliverWebhooks(lastOrigin); // integrations: outgoing webhooks that are due
+      await processInbound(lastOrigin); // integrations: incoming webhooks just received
       if (ticks++ % 40 === 0) { await proxyReminders(); await votesSummary(); await weeklyDigest(); await cleanup(); }
     } catch (e) {
       console.error('notification worker', (e as Error).message);

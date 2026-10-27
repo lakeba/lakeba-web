@@ -1,0 +1,121 @@
+---
+import Auth from '../layouts/Auth.astro';
+import { OPS } from '../lib/api/spec';
+import { API_SCOPES } from '../lib/api/scopes';
+import { EVENTS, eventScope } from '../lib/integrations/events';
+import { AUTHS, DEFAULT_MAP, KINDS } from '../lib/integrations/inbound';
+
+// The API documentation, public (no sign-in): made from the same list as /api/v1/openapi.json.
+const origin = Astro.locals.site?.central ?? Astro.url.origin;
+const api = `${origin}/api/v1`;
+const tags = [...Map.groupBy(OPS, (o) => o.tag)];
+const methodClass: Record<string, string> = { GET: 'bg-lk-blue/15 text-lk-blue', POST: 'bg-lk-green/15 text-lk-green', PATCH: 'bg-lk-orange/15 text-lk-orange', PUT: 'bg-lk-orange/15 text-lk-orange', DELETE: 'bg-lk-red/15 text-lk-red' };
+const node = `import { createHmac, timingSafeEqual } from 'node:crypto';
+
+// raw: the request body exactly as received (a string); header: Lakeba-Signature
+function fromLakeba(raw, header, secret) {
+  const m = /^t=(\\d+),v1=([0-9a-f]{64})$/.exec(header ?? '');
+  if (!m || Math.abs(Date.now() / 1000 - Number(m[1])) > 300) return false;
+  const expected = createHmac('sha256', secret).update(\`\${m[1]}.\${raw}\`).digest('hex');
+  return timingSafeEqual(Buffer.from(expected), Buffer.from(m[2]));
+}`;
+const python = `import hmac, hashlib, re, time
+
+def from_lakeba(raw: bytes, header: str, secret: str) -> bool:
+    m = re.fullmatch(r"t=(\\d+),v1=([0-9a-f]{64})", header or "")
+    if not m or abs(time.time() - int(m[1])) > 300:
+        return False
+    expected = hmac.new(secret.encode(), f"{m[1]}.".encode() + raw, hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, m[2])`;
+const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at: '2026-11-03T02:14:09Z', company: { code: 'EZF', name: 'Ezifin' }, description: 'An investor lodged proxy votes', data: { meeting_id: '9b2e…', user_id: '51aa…' }, api: `${api}` }, null, 2);
+---
+
+<Auth title="Lakeba portal API" subtitle="For a company’s other tools: its register, investors, documents, news, meetings, Board Q&A, data rooms and newsletter." wide>
+  <nav class="mb-8 flex flex-wrap gap-2 text-sm">{['Start', 'Scopes', 'Requests', 'Endpoints', 'Webhooks', 'Events', 'Incoming', 'Apps', 'Connectors'].map((s) => <a href={`#${s.toLowerCase()}`} class="rounded-full border border-white/10 px-3 py-1 text-white/70 hover:text-white">{s}</a>)}<a href="/api/v1/openapi.json" class="rounded-full border border-white/10 px-3 py-1 text-white/70 hover:text-white">OpenAPI ↗</a></nav>
+  <div class="prose-sm space-y-10 text-sm leading-relaxed text-white/75">
+    <section id="start">
+      <h2 class="font-display text-xl font-bold text-white">Start</h2>
+      <p class="mt-2">A company’s Admins make keys in <strong class="text-white">Admin → Companies → the company → Integrations → API keys</strong>, choosing what each key may do. A key belongs to that company only. Send it as a bearer token:</p>
+      <pre class="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-white">curl {api}/holders?limit=5 \{'\n'}  -H "Authorization: Bearer lk_live_…"</pre>
+      <p class="mt-2">Live keys (lk_live_…) work on the live portal; test keys (lk_test_…) on staging only, which never calls the outside world. Keys can expire, be limited to IP addresses, be rotated (the old one keeps working for 7 days) and be revoked at once. A Lakeba group Admin can switch a company’s integrations off: every key is then refused.</p>
+    </section>
+
+    <section id="scopes">
+      <h2 class="font-display text-xl font-bold text-white">Scopes</h2>
+      <p class="mt-2">“do” includes “view”. <strong class="text-white">people.read</strong> (names, emails, phones, addresses) is never implied: a key without it gets no personal details, and webhooks leave them out.</p>
+      <table class="mt-3 w-full text-left text-xs"><tbody class="divide-y divide-white/5">{API_SCOPES.map((s) => <tr><td class="py-1.5 pr-4 font-mono text-white">{s.key}</td><td class="py-1.5">{s.label}</td></tr>)}</tbody></table>
+    </section>
+
+    <section id="requests">
+      <h2 class="font-display text-xl font-bold text-white">Requests</h2>
+      <ul class="mt-2 list-disc space-y-1 pl-5">
+        <li><strong class="text-white">Lists</strong> return <code>data</code>, <code>total</code> and <code>next_cursor</code>: pass it back as <code>?cursor=</code>. <code>limit</code> is 1–200 (default 50). Some lists take <code>updated_since</code> for changes only.</li>
+        <li><strong class="text-white">Errors</strong> are <code>application/problem+json</code> with <code>status</code>, <code>code</code> (e.g. insufficient_scope, not_found, register_company) and a plain-English <code>detail</code>.</li>
+        <li><strong class="text-white">Rate limit</strong>: 300 requests a minute per key (X-RateLimit-Remaining; 429 with Retry-After beyond).</li>
+        <li><strong class="text-white">Retries</strong>: send <code>Idempotency-Key: &lt;your id&gt;</code> with writes; the same key gets the first answer again for a day.</li>
+        <li><strong class="text-white">Your IDs</strong>: store your system’s ID on holders and investors (PUT …/external-ids/&lt;system&gt;); reads return them as <code>external_ids</code>.</li>
+        <li><strong class="text-white">What stays in the portal</strong>: changes to a company whose holdings come from its register of members go through a register import (an Admin confirms it); documents and news arrive as drafts; opening proxy voting, publishing and sending happen in the portal. Every write is in the audit log as made by the key.</li>
+      </ul>
+    </section>
+
+    <section id="endpoints">
+      <h2 class="font-display text-xl font-bold text-white">Endpoints</h2>
+      <p class="mt-2">All under <span class="font-mono text-white">{api}</span>.</p>
+      {tags.map(([tag, ops]) => (
+        <div class="mt-6">
+          <h3 class="font-semibold text-white">{tag}</h3>
+          <div class="mt-2 space-y-3">{ops.map((o) => (
+            <div class="rounded-xl border border-white/10 p-3">
+              <p class="flex flex-wrap items-center gap-2"><span class:list={['rounded px-2 py-0.5 font-mono text-[11px] font-bold', methodClass[o.method]]}>{o.method}</span><span class="font-mono text-xs text-white">{o.path}</span><span class="rounded-full bg-white/10 px-2 py-0.5 font-mono text-[11px] text-white/60">{o.scope === 'any' ? 'any key' : o.scope}</span></p>
+              <p class="mt-1">{o.summary}</p>
+              {o.query?.length ? <p class="mt-1 text-xs text-white/50">Query: {o.query.map((q) => <span><code class="text-white/70">{q.name}</code>{q.description && ` (${q.description})`}; </span>)}</p> : null}
+              {o.body?.length ? <p class="mt-1 text-xs text-white/50">Body (JSON): {o.body.map((b) => <span><code class="text-white/70">{b.name}</code>{b.required && '*'}{b.description && ` ${b.description}`}; </span>)}</p> : null}
+              {o.bodyType && <p class="mt-1 text-xs text-white/50">Body: {o.bodyType}</p>}
+            </div>
+          ))}</div>
+        </div>
+      ))}
+    </section>
+
+    <section id="webhooks">
+      <h2 class="font-display text-xl font-bold text-white">Outgoing webhooks</h2>
+      <p class="mt-2">Made in Integrations → Outgoing webhooks (or with <code>POST /webhooks</code>). For each event chosen, the portal POSTs JSON to the address, with the headers <code>Lakeba-Event</code>, <code>Lakeba-Event-Id</code> (use it to ignore repeats) and <code>Lakeba-Signature: t=&lt;seconds&gt;,v1=&lt;hex&gt;</code>, the HMAC-SHA256 of <code>"&lt;t&gt;.&lt;body&gt;"</code> with the webhook’s secret. Answer with any 2xx within 15 seconds. Failures are retried after 1, 5 and 15 minutes, 1, 3, 6 and 12 hours, then daily, for about three days; then the webhook is switched off and the company’s Admins are told. Slack and Teams formats send a ready-to-read message instead.</p>
+      <pre class="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-white">{sample}</pre>
+      <p class="mt-3">Checking the signature (Node.js, then Python):</p>
+      <pre class="mt-2 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-white">{node}</pre>
+      <pre class="mt-2 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-white">{python}</pre>
+      <p class="mt-2">Events carry IDs and facts; names and emails only for webhooks allowed personal data. Look the rest up with the API.</p>
+    </section>
+
+    <section id="events">
+      <h2 class="font-display text-xl font-bold text-white">Events</h2>
+      <table class="mt-3 w-full text-left text-xs"><tbody class="divide-y divide-white/5">{Object.entries(EVENTS).map(([k, v]) => <tr><td class="py-1.5 pr-4 font-mono text-white">{k}</td><td class="py-1.5 pr-4">{v}</td><td class="py-1.5 font-mono text-white/45">{eventScope(k)}</td></tr>)}</tbody></table>
+    </section>
+
+    <section id="incoming">
+      <h2 class="font-display text-xl font-bold text-white">Incoming webhooks</h2>
+      <p class="mt-2">Made in Integrations → Incoming webhooks: each gets its own address, <span class="font-mono text-white">{origin}/api/hooks/in/&lt;token&gt;</span>, and a secret. Post JSON (a register: the PDF itself, or JSON with <code>file_base64</code>). The answer is 202 once it’s kept; send <code>Idempotency-Key</code> to make repeats harmless.</p>
+      <ul class="mt-3 list-disc space-y-1 pl-5">{Object.entries(KINDS).map(([k, v]) => <li><strong class="text-white">{v.label}</strong>{v.review ? ' (an Admin reviews each one)' : ''}: {v.help}{DEFAULT_MAP[k] && <span class="text-white/50"> Fields: {Object.keys(DEFAULT_MAP[k]).join(', ')} (paths can be changed, e.g. email=data.contact.email).</span>}</li>)}</ul>
+      <p class="mt-3">How the sender proves it’s them:</p>
+      <ul class="mt-1 list-disc space-y-1 pl-5">{Object.values(AUTHS).map((v) => <li>{v}</li>)}</ul>
+      <pre class="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-white">curl -X POST {origin}/api/hooks/in/&lt;token&gt; \{'\n'}  -H "Authorization: Bearer whin_…" -H "Content-Type: application/pdf" \{'\n'}  --data-binary @register.pdf</pre>
+    </section>
+
+    <section id="apps">
+      <h2 class="font-display text-xl font-bold text-white">Apps (OAuth 2)</h2>
+      <p class="mt-2">An app that works with many companies (Zapier, a marketplace app) is registered once by Lakeba and gets a client ID and secret. A company’s Admin allows it for their company:</p>
+      <ol class="mt-2 list-decimal space-y-1 pl-5">
+        <li>Send the Admin to <span class="font-mono text-white">{origin}/oauth/authorize?response_type=code&amp;client_id=…&amp;redirect_uri=…&amp;scope=investors.view+people.read&amp;state=…</span> (add <code>code_challenge</code> and <code>code_challenge_method=S256</code> for PKCE).</li>
+        <li>They choose the company and allow it; you get <code>?code=…&amp;state=…</code> back.</li>
+        <li>POST <span class="font-mono text-white">{origin}/oauth/token</span> with <code>grant_type=authorization_code</code>, the code, the redirect_uri and your client secret (or the PKCE <code>code_verifier</code>): you get an access token (an hour) and a refresh token (60 days; each refresh gives a new pair).</li>
+        <li>Use the access token like a key. For triggers, subscribe with <code>POST /webhooks</code> (target_url, events) and unsubscribe with <code>DELETE /webhooks/&lt;id&gt;</code>.</li>
+      </ol>
+      <p class="mt-2">The app never gets more than the Admin who allowed it can do. Companies stop apps in Integrations → Apps; individual investors can’t allow apps.</p>
+    </section>
+
+    <section id="connectors">
+      <h2 class="font-display text-xl font-bold text-white">HubSpot and Xero</h2>
+      <p class="mt-2">Built in, no code needed: a company’s Admin presses Connect in Integrations. <strong class="text-white">HubSpot</strong>: investors become contacts and holders become companies, with “Lakeba portal” properties and activity notes; optionally name and phone changes, “Invite to portal” and deal stages come back. <strong class="text-white">Xero</strong>: holders become contacts, paid-up capital is checked against the share capital accounts, and dividends are prepared as draft bills. Shares, holders and the register never come from either tool.</p>
+    </section>
+  </div>
+</Auth>

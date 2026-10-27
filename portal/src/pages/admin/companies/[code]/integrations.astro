@@ -1,0 +1,702 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime, shortDate } from '../../../../lib/format';
+import { LIVE, newApiKey } from '../../../../lib/api/core';
+import { API_SCOPES, grantable, normaliseScopes } from '../../../../lib/api/scopes';
+import { EVENTS, newWebhookSecret, sealSecret, sendTest } from '../../../../lib/integrations/events';
+import { TABS, companyByCode, isCompanyAdmin, type TabKey } from '../../../../lib/integrations/admin';
+import { outboundProblem } from '../../../../lib/outbound';
+import { integrationsReady } from '../../../../lib/secret-box';
+import { connectionOf, PROVIDERS, startConnect, type Provider } from '../../../../lib/integrations/connections';
+import { hubspotSettings } from '../../../../lib/integrations/hubspot';
+import { equityAccounts, prepareDividend, registerPaidUp, xeroContext, xeroSettings } from '../../../../lib/integrations/xero';
+import { inviteGuest } from '../../../../lib/data-rooms';
+import { brandOf } from '../../../../lib/brand';
+import { AUTHS, DEFAULT_MAP, KINDS, newInboundSecret, newInboundToken } from '../../../../lib/integrations/inbound';
+import { addInvestor } from '../../../../lib/people';
+import { DOCUMENT_CATEGORIES } from '../../../../lib/integrations/actions';
+import { newClientCredentials, revokeApp } from '../../../../lib/integrations/oauth';
+
+// A company's integrations: API keys, outgoing webhooks, incoming webhooks, the
+// HubSpot and Xero connections, apps it allowed, and usage. Its Admins (and the
+// group's) run them; a group Admin can switch them all off for the company.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const company = await companyByCode(svc, Astro.params.code ?? '');
+if (!company || !isCompanyAdmin(access, company.id)) return new Response('Not found', { status: 404 });
+const code = company.code;
+const userId = Astro.locals.user!.id;
+const tab = (TABS.find((t) => t.key === Astro.url.searchParams.get('tab'))?.key ?? 'overview') as TabKey;
+const here = (t: TabKey, extra = '') => `/admin/companies/${code}/integrations?tab=${t}${extra}`;
+const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { company: code, ...detail } });
+const origin = Astro.locals.site?.central ?? Astro.url.origin;
+let error = '', notice = Astro.url.searchParams.get('notice') ?? '';
+let madeKey: string | null = null, madeSecret: string | null = null, madeApp: { clientId: string; secret: string } | null = null;
+const mayScopes = grantable(access, company.id);
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const id = field(form, 'id');
+  if (intent === 'switch' && access.groupAdmin) {
+    const on = field(form, 'on') === 'yes';
+    await svc.from('entities').update({ integrations_enabled: on }).eq('id', company.id).throwOnError();
+    await log(on ? 'integrations_switched_on' : 'integrations_switched_off', {});
+    return Astro.redirect(here('overview', `&notice=${encodeURIComponent(on ? 'Integrations are on again.' : 'Integrations are off: keys are refused, webhooks wait, HubSpot and Xero pause.')}`), 303);
+  } else if (intent === 'create-key') {
+    const name = field(form, 'name').slice(0, 80);
+    const scopes = normaliseScopes(form.getAll('scope').map(String)).filter((s) => mayScopes.includes(s));
+    const days = Number(field(form, 'expires_days')) || 0;
+    const ips = field(form, 'ips').split(/[\s,]+/).filter(Boolean);
+    const allCompanies = access.groupAdmin && company.relationship === 'group' && form.get('all_companies') === 'on';
+    if (!name) error = 'Give the key a name, e.g. “HubSpot sync”.';
+    else if (!scopes.length) error = 'Tick at least one thing the key may do.';
+    else if (ips.some((ip) => !/^[0-9a-f.:]{3,45}$/i.test(ip))) error = 'List IP addresses only (one per line), or leave it empty.';
+    else {
+      const k = newApiKey();
+      await svc.from('api_keys').insert({ entity_id: company.id, name, prefix: k.prefix, key_hash: k.hash, scopes, all_companies: allCompanies, allowed_ips: ips, expires_at: days > 0 ? new Date(Date.now() + days * 86_400_000).toISOString() : null, created_by: userId }).throwOnError();
+      await log('admin_created_api_key', { name, scopes, all_companies: allCompanies, expires_days: days || null });
+      madeKey = k.key;
+    }
+  } else if (intent === 'rotate-key' || intent === 'revoke-key') {
+    const { data: old } = await svc.from('api_keys').select('id, name, scopes, all_companies, allowed_ips, expires_at').eq('id', id).eq('entity_id', company.id).eq('kind', 'key').is('revoked_at', null).maybeSingle();
+    if (!old) error = 'That key was not found.';
+    else if (intent === 'revoke-key') {
+      await svc.from('api_keys').update({ revoked_at: new Date().toISOString() }).eq('id', old.id);
+      await log('admin_revoked_api_key', { name: old.name });
+      notice = `“${old.name}” was revoked: it stops working straight away.`;
+    } else {
+      // The old key keeps working for 7 days, so the tool can be switched over.
+      const k = newApiKey();
+      await svc.from('api_keys').insert({ entity_id: company.id, name: old.name, prefix: k.prefix, key_hash: k.hash, scopes: old.scopes, all_companies: old.all_companies, allowed_ips: old.allowed_ips, expires_at: old.expires_at, created_by: userId }).throwOnError();
+      const ends = new Date(Date.now() + 7 * 86_400_000).toISOString();
+      await svc.from('api_keys').update({ name: `${old.name} (old, until ${ends.slice(0, 10)})`, expires_at: old.expires_at && old.expires_at < ends ? old.expires_at : ends }).eq('id', old.id);
+      await log('admin_rotated_api_key', { name: old.name });
+      madeKey = k.key;
+      notice = `A new key for “${old.name}”. The old one keeps working for 7 days.`;
+    }
+  } else if (intent === 'create-webhook') {
+    const name = field(form, 'name').slice(0, 80);
+    const url = field(form, 'url');
+    const events = form.getAll('event').map(String).filter((e) => e === '*' || e in EVENTS);
+    const format = ['json', 'slack', 'teams'].includes(field(form, 'format')) ? field(form, 'format') : 'json';
+    const personal = form.get('personal_data') === 'on' && mayScopes.includes('people.read');
+    const problem = outboundProblem(url);
+    if (!integrationsReady()) error = 'Integrations aren’t set up on this server yet (INTEGRATIONS_KEY). Ask Lakeba.';
+    else if (!name) error = 'Give the webhook a name, e.g. “Slack #investors”.';
+    else if (problem) error = problem;
+    else if (!events.length) error = 'Choose the events to send (or “All events”).';
+    else {
+      const secret = newWebhookSecret();
+      await svc.from('webhook_endpoints').insert({ entity_id: company.id, name, url, events: events.includes('*') ? ['*'] : events, format, personal_data: personal, secret_enc: sealSecret(secret), created_by: userId }).throwOnError();
+      await log('admin_created_webhook', { name, url, events, format, personal_data: personal });
+      madeSecret = secret;
+    }
+  } else if (['test-webhook', 'pause-webhook', 'resume-webhook', 'delete-webhook', 'personal-on', 'personal-off'].includes(intent)) {
+    const { data: ep } = await svc.from('webhook_endpoints').select('id, entity_id, name, url, format, secret_enc, personal_data, active').eq('id', id).eq('entity_id', company.id).maybeSingle();
+    if (!ep) error = 'That webhook was not found.';
+    else if (intent === 'test-webhook') {
+      try {
+        const status = await sendTest(svc, ep, company, origin);
+        if (status >= 200 && status < 300) notice = `Test sent to “${ep.name}”: it answered ${status}.`;
+        else error = `Test sent to “${ep.name}”, but it answered ${status}.`;
+      } catch (e) { error = `The test couldn’t be sent: ${(e as Error).message}`; }
+    } else if (intent === 'delete-webhook') {
+      await svc.from('webhook_endpoints').delete().eq('id', ep.id);
+      await log('admin_deleted_webhook', { name: ep.name });
+      notice = `Deleted “${ep.name}”.`;
+    } else if (intent === 'personal-on' || intent === 'personal-off') {
+      if (intent === 'personal-on' && !mayScopes.includes('people.read')) error = 'You can’t share personal data from this company.';
+      else { await svc.from('webhook_endpoints').update({ personal_data: intent === 'personal-on' }).eq('id', ep.id); await log('admin_changed_webhook', { name: ep.name, personal_data: intent === 'personal-on' }); notice = intent === 'personal-on' ? `“${ep.name}” now receives names and emails.` : `“${ep.name}” no longer receives names and emails.`; }
+    } else {
+      const on = intent === 'resume-webhook';
+      await svc.from('webhook_endpoints').update({ active: on, disabled_reason: on ? null : 'Paused by an admin.', failures: 0 }).eq('id', ep.id);
+      if (on) await svc.from('webhook_deliveries').update({ next_attempt_at: new Date().toISOString() }).eq('endpoint_id', ep.id).in('status', ['pending', 'failed']);
+      await log(on ? 'admin_resumed_webhook' : 'admin_paused_webhook', { name: ep.name });
+      notice = on ? `“${ep.name}” is on again; waiting events go out now.` : `“${ep.name}” is paused; events wait until it’s switched back on.`;
+    }
+  } else if (intent === 'connect' && (field(form, 'provider') as Provider) in PROVIDERS) {
+    const provider = field(form, 'provider') as Provider;
+    if (!PROVIDERS[provider].ready()) error = `${PROVIDERS[provider].name} isn’t set up on this server yet (Lakeba’s ${PROVIDERS[provider].name} app). Ask Lakeba.`;
+    else if (!integrationsReady()) error = 'Integrations aren’t set up on this server yet (INTEGRATIONS_KEY). Ask Lakeba.';
+    else return Astro.redirect(await startConnect(svc, company.id, provider, userId, origin), 303);
+  } else if (['disconnect', 'sync-now', 'pause-sync', 'resume-sync'].includes(intent) && (field(form, 'provider') as Provider) in PROVIDERS) {
+    const provider = field(form, 'provider') as Provider;
+    const c = await connectionOf(svc, company.id, provider);
+    if (!c) error = 'Not connected.';
+    else if (intent === 'disconnect') {
+      await svc.from('connections').update({ status: 'disconnected', tokens_enc: null, token_expires_at: null }).eq('id', c.id);
+      await log('admin_disconnected_integration', { provider });
+      notice = `${PROVIDERS[provider].name} is disconnected. Nothing was deleted there; connect again any time.`;
+    } else if (intent === 'sync-now') {
+      await svc.from('connections').update({ cursor: { ...c.cursor, sync_now: true } }).eq('id', c.id);
+      notice = 'Syncing within a minute.';
+    } else {
+      await svc.from('connections').update({ settings: { ...c.settings, paused: intent === 'pause-sync' } }).eq('id', c.id);
+      await log(intent === 'pause-sync' ? 'admin_paused_integration' : 'admin_resumed_integration', { provider });
+      notice = intent === 'pause-sync' ? `${PROVIDERS[provider].name} sync is paused.` : `${PROVIDERS[provider].name} sync is on again.`;
+    }
+  } else if (intent === 'hubspot-settings') {
+    const c = await connectionOf(svc, company.id, 'hubspot');
+    if (c) {
+      const next = { ...c.settings, contact_details: field(form, 'contact_details') === 'hubspot' ? 'hubspot' : 'portal', invites: form.get('invites') === 'on', notes: form.get('notes') === 'on', deal_stage: field(form, 'deal_stage').slice(0, 80), deal_room_id: field(form, 'deal_room_id') };
+      await svc.from('connections').update({ settings: next, cursor: { ...c.cursor, sync_now: true } }).eq('id', c.id);
+      await log('admin_saved_integration_settings', { provider: 'hubspot', settings: { contact_details: next.contact_details, invites: next.invites, notes: next.notes, deal_stage: next.deal_stage } });
+      notice = 'Saved. HubSpot syncs with these choices within a minute.';
+    }
+  } else if (intent === 'xero-settings') {
+    const c = await connectionOf(svc, company.id, 'xero');
+    if (c) {
+      const tenants = (c.settings.tenants as { id: string; name: string }[] | undefined) ?? [];
+      const tenant = tenants.find((t) => t.id === field(form, 'tenant_id'));
+      const next = { ...c.settings, capital_accounts: form.getAll('capital_account').map(String).slice(0, 10), contacts: form.get('contacts') === 'on', ...(tenant ? { tenant_id: tenant.id } : {}) };
+      await svc.from('connections').update({ settings: next, cursor: { ...c.cursor, sync_now: true }, ...(tenant ? { account_id: tenant.id, account_name: tenant.name } : {}) }).eq('id', c.id);
+      await log('admin_saved_integration_settings', { provider: 'xero', settings: { capital_accounts: next.capital_accounts, contacts: next.contacts } });
+      notice = 'Saved. Xero syncs with these choices within a minute.';
+    }
+  } else if (intent === 'xero-dividend') {
+    const c = await connectionOf(svc, company.id, 'xero');
+    const perShare = Number(field(form, 'per_share'));
+    const classId = field(form, 'share_class_id');
+    const { data: cls } = await svc.from('share_classes').select('id, code').eq('id', classId).eq('entity_id', company.id).maybeSingle();
+    if (!c || c.status !== 'connected') error = 'Connect Xero first.';
+    else if (!cls) error = 'Choose the share class.';
+    else if (!/^\d{4}-\d{2}-\d{2}$/.test(field(form, 'record_date'))) error = 'Choose the record date.';
+    else if (!(perShare > 0) || perShare > 1000) error = 'Enter the amount per share, e.g. 0.05.';
+    else if (!field(form, 'account_code')) error = 'Choose the Xero account for the bills.';
+    else {
+      const { data: run } = await svc.from('dividend_runs').insert({ entity_id: company.id, share_class_id: cls.id, record_date: field(form, 'record_date'), per_share: perShare, account_code: field(form, 'account_code'), description: field(form, 'description') || 'Dividend', created_by: userId }).select('*').single().throwOnError();
+      try {
+        const r = await prepareDividend(svc, c, company, origin, { ...run!, per_share: Number(run!.per_share) });
+        await log('admin_prepared_dividend', { run_id: run!.id, share_class: cls.code, record_date: run!.record_date, per_share: perShare, bills: r.created, total: r.total });
+        if (r.failed) error = `${r.created} draft bills were made in Xero (total $${r.total.toLocaleString('en-AU', { minimumFractionDigits: 2 })}); ${r.failed} couldn’t be: see the list below.`;
+        else notice = `${r.created} draft bills were made in Xero, total $${r.total.toLocaleString('en-AU', { minimumFractionDigits: 2 })}. Review and approve them in Xero.`;
+      } catch (e) {
+        await svc.from('dividend_runs').update({ status: 'failed', results: [{ error: (e as Error).message }] }).eq('id', run!.id);
+        error = `Xero refused it: ${(e as Error).message}`;
+      }
+    }
+  } else if (intent === 'resolve-issue' || intent === 'approve-request') {
+    const { data: issue } = await svc.from('connection_issues').select('id, kind, detail, summary, connections!inner(entity_id)').eq('id', id).eq('connections.entity_id', company.id).is('resolved_at', null).maybeSingle();
+    if (!issue) error = 'Already done.';
+    else {
+      if (intent === 'approve-request' && issue.kind === 'data_room_request') {
+        const d = issue.detail as { email: string; name: string; organisation: string; room_id: string };
+        const { data: room } = await svc.from('data_rooms').select('id, entity_id, name, closed_at').eq('id', d.room_id).eq('entity_id', company.id).maybeSingle();
+        if (!room || room.closed_at) { error = 'That data room is closed or no longer exists.'; }
+        else {
+          const r = await inviteGuest(svc, { room, company, guest: { name: d.name || d.email, email: d.email, organisation: d.organisation ?? '' }, days: 30, origin, invitedBy: userId, log });
+          if ('error' in r) error = r.error ?? 'Couldn’t invite them.';
+          else notice = `${d.email} was invited to “${room.name}”.`;
+        }
+      }
+      if (!error) { await svc.from('connection_issues').update({ resolved_at: new Date().toISOString() }).eq('id', issue.id); if (!notice) notice = 'Marked as done.'; }
+    }
+  } else if (intent === 'create-inbound') {
+    const name = field(form, 'name').slice(0, 80);
+    const kind = field(form, 'kind'), auth = field(form, 'auth');
+    const map: Record<string, string> = {};
+    for (const line of field(form, 'map').split(/\n/)) { const [k, v] = line.split('=').map((x) => x?.trim()); if (k && v && /^[a-z_]+$/.test(k) && /^[A-Za-z0-9_.]{1,120}$/.test(v)) map[k] = v; }
+    const settings: Record<string, unknown> = { map };
+    if (kind === 'data_room.request') settings.room_id = field(form, 'room_id');
+    if (kind === 'person.add') settings.invite = form.get('invite') === 'on';
+    if (kind === 'document.signed') { settings.category = DOCUMENT_CATEGORIES.includes(field(form, 'category')) ? field(form, 'category') : 'governance'; settings.audience = field(form, 'audience') === 'all_investors' ? 'all_investors' : 'board'; }
+    if (!integrationsReady()) error = 'Integrations aren’t set up on this server yet (INTEGRATIONS_KEY). Ask Lakeba.';
+    else if (!name) error = 'Give it a name, e.g. “Website sign-up form”.';
+    else if (!(kind in KINDS) || !(auth in AUTHS)) error = 'Choose what it receives and how the sender signs it.';
+    else if (kind === 'data_room.request' && !settings.room_id) error = 'Choose the data room.';
+    else {
+      const secret = newInboundSecret();
+      await svc.from('inbound_endpoints').insert({ entity_id: company.id, name, kind, auth, token: newInboundToken(), secret_enc: sealSecret(secret), settings, created_by: userId }).throwOnError();
+      await log('admin_created_inbound_webhook', { name, kind, auth });
+      madeSecret = secret;
+    }
+  } else if (intent === 'delete-inbound' || intent === 'toggle-inbound') {
+    const { data: ep } = await svc.from('inbound_endpoints').select('id, name, active').eq('id', id).eq('entity_id', company.id).maybeSingle();
+    if (ep && intent === 'delete-inbound') { await svc.from('inbound_endpoints').delete().eq('id', ep.id); await log('admin_deleted_inbound_webhook', { name: ep.name }); notice = `Deleted “${ep.name}”: its address stops working.`; }
+    else if (ep) { await svc.from('inbound_endpoints').update({ active: !ep.active }).eq('id', ep.id); notice = ep.active ? `“${ep.name}” is off: messages to it are refused.` : `“${ep.name}” is on again.`; }
+  } else if (['approve-message', 'reject-message', 'retry-message'].includes(intent)) {
+    const { data: m } = await svc.from('inbound_messages').select('id, kind, status, result, summary').eq('id', id).eq('entity_id', company.id).maybeSingle();
+    const r = (m?.result ?? {}) as Record<string, string | boolean>;
+    if (!m) error = 'Not found.';
+    else if (intent === 'retry-message' && m.status === 'failed') { await svc.from('inbound_messages').update({ status: 'received', attempts: 0, error: null }).eq('id', m.id); notice = 'Trying again within a minute.'; }
+    else if (m.status !== 'needs_review') error = 'Already handled.';
+    else if (intent === 'reject-message') { await svc.from('inbound_messages').update({ status: 'rejected', reviewed_by: userId, reviewed_at: new Date().toISOString() }).eq('id', m.id); await log('admin_rejected_inbound', { message_id: m.id, kind: m.kind }); notice = 'Rejected: nothing was changed.'; }
+    else if (m.kind === 'register.pdf') return Astro.redirect(`/admin/import/register?company=${code}&received=${m.id}`, 303);
+    else {
+      let done = '';
+      if (m.kind === 'person.add') {
+        const res = await addInvestor(svc, { email: String(r.email), firstName: String(r.first_name ?? ''), lastName: String(r.last_name ?? ''), holderId: String(r.holder_id), invite: r.invite === true, origin, brand: brandOf(company as never), log: (action, detail) => log(action, { ...detail, message_id: m.id }) });
+        if ('error' in res) error = res.error; else done = res.existing ? `${r.email} already had an account; now linked to the holder.` : res.invited ? `${r.email} was added and invited.` : `${r.email} was added (not invited yet).`;
+      } else if (m.kind === 'data_room.request') {
+        const { data: room } = await svc.from('data_rooms').select('id, entity_id, name, closed_at').eq('id', String(r.room_id)).eq('entity_id', company.id).maybeSingle();
+        if (!room || room.closed_at) error = 'That data room is closed or no longer exists.';
+        else { const res = await inviteGuest(svc, { room, company, guest: { name: String(r.name), email: String(r.email), organisation: String(r.organisation ?? '') }, days: 30, origin, invitedBy: userId, log }); if ('error' in res) error = res.error ?? 'Couldn’t invite them.'; else done = `${r.email} was invited to “${room.name}”.`; }
+      }
+      if (done) { await svc.from('inbound_messages').update({ status: 'approved', reviewed_by: userId, reviewed_at: new Date().toISOString() }).eq('id', m.id); notice = done; }
+    }
+  } else if (intent === 'stop-app') {
+    const { data: cl } = await svc.from('oauth_clients').select('id, name').eq('id', id).maybeSingle();
+    if (cl) { await revokeApp(svc, company.id, cl.id); await log('admin_stopped_app', { client: cl.name }); notice = `${cl.name} is stopped for ${company.display_name}: its access ended at once and its webhooks were removed.`; }
+  } else if (intent === 'register-app' && access.groupAdmin) {
+    const name = field(form, 'name').slice(0, 80);
+    const uris = field(form, 'redirect_uris').split(/\s+/).filter(Boolean);
+    const scopes = normaliseScopes(form.getAll('scope').map(String));
+    const website = field(form, 'website');
+    if (name.length < 2) error = 'Give the app its name, as companies will see it.';
+    else if (!uris.length || uris.some((u) => !/^https:\/\/[^\s]+$/.test(u) && !/^http:\/\/(127\.0\.0\.1|localhost)(:\d+)?\//.test(u))) error = 'List the app’s return addresses (https://…), one per line.';
+    else if (!scopes.length) error = 'Tick what the app may ask for.';
+    else if (website && !/^https?:\/\//.test(website)) error = 'The website must start with https://';
+    else {
+      const cred = newClientCredentials();
+      await svc.from('oauth_clients').insert({ client_id: cred.clientId, name, description: field(form, 'description').slice(0, 300), website: website || null, redirect_uris: uris, secret_hash: cred.secretHash, scopes_allowed: scopes, created_by: userId }).throwOnError();
+      await log('admin_registered_app', { name, scopes });
+      madeApp = { clientId: cred.clientId, secret: cred.secret };
+    }
+  } else if (intent === 'retire-app' && access.groupAdmin) {
+    const { data: cl } = await svc.from('oauth_clients').select('id, name').eq('id', id).maybeSingle();
+    if (cl) {
+      const { data: ks } = await svc.from('api_keys').select('entity_id').eq('client_id', cl.id);
+      for (const e of new Set((ks ?? []).map((k) => k.entity_id))) await revokeApp(svc, e, cl.id);
+      await svc.from('oauth_clients').update({ revoked_at: new Date().toISOString() }).eq('id', cl.id);
+      await log('admin_retired_app', { name: cl.name });
+      notice = `${cl.name} was retired: no company can use it any more.`;
+    }
+  } else if (intent === 'redeliver') {
+    const { data: d } = await svc.from('webhook_deliveries').select('id, webhook_endpoints!inner(entity_id)').eq('id', Number(id)).eq('webhook_endpoints.entity_id', company.id).maybeSingle();
+    if (d) { await svc.from('webhook_deliveries').update({ status: 'pending', attempts: 0, next_attempt_at: new Date().toISOString() }).eq('id', d.id); notice = 'Queued again: it goes out within a minute.'; }
+  }
+}
+
+// ---------- What the tabs show ----------
+const { data: keys } = await svc.from('api_keys').select('id, name, kind, prefix, scopes, all_companies, allowed_ips, expires_at, last_used_at, created_at, revoked_at, client_id').eq('entity_id', company.id).order('created_at', { ascending: false });
+const liveKeys = (keys ?? []).filter((k) => !k.revoked_at && k.kind === 'key');
+const { data: hooks } = await svc.from('webhook_endpoints').select('id, name, url, events, format, personal_data, active, disabled_reason, failures, created_at, created_by_key').eq('entity_id', company.id).order('created_at');
+const { data: deliveries } = tab === 'webhooks' && hooks?.length
+  ? await svc.from('webhook_deliveries').select('id, endpoint_id, status, attempts, last_status, last_error, delivered_at, created_at, next_attempt_at, integration_events(type, occurred_at)').in('endpoint_id', hooks.map((h) => h.id)).order('id', { ascending: false }).limit(60)
+  : { data: [] };
+const { data: usage } = tab === 'usage' || tab === 'overview' ? await svc.from('api_usage').select('key_id, day, endpoint, requests, errors').in('key_id', (keys ?? []).map((k) => k.id).concat('00000000-0000-0000-0000-000000000000')).gte('day', new Date(Date.now() - 30 * 86_400_000).toISOString().slice(0, 10)) : { data: [] };
+const keyName = new Map((keys ?? []).map((k) => [k.id, k.name]));
+const usageByKey = Map.groupBy(usage ?? [], (u) => u.key_id);
+const sum = (rows: { requests: number; errors: number }[]) => rows.reduce((a, r) => ({ requests: a.requests + r.requests, errors: a.errors + r.errors }), { requests: 0, errors: 0 });
+const total30 = sum(usage ?? []);
+const scopeAreas = Map.groupBy(API_SCOPES, (s) => s.area);
+const hubspot = await connectionOf(svc, company.id, 'hubspot');
+const xero = await connectionOf(svc, company.id, 'xero');
+const conn = tab === 'hubspot' ? hubspot : tab === 'xero' ? xero : null;
+const { data: issues } = conn ? await svc.from('connection_issues').select('id, kind, summary, created_at').eq('connection_id', conn.id).is('resolved_at', null).order('created_at', { ascending: false }).limit(50) : { data: [] };
+const { data: linked } = conn ? await svc.from('external_links').select('local_type').eq('entity_id', company.id).eq('system', conn.provider) : { data: [] };
+const { data: rooms } = tab === 'hubspot' || tab === 'incoming' ? await svc.from('data_rooms').select('id, name').eq('entity_id', company.id).is('closed_at', null) : { data: [] };
+const { data: classes } = tab === 'xero' ? await svc.from('share_classes').select('id, code, name').eq('entity_id', company.id).order('code') : { data: [] };
+const { data: runs } = tab === 'xero' ? await svc.from('dividend_runs').select('id, record_date, per_share, description, status, holders, total, created_at, results, share_classes(code)').eq('entity_id', company.id).order('created_at', { ascending: false }).limit(10) : { data: [] };
+let equity: { id: string; code: string; name: string }[] = [];
+let equityError = '';
+if (tab === 'xero' && xero?.status === 'connected') {
+  try { equity = await equityAccounts(await xeroContext(svc, xero, company, origin)); } catch (e) { equityError = (e as Error).message; }
+}
+const { data: inEndpoints } = tab === 'incoming' ? await svc.from('inbound_endpoints').select('id, name, kind, auth, token, settings, active, created_at, last_received_at').eq('entity_id', company.id).order('created_at') : { data: [] };
+const { data: inMessages } = tab === 'incoming' || tab === 'overview' ? await svc.from('inbound_messages').select('id, endpoint_id, kind, source, status, summary, error, received_at, processed_at').eq('entity_id', company.id).order('received_at', { ascending: false }).limit(60) : { data: [] };
+const reviewCount = (inMessages ?? []).filter((m) => m.status === 'needs_review').length;
+const statusClass = (s: string) => (s === 'done' || s === 'approved' ? 'bg-lk-green/15 text-lk-green' : s === 'needs_review' ? 'bg-lk-orange/15 text-lk-orange' : s === 'failed' ? 'bg-lk-red/15 text-lk-red' : 'bg-white/10 text-white/60');
+const { data: appKeys } = tab === 'apps' ? await svc.from('api_keys').select('client_id, scopes, created_at, last_used_at, revoked_at, refresh_expires_at').eq('entity_id', company.id).eq('kind', 'oauth').is('revoked_at', null) : { data: [] };
+const { data: clients } = tab === 'apps' ? await svc.from('oauth_clients').select('id, client_id, name, description, website, redirect_uris, scopes_allowed, created_at, revoked_at').order('created_at') : { data: [] };
+const allowed = [...Map.groupBy((appKeys ?? []).filter((k) => k.refresh_expires_at && new Date(k.refresh_expires_at) > new Date()), (k) => k.client_id!)].map(([cid, ks]) => ({ client: (clients ?? []).find((c) => c.id === cid), scopes: [...new Set(ks.flatMap((k) => k.scopes))], since: ks.map((k) => k.created_at).sort()[0], used: ks.map((k) => k.last_used_at).filter(Boolean).sort().at(-1) }));
+const paidUp = tab === 'xero' ? await registerPaidUp(svc, company.id) : 0;
+const hsSet = hubspotSettings(hubspot?.settings ?? {});
+const xeSet = xeroSettings(xero?.settings ?? {});
+const capital = xero?.cursor?.capital_check as { as_at: string; register: number; xero: number; difference: number; accounts: string[] } | undefined;
+const money = (n: number) => `$${n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const deliveryClass = (s: string) => (s === 'delivered' ? 'bg-lk-green/15 text-lk-green' : s === 'pending' ? 'bg-white/10 text-white/60' : 'bg-lk-red/15 text-lk-red');
+---
+
+<Admin title={`${company.display_name} integrations`}>
+  <a href={`/admin/companies/${code}`} class="text-sm text-white/50 hover:text-white">← {company.display_name}</a>
+  <div class="mt-2 flex flex-wrap items-center justify-between gap-3">
+    <h1 class="font-display text-3xl font-bold">Integrations</h1>
+    <a href="/developers" target="_blank" class="btn-ghost text-sm">API documentation ↗</a>
+  </div>
+  <p class="mt-1 max-w-3xl text-sm text-white/55">Connect {company.display_name}’s other tools to the portal: HubSpot and Xero, your own systems through the API, and webhooks that tell other tools when something happens. Everything here is for {company.display_name} only.</p>
+  {!company.integrations_enabled && <div class="mt-4"><Alert tone="error">Integrations are switched off for {company.display_name}: keys are refused, webhooks wait and HubSpot and Xero are paused.{access.groupAdmin ? ' Switch them back on below.' : ' A Lakeba group Admin can switch them back on.'}</Alert></div>}
+  {!LIVE && <div class="mt-4"><Alert>Staging: keys made here are test keys (lk_test_…) and only work on staging. Webhooks, HubSpot and Xero only reach staging’s own test stand-ins.</Alert></div>}
+
+  <nav class="mt-6 flex flex-wrap gap-1 border-b border-white/10" aria-label="Integrations">
+    {TABS.map((t) => <a href={here(t.key)} class:list={['-mb-px rounded-t-lg border-b-2 px-3 py-2 text-sm', t.key === tab ? 'border-lk-blue font-semibold text-white' : 'border-transparent text-white/55 hover:text-white']} aria-current={t.key === tab ? 'page' : undefined}>{t.label}</a>)}
+  </nav>
+  <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
+
+  {madeKey && (
+    <section class="card mt-6 border border-lk-green/30">
+      <h2 class="font-display text-lg font-bold">Your new API key</h2>
+      <p class="mt-1 text-sm text-white/60">Copy it now: it isn’t shown again. Keep it on a server or in the tool’s secure settings; never in a web page or an email.</p>
+      <pre class="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-sm text-white" data-secret>{madeKey}</pre>
+    </section>
+  )}
+  {madeSecret && (
+    <section class="card mt-6 border border-lk-green/30">
+      <h2 class="font-display text-lg font-bold">{tab === 'incoming' ? 'The sender’s secret' : 'The webhook’s signing secret'}</h2>
+      <p class="mt-1 text-sm text-white/60">Copy it now: it isn’t shown again. {tab === 'incoming' ? 'Put it in the sending tool: it signs each message with it (or sends it as the Bearer secret), so the portal knows the message is really from it.' : 'The receiving tool uses it to check that each message really comes from the portal (the Lakeba-Signature header, see the documentation).'}</p>
+      <pre class="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-sm text-white" data-secret>{madeSecret}</pre>
+    </section>
+  )}
+
+  {tab === 'overview' && (
+    <div class="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+      <a href={here('keys')} class="card block hover:border-lk-blue/40"><p class="text-xs uppercase tracking-widest text-white/40">API keys</p><p class="mt-2 font-display text-3xl font-bold">{liveKeys.length}</p><p class="mt-1 text-sm text-white/55">{total30.requests.toLocaleString('en-AU')} requests in 30 days{total30.errors ? `, ${total30.errors} refused` : ''}</p></a>
+      <a href={here('webhooks')} class="card block hover:border-lk-blue/40"><p class="text-xs uppercase tracking-widest text-white/40">Outgoing webhooks</p><p class="mt-2 font-display text-3xl font-bold">{(hooks ?? []).filter((h) => h.active).length}</p><p class="mt-1 text-sm text-white/55">{(hooks ?? []).filter((h) => !h.active).length ? `${(hooks ?? []).filter((h) => !h.active).length} switched off` : 'Tell other tools when something happens'}</p></a>
+      <a href={here('incoming')} class="card block hover:border-lk-blue/40"><p class="text-xs uppercase tracking-widest text-white/40">Incoming webhooks</p><p class="mt-2 font-display text-3xl font-bold">{reviewCount}</p><p class="mt-1 text-sm text-white/55">{reviewCount ? 'waiting for your review' : 'nothing waiting for review'}</p></a>
+      {(['hubspot', 'xero'] as Provider[]).map((p) => { const c = p === 'hubspot' ? hubspot : xero; return (
+        <a href={here(p)} class="card block hover:border-lk-blue/40"><p class="text-xs uppercase tracking-widest text-white/40">{PROVIDERS[p].name}</p><p class="mt-2 font-display text-xl font-bold">{c?.status === 'connected' ? (c.settings.paused ? 'Paused' : 'Connected') : c?.status === 'error' ? 'Needs reconnecting' : 'Not connected'}</p><p class="mt-1 text-sm text-white/55">{c?.status === 'connected' ? `${c.account_name}${c.last_sync_at ? ` · synced ${dateTime.format(new Date(c.last_sync_at))}` : ''}` : p === 'hubspot' ? 'Investors and holders in your CRM' : 'Contacts, share capital check, dividends'}</p></a>
+      ); })}
+      {access.groupAdmin && (
+        <section class="card md:col-span-2 xl:col-span-3">
+          <h2 class="font-display text-lg font-bold">Switch for {company.display_name}</h2>
+          <p class="mt-1 text-sm text-white/55">Group Admins only. Off: every key is refused at once, webhooks wait, HubSpot and Xero pause. Nothing is deleted.</p>
+          <form method="post" class="mt-4"><input type="hidden" name="on" value={company.integrations_enabled ? 'no' : 'yes'} />
+            <button name="intent" value="switch" class:list={['btn-ghost', company.integrations_enabled && '!border-lk-red/40 !text-lk-red']} onclick={company.integrations_enabled ? `return confirm('Switch off all integrations for ${company.display_name}?')` : undefined}>{company.integrations_enabled ? 'Switch integrations off' : 'Switch integrations on'}</button>
+          </form>
+        </section>
+      )}
+    </div>
+  )}
+
+  {tab === 'keys' && (
+    <>
+      <section class="card mt-6 overflow-hidden !p-0">
+        <table class="w-full text-left text-sm">
+          <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-3 font-medium">Key</th><th class="px-5 py-3 font-medium">May</th><th class="px-5 py-3 font-medium">Last used</th><th class="px-5 py-3"></th></tr></thead>
+          <tbody class="divide-y divide-white/5">
+            {(keys ?? []).filter((k) => k.kind === 'key').map((k) => {
+              const expired = k.expires_at && new Date(k.expires_at) < new Date();
+              return (
+                <tr class:list={[(k.revoked_at || expired) && 'opacity-50']}>
+                  <td class="px-5 py-3 align-top"><p class="font-medium text-white">{k.name}</p><p class="font-mono text-xs text-white/40">{k.prefix}…</p>
+                    <p class="text-xs text-white/40">{k.revoked_at ? `Revoked ${shortDate.format(new Date(k.revoked_at))}` : expired ? 'Expired' : k.expires_at ? `Until ${shortDate.format(new Date(k.expires_at))}` : 'No expiry'}{k.all_companies && ' · all companies'}{k.allowed_ips.length > 0 && ` · from ${k.allowed_ips.join(', ')}`}</p></td>
+                  <td class="px-5 py-3 align-top text-xs text-white/60">{k.scopes.map((s) => <span class:list={['mb-1 mr-1 inline-block rounded-full px-2 py-0.5', s === 'people.read' ? 'bg-lk-orange/15 text-lk-orange' : 'bg-white/10']}>{s}</span>)}</td>
+                  <td class="px-5 py-3 align-top text-xs text-white/50">{k.last_used_at ? dateTime.format(new Date(k.last_used_at)) : 'Never'}<br />{sum(usageByKey.get(k.id) ?? []).requests.toLocaleString('en-AU')} requests in 30 days</td>
+                  <td class="px-5 py-3 text-right align-top">{!k.revoked_at && !expired && (
+                    <form method="post" class="flex justify-end gap-2"><input type="hidden" name="id" value={k.id} />
+                      <button name="intent" value="rotate-key" class="btn-ghost px-3 py-1.5 text-xs" title="A new key; this one keeps working for 7 days">Rotate</button>
+                      <button name="intent" value="revoke-key" class="btn-ghost px-3 py-1.5 text-xs text-lk-red" onclick="return confirm('Revoke this key? Tools using it stop working straight away.')">Revoke</button>
+                    </form>)}</td>
+                </tr>
+              );
+            })}
+            {!(keys ?? []).some((k) => k.kind === 'key') && <tr><td colspan="4" class="px-5 py-6 text-center text-white/45">No API keys yet.</td></tr>}
+          </tbody>
+        </table>
+      </section>
+      <details class="card mt-6" open={!liveKeys.length || Boolean(error)}>
+        <summary class="cursor-pointer font-display text-lg font-bold text-white">New API key</summary>
+        <form method="post" class="mt-6 grid gap-4">
+          <div class="grid gap-4 sm:grid-cols-3">
+            <div><label class="label" for="k_name">Name</label><input id="k_name" name="name" required class="field" placeholder="HubSpot sync" /></div>
+            <div><label class="label" for="k_days">Expires</label><select id="k_days" name="expires_days" class="field"><option value="0">Never (revoke when done)</option><option value="30">In 30 days</option><option value="90">In 90 days</option><option value="365">In a year</option></select></div>
+            <div><label class="label" for="k_ips">Only from these IP addresses (optional)</label><textarea id="k_ips" name="ips" rows="1" class="field font-mono text-xs" placeholder="203.0.113.10"></textarea></div>
+          </div>
+          <fieldset><legend class="label">What the key may do (never more than you can)</legend>
+            <div class="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2">
+              {[...scopeAreas].map(([area, ss]) => ss.map((s) => (
+                <label class:list={['flex items-start gap-2 text-sm', !mayScopes.includes(s.key) ? 'text-white/30' : 'text-white/75']}><input type="checkbox" name="scope" value={s.key} disabled={!mayScopes.includes(s.key)} class="mt-0.5 size-4 accent-lk-blue" /><span>{s.label} <span class="font-mono text-[11px] text-white/35">{s.key}</span></span></label>
+              )))}
+            </div>
+            <p class="mt-2 text-xs text-white/40">“people.read” lets the key read names, emails, phones and addresses. Give it only to tools that need them (a CRM), and every use is counted.</p>
+          </fieldset>
+          {access.groupAdmin && company.relationship === 'group' && <label class="flex items-center gap-2 text-sm text-white/70"><input type="checkbox" name="all_companies" class="size-4 accent-lk-blue" /> For every company (Lakeba Group only; ?company=CODE narrows a request)</label>}
+          <div><button name="intent" value="create-key" class="btn-primary">Create key</button></div>
+        </form>
+      </details>
+    </>
+  )}
+
+  {tab === 'webhooks' && (
+    <>
+      <div class="mt-6 space-y-4">
+        {(hooks ?? []).map((h) => (
+          <section class="card">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p class="font-medium text-white">{h.name} <span class:list={['ml-2 rounded-full px-2 py-0.5 text-[11px]', h.active ? 'bg-lk-green/15 text-lk-green' : 'bg-lk-red/15 text-lk-red']}>{h.active ? 'On' : 'Off'}</span>{h.format !== 'json' && <span class="ml-1 rounded-full bg-white/10 px-2 py-0.5 text-[11px] capitalize text-white/60">{h.format}</span>}{h.personal_data && <span class="ml-1 rounded-full bg-lk-orange/15 px-2 py-0.5 text-[11px] text-lk-orange">names and emails</span>}{h.created_by_key && <span class="ml-1 rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/60">made by an app</span>}</p>
+                <p class="mt-0.5 break-all font-mono text-xs text-white/45">{h.url}</p>
+                <p class="mt-1 text-xs text-white/50">{h.events.includes('*') ? 'All events' : h.events.join(', ')}</p>
+                {h.disabled_reason && <p class="mt-1 text-xs text-lk-red">{h.disabled_reason}</p>}
+              </div>
+              <form method="post" class="flex flex-wrap gap-2"><input type="hidden" name="id" value={h.id} />
+                <button name="intent" value="test-webhook" class="btn-ghost px-3 py-1.5 text-xs">Send test</button>
+                <button name="intent" value={h.active ? 'pause-webhook' : 'resume-webhook'} class="btn-ghost px-3 py-1.5 text-xs">{h.active ? 'Pause' : 'Switch on'}</button>
+                {mayScopes.includes('people.read') && <button name="intent" value={h.personal_data ? 'personal-off' : 'personal-on'} class="btn-ghost px-3 py-1.5 text-xs">{h.personal_data ? 'Stop names and emails' : 'Include names and emails'}</button>}
+                <button name="intent" value="delete-webhook" class="btn-ghost px-3 py-1.5 text-xs text-lk-red" onclick="return confirm('Delete this webhook and its delivery log?')">Delete</button>
+              </form>
+            </div>
+            {(deliveries ?? []).some((d) => d.endpoint_id === h.id) && (
+              <details class="mt-3"><summary class="cursor-pointer text-xs text-white/50">Recent deliveries</summary>
+                <table class="mt-2 w-full text-left text-xs"><tbody class="divide-y divide-white/5">
+                  {(deliveries ?? []).filter((d) => d.endpoint_id === h.id).slice(0, 15).map((d) => {
+                    const ev = d.integration_events as unknown as { type: string; occurred_at: string } | null;
+                    return (
+                      <tr><td class="py-1.5 pr-3 font-mono text-white/70">{ev?.type}</td><td class="py-1.5 pr-3 text-white/45">{ev && dateTime.format(new Date(ev.occurred_at))}</td>
+                        <td class="py-1.5 pr-3"><span class:list={['rounded-full px-2 py-0.5', deliveryClass(d.status)]}>{d.status === 'gave_up' ? 'gave up' : d.status}</span> {d.last_status && <span class="text-white/45">{d.last_status}</span>} {d.attempts > 1 && <span class="text-white/45">· {d.attempts} attempts</span>}{d.last_error && d.status !== 'delivered' && <span class="block text-lk-red">{d.last_error}{d.status === 'failed' && ` · next try ${dateTime.format(new Date(d.next_attempt_at))}`}</span>}</td>
+                        <td class="py-1.5 text-right">{d.status !== 'pending' && <form method="post"><input type="hidden" name="id" value={d.id} /><button name="intent" value="redeliver" class="text-lk-blue hover:underline">Resend</button></form>}</td></tr>
+                    );
+                  })}
+                </tbody></table>
+              </details>
+            )}
+          </section>
+        ))}
+        {!hooks?.length && <p class="text-sm text-white/45">No webhooks yet.</p>}
+      </div>
+      <details class="card mt-6" open={!hooks?.length || Boolean(error)}>
+        <summary class="cursor-pointer font-display text-lg font-bold text-white">New webhook</summary>
+        <p class="mt-2 text-sm text-white/55">The portal sends a signed POST to the address for each event you choose, retrying for about three days if it fails. For Slack or Teams, paste the channel’s incoming-webhook address and choose that format: messages arrive ready to read.</p>
+        <form method="post" class="mt-6 grid gap-4">
+          <div class="grid gap-4 sm:grid-cols-3">
+            <div><label class="label" for="w_name">Name</label><input id="w_name" name="name" required class="field" placeholder="Slack #investors" /></div>
+            <div class="sm:col-span-2"><label class="label" for="w_url">Address (https://)</label><input id="w_url" name="url" type="url" required class="field" placeholder="https://hooks.slack.com/services/…" /></div>
+            <div><label class="label" for="w_format">Format</label><select id="w_format" name="format" class="field"><option value="json">JSON (any tool)</option><option value="slack">Slack message</option><option value="teams">Microsoft Teams message</option></select></div>
+          </div>
+          <fieldset><legend class="label">Events</legend>
+            <label class="mt-2 flex items-center gap-2 text-sm text-white/80"><input type="checkbox" name="event" value="*" class="size-4 accent-lk-blue" /> All events</label>
+            <div class="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2">{Object.entries(EVENTS).map(([k, label]) => <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="event" value={k} class="mt-0.5 size-4 accent-lk-blue" /><span>{label} <span class="font-mono text-[11px] text-white/35">{k}</span></span></label>)}</div>
+          </fieldset>
+          {mayScopes.includes('people.read') && <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="personal_data" class="mt-0.5 size-4 accent-lk-blue" /> Include names and emails in events (otherwise they’re left out, and the receiving tool can look the person up with a key that has “people.read”)</label>}
+          <div><button name="intent" value="create-webhook" class="btn-primary">Create webhook</button></div>
+        </form>
+      </details>
+    </>
+  )}
+
+  {tab === 'usage' && (
+    <section class="card mt-6 overflow-hidden !p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40"><tr><th class="px-5 py-3 font-medium">Key or app</th><th class="px-5 py-3 font-medium">Endpoint</th><th class="px-5 py-3 text-right font-medium">Requests (30 days)</th><th class="px-5 py-3 text-right font-medium">Refused or failed</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {[...Map.groupBy(usage ?? [], (u) => `${u.key_id}|${u.endpoint}`)].sort((a, b) => sum(b[1]).requests - sum(a[1]).requests).map(([k, rows]) => (
+            <tr><td class="px-5 py-2 text-white/80">{keyName.get(k.split('|')[0]) ?? '—'}</td><td class="px-5 py-2 font-mono text-xs text-white/60">{k.split('|')[1]}</td><td class="px-5 py-2 text-right tabular-nums">{sum(rows).requests.toLocaleString('en-AU')}</td><td class:list={['px-5 py-2 text-right tabular-nums', sum(rows).errors ? 'text-lk-red' : 'text-white/40']}>{sum(rows).errors}</td></tr>
+          ))}
+          {!usage?.length && <tr><td colspan="4" class="px-5 py-6 text-center text-white/45">No requests in the last 30 days.</td></tr>}
+        </tbody>
+      </table>
+    </section>
+  )}
+
+
+  {(tab === 'hubspot' || tab === 'xero') && (() => {
+    const p = tab as Provider;
+    const c = p === 'hubspot' ? hubspot : xero;
+    const on = c?.status === 'connected';
+    return (
+      <section class="card mt-6">
+        <div class="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <h2 class="font-display text-xl font-bold">{PROVIDERS[p].name} <span class:list={['ml-2 rounded-full px-2 py-0.5 text-xs font-normal', on ? (c?.settings.paused ? 'bg-white/10 text-white/60' : 'bg-lk-green/15 text-lk-green') : c?.status === 'error' ? 'bg-lk-red/15 text-lk-red' : 'bg-white/10 text-white/60']}>{on ? (c?.settings.paused ? 'Paused' : 'Connected') : c?.status === 'error' ? 'Needs reconnecting' : 'Not connected'}</span></h2>
+            {on && <p class="mt-1 text-sm text-white/55">{c!.account_name} · connected {shortDate.format(new Date(c!.connected_at!))} · last sync {c!.last_sync_at ? dateTime.format(new Date(c!.last_sync_at)) : 'not yet'} · {(linked ?? []).filter((l) => l.local_type === 'holder').length} holders{p === 'hubspot' && ` and ${(linked ?? []).filter((l) => l.local_type === 'person').length} investors`} linked</p>}
+            {c?.last_error && <p class="mt-1 text-sm text-lk-red">{c.last_error}</p>}
+          </div>
+          <form method="post" class="flex flex-wrap gap-2"><input type="hidden" name="provider" value={p} />
+            {on ? <>
+              <button name="intent" value="sync-now" class="btn-ghost px-3 py-1.5 text-xs">Sync now</button>
+              <button name="intent" value={c?.settings.paused ? 'resume-sync' : 'pause-sync'} class="btn-ghost px-3 py-1.5 text-xs">{c?.settings.paused ? 'Resume' : 'Pause'}</button>
+              <button name="intent" value="disconnect" class="btn-ghost px-3 py-1.5 text-xs text-lk-red" onclick="return confirm('Disconnect? Nothing is deleted in either place; the sync just stops.')">Disconnect</button>
+            </> : <button name="intent" value="connect" class="btn-primary">Connect {PROVIDERS[p].name}</button>}
+          </form>
+        </div>
+        {!on && <p class="mt-4 max-w-3xl text-sm text-white/60">{p === 'hubspot'
+          ? `“Connect” opens HubSpot’s own sign-in: approve access for ${company.display_name}’s HubSpot account. The portal then keeps HubSpot up to date: investors as contacts and holders as companies, with “Lakeba portal” properties (shares, % ownership, portal status, last sign-in) and notes for their activity. It needs to read personal data (names and emails) to do this. Changes from HubSpot are optional and set below once connected; shares, holders and the register never come from HubSpot.`
+          : `“Connect” opens Xero’s own sign-in: approve access to ${company.display_name}’s organisation. The portal then keeps holders as Xero contacts (with the register’s address), checks paid-up capital against the share capital accounts you choose, and can prepare dividends as draft bills. It never approves or pays anything in Xero.`}</p>}
+      </section>
+    );
+  })()}
+
+  {tab === 'hubspot' && hubspot?.status === 'connected' && (
+    <section class="card mt-6">
+      <h2 class="font-display text-lg font-bold">What flows which way</h2>
+      <form method="post" class="mt-4 grid gap-4">
+        <div><span class="label">Names and phone numbers</span>
+          <label class="mt-1 flex items-center gap-2 text-sm text-white/75"><input type="radio" name="contact_details" value="portal" checked={hsSet.contact_details === 'portal'} class="accent-lk-blue" /> The portal’s are sent to HubSpot</label>
+          <label class="mt-1 flex items-center gap-2 text-sm text-white/75"><input type="radio" name="contact_details" value="hubspot" checked={hsSet.contact_details === 'hubspot'} class="accent-lk-blue" /> Changes made in HubSpot update the portal</label></div>
+        <label class="flex items-start gap-2 text-sm text-white/75"><input type="checkbox" name="invites" checked={hsSet.invites} class="mt-0.5 size-4 accent-lk-blue" /><span>“Invite to portal” in HubSpot adds the contact to the portal (“Add without inviting” or “Add and invite”), linked to their HubSpot company’s holder. Anything unclear goes to “Needs a look”.</span></label>
+        <label class="flex items-start gap-2 text-sm text-white/75"><input type="checkbox" name="notes" checked={hsSet.notes} class="mt-0.5 size-4 accent-lk-blue" /><span>Add a note to the contact for portal activity: proxy votes, Board Q&A, data room views, invitations, trading interest.</span></label>
+        <div class="grid gap-4 sm:grid-cols-2">
+          <div><label class="label" for="deal_stage">Deal stage that asks for the data room (HubSpot’s internal stage name, optional)</label><input id="deal_stage" name="deal_stage" value={hsSet.deal_stage} class="field" placeholder="e.g. qualifiedtobuy" /></div>
+          <div><label class="label" for="deal_room_id">…for this data room</label><select id="deal_room_id" name="deal_room_id" class="field"><option value="">—</option>{(rooms ?? []).map((r) => <option value={r.id} selected={r.id === hsSet.deal_room_id}>{r.name}</option>)}</select></div>
+        </div>
+        <p class="text-xs text-white/40">A deal reaching that stage puts its contacts in “Needs a look” below, where an Admin invites them to the data room with one click.</p>
+        <div><button name="intent" value="hubspot-settings" class="btn-primary">Save</button></div>
+      </form>
+    </section>
+  )}
+
+  {tab === 'xero' && xero?.status === 'connected' && (
+    <>
+      <section class="card mt-6">
+        <h2 class="font-display text-lg font-bold">Share capital check</h2>
+        <p class="mt-1 text-sm text-white/55">Paid-up capital from the register of members: <strong class="text-white">{money(paidUp)}</strong> (shares allotted × amount paid per share).</p>
+        {capital && <p class:list={['mt-2 text-sm', Math.abs(capital.difference) >= 1 ? 'text-lk-red' : 'text-lk-green']}>{Math.abs(capital.difference) >= 1 ? `Doesn’t match: Xero shows ${money(capital.xero)} in ${capital.accounts.join(', ')} (difference ${money(capital.difference)}), as at ${capital.as_at}.` : `Matches Xero (${capital.accounts.join(', ')}: ${money(capital.xero)}), as at ${capital.as_at}.`}</p>}
+        {equityError && <p class="mt-2 text-sm text-lk-red">Couldn’t read Xero’s accounts: {equityError}</p>}
+        <form method="post" class="mt-4 grid gap-4">
+          {((xero.settings.tenants as { id: string; name: string }[] | undefined) ?? []).length > 1 && <div><label class="label" for="tenant_id">Xero organisation</label><select id="tenant_id" name="tenant_id" class="field">{((xero.settings.tenants as { id: string; name: string }[]) ?? []).map((t) => <option value={t.id} selected={t.id === xeSet.tenant_id}>{t.name}</option>)}</select></div>}
+          <fieldset><legend class="label">Share capital accounts in Xero</legend>
+            <div class="mt-1 grid gap-1 sm:grid-cols-2">{equity.map((a) => <label class="flex items-center gap-2 text-sm text-white/75"><input type="checkbox" name="capital_account" value={a.code} checked={xeSet.capital_accounts.includes(a.code)} class="size-4 accent-lk-blue" /> {a.code} {a.name}</label>)}</div>
+            {!equity.length && !equityError && <p class="text-sm text-white/45">No equity accounts found in Xero.</p>}
+          </fieldset>
+          <label class="flex items-center gap-2 text-sm text-white/75"><input type="checkbox" name="contacts" checked={xeSet.contacts} class="size-4 accent-lk-blue" /> Keep holders as Xero contacts (name, register reference as contact number, register address)</label>
+          <div><button name="intent" value="xero-settings" class="btn-primary">Save</button></div>
+        </form>
+      </section>
+      <section class="card mt-6">
+        <h2 class="font-display text-lg font-bold">Prepare a dividend or distribution</h2>
+        <p class="mt-1 text-sm text-white/55">Each holder’s shares on the record date × the amount per share becomes a <strong class="text-white">draft bill</strong> in Xero, to the holder’s contact. Finance reviews, approves and pays them in Xero; nothing is paid from here.</p>
+        <form method="post" class="mt-4 grid gap-4 sm:grid-cols-2 lg:grid-cols-3" onsubmit="return confirm('Create the draft bills in Xero?')">
+          <div><label class="label" for="d_class">Share class</label><select id="d_class" name="share_class_id" class="field">{(classes ?? []).map((k) => <option value={k.id}>{k.code} · {k.name}</option>)}</select></div>
+          <div><label class="label" for="d_date">Record date</label><input id="d_date" type="date" name="record_date" required class="field" /></div>
+          <div><label class="label" for="d_per">Amount per share ($)</label><input id="d_per" name="per_share" inputmode="decimal" required class="field" placeholder="0.05" /></div>
+          <div><label class="label" for="d_acc">Xero account for the bills</label><select id="d_acc" name="account_code" class="field">{equity.map((a) => <option value={a.code}>{a.code} {a.name}</option>)}</select></div>
+          <div class="sm:col-span-2"><label class="label" for="d_desc">Description</label><input id="d_desc" name="description" class="field" value="Final dividend" maxlength="120" /></div>
+          <div><button name="intent" value="xero-dividend" class="btn-primary">Create draft bills</button></div>
+        </form>
+        {(runs ?? []).length > 0 && (
+          <table class="mt-6 w-full text-left text-sm"><thead class="text-xs uppercase tracking-widest text-white/40"><tr><th class="py-2">Prepared</th><th class="py-2">Class · record date</th><th class="py-2 text-right">Per share</th><th class="py-2 text-right">Bills</th><th class="py-2 text-right">Total</th></tr></thead>
+            <tbody class="divide-y divide-white/5">{(runs ?? []).map((r) => <tr><td class="py-2 text-white/60">{dateTime.format(new Date(r.created_at))}<span class="block text-xs text-white/40">{r.description}</span></td><td class="py-2 text-white/75">{(r.share_classes as unknown as { code: string } | null)?.code} · {r.record_date}</td><td class="py-2 text-right tabular-nums">${Number(r.per_share)}</td><td class:list={['py-2 text-right tabular-nums', r.status === 'failed' && 'text-lk-red']}>{r.holders}{r.status === 'failed' && ` (${(r.results as { error?: string }[]).filter((x) => x.error).length} failed)`}</td><td class="py-2 text-right tabular-nums">{money(Number(r.total))}</td></tr>)}</tbody>
+          </table>
+        )}
+      </section>
+    </>
+  )}
+
+  {(tab === 'hubspot' || tab === 'xero') && (issues ?? []).length > 0 && (
+    <section class="card mt-6">
+      <h2 class="font-display text-lg font-bold">Needs a look ({(issues ?? []).length})</h2>
+      <ul class="mt-3 divide-y divide-white/5">
+        {(issues ?? []).map((i) => (
+          <li class="flex flex-wrap items-start justify-between gap-3 py-3 text-sm"><span class="max-w-3xl text-white/80">{i.summary}<span class="block text-xs text-white/40">{dateTime.format(new Date(i.created_at))}</span></span>
+            <form method="post" class="flex gap-2"><input type="hidden" name="id" value={i.id} />
+              {i.kind === 'data_room_request' && <button name="intent" value="approve-request" class="btn-primary px-3 py-1.5 text-xs">Invite to the data room</button>}
+              <button name="intent" value="resolve-issue" class="btn-ghost px-3 py-1.5 text-xs">{i.kind === 'data_room_request' ? 'Decline' : 'Done'}</button>
+            </form></li>
+        ))}
+      </ul>
+    </section>
+  )}
+
+
+  {tab === 'incoming' && (
+    <>
+      {reviewCount > 0 && <div class="mt-6"><Alert>{reviewCount} received {reviewCount === 1 ? 'item needs' : 'items need'} your review below.</Alert></div>}
+      <div class="mt-6 space-y-4">
+        {(inEndpoints ?? []).map((e) => (
+          <section class="card">
+            <div class="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p class="font-medium text-white">{e.name} <span class:list={['ml-2 rounded-full px-2 py-0.5 text-[11px]', e.active ? 'bg-lk-green/15 text-lk-green' : 'bg-lk-red/15 text-lk-red']}>{e.active ? 'On' : 'Off'}</span> <span class="ml-1 rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/60">{KINDS[e.kind]?.label}</span></p>
+                <p class="mt-1 break-all font-mono text-xs text-white/70">{origin}/api/hooks/in/{e.token}</p>
+                <p class="mt-1 text-xs text-white/45">{AUTHS[e.auth]} · {e.last_received_at ? `last received ${dateTime.format(new Date(e.last_received_at))}` : 'nothing received yet'}{Object.keys((e.settings as { map?: object }).map ?? {}).length > 0 && ` · fields: ${Object.entries((e.settings as { map: Record<string, string> }).map).map(([k, v]) => `${k}=${v}`).join(', ')}`}</p>
+              </div>
+              <form method="post" class="flex gap-2"><input type="hidden" name="id" value={e.id} />
+                <button name="intent" value="toggle-inbound" class="btn-ghost px-3 py-1.5 text-xs">{e.active ? 'Switch off' : 'Switch on'}</button>
+                <button name="intent" value="delete-inbound" class="btn-ghost px-3 py-1.5 text-xs text-lk-red" onclick="return confirm('Delete this address? Senders using it get “unknown address”.')">Delete</button>
+              </form>
+            </div>
+          </section>
+        ))}
+        {!inEndpoints?.length && <p class="text-sm text-white/45">No incoming webhooks yet.</p>}
+      </div>
+      <details class="card mt-6" open={!inEndpoints?.length || Boolean(error)}>
+        <summary class="cursor-pointer font-display text-lg font-bold text-white">New incoming webhook</summary>
+        <p class="mt-2 text-sm text-white/55">An address another tool posts to. Changes to who is an investor, data room access and registers always wait for an Admin here; sign-ups, contact details and signed documents (as drafts) are handled straight away.</p>
+        <form method="post" class="mt-6 grid gap-4">
+          <div class="grid gap-4 sm:grid-cols-3">
+            <div><label class="label" for="i_name">Name</label><input id="i_name" name="name" required class="field" placeholder="Website sign-up form" /></div>
+            <div><label class="label" for="i_kind">It receives</label><select id="i_kind" name="kind" class="field">{Object.entries(KINDS).map(([k, v]) => <option value={k}>{v.label}{v.review ? ' (reviewed)' : ''}</option>)}</select></div>
+            <div><label class="label" for="i_auth">The sender signs with</label><select id="i_auth" name="auth" class="field">{Object.entries(AUTHS).map(([k, v]) => <option value={k}>{v}</option>)}</select></div>
+          </div>
+          <ul class="space-y-1 text-xs text-white/50">{Object.entries(KINDS).map(([k, v]) => <li><strong class="text-white/70">{v.label}:</strong> {v.help}</li>)}</ul>
+          <div class="grid gap-4 sm:grid-cols-3">
+            <div><label class="label" for="i_room">Data room (for data room requests)</label><select id="i_room" name="room_id" class="field"><option value="">—</option>{(rooms ?? []).map((r) => <option value={r.id}>{r.name}</option>)}</select></div>
+            <div><label class="label" for="i_cat">Category and audience (signed documents)</label><div class="flex gap-2"><select id="i_cat" name="category" class="field">{DOCUMENT_CATEGORIES.map((c) => <option value={c} selected={c === 'governance'}>{c}</option>)}</select><select name="audience" class="field" aria-label="Audience"><option value="board">Board only</option><option value="all_investors">All investors</option></select></div></div>
+            <label class="flex items-end gap-2 pb-2 text-sm text-white/70"><input type="checkbox" name="invite" class="size-4 accent-lk-blue" /> New investors: invite them once approved</label>
+          </div>
+          <div><label class="label" for="i_map">Where the fields are in what they send (optional; one per line)</label><textarea id="i_map" name="map" rows="3" class="field font-mono text-xs" placeholder={Object.entries(DEFAULT_MAP['newsletter.subscribe']).map(([k, v]) => `${k}=form_response.${v}`).join('\n')}></textarea><p class="mt-1 text-xs text-white/40">Defaults: {Object.entries(DEFAULT_MAP).map(([k, m]) => `${KINDS[k].label.toLowerCase()}: ${Object.keys(m).join(', ')}`).join(' · ')}. Use dots for nested fields, e.g. email=data.contact.email.</p></div>
+          <div><button name="intent" value="create-inbound" class="btn-primary">Create address</button></div>
+        </form>
+      </details>
+      <section class="card mt-6 overflow-hidden !p-0">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Received</h2>
+        <table class="mt-3 w-full text-left text-sm"><tbody class="divide-y divide-white/5">
+          {(inMessages ?? []).map((m) => (
+            <tr><td class="px-5 py-3 align-top text-xs text-white/50">{dateTime.format(new Date(m.received_at))}<span class="block">{m.source === 'api' ? 'Through the API' : (inEndpoints ?? []).find((e) => e.id === m.endpoint_id)?.name ?? '—'}</span></td>
+              <td class="px-5 py-3 align-top"><span class:list={['rounded-full px-2 py-0.5 text-[11px]', statusClass(m.status)]}>{m.status.replace('_', ' ')}</span><span class="mt-1 block text-white/80">{m.summary ?? 'Waiting to be handled…'}</span>{m.error && <span class="block text-xs text-lk-red">{m.error}</span>}</td>
+              <td class="px-5 py-3 text-right align-top">
+                <form method="post" class="flex justify-end gap-2"><input type="hidden" name="id" value={m.id} />
+                  {m.status === 'needs_review' && <button name="intent" value="approve-message" class="btn-primary px-3 py-1.5 text-xs">{m.kind === 'register.pdf' ? 'Check and apply' : 'Approve'}</button>}
+                  {m.status === 'needs_review' && <button name="intent" value="reject-message" class="btn-ghost px-3 py-1.5 text-xs">Reject</button>}
+                  {m.status === 'failed' && <button name="intent" value="retry-message" class="btn-ghost px-3 py-1.5 text-xs">Try again</button>}
+                </form></td></tr>
+          ))}
+          {!inMessages?.length && <tr><td class="px-5 py-6 text-center text-white/45">Nothing received yet.</td></tr>}
+        </tbody></table>
+      </section>
+    </>
+  )}
+
+
+  {tab === 'apps' && (
+    <>
+      {madeApp && (
+        <section class="card mt-6 border border-lk-green/30">
+          <h2 class="font-display text-lg font-bold">The app’s credentials</h2>
+          <p class="mt-1 text-sm text-white/60">Give these to the app’s developer. The secret isn’t shown again.</p>
+          <pre class="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-sm text-white" data-secret>client_id: {madeApp.clientId}{'\n'}client_secret: {madeApp.secret}</pre>
+        </section>
+      )}
+      <section class="card mt-6">
+        <h2 class="font-display text-lg font-bold">Apps {company.display_name} allowed</h2>
+        <p class="mt-1 text-sm text-white/55">Apps such as Zapier ask for access on a Lakeba page, where one of {company.display_name}’s Admins allows them. Stopping one ends its access at once and removes the webhooks it made.</p>
+        <ul class="mt-4 divide-y divide-white/5">
+          {allowed.map((a) => (
+            <li class="flex flex-wrap items-start justify-between gap-3 py-3 text-sm">
+              <span><span class="font-medium text-white">{a.client?.name ?? 'An app'}</span><span class="block text-xs text-white/45">Allowed {shortDate.format(new Date(a.since))}{a.used && ` · last used ${dateTime.format(new Date(a.used))}`}</span>
+                <span class="mt-1 block">{a.scopes.map((sc) => <span class:list={['mb-1 mr-1 inline-block rounded-full px-2 py-0.5 text-[11px]', sc === 'people.read' ? 'bg-lk-orange/15 text-lk-orange' : 'bg-white/10 text-white/60']}>{sc}</span>)}</span></span>
+              <form method="post"><input type="hidden" name="id" value={a.client?.id} /><button name="intent" value="stop-app" class="btn-ghost px-3 py-1.5 text-xs text-lk-red" onclick="return confirm('Stop this app? Its access ends at once.')">Stop</button></form>
+            </li>
+          ))}
+          {!allowed.length && <li class="py-3 text-sm text-white/45">No apps allowed.</li>}
+        </ul>
+      </section>
+      {access.groupAdmin && (
+        <>
+          <section class="card mt-6">
+            <h2 class="font-display text-lg font-bold">Registered apps (group Admins)</h2>
+            <p class="mt-1 text-sm text-white/55">An app is registered once, here, and then any company can allow it. Authorisation address: <span class="font-mono text-xs">{origin}/oauth/authorize</span> · tokens: <span class="font-mono text-xs">{origin}/oauth/token</span></p>
+            <ul class="mt-4 divide-y divide-white/5">
+              {(clients ?? []).map((c) => (
+                <li class:list={['flex flex-wrap items-start justify-between gap-3 py-3 text-sm', c.revoked_at && 'opacity-50']}>
+                  <span><span class="font-medium text-white">{c.name}</span> <span class="font-mono text-xs text-white/45">{c.client_id}</span>{c.revoked_at && <span class="ml-2 text-xs text-lk-red">retired</span>}
+                    <span class="block text-xs text-white/45">{c.redirect_uris.join(', ')}</span><span class="block text-xs text-white/45">May ask for: {c.scopes_allowed.join(', ')}</span></span>
+                  {!c.revoked_at && <form method="post"><input type="hidden" name="id" value={c.id} /><button name="intent" value="retire-app" class="btn-ghost px-3 py-1.5 text-xs text-lk-red" onclick="return confirm('Retire this app for every company?')">Retire</button></form>}
+                </li>
+              ))}
+              {!clients?.length && <li class="py-3 text-sm text-white/45">No apps registered.</li>}
+            </ul>
+          </section>
+          <details class="card mt-6">
+            <summary class="cursor-pointer font-display text-lg font-bold text-white">Register an app</summary>
+            <form method="post" class="mt-6 grid gap-4">
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div><label class="label" for="a_name">Name (companies see it)</label><input id="a_name" name="name" required class="field" placeholder="Zapier" /></div>
+                <div><label class="label" for="a_web">Website</label><input id="a_web" name="website" class="field" placeholder="https://zapier.com" /></div>
+              </div>
+              <div><label class="label" for="a_desc">What it does (optional)</label><input id="a_desc" name="description" class="field" maxlength="300" /></div>
+              <div><label class="label" for="a_uris">Return addresses (one per line)</label><textarea id="a_uris" name="redirect_uris" rows="2" required class="field font-mono text-xs" placeholder="https://zapier.com/dashboard/auth/oauth/return/App123CLIAPI/"></textarea></div>
+              <fieldset><legend class="label">It may ask for</legend><div class="mt-1 grid gap-x-6 gap-y-1 sm:grid-cols-2">{API_SCOPES.map((sc) => <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="scope" value={sc.key} class="mt-0.5 size-4 accent-lk-blue" /><span>{sc.label} <span class="font-mono text-[11px] text-white/35">{sc.key}</span></span></label>)}</div></fieldset>
+              <div><button name="intent" value="register-app" class="btn-primary">Register app</button></div>
+            </form>
+          </details>
+        </>
+      )}
+    </>
+  )}
+
+</Admin>

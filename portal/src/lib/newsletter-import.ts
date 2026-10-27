@@ -49,7 +49,7 @@ export function publicAddress(ip: string) {
 }
 
 /** DNS lookup that refuses non-public addresses, checked when connecting (so a name can't switch to an internal address in between). */
-const safeLookup: LookupFunction = (host, options, cb) => {
+export const safeLookup: LookupFunction = (host, options, cb) => {
   lookup(host, { ...options, all: true }, (err, addresses) => {
     if (err) return (cb as (e: Error | null, a?: unknown, f?: number) => void)(err);
     const list = (addresses as unknown as { address: string; family: number }[]).filter((a) => publicAddress(a.address));

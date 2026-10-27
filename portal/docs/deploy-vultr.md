@@ -25,6 +25,14 @@ Files for all of this are in `portal/deploy/vultr/`.
 - **Ask Lakeba key**: `ssh -t root@<server> lakeba-set-anthropic-key` checks a Claude API key
   with Anthropic, stores it and restarts the portal (an empty key turns AI answers off).
   Set a spend limit in the Anthropic Console first.
+- **Integrations key**: `ssh root@<server> lakeba-set-integrations-key` creates the key that
+  encrypts integration secrets (webhook signing secrets, HubSpot and Xero tokens), stores it in
+  `portal.env` and restarts the portal. Run it once, before companies use Integrations; it keeps an
+  existing key. Never set `OUTBOUND_ALLOWLIST` in production (staging uses it to keep calls local).
+- **HubSpot and Xero apps**: Lakeba's own HubSpot app and Xero app, registered once in their
+  developer portals with the return addresses `https://investors.lakeba.com/admin/companies/oauth/hubspot`
+  and `…/oauth/xero`. Their IDs and secrets go in `portal.env` as `HUBSPOT_CLIENT_ID`,
+  `HUBSPOT_CLIENT_SECRET`, `XERO_CLIENT_ID`, `XERO_CLIENT_SECRET` (the user enters them; restart after).
 - **Browser notifications**: `ssh root@<server> lakeba-set-push-keys` creates the Web Push
   (VAPID) keys on the server, stores them in `portal.env` and restarts the portal. Run it once;
   it keeps existing keys (`--rotate` replaces them, and every device must turn notifications on again).

@@ -43,9 +43,11 @@ if (Astro.request.method === 'POST') {
       await log('admin_updated_meeting', { status });
       if (status === 'open' && before?.status !== 'open') {
         await notifyMembers({ kind: 'meeting', entityId: before?.entity_id, title: `${field(form, 'title')}: proxy voting is open`, body: 'Read the notice of meeting, lodge your proxy votes and send questions in advance.', link: `/agm/${id}`, origin: Astro.url.origin, pushDetail: field(form, 'title') });
+        await log('meeting_opened', { title: field(form, 'title') });
         notice = 'Meeting opened. Shareholders have been notified.';
       } else if (status === 'results' && before?.status !== 'results') {
         await notifyMembers({ kind: 'meeting_results', entityId: before?.entity_id, title: `${field(form, 'title')}: results are available`, body: 'The results of the meeting have been published in the portal.', link: `/agm/${id}`, origin: Astro.url.origin, pushDetail: field(form, 'title') });
+        await log('meeting_results_published', { title: field(form, 'title') });
         notice = 'Results published. Shareholders have been notified.';
       } else notice = 'Meeting saved.';
     }

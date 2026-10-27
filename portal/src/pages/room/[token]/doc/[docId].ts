@@ -22,6 +22,7 @@ export const GET: APIRoute = async ({ params, request, clientAddress }) => {
     return new Response('This document could not be prepared. Please contact the person who invited you.', { status: 500 });
   }
   await svc.from('data_room_views').insert({ guest_id: guest.id, document_id: doc.id, ip: requestIp(request, clientAddress) });
+  if (!guest.is_test) await svc.from('audit_log').insert({ action: 'data_room_document_viewed', detail: { room_id: room.id, guest_id: guest.id, document_id: doc.id, title: doc.title, name: guest.name, email: guest.email } });
   await svc.from('data_room_guests').update({ last_seen_at: new Date().toISOString() }).eq('id', guest.id);
 
   const name = `${doc.title.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-') || 'document'}.pdf`;

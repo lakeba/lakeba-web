@@ -3,6 +3,7 @@ import Admin from '../../../layouts/Admin.astro';
 import Alert from '../../../components/Alert.astro';
 import ReviewChange from '../../../components/ReviewChange.astro';
 import { serviceClient } from '../../../lib/admin';
+import { isCompanyAdmin } from '../../../lib/integrations/admin';
 import { field } from '../../../lib/forms';
 import { displayName } from '../../../lib/admin-forms';
 import { shortDate } from '../../../lib/format';
@@ -224,6 +225,7 @@ const sel = 'field !py-1.5 text-sm';
       {mayGroup && access.can('users.do', null) && c.relationship !== 'group' && <a href={`/admin/companies/${c.code}/setup`} class="btn-ghost text-sm">Set-up checklist</a>}
       {access.can('news.view', c.id) && <a href={`/admin/companies/${c.code}/website`} class="btn-ghost text-sm">Website news</a>}
       {c.relationship !== 'group' && <a href={`/admin/companies/${c.code}/domain`} class="btn-ghost text-sm">Domain and mail</a>}
+      {isCompanyAdmin(access, c.id) && <a href={`/admin/companies/${c.code}/integrations`} class="btn-ghost text-sm">Integrations</a>}
     </span>
   </div>
   <p class="mt-1 text-sm text-white/50">{c.code} · {RELATIONSHIPS[c.relationship as keyof typeof RELATIONSHIPS]} · {PORTAL_ACCESS[c.portal as keyof typeof PORTAL_ACCESS]}{!mayEdit && ' · read only'}</p>

@@ -96,6 +96,7 @@ if (Astro.request.method === 'POST' && !locked) {
           }
           if ((visibility === 'public' && row.on_lakeba_site) || (post?.visibility === 'public' && post.on_lakeba_site)) await markWebsiteChanged(svc);
           await log('admin_saved_post', { id, slug, visibility, published_at: publishedAt });
+          if (isLive && !wasLive) await log('news_published', { post_id: id, slug, title, visibility });
           return Astro.redirect(withCompany(scope, `/admin/news/${id}?saved=1${reapprove ? '&reapprove=1' : ''}`), 303);
         }
         }

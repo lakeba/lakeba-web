@@ -3,7 +3,8 @@ import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
 import Alert from '../../../components/Alert.astro';
 import { serviceClient } from '../../../lib/admin';
-import { sendInvite, sendWelcome } from '../../../lib/admin-auth';
+import { sendWelcome } from '../../../lib/admin-auth';
+import { addInvestor } from '../../../lib/people';
 import { brandOf } from '../../../lib/brand';
 import { adminScope } from '../../../lib/admin-company';
 import { memberIds } from '../../../lib/notify';
@@ -73,36 +74,17 @@ if (Astro.request.method === 'POST') {
     error = 'Enter their email address.';
   } else if (!holderId) {
     error = 'Choose the holder they invest through. To add staff (Admin, Board, Marketing…), use System → Users.';
-  } else if (field(form, 'send') === 'later') {
-    // Added now, invited later (the welcome list above, or their page): no email is sent.
-    const { data: existing } = await svc.from('profiles').select('id').eq('email', email).maybeSingle();
-    let userId = existing?.id ?? null;
-    if (!userId) {
-      const { data, error: e } = await svc.auth.admin.createUser({ email, email_confirm: true, user_metadata: { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') } });
-      if (e || !data.user) error = e?.message ?? 'Could not add them.';
-      else {
-        userId = data.user.id;
-        await svc.from('profiles').update({ first_name: field(form, 'first_name') || null, last_name: field(form, 'last_name') || null }).eq('id', userId).throwOnError();
-      }
-    }
-    if (userId) {
-      await svc.from('holder_members').upsert({ holder_id: holderId, user_id: userId, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner' }).throwOnError();
-      await supabase.rpc('log_event', { event_action: 'admin_added_investor', event_detail: { email, role: 'investor', holder_id: holderId, existing: Boolean(existing) } });
-      notice = existing ? `${email} already had an account; they can now see this holder too. No email was sent.` : `Added ${email}. No email was sent: invite them when you’re ready, from their page or with the welcome emails.`;
-    }
   } else {
-    const { error: inviteError, userId, url: inviteUrl } = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') }, brandOf(welcomeCompany));
-    if (inviteError || !userId) {
-      error = inviteError ?? 'Could not send the invitation.';
-    } else {
-      if (holderId) {
-        // Checked above for company admins, so the service key may write the link.
-        await svc.from('holder_members').upsert({ holder_id: holderId, user_id: userId, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner' }).throwOnError();
-      }
-      await supabase.rpc('log_event', { event_action: 'admin_invited_user', event_detail: { email, role: 'investor', holder_id: holderId || null } });
-      notice = `Invitation sent to ${email}.`;
-      shareLink = inviteUrl ?? '';
-    }
+    // Added with or without the invitation (later: their page, or the welcome emails above).
+    const r = await addInvestor(svc, {
+      email, firstName: field(form, 'first_name'), lastName: field(form, 'last_name'), holderId, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner',
+      invite: field(form, 'send') !== 'later', origin: Astro.url.origin, brand: brandOf(welcomeCompany),
+      log: (action, detail) => supabase.rpc('log_event', { event_action: action, event_detail: detail }),
+    });
+    if ('error' in r) error = r.error;
+    else if (r.existing) notice = `${email} already had an account; they can now see this holder too. No email was sent.`;
+    else if (r.invited) { notice = `Invitation sent to ${email}.`; shareLink = r.inviteUrl ?? ''; }
+    else notice = `Added ${email}. No email was sent: invite them when you’re ready, from their page or with the welcome emails.`;
   }
 }
 

@@ -59,6 +59,23 @@ export default defineConfig({
       // Staging: read the real shareholder mailboxes, but never send from them or change them (no replies,
       // automatic or not, no Outlook categories or Gmail labels). Never set in production.
       MAILBOXES_READ_ONLY: envField.boolean({ context: 'server', access: 'secret', default: false }),
+      // Integrations (Admin → Companies → Integrations). INTEGRATIONS_KEY (32 random bytes, base64) encrypts
+      // stored secrets: webhook signing secrets, HubSpot and Xero tokens. OUTBOUND_ALLOWLIST, when set, is the
+      // only places integrations may call (comma-separated address prefixes): staging sets it to its local
+      // stand-ins, so no webhook, HubSpot or Xero call leaves this Mac. Never set it in production.
+      INTEGRATIONS_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      OUTBOUND_ALLOWLIST: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // Lakeba's HubSpot app and Xero app (one each, used by every venture that connects).
+      HUBSPOT_CLIENT_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      HUBSPOT_CLIENT_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+      HUBSPOT_AUTH_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://app.hubspot.com' }),
+      HUBSPOT_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.hubapi.com' }),
+      XERO_CLIENT_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      XERO_CLIENT_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+      XERO_AUTH_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://login.xero.com/identity/connect' }),
+      XERO_TOKEN_URL: envField.string({ context: 'server', access: 'secret', default: 'https://identity.xero.com/connect/token' }),
+      XERO_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.xero.com' }),
+      XERO_SCOPES: envField.string({ context: 'server', access: 'secret', default: 'openid profile email offline_access accounting.contacts accounting.transactions accounting.reports.read accounting.settings.read' }),
       // Ventures on Google Workspace. Sending: Google's SMTP relay (the venture allows this server's address).
       // GOOGLE_RELAY_URL replaces it in tests (e.g. smtp://127.0.0.1:54325).
       GOOGLE_RELAY_URL: envField.string({ context: 'server', access: 'secret', optional: true }),

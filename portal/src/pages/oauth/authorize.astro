@@ -1,0 +1,62 @@
+---
+import Auth from '../../layouts/Auth.astro';
+import Alert from '../../components/Alert.astro';
+import { serviceClient } from '../../lib/admin';
+import { field } from '../../lib/forms';
+import { API_SCOPES, grantable, normaliseScopes } from '../../lib/api/scopes';
+import { isCompanyAdmin } from '../../lib/integrations/admin';
+import { clientById, newCode } from '../../lib/integrations/oauth';
+
+// An app asks to work with a company. An Admin of the company chooses which
+// company and allows it (never more than they can do themselves); the app is
+// sent back with a one-time code. Companies only: investors can't allow apps.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const q = Astro.url.searchParams;
+const client = await clientById(svc, q.get('client_id') ?? '');
+const redirectUri = q.get('redirect_uri') ?? '';
+const state = q.get('state') ?? '';
+const challenge = q.get('code_challenge');
+let error = '';
+if (!client) error = 'This app isn’t registered with the Lakeba portal.';
+else if (!client.redirect_uris.includes(redirectUri)) error = 'This app sent an address that isn’t registered for it, so it can’t continue.';
+else if (q.get('response_type') !== 'code') error = 'This app asked in a way the portal doesn’t support (response_type must be “code”).';
+else if (challenge && q.get('code_challenge_method') !== 'S256') error = 'Only S256 PKCE challenges are accepted.';
+const back = (params: Record<string, string>) => `${redirectUri}${redirectUri.includes('?') ? '&' : '?'}${new URLSearchParams({ ...params, ...(state ? { state } : {}) })}`;
+
+// The companies this person runs.
+const { data: entities } = await svc.from('entities').select('id, code, display_name, integrations_enabled').order('sort');
+const mine = (entities ?? []).filter((e) => isCompanyAdmin(access, e.id) && e.integrations_enabled);
+const asked = normaliseScopes((q.get('scope') ?? '').split(/[\s,+]+/).filter(Boolean)).filter((s) => client?.scopes_allowed.includes(s));
+
+if (!error && Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  if (field(form, 'decision') === 'deny') return Astro.redirect(back({ error: 'access_denied', error_description: 'The company didn’t allow it.' }), 303);
+  const company = mine.find((e) => e.id === field(form, 'entity_id'));
+  const scopes = company ? asked.filter((s) => grantable(access, company.id).includes(s)) : [];
+  if (!company) error = 'Choose one of your companies.';
+  else if (!scopes.length) error = 'You can’t give this app anything it asks for in this company.';
+  else {
+    const code = await newCode(svc, { client: client!, entityId: company.id, userId: Astro.locals.user!.id, scopes, redirectUri, codeChallenge: challenge });
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_allowed_app', event_detail: { company: company.code, client: client!.name, scopes } });
+    return Astro.redirect(back({ code }), 303);
+  }
+}
+const scopeLabel = new Map(API_SCOPES.map((s) => [s.key, s.label]));
+---
+
+<Auth title={client ? `Allow ${client.name}?` : 'Allow an app'} subtitle="Lakeba investor portal" wide>
+  {error && <div class="mb-5"><Alert tone="error">{error}</Alert></div>}
+  {client && !error && !mine.length && <Alert tone="error">Only a company’s Admins can allow apps, and you aren’t an Admin of any company with integrations switched on.</Alert>}
+  {client && mine.length > 0 && client.redirect_uris.includes(redirectUri) && (
+    <form method="post" class="space-y-5">
+      <p class="text-sm text-white/70"><strong class="text-white">{client.name}</strong>{client.website && <> (<a class="text-lk-blue hover:underline" href={client.website} target="_blank" rel="noopener">{new URL(client.website).hostname}</a>)</>} wants to work with your company’s data in the portal.{client.description && ` ${client.description}`}</p>
+      <div><label class="label" for="entity_id">For which company</label><select id="entity_id" name="entity_id" class="field">{mine.map((e) => <option value={e.id}>{e.display_name}</option>)}</select></div>
+      <div><p class="label">It will be able to</p>
+        <ul class="mt-1 space-y-1 text-sm text-white/75">{asked.map((s) => <li class="flex gap-2"><span class:list={[s === 'people.read' ? 'text-lk-orange' : 'text-lk-green']}>•</span>{scopeLabel.get(s) ?? s}</li>)}</ul>
+        {!asked.length && <p class="text-sm text-white/50">Nothing it asks for is allowed for this app.</p>}
+        <p class="mt-2 text-xs text-white/40">Only what you can do yourself in the chosen company is given. You can stop it any time in Admin → Companies → Integrations → Apps.</p></div>
+      <div class="flex gap-3"><button name="decision" value="allow" class="btn-primary" disabled={!asked.length}>Allow</button><button name="decision" value="deny" class="btn-ghost">Don’t allow</button></div>
+    </form>
+  )}
+</Auth>

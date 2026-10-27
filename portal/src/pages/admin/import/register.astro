@@ -43,6 +43,8 @@ let fileName = '';
 let fingerprint = '';
 let applied = false;
 let notice = '';
+// A register received from another tool (Integrations → Incoming webhooks, or the API), checked here like an upload.
+let received = '';
 const fingerprintOf = (r: Result) => createHash('sha256').update(JSON.stringify({ c: r.changes, m: r.choices })).digest('hex');
 const pathOf = (id: string) => `imports/register-${id}.pdf`;
 const groupWide = Astro.locals.access.groupAdmin;
@@ -82,6 +84,7 @@ else if (Astro.request.method === 'POST') {
       }
     } else if (intent === 'preview' || intent === 'apply') {
       uploadId = field(form, 'upload_id');
+      received = /^[0-9a-f-]{36}$/.test(field(form, 'received')) ? field(form, 'received') : '';
       fileName = field(form, 'file_name');
       const { data: blob } = /^[0-9a-f-]{36}$/.test(uploadId) ? await svc.storage.from('documents').download(pathOf(uploadId)) : { data: null };
       if (!blob) { error = 'That upload has expired. Upload the register again.'; uploadId = ''; }
@@ -118,7 +121,11 @@ else if (Astro.request.method === 'POST') {
                 await svc.from('entities').update({ holdings_from_register: true }).eq('id', scope.entityId).throwOnError();
                 await log('admin_set_register_source', { holdings_from_register: true });
               }
-              await log('admin_applied_register', { file: fileName, as_at: done.asAt, import_id: done.importId, changed_holders: done.changedHolders.length, trades_completed: done.registeredTrades.length });
+              await log('admin_applied_register', { file: fileName, as_at: done.asAt, import_id: done.importId, changed_holders: done.changedHolders.length, trades_completed: done.registeredTrades.length, ...(received ? { received } : {}) });
+              if (received) {
+                const { data: m } = await svc.from('inbound_messages').update({ status: 'approved', reviewed_by: me, reviewed_at: new Date().toISOString(), summary: `Register as at ${done.asAt} applied.` }).eq('id', received).eq('entity_id', scope.entityId).select('file_path');
+                if (m?.[0]?.file_path) await svc.storage.from('documents').remove([m[0].file_path]);
+              }
             } else error = 'Nothing was imported.';
           }
         }
@@ -126,6 +133,23 @@ else if (Astro.request.method === 'POST') {
     }
   } catch (e) {
     error = `Something went wrong: ${e instanceof Error ? e.message : String(e)}`;
+  }
+} else if (Astro.url.searchParams.get('received')) {
+  const id = Astro.url.searchParams.get('received')!;
+  const { data: m } = /^[0-9a-f-]{36}$/.test(id) ? await svc.from('inbound_messages').select('id, file_path, status, result').eq('id', id).eq('entity_id', scope.entityId).eq('kind', 'register.pdf').maybeSingle() : { data: null };
+  const { data: blob } = m?.file_path && m.status === 'needs_review' ? await svc.storage.from('documents').download(m.file_path) : { data: null };
+  if (!blob) error = 'That received register has already been handled or is no longer available.';
+  else {
+    const data = new Uint8Array(await blob.arrayBuffer());
+    fileName = String((m!.result as { file_name?: string }).file_name ?? 'register.pdf');
+    received = m!.id;
+    result = await compare(data, null);
+    if (result) {
+      uploadId = crypto.randomUUID();
+      await svc.storage.from('documents').upload(pathOf(uploadId), data, { contentType: 'application/pdf' });
+      fingerprint = fingerprintOf(result);
+    }
+    await log('admin_checked_register', { file: fileName, as_at: read?.asAt ?? null, received: m!.id, problems: (read?.problems.length ?? 0) + (result?.problems.length ?? 0) });
   }
 }
 
@@ -242,7 +266,7 @@ const keepLater = r?.choices.later === 'keep';
       {r.warnings.length > 0 && <div class="mb-6"><Alert tone="info"><ul class="list-disc pl-5 text-sm">{r.warnings.map((w) => <li>{w}</li>)}</ul></Alert></div>}
 
       <form method="post" class="card mb-6 space-y-6" id="matching">
-        <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} />
+        <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} /><input type="hidden" name="received" value={received} />
         <div class="flex flex-wrap items-baseline justify-between gap-2">
           <h2 class="text-lg font-bold">2. Match the register to the portal</h2>
           <p class="text-sm text-white/50">Remembered when you import, so the next register matches by itself.</p>
@@ -331,7 +355,7 @@ const keepLater = r?.choices.later === 'keep';
         {!r.problems.length && uploadId && (
           <form method="post" class="space-y-4 rounded-2xl border border-lk-green/30 bg-lk-green/[0.06] p-5" onsubmit="return confirm('Import this register? Holdings change to its figures.')">
             <p class="font-semibold text-white">4. Confirm</p>
-            <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} /><input type="hidden" name="fingerprint" value={fingerprint} />
+            <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} /><input type="hidden" name="received" value={received} /><input type="hidden" name="fingerprint" value={fingerprint} />
             <input type="hidden" name="choices" value={JSON.stringify(r.choices)} />
             <p class="text-sm text-white/60">{company!.display_name}’s holdings take the register’s figures as at {day(r.asAt)}, with their history ({r.datedRows} dated balances from {rd?.facts.movements ?? 0} movements){later.length > 0 && !keepLater ? `, and ${later.length} figure${later.length === 1 ? ' the register doesn’t support is' : 's the register doesn’t support are'} removed` : ''}. If you changed a match above, press “Update the preview” first.</p>
             {!fromRegister && <label class="flex items-start gap-3 text-sm text-white/80"><input type="checkbox" name="from_register" checked class="mt-0.5 size-4 accent-lk-blue" /><span>From now on, {company!.display_name}’s holdings come from its register of members<span class="block text-xs text-white/50">The workbook import will only check them, and changing them on screen will ask why.</span></span></label>}
