@@ -76,7 +76,8 @@ async function remove() {
     const { error } = await svc.auth.admin.deleteUser(p.id);
     if (error) throw error;
   }
-  await svc.from('entities').update({ portal: 'portfolio', ...Object.fromEntries(Object.keys(SETTINGS).filter((k) => k !== 'portal').map((k) => [k, k === 'tagline' ? '' : null])) }).eq('id', MIST).throwOnError();
+  // Also the stake this script states, and what the own-domain and Microsoft 365 tests leave on MIST.
+  await svc.from('entities').update({ portal: 'portfolio', ...Object.fromEntries(Object.keys(SETTINGS).filter((k) => k !== 'portal').map((k) => [k, k === 'tagline' ? '' : null])), lakeba_stake: null, stake_as_at: null, custom_domain: null, ms_connected_at: null }).eq('id', MIST).throwOnError();
   console.log(`Removed MIST's fake data (${people?.length ?? 0} people, ${docs?.length ?? 0} documents).`);
 }
 await remove();
