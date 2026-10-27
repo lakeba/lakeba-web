@@ -1,5 +1,6 @@
 ---
 import Auth from '../layouts/Auth.astro';
+import PageHeader from '../components/PageHeader.astro';
 import { OPS } from '../lib/api/spec';
 import { API_SCOPES } from '../lib/api/scopes';
 import { EVENTS, eventScope } from '../lib/integrations/events';
@@ -9,6 +10,11 @@ import { AUTHS, DEFAULT_MAP, KINDS } from '../lib/integrations/inbound';
 const origin = Astro.locals.site?.central ?? Astro.url.origin;
 const api = `${origin}/api/v1`;
 const tags = [...Map.groupBy(OPS, (o) => o.tag)];
+const sections: { id: string; label: string; count?: number }[] = [
+  { id: 'start', label: 'Getting started' }, { id: 'scopes', label: 'Scopes', count: API_SCOPES.length }, { id: 'requests', label: 'Requests' },
+  { id: 'endpoints', label: 'Endpoints', count: OPS.length }, { id: 'webhooks', label: 'Outgoing webhooks' }, { id: 'events', label: 'Events', count: Object.keys(EVENTS).length },
+  { id: 'incoming', label: 'Incoming webhooks' }, { id: 'apps', label: 'Apps (OAuth 2)' }, { id: 'connectors', label: 'HubSpot and Xero' },
+];
 const methodClass: Record<string, string> = { GET: 'bg-lk-blue/15 text-lk-blue', POST: 'bg-lk-green/15 text-lk-green', PATCH: 'bg-lk-orange/15 text-lk-orange', PUT: 'bg-lk-orange/15 text-lk-orange', DELETE: 'bg-lk-red/15 text-lk-red' };
 const node = `import { createHmac, timingSafeEqual } from 'node:crypto';
 
@@ -30,23 +36,38 @@ def from_lakeba(raw: bytes, header: str, secret: str) -> bool:
 const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at: '2026-11-03T02:14:09Z', company: { code: 'EZF', name: 'Ezifin' }, description: 'An investor lodged proxy votes', data: { meeting_id: '9b2e…', user_id: '51aa…' }, api: `${api}` }, null, 2);
 ---
 
-<Auth title="Lakeba portal API" subtitle="For a company’s other tools: its register, investors, documents, news, meetings, Board Q&A, data rooms and newsletter." wide>
-  <nav class="mb-8 flex flex-wrap gap-2 text-sm">{['Start', 'Scopes', 'Requests', 'Endpoints', 'Webhooks', 'Events', 'Incoming', 'Apps', 'Connectors'].map((s) => <a href={`#${s.toLowerCase()}`} class="rounded-full border border-white/10 px-3 py-1 text-white/70 hover:text-white">{s}</a>)}<a href="/developers/reference" class="rounded-full bg-lk-blue px-3 py-1 font-medium text-[#fff] hover:bg-[#3a78ee]">API reference, with “Try it” →</a><a href="/api/v1/openapi.json" class="rounded-full border border-white/10 px-3 py-1 text-white/70 hover:text-white">OpenAPI ↗</a></nav>
-  <div class="prose-sm space-y-10 text-sm leading-relaxed text-white/75">
-    <section id="start">
-      <h2 class="font-display text-xl font-bold text-white">Start</h2>
+<Auth title="Lakeba portal API" page>
+  <PageHeader eyebrow="Developers" title="Lakeba portal API" subtitle="For a company’s other tools: its register, investors, documents, news, meetings, Board Q&A, data rooms and newsletter." />
+
+  <div class="grid gap-8 lg:grid-cols-[14rem_1fr]">
+    {/* The sections, like the document categories; the one being read is highlighted. */}
+    <aside class="space-y-6 lg:sticky lg:top-6 lg:self-start">
+      <a href="/developers/reference" class="btn-primary w-full justify-center py-2.5 text-sm" title="Every request and answer, with “Try it”">API reference →</a>
+      <nav aria-label="On this page" class="flex flex-wrap gap-1 text-sm lg:flex-col" data-toc>
+        {sections.map((x) => (
+          <a href={`#${x.id}`} data-toc-link={x.id} class="flex justify-between gap-2 rounded-lg px-3 py-2 text-white/55 hover:text-white">
+            <span>{x.label}</span>{x.count !== undefined && <span class="text-white/35">{x.count}</span>}
+          </a>
+        ))}
+      </nav>
+      <a href="/api/v1/openapi.json" class="block px-3 text-sm text-white/55 hover:text-white">OpenAPI ↗</a>
+    </aside>
+
+  <div class="min-w-0 space-y-4 text-sm leading-relaxed text-white/75">
+    <section class="card scroll-mt-6 p-5 sm:p-6" id="start">
+      <h2 class="font-display text-xl font-bold text-white">Getting started</h2>
       <p class="mt-2">A company’s Admins make keys in <strong class="text-white">Admin → Companies → the company → Integrations → API keys</strong>, choosing what each key may do. A key belongs to that company only. Send it as a bearer token:</p>
       <pre class="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-white">curl {api}/holders?limit=5 \{'\n'}  -H "Authorization: Bearer lk_live_…"</pre>
       <p class="mt-2">Live keys (lk_live_…) work on the live portal; test keys (lk_test_…) on staging only, which never calls the outside world. Keys can expire, be limited to IP addresses, be rotated (the old one keeps working for 7 days) and be revoked at once. A Lakeba group Admin can switch a company’s integrations off: every key is then refused.</p>
     </section>
 
-    <section id="scopes">
+    <section class="card scroll-mt-6 p-5 sm:p-6" id="scopes">
       <h2 class="font-display text-xl font-bold text-white">Scopes</h2>
       <p class="mt-2">“do” includes “view”. <strong class="text-white">people.read</strong> (names, emails, phones, addresses) is never implied: a key without it gets no personal details, and webhooks leave them out.</p>
-      <table class="mt-3 w-full text-left text-xs"><tbody class="divide-y divide-white/5">{API_SCOPES.map((s) => <tr><td class="py-1.5 pr-4 font-mono text-white">{s.key}</td><td class="py-1.5">{s.label}</td></tr>)}</tbody></table>
+      <div class="mt-3 overflow-x-auto"><table class="w-full text-left text-xs"><tbody class="divide-y divide-white/5">{API_SCOPES.map((s) => <tr><td class="py-1.5 pr-4 font-mono text-white">{s.key}</td><td class="py-1.5">{s.label}</td></tr>)}</tbody></table></div>
     </section>
 
-    <section id="requests">
+    <section class="card scroll-mt-6 p-5 sm:p-6" id="requests">
       <h2 class="font-display text-xl font-bold text-white">Requests</h2>
       <ul class="mt-2 list-disc space-y-1 pl-5">
         <li><strong class="text-white">Lists</strong> return <code>data</code>, <code>total</code> and <code>next_cursor</code>: pass it back as <code>?cursor=</code>. <code>limit</code> is 1–200 (default 50). Some lists take <code>updated_since</code> for changes only.</li>
@@ -58,7 +79,7 @@ const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at
       </ul>
     </section>
 
-    <section id="endpoints">
+    <section class="card scroll-mt-6 p-5 sm:p-6" id="endpoints">
       <h2 class="font-display text-xl font-bold text-white">Endpoints</h2>
       <p class="mt-2">All under <span class="font-mono text-white">{api}</span>. The <a href="/developers/reference" class="text-lk-blue underline underline-offset-2">API reference</a> has examples of every request and answer, code in several languages, and “Try it” with your key.</p>
       {tags.map(([tag, ops]) => (
@@ -77,7 +98,7 @@ const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at
       ))}
     </section>
 
-    <section id="webhooks">
+    <section class="card scroll-mt-6 p-5 sm:p-6" id="webhooks">
       <h2 class="font-display text-xl font-bold text-white">Outgoing webhooks</h2>
       <p class="mt-2">Made in Integrations → Outgoing webhooks (or with <code>POST /webhooks</code>). For each event chosen, the portal POSTs JSON to the address, with the headers <code>Lakeba-Event</code>, <code>Lakeba-Event-Id</code> (use it to ignore repeats) and <code>Lakeba-Signature: t=&lt;seconds&gt;,v1=&lt;hex&gt;</code>, the HMAC-SHA256 of <code>"&lt;t&gt;.&lt;body&gt;"</code> with the webhook’s secret. Answer with any 2xx within 15 seconds. Failures are retried after 1, 5 and 15 minutes, 1, 3, 6 and 12 hours, then daily, for about three days; then the webhook is switched off and the company’s Admins are told. Slack and Teams formats send a ready-to-read message instead.</p>
       <pre class="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-white">{sample}</pre>
@@ -87,12 +108,12 @@ const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at
       <p class="mt-2">Events carry IDs and facts; names and emails only for webhooks allowed personal data. Look the rest up with the API.</p>
     </section>
 
-    <section id="events">
+    <section class="card scroll-mt-6 p-5 sm:p-6" id="events">
       <h2 class="font-display text-xl font-bold text-white">Events</h2>
-      <table class="mt-3 w-full text-left text-xs"><tbody class="divide-y divide-white/5">{Object.entries(EVENTS).map(([k, v]) => <tr><td class="py-1.5 pr-4 font-mono text-white">{k}</td><td class="py-1.5 pr-4">{v}</td><td class="py-1.5 font-mono text-white/45">{eventScope(k)}</td></tr>)}</tbody></table>
+      <div class="mt-3 overflow-x-auto"><table class="w-full text-left text-xs"><tbody class="divide-y divide-white/5">{Object.entries(EVENTS).map(([k, v]) => <tr><td class="py-1.5 pr-4 font-mono text-white">{k}</td><td class="py-1.5 pr-4">{v}</td><td class="py-1.5 font-mono text-white/45">{eventScope(k)}</td></tr>)}</tbody></table></div>
     </section>
 
-    <section id="incoming">
+    <section class="card scroll-mt-6 p-5 sm:p-6" id="incoming">
       <h2 class="font-display text-xl font-bold text-white">Incoming webhooks</h2>
       <p class="mt-2">Made in Integrations → Incoming webhooks: each gets its own address, <span class="font-mono text-white">{origin}/api/hooks/in/&lt;token&gt;</span>, and a secret. Post JSON (a register: the PDF itself, or JSON with <code>file_base64</code>). The answer is 202 once it’s kept; send <code>Idempotency-Key</code> to make repeats harmless.</p>
       <ul class="mt-3 list-disc space-y-1 pl-5">{Object.entries(KINDS).map(([k, v]) => <li><strong class="text-white">{v.label}</strong>{v.review ? ' (an Admin reviews each one)' : ''}: {v.help}{DEFAULT_MAP[k] && <span class="text-white/50"> Fields: {Object.keys(DEFAULT_MAP[k]).join(', ')} (paths can be changed, e.g. email=data.contact.email).</span>}</li>)}</ul>
@@ -101,7 +122,7 @@ const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at
       <pre class="mt-3 overflow-x-auto rounded-xl bg-black/40 p-3 font-mono text-xs text-white">curl -X POST {origin}/api/hooks/in/&lt;token&gt; \{'\n'}  -H "Authorization: Bearer whin_…" -H "Content-Type: application/pdf" \{'\n'}  --data-binary @register.pdf</pre>
     </section>
 
-    <section id="apps">
+    <section class="card scroll-mt-6 p-5 sm:p-6" id="apps">
       <h2 class="font-display text-xl font-bold text-white">Apps (OAuth 2)</h2>
       <p class="mt-2">An app that works with many companies (Zapier, a marketplace app) is registered once by Lakeba and gets a client ID and secret. A company’s Admin allows it for their company:</p>
       <ol class="mt-2 list-decimal space-y-1 pl-5">
@@ -113,9 +134,32 @@ const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at
       <p class="mt-2">The app never gets more than the Admin who allowed it can do. Companies stop apps in Integrations → Apps; individual investors can’t allow apps.</p>
     </section>
 
-    <section id="connectors">
+    <section class="card scroll-mt-6 p-5 sm:p-6" id="connectors">
       <h2 class="font-display text-xl font-bold text-white">HubSpot and Xero</h2>
       <p class="mt-2">Built in, no code needed: a company’s Admin presses Connect in Integrations. <strong class="text-white">HubSpot</strong>: investors become contacts and holders become companies, with “Lakeba portal” properties and activity notes; optionally name and phone changes, “Invite to portal” and deal stages come back. <strong class="text-white">Xero</strong>: holders become contacts, paid-up capital is checked against the share capital accounts, and dividends are prepared as draft bills. Shares, holders and the register never come from either tool.</p>
     </section>
   </div>
+  </div>
 </Auth>
+
+<script>
+  // Highlights the section being read in the sidebar.
+  const links = new Map([...document.querySelectorAll<HTMLAnchorElement>('[data-toc-link]')].map((a) => [a.dataset.tocLink!, a]));
+  const mark = (id: string) => links.forEach((a, k) => {
+    const on = k === id;
+    a.classList.toggle('bg-white/10', on); a.classList.toggle('text-white', on); a.classList.toggle('text-white/55', !on);
+    if (on) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
+  });
+  // The section being read: the last one whose top has reached the upper part of the window (the last one at the bottom).
+  const sections = [...links.keys()].map((id) => document.getElementById(id)!).filter(Boolean);
+  let frame = 0;
+  const update = () => {
+    frame = 0;
+    const atEnd = innerHeight + scrollY >= document.documentElement.scrollHeight - 4;
+    const current = atEnd ? sections.at(-1) : sections.filter((s) => s.getBoundingClientRect().top <= innerHeight * 0.25).at(-1) ?? sections[0];
+    if (current) mark(current.id);
+  };
+  addEventListener('scroll', () => { frame ||= requestAnimationFrame(update); }, { passive: true });
+  update();
+</script>
+

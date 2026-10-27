@@ -7,8 +7,9 @@ import { HTML_LANG, LANGUAGE_NAMES, LOCALES } from '../lib/i18n';
 import { accentOf, brandOf } from '../lib/brand';
 import { ventureBySlug } from '../lib/sites';
 import type { Company } from '../lib/companies';
-interface Props { title: string; subtitle?: string; wide?: boolean; company?: Company | null }
-const { title, subtitle, wide = false, company } = Astro.props;
+// page: a full-width page (the /developers guide) instead of the centred card; the slot brings its own heading.
+interface Props { title: string; subtitle?: string; wide?: boolean; page?: boolean; company?: Company | null }
+const { title, subtitle, wide = false, page = false, company } = Astro.props;
 const { t, locale } = Astro.locals;
 // Arriving from a venture's own domain (?venture=mist), or a page about one venture (company): its name on the page, Lakeba as the provider.
 const slug = Astro.url.searchParams.get('venture');
@@ -48,7 +49,7 @@ const languageLinks = LOCALES.map((l) => {
       <div class="absolute -top-40 left-1/2 h-[36rem] w-[36rem] -translate-x-full rounded-full bg-lk-blue/20 blur-[120px]"></div>
       <div class="absolute bottom-0 left-1/2 h-[28rem] w-[28rem] rounded-full bg-lk-orange/10 blur-[120px]"></div>
     </div>
-    <main class:list={['w-full', wide ? 'max-w-3xl' : 'max-w-md']}>
+    <main class:list={['w-full', page ? 'container-portal min-w-0 !px-0' : wide ? 'max-w-3xl' : 'max-w-md']}>
       {venture ? (
         <div class="mb-8 text-center">
           {venture.logo_url
@@ -57,17 +58,19 @@ const languageLinks = LOCALES.map((l) => {
           <p class="mt-2 flex items-center justify-center gap-1.5 text-xs text-white/40"><Mark class="size-3.5" /> {t('{company} Investor Portal, powered by Lakeba', { company: venture.display_name })}</p>
         </div>
       ) : (
-        <a href="/" class="mb-8 flex items-center justify-center gap-2.5">
+        <a href="/" class:list={['mb-8 flex items-center gap-2.5', page ? 'justify-start' : 'justify-center']}>
           <Mark class="size-9" />
           <span class="font-display text-xl font-bold text-white">lakeba</span>
           <span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70">{t('Investors')}</span>
         </a>
       )}
-      <div class="card">
-        <h1 class="text-2xl font-bold">{title}</h1>
-        {subtitle && <p class="mt-2 text-sm text-white/55">{subtitle}</p>}
-        <div class="mt-6"><slot /></div>
-      </div>
+      {page ? <slot /> : (
+        <div class="card">
+          <h1 class="text-2xl font-bold">{title}</h1>
+          {subtitle && <p class="mt-2 text-sm text-white/55">{subtitle}</p>}
+          <div class="mt-6"><slot /></div>
+        </div>
+      )}
       <p class="mt-6 text-center text-xs text-white/35">{t('Need help?')} <a href={`mailto:${brand.contactEmail}`} class="underline hover:text-white">{brand.contactEmail}</a></p>
       <nav aria-label={t('Language')} class="mt-3 flex flex-wrap justify-center gap-x-3 gap-y-1 text-xs text-white/35">
         {languageLinks.map((l) => (
