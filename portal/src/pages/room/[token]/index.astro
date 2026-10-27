@@ -42,7 +42,7 @@ Astro.response.headers.set('Referrer-Policy', 'no-referrer');
 
 {!guest || !room ? (
   <Auth title={t('Data room')}>
-    <Alert tone="error">{'problem' in found && found.problem === 'expired' ? t('This data room link has expired.') : t('This data room link is not valid or has been closed.')} {t('Please contact the person who invited you.')}</Alert>
+    <Alert tone="error">{`${'problem' in found && found.problem === 'expired' ? t('This data room link has expired.') : t('This data room link is not valid or has been closed.')} ${t('Please contact the person who invited you.')}`}</Alert>
   </Auth>
 ) : !guest.nda_accepted_at ? (
   <Auth title={room.name} subtitle={t('{company} · Confidential data room for {name}', { company: companyName, name: guest.name })} wide>
