@@ -34,6 +34,17 @@ if (Astro.request.method === 'POST' && mayEdit) {
       await log('admin_created_news_key', { name, kind, origins });
       made = { key: k.key, kind };
     }
+  } else if (intent === 'origins') {
+    const lines = field(form, 'origins').split(/[\s,]+/).filter(Boolean);
+    const origins = [...new Set(lines.map(originOf))];
+    if (!origins.length || origins.includes(null)) error = 'List the website’s addresses, e.g. https://www.mist.com (one per line).';
+    else {
+      const { data: changed } = await svc.from('news_api_keys').update({ allowed_origins: origins }).eq('id', field(form, 'id')).eq('entity_id', company.id).eq('kind', 'publishable').is('revoked_at', null).select('name');
+      if (changed?.length) {
+        await log('admin_changed_news_key_websites', { id: field(form, 'id'), name: changed[0].name, origins });
+        notice = `“${changed[0].name}” now works from ${origins.join(', ')}.`;
+      }
+    }
   } else if (intent === 'revoke') {
     await svc.from('news_api_keys').update({ revoked_at: new Date().toISOString() }).eq('id', field(form, 'id')).eq('entity_id', company.id).is('revoked_at', null);
     await log('admin_revoked_news_key', { id: field(form, 'id') });
@@ -93,6 +104,17 @@ const { count: posts } = await (company.relationship === 'group'
                 <span><span class="text-white/85">{k.name}</span> <span class="rounded-full bg-white/10 px-2 py-0.5 text-xs text-white/60">{k.kind}</span>
                   <span class="block font-mono text-xs text-white/45">{k.prefix}…</span>
                   {k.allowed_origins.length > 0 && <span class="block text-xs text-white/45">{k.allowed_origins.join(', ')}</span>}
+                  {mayEdit && k.kind === 'publishable' && !k.revoked_at && (
+                    <details class="mt-1">
+                      <summary class="cursor-pointer text-xs text-lk-blue hover:underline">Change its website addresses</summary>
+                      <form method="post" class="mt-2 space-y-2">
+                        <input type="hidden" name="intent" value="origins" /><input type="hidden" name="id" value={k.id} />
+                        <textarea name="origins" rows="3" required class="field text-sm" aria-label={`Website addresses for ${k.name}`}>{k.allowed_origins.join('\n')}</textarea>
+                        <p class="text-xs text-white/40">One per line, with http:// or https:// and any port, e.g. http://localhost:4321 for testing. The key keeps working; the change applies straight away.</p>
+                        <button class="btn-ghost px-3 py-1.5 text-xs">Save addresses</button>
+                      </form>
+                    </details>
+                  )}
                   <span class="block text-xs text-white/40">{k.revoked_at ? `Revoked ${dateTime.format(new Date(k.revoked_at))}` : k.last_used_at ? `Last used ${dateTime.format(new Date(k.last_used_at))}` : 'Not used yet'}</span></span>
                 {mayEdit && !k.revoked_at && <form method="post"><input type="hidden" name="id" value={k.id} /><button name="intent" value="revoke" class="text-xs text-white/45 hover:text-lk-red" onclick="return confirm('Revoke this key? Websites using it stop showing news.')">Revoke</button></form>}
               </div>
@@ -106,7 +128,7 @@ const { count: posts } = await (company.relationship === 'group'
             <p class="text-sm font-semibold">Make a key</p>
             <div><label class="label" for="name">Name</label><input id="name" name="name" required maxlength="80" placeholder="Live website" class="field" /></div>
             <div><label class="label" for="kind">Kind</label><select id="kind" name="kind" class="field"><option value="publishable">Publishable: for the website component</option><option value="secret">Secret: for a website’s server</option></select></div>
-            <div><label class="label" for="origins">Website addresses (publishable keys)</label><textarea id="origins" name="origins" rows="2" placeholder={company.website ?? 'https://www.example.com'} class="field text-sm">{originOf(company.website ?? '') ?? ''}</textarea><p class="mt-1 text-xs text-white/40">One per line, e.g. https://www.mist.com and https://mist.com.</p></div>
+            <div><label class="label" for="origins">Website addresses (publishable keys)</label><textarea id="origins" name="origins" rows="2" placeholder={company.website ?? 'https://www.example.com'} class="field text-sm">{originOf(company.website ?? '') ?? ''}</textarea><p class="mt-1 text-xs text-white/40">One per line, e.g. https://www.mist.com and https://mist.com. You can change them later.</p></div>
             <button class="btn-ghost w-full">Make the key</button>
           </form>
         )}

@@ -20,11 +20,15 @@ export const GET: APIRoute = async ({ request, url }) => {
   const origin = request.headers.get('origin');
   const raw = url.searchParams.get('key') ?? request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? '';
   const found = await keyFor(svc, raw.trim());
-  if (!found) return json({ error: 'A valid key is needed.' }, 401);
+  // Refusals can be read by the page (the website component says why) and aren't kept, so a fixed key works at once.
+  const refuse = (code: string, error: string, status: number) => json({ error, code }, status, { ...cors(origin), 'cache-control': 'no-store' });
+  if (!found) return refuse('invalid_key', 'This key isn’t valid (it may have been revoked).', 401);
   const { key, company } = found;
   // A secret key never comes from a web page; a publishable one only from its website's addresses.
-  if (key.kind === 'secret' && origin) return json({ error: 'Secret keys are for servers. Use a publishable key in web pages.' }, 403);
-  if (key.kind === 'publishable' && (!origin || !key.allowed_origins.includes(origin))) return json({ error: 'This key doesn’t work from this website.' }, 403);
+  if (key.kind === 'secret' && origin) return refuse('secret_key', 'This is a secret key, for servers. Use a publishable key (pk_live_…) in web pages.', 403);
+  if (key.kind === 'publishable' && (!origin || !key.allowed_origins.includes(origin))) {
+    return refuse('wrong_website', origin ? `This key doesn’t work from ${origin}. Add that address to the key on the portal’s Website news page.` : 'This key only works from a web page on its website.', 403);
+  }
   if (overLimit(key.id)) return json({ error: 'Too many requests. Please slow down.' }, 429, cors(origin));
   await touchKey(svc, key.id);
   const site = { name: company.display_name, code: company.code, color: company.brand_color ?? '#276ae7', website: company.website };

@@ -37,7 +37,12 @@ const SCRIPT = String.raw`(() => {
       u.searchParams.set('key', this.key || '');
       for (const [k, v] of Object.entries(params)) if (v != null && v !== '') u.searchParams.set(k, v);
       const r = await fetch(u, { credentials: 'omit' });
-      if (!r.ok) throw new Error(String(r.status));
+      if (!r.ok) {
+        // The portal says why (a wrong key, or a website the key isn't for): shown to help whoever set up the page.
+        const why = await r.json().then((j) => j.error).catch(() => '');
+        if (why) console.warn('lakeba-news:', why);
+        throw Object.assign(new Error(String(r.status)), { why: r.status === 429 ? '' : why });
+      }
       return r.json();
     }
     paint(html, color) {
@@ -63,7 +68,7 @@ const SCRIPT = String.raw`(() => {
         const more = this.shadowRoot.querySelector('.more');
         if (more) more.addEventListener('click', () => this.render());
       } catch (e) {
-        this.paint('<p class="muted">The news couldn’t be loaded just now.</p>', this.color);
+        this.paint('<p class="muted">The news couldn’t be loaded' + (e && e.why ? ': ' + esc(e.why) : ' just now.') + '</p>', this.color);
       }
     }
     async article(slug) {
