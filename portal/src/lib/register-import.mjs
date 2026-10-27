@@ -225,7 +225,7 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
     return { code: c.code, name: c.newName, portal: classById.get(c.id)?.code ?? c.newCode, register: c.total, now, after: Number(after) };
   });
 
-  const matching = rows.map((r) => ({ key: r.h.key, register_name: r.h.register_name, name: r.h.name, trust: r.h.beneficially_for, acn: r.h.acn, kind: r.h.kind, classes: r.h.classes.map((c) => ({ code: c.code, shares: c.balance })), how: r.how, why: r.why, holderId: r.holderId, holderName: r.holderId ? holderById.get(r.holderId).name : null }));
+  const matching = rows.map((r) => ({ key: r.h.key, register_name: r.h.register_name, name: r.h.name, newName: newHolderName(r.h), trust: r.h.beneficially_for, acn: r.h.acn, kind: r.h.kind, classes: r.h.classes.map((c) => ({ code: c.code, shares: c.balance })), how: r.how, why: r.why, holderId: r.holderId, holderName: r.holderId ? holderById.get(r.holderId).name : null }));
   const candidates = holders.map((h) => ({ id: h.id, name: h.name, ref: h.registry_ref, here: inCompany.has(h.id) })).sort((a, b) => Number(b.here) - Number(a.here) || a.name.localeCompare(b.name));
   const resolved = { holders: Object.fromEntries(rows.map((r) => [r.h.key, r.holderId ?? 'new'])), classes: Object.fromEntries(classMap.map((c) => [c.code, c.id ?? 'new'])), later: keepLater ? 'keep' : 'remove' };
   const out = { entity, asAt, datedRows, problems, warnings, changes, classes: classMap.map(({ settings, ...c }) => ({ ...c, portal: c.id ? classById.get(c.id).code : null })), allClasses: classes.map((c) => ({ id: c.id, code: c.code, name: c.name })), matching, candidates, totals, choices: resolved, applied: false, changedHolders: /** @type {string[]} */ ([]), importId: null, registeredTrades };
@@ -309,8 +309,25 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
   return { ...out, applied: true, importId: imp.id, changedHolders: [...changedIds].map((id) => holderById.get(id)?.registry_ref).filter(Boolean) };
 }
 
-/** A new holder's name: the register's, with its trust ("X atf Y"). */
-function newHolderName(h) { return `${h.name}${h.beneficially_for ? ` atf ${h.beneficially_for}` : ''}`; }
+/** A new holder's name: the register's, with its trust ("X atf Y"), in the portal's capitals. */
+export function newHolderName(h) { return `${nameCase(h.name)}${h.beneficially_for ? ` atf ${nameCase(h.beneficially_for)}` : ''}`; }
+
+// Registers print names in capitals; the portal writes them "Klockmann Investments Pty Ltd".
+// Only words in capitals change (a name already in mixed case is kept); words without a vowel
+// stay as they are, being initials (KTF, WSN), except the usual abbreviations.
+const SMALL = new Set(['and', 'of', 'the', 'atf', 'for', 'as']);
+const ABBREVIATIONS = { LTD: 'Ltd', PTY: 'Pty', MR: 'Mr', MRS: 'Mrs', MS: 'Ms', DR: 'Dr', ST: 'St', JR: 'Jr', SR: 'Sr' };
+export function nameCase(name) {
+  return String(name).split(/(\s+)/).map((word, i) => {
+    if (!/[A-Z]/.test(word) || /[a-z]/.test(word)) return word;
+    const bare = word.replace(/[^A-Z]/g, '');
+    if (i > 0 && SMALL.has(bare.toLowerCase()) && bare === word) return bare.toLowerCase();
+    if (ABBREVIATIONS[bare]) return word.replace(bare, ABBREVIATIONS[bare]);
+    if (!/[AEIOUY]/.test(bare)) return word;
+    // Each part after a hyphen or apostrophe starts with a capital: Kalinowski-Weaver, O'Hara; and McIntosh.
+    return word.toLowerCase().replace(/(^|[-'’(])([a-z])/g, (m, a, b) => a + b.toUpperCase()).replace(/\bMc([a-z])/g, (m, c) => `Mc${c.toUpperCase()}`);
+  }).join('');
+}
 
 /** The latest row per holder and class. */
 function latestOf(rows) {

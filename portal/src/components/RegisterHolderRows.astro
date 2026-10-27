@@ -2,7 +2,7 @@
 // Names on a register of members and the portal holder each one is (Admin →
 // Import data → Register of members). Each list starts with its current choice
 // and "New holder"; the page fills in the other holders when it's opened.
-type Row = { key: string; register_name: string; name: string; trust: string | null; acn: string | null; kind: string; classes: { code: string; shares: number }[]; how: string; why: string; holderId: string | null; holderName: string | null };
+type Row = { key: string; register_name: string; name: string; newName: string; trust: string | null; acn: string | null; kind: string; classes: { code: string; shares: number }[]; how: string; why: string; holderId: string | null; holderName: string | null };
 interface Props { rows: Row[] }
 const { rows } = Astro.props;
 const HOW: Record<string, string> = { name: 'Same name', saved: 'Matched before', chosen: 'Your choice', 'chosen-new': 'Your choice', suggested: 'Suggested', new: 'No match' };
@@ -20,7 +20,7 @@ const KIND: Record<string, string> = { individual: 'individual', company: 'compa
           <td class="py-2 pl-3">
             <select name={`h:${m.key}`} data-holders class="field w-full max-w-md py-1 text-sm" aria-label={`Portal holder for ${m.register_name}`}>
               {m.holderId && <option value={m.holderId} selected>{m.holderName}</option>}
-              <option value="new" selected={!m.holderId}>New holder: {m.name}{m.trust ? ` atf ${m.trust}` : ''} ({KIND[m.kind] ?? m.kind})</option>
+              <option value="new" selected={!m.holderId}>New holder: {m.newName} ({KIND[m.kind] ?? m.kind})</option>
             </select>
             <span class:list={['mt-1 block text-xs', TONE[m.how] ?? 'text-white/40']}>{HOW[m.how] ?? m.how}{m.why && m.how === 'suggested' ? `: ${m.why}. Check it’s the same holder.` : ''}</span>
           </td>
