@@ -21,6 +21,10 @@
 // figures in the portal the register doesn't support (dated after it, which
 // would stay "current", or between its movements) are listed, and removed
 // unless the admin chooses to keep them.
+//
+// A sale paired on the portal's trading board (a trade match still being
+// arranged) is completed when the register shows it: the seller's transfer out
+// of those shares, on or after the pairing, and the buyer's transfer in that day.
 import { tidyName } from './register-pdf.mjs';
 
 /** @typedef {{ sheet: string, action: 'add' | 'update' | 'remove' | 'same', item: string, details: string[] }} Change */
@@ -196,6 +200,23 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
   const after = later.filter((h) => h.as_at > asAt).length;
   if (later.length && keepLater) warnings.push(`You chose to keep ${later.length} figure${later.length === 1 ? '' : 's'} the register doesn’t support${after ? `: ${after === 1 ? 'the one' : `the ${after}`} dated after it stay${after === 1 ? 's' : ''} the current figure, not the register’s` : ''}.`);
 
+  // Trades paired in the portal that this register shows as transferred.
+  const matches = mapped.size ? await all(svc.from('trade_matches').select('id, share_class_id, shares, created_at, admin_note, sell_id, buy_id').eq('entity_id', entityId).eq('status', 'approved').in('share_class_id', [...mapped])) : [];
+  const interests = matches.length ? await all(svc.from('trade_interests').select('id, holder_id').in('id', matches.flatMap((m) => [m.sell_id, m.buy_id]))) : [];
+  const holderOfInterest = new Map(interests.map((i) => [i.id, i.holder_id]));
+  const rowOfHolder = new Map(rows.filter((r) => r.holderId).map((r) => [r.holderId, r]));
+  const movesIn = (row, classId) => (row?.h.classes ?? []).filter((c) => classIdOf(c.code) === classId).flatMap((c) => c.movements);
+  const registeredTrades = [];
+  for (const m of matches) {
+    const seller = rowOfHolder.get(holderOfInterest.get(m.sell_id)), buyer = rowOfHolder.get(holderOfInterest.get(m.buy_id));
+    const n = Number(m.shares), since = String(m.created_at).slice(0, 10);
+    const sold = movesIn(seller, m.share_class_id).find((mv) => mv.shares === -n && mv.date >= since);
+    const bought = sold && movesIn(buyer, m.share_class_id).find((mv) => mv.shares === n && mv.date === sold.date);
+    if (!sold || !bought) continue;
+    registeredTrades.push({ id: m.id, sell_id: m.sell_id, buy_id: m.buy_id, on: sold.date, note: m.admin_note });
+    changes.push({ sheet: 'Trades', action: 'update', item: `${show(n)} ${classById.get(m.share_class_id).code}: ${nameOf(seller)} → ${nameOf(buyer)}`, details: [`Paired on the trading board on ${day(since)}; on the register on ${day(sold.date)}, so it’s completed`] });
+  }
+
   // Totals per class: the portal now, and after.
   const totals = classMap.map((c) => {
     const now = c.id ? latestOf(holdings.filter((h) => h.share_class_id === c.id)).reduce((a, h) => a + Number(h.shares), 0) : 0;
@@ -207,7 +228,7 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
   const matching = rows.map((r) => ({ key: r.h.key, register_name: r.h.register_name, name: r.h.name, trust: r.h.beneficially_for, acn: r.h.acn, kind: r.h.kind, classes: r.h.classes.map((c) => ({ code: c.code, shares: c.balance })), how: r.how, why: r.why, holderId: r.holderId, holderName: r.holderId ? holderById.get(r.holderId).name : null }));
   const candidates = holders.map((h) => ({ id: h.id, name: h.name, ref: h.registry_ref, here: inCompany.has(h.id) })).sort((a, b) => Number(b.here) - Number(a.here) || a.name.localeCompare(b.name));
   const resolved = { holders: Object.fromEntries(rows.map((r) => [r.h.key, r.holderId ?? 'new'])), classes: Object.fromEntries(classMap.map((c) => [c.code, c.id ?? 'new'])), later: keepLater ? 'keep' : 'remove' };
-  const out = { entity, asAt, datedRows, problems, warnings, changes, classes: classMap.map(({ settings, ...c }) => ({ ...c, portal: c.id ? classById.get(c.id).code : null })), allClasses: classes.map((c) => ({ id: c.id, code: c.code, name: c.name })), matching, candidates, totals, choices: resolved, applied: false, changedHolders: /** @type {string[]} */ ([]), importId: null };
+  const out = { entity, asAt, datedRows, problems, warnings, changes, classes: classMap.map(({ settings, ...c }) => ({ ...c, portal: c.id ? classById.get(c.id).code : null })), allClasses: classes.map((c) => ({ id: c.id, code: c.code, name: c.name })), matching, candidates, totals, choices: resolved, applied: false, changedHolders: /** @type {string[]} */ ([]), importId: null, registeredTrades };
   if (!apply || problems.length) return out;
 
   // ---------------------------------------------------------------------------
@@ -275,6 +296,9 @@ export async function compareRegister({ svc, register, entityId, groupWide, choi
     paid_per_share: mv.paid, unpaid_per_share: mv.unpaid, beneficial: mv.beneficial,
   })));
   for (let i = 0; i < moves.length; i += 500) await svc.from('register_movements').insert(moves.slice(i, i + 500)).throwOnError();
+  for (const t of registeredTrades) {
+    await svc.from('trade_matches').update({ status: 'completed', completed_on: t.on, completed_by: actorId, admin_note: [t.note, `Completed from the register of members as at ${day(asAt)}`].filter(Boolean).join(' · ') }).eq('id', t.id).eq('status', 'approved').throwOnError();
+  }
 
   const changedIds = new Set();
   for (const row of rows) for (const c of row.h.classes) {

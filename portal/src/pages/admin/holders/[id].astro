@@ -31,11 +31,22 @@ const { data: allClasses } = await svc.from('share_classes').select('id, code, n
 const classes = (allClasses ?? []) as unknown as Cls[];
 const classById = new Map(classes.map((c) => [c.id, c]));
 const classLabel = (cid: string) => { const c = classById.get(cid); return c ? `${c.entities?.code}-${c.code} ${c.name}` : 'unknown class'; };
+// Companies whose holdings come from their register of members, and the date of the last register imported.
+const [{ data: fromRegister }, { data: lastRegisters }] = await Promise.all([
+  svc.from('entities').select('id').eq('holdings_from_register', true),
+  svc.from('register_imports').select('entity_id, as_at').order('as_at', { ascending: false }),
+]);
+const lastRegister = new Map<string, string>();
+for (const r of lastRegisters ?? []) if (!lastRegister.has(r.entity_id)) lastRegister.set(r.entity_id, r.as_at);
+const registerSource = new Set((fromRegister ?? []).map((e) => e.id));
+/** The date of the register a class's holdings come from, if its company's do. */
+const registerOf = (cid: string) => { const e = classById.get(cid)?.entity_id; return e && registerSource.has(e) ? lastRegister.get(e) ?? '' : null; };
+const registerWarning = (cid: string) => `${classById.get(cid)?.entities?.display_name}’s holdings come from the company secretary’s register of members${registerOf(cid) ? ` (last imported as at ${shortDate.format(new Date(registerOf(cid)!))})` : ''}. The next register imported puts back its figures, so record the change with the company secretary too.`;
 const mayEditClass = (cid: string) => { const c = classById.get(cid); return Boolean(c && rights.company(c.entity_id)); };
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { holder_id: id, holder: holder!.name, ...detail } });
 
 let error = '', notice = '';
-let review: { title: string; lines: string[]; fields: [string, string][]; danger?: boolean } | null = null;
+let review: { title: string; lines: string[]; fields: [string, string][]; danger?: boolean; reason?: string } | null = null;
 let changedHoldings = false;
 let tellAsAt: string | null = null;
 
@@ -45,7 +56,9 @@ if (Astro.request.method === 'POST') {
   const action = field(form, 'op');
   const fields = [...form.entries()].filter(([k]) => k !== 'intent').map(([k, v]) => [k, String(v)] as [string, string]);
   /** Checks an action; returns what it changes and how to apply it, or an error. */
-  const plan = async (): Promise<{ title: string; lines: string[]; danger?: boolean; apply: () => Promise<string> } | string> => {
+  const reason = field(form, 'reason').slice(0, 500);
+  const why = (cid: string) => (registerOf(cid) != null ? { reason } : {});
+  const plan = async (): Promise<{ title: string; lines: string[]; danger?: boolean; reason?: string; apply: () => Promise<string> } | string> => {
     if (action === 'details') {
       if (!rights.group) return 'Only people who manage the whole register can change a holder’s details.';
       const next = { name: field(form, 'name').slice(0, 200), kind: field(form, 'kind'), registry_ref: field(form, 'registry_ref').slice(0, 40) || null };
@@ -76,10 +89,11 @@ if (Astro.request.method === 'POST') {
       const labels = { as_at: 'As at', shares: 'Shares', exercise_price: 'Exercise price', expires_on: 'Expires on' };
       const lines = old ? changes(old, next, labels) : [`${classLabel(classId)}: ${fmt(next.shares)} shares as at ${shortDate.format(new Date(next.as_at))}`, ...(next.exercise_price != null ? [`Exercise price ${fmt(next.exercise_price)}`] : []), ...(next.expires_on ? [`Expires ${shortDate.format(new Date(next.expires_on))}`] : [])];
       if (!lines.length) return 'Nothing changed.';
-      return { title: old ? `Correct this ${classLabel(classId)} row?` : 'Add this holding row?', lines, apply: async () => {
+      const reg = registerOf(classId) != null;
+      return { title: old ? `Correct this ${classLabel(classId)} row?` : 'Add this holding row?', lines: reg ? [...lines, registerWarning(classId)] : lines, reason: reg ? 'Why are you changing figures from the register?' : undefined, apply: async () => {
         if (old) await svc.from('holdings').update(next).eq('id', old.id).throwOnError();
         else await svc.from('holdings').insert({ holder_id: id, share_class_id: classId, ...next }).throwOnError();
-        await log(old ? 'register_holding_corrected' : 'register_holding_added', { class: classLabel(classId), changes: lines });
+        await log(old ? 'register_holding_corrected' : 'register_holding_added', { class: classLabel(classId), changes: lines, ...why(classId) });
         changedHoldings = true; tellAsAt = next.as_at;
         return old ? 'Holding row corrected.' : 'Holding row added.';
       } };
@@ -88,9 +102,10 @@ if (Astro.request.method === 'POST') {
       const old = (await svc.from('holdings').select('*').eq('id', field(form, 'row')).eq('holder_id', id).maybeSingle()).data as Row | null;
       if (!old) return 'That holding row was not found.';
       if (!mayEditClass(old.share_class_id)) return 'You can’t change holdings in that company.';
-      return { title: 'Delete this holding row?', danger: true, lines: [`${classLabel(old.share_class_id)}: ${fmt(Number(old.shares))} shares as at ${shortDate.format(new Date(old.as_at))}`, 'The holder’s balance becomes the latest row left for this class. Use a row with 0 shares instead if they sold out (it keeps the history).'], apply: async () => {
+      const reg = registerOf(old.share_class_id) != null;
+      return { title: 'Delete this holding row?', danger: true, lines: [`${classLabel(old.share_class_id)}: ${fmt(Number(old.shares))} shares as at ${shortDate.format(new Date(old.as_at))}`, 'The holder’s balance becomes the latest row left for this class. Use a row with 0 shares instead if they sold out (it keeps the history).', ...(reg ? [registerWarning(old.share_class_id)] : [])], reason: reg ? 'Why are you changing figures from the register?' : undefined, apply: async () => {
         await svc.from('holdings').delete().eq('id', old.id).throwOnError();
-        await log('register_holding_deleted', { class: classLabel(old.share_class_id), shares: old.shares, as_at: old.as_at });
+        await log('register_holding_deleted', { class: classLabel(old.share_class_id), shares: old.shares, as_at: old.as_at, ...why(old.share_class_id) });
         changedHoldings = true;
         return 'Holding row deleted.';
       } };
@@ -168,8 +183,10 @@ if (Astro.request.method === 'POST') {
   } else {
     const p = await plan();
     if (typeof p === 'string') error = p;
-    else if (intent === 'review') review = { title: p.title, lines: p.lines, fields, danger: p.danger };
-    else if (intent === 'apply') {
+    else if (intent === 'review' || (intent === 'apply' && p.reason && !reason)) {
+      if (intent === 'apply') error = 'Say why you’re changing figures from the register.';
+      review = { title: p.title, lines: p.lines, fields, danger: p.danger, reason: p.reason };
+    } else if (intent === 'apply') {
       const done = await p.apply();
       if (done === 'deleted') return Astro.redirect(`/admin/holdings?deleted=${encodeURIComponent(holder.name)}`, 303);
       notice = done;
@@ -222,7 +239,7 @@ const btn = 'text-xs text-white/55 hover:text-white';
       <p class="-mt-2 text-sm text-white/50">One row per date: the latest row in each class is the current balance. To record a change, add a row with the new date; correct a row only if it was wrong.</p>
       {byClass.map(([cid, list]) => (
         <div class="card @container p-0">
-          <div class="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-4"><h3 class="font-semibold">{classLabel(cid)}</h3>{noteOf.get(cid) && <span class="text-xs text-lk-orange">Note: {noteOf.get(cid)}</span>}</div>
+          <div class="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-4"><h3 class="font-semibold">{classLabel(cid)}{registerOf(cid) != null && <span class="ml-2 rounded-full bg-lk-blue/10 px-2 py-0.5 text-[11px] font-normal text-lk-blue">From the register{registerOf(cid) ? ` of ${shortDate.format(new Date(registerOf(cid)!))}` : ''}</span>}</h3>{noteOf.get(cid) && <span class="text-xs text-lk-orange">Note: {noteOf.get(cid)}</span>}</div>
           <div class="mt-2 text-sm">
             <div class="hidden grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem] gap-2 px-5 pb-1 text-xs uppercase tracking-wider text-white/40 @3xl:grid"><span>As at</span><span class="text-right">Shares</span><span class="text-right">Exercise price</span><span>Expires</span><span></span></div>
             <div class="divide-y divide-white/5">

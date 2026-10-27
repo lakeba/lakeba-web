@@ -8,6 +8,7 @@ import { field } from '../../../lib/forms';
 import { importScope } from '../../../lib/import-scope';
 import { readRegister } from '../../../lib/register-pdf.mjs';
 import { compareRegister } from '../../../lib/register-import.mjs';
+import { refreshStatus } from '../../../lib/trading';
 import { createHash } from 'node:crypto';
 
 /*
@@ -20,6 +21,10 @@ import { createHash } from 'node:crypto';
  * applied, as the record of that register (registers/<company>/<import>.pdf).
  * If the portal changes between the preview and the confirmation, nothing is
  * applied and the new preview is shown instead.
+ *
+ * The company's switch "holdings come from the register" (offered when a
+ * register is imported, and on this page) makes the workbook import and the
+ * screens leave its holdings and shares on issue to the register.
  */
 const svc = serviceClient();
 const supabase = Astro.locals.supabase;
@@ -37,6 +42,7 @@ let uploadId = '';
 let fileName = '';
 let fingerprint = '';
 let applied = false;
+let notice = '';
 const fingerprintOf = (r: Result) => createHash('sha256').update(JSON.stringify({ c: r.changes, m: r.choices })).digest('hex');
 const pathOf = (id: string) => `imports/register-${id}.pdf`;
 const groupWide = Astro.locals.access.groupAdmin;
@@ -53,7 +59,12 @@ else if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   const intent = field(form, 'intent');
   try {
-    if (intent === 'check') {
+    if (intent === 'source') {
+      const on = field(form, 'source') === 'on';
+      await svc.from('entities').update({ holdings_from_register: on }).eq('id', scope.entityId).throwOnError();
+      await log('admin_set_register_source', { holdings_from_register: on });
+      notice = on ? `${company!.display_name}’s holdings now come from its register of members.` : `${company!.display_name}’s holdings can be changed by the workbook import and on screen again.`;
+    } else if (intent === 'check') {
       const file = form.get('file');
       if (!(file instanceof File) || !file.size) error = 'Choose the register (PDF) to check.';
       else if (file.size > MAX_BYTES) error = 'That file is larger than 20 MB.';
@@ -102,7 +113,12 @@ else if (Astro.request.method === 'POST') {
               const { error: moveError } = await svc.storage.from('documents').move(pathOf(uploadId), keep);
               if (!moveError) await svc.from('register_imports').update({ file_path: keep }).eq('id', done.importId!);
               result = done; applied = true; uploadId = '';
-              await log('admin_applied_register', { file: fileName, as_at: done.asAt, import_id: done.importId, changed_holders: done.changedHolders.length });
+              if (done.registeredTrades.length) await refreshStatus(svc, done.registeredTrades.flatMap((t) => [t.sell_id, t.buy_id]));
+              if (form.get('from_register') === 'on') {
+                await svc.from('entities').update({ holdings_from_register: true }).eq('id', scope.entityId).throwOnError();
+                await log('admin_set_register_source', { holdings_from_register: true });
+              }
+              await log('admin_applied_register', { file: fileName, as_at: done.asAt, import_id: done.importId, changed_holders: done.changedHolders.length, trades_completed: done.registeredTrades.length });
             } else error = 'Nothing was imported.';
           }
         }
@@ -113,6 +129,12 @@ else if (Astro.request.method === 'POST') {
   }
 }
 
+// Where this company's holdings come from, and its last register.
+const [{ data: source }, { data: lastImport }] = scope ? await Promise.all([
+  svc.from('entities').select('holdings_from_register').eq('id', scope.entityId).single(),
+  svc.from('register_imports').select('as_at, created_at, file_name').eq('entity_id', scope.entityId).order('created_at', { ascending: false }).limit(1).maybeSingle(),
+]) : [{ data: null }, { data: null }];
+const fromRegister = Boolean(source?.holdings_from_register);
 const show = (n: number) => Number(n).toLocaleString('en-AU');
 const day = (d: string | null | undefined) => (d ? new Date(`${d}T00:00:00`).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' }) : '');
 const r = result as Result | null;
@@ -120,7 +142,7 @@ const rd = read as Read | null;
 const look = r ? r.matching.filter((m) => m.how === 'suggested' || m.how === 'new') : [];
 const matched = r ? r.matching.filter((m) => !(m.how === 'suggested' || m.how === 'new')) : [];
 const changes = r?.changes ?? [];
-const SHEETS = ['Company', 'Share classes', 'Holders', 'Holdings', 'History', 'Other figures'];
+const SHEETS = ['Company', 'Share classes', 'Holders', 'Holdings', 'History', 'Other figures', 'Trades'];
 const LABEL = { add: 'New', update: 'Changed', remove: 'Removed', same: 'Unchanged' } as const;
 const TONE = { add: 'text-lk-green', update: 'text-lk-blue', remove: 'text-lk-red', same: 'text-white/50' } as const;
 const count = (sheet: string, action: string) => changes.filter((c) => c.sheet === sheet && c.action === action).length;
@@ -141,10 +163,11 @@ const keepLater = r?.choices.later === 'keep';
     </form>
   )}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 
   {applied && r && (
     <div class="mb-6 space-y-4">
-      <Alert tone="success">Imported the register as at {day(r.asAt)}. {company!.display_name}’s holdings now follow it; its names and classes are remembered for the next register. No emails were sent.</Alert>
+      <Alert tone="success">Imported the register as at {day(r.asAt)}. {company!.display_name}’s holdings now follow it, with their history; its names and classes are remembered for the next register.{r.registeredTrades.length > 0 && ` ${r.registeredTrades.length} trade${r.registeredTrades.length === 1 ? '' : 's'} paired on the trading board ${r.registeredTrades.length === 1 ? 'is' : 'are'} now completed.`} No emails were sent.</Alert>
       {r.changedHolders.length > 0 && (
         <form method="post" action={`/admin/import${q}`} class="card flex flex-wrap items-center justify-between gap-4">
           <input type="hidden" name="refs" value={JSON.stringify(r.changedHolders)} />
@@ -154,6 +177,20 @@ const keepLater = r?.choices.later === 'keep';
         </form>
       )}
     </div>
+  )}
+
+  {scope && (
+    <section class="card mb-6 flex flex-wrap items-center justify-between gap-4">
+      <div class="text-sm">
+        <p class="font-semibold text-white">{fromRegister ? `${company!.display_name}’s holdings come from its register of members` : `${company!.display_name}’s holdings are kept in the portal`}</p>
+        <p class="mt-1 text-white/55">{fromRegister
+          ? 'The workbook import only checks its holdings and shares on issue, and changing them on screen asks why. Import each new register to update them.'
+          : 'The workbook import and the screens change its holdings. Switch to the register once you import it regularly.'}
+          {lastImport && ` Last register imported: as at ${day(lastImport.as_at)} (${new Date(lastImport.created_at).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', year: 'numeric' })}).`}</p>
+      </div>
+      <form method="post"><input type="hidden" name="source" value={fromRegister ? 'off' : 'on'} />
+        <button name="intent" value="source" class="btn-ghost text-sm" onclick={fromRegister ? "return confirm('Let the workbook import and the screens change these holdings again?')" : undefined}>{fromRegister ? 'Keep holdings in the portal instead' : 'Take holdings from the register'}</button></form>
+    </section>
   )}
 
   {scope && !applied && (
@@ -296,6 +333,7 @@ const keepLater = r?.choices.later === 'keep';
             <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} /><input type="hidden" name="fingerprint" value={fingerprint} />
             <input type="hidden" name="choices" value={JSON.stringify(r.choices)} />
             <p class="text-sm text-white/60">{company!.display_name}’s holdings take the register’s figures as at {day(r.asAt)}, with their history ({r.datedRows} dated balances from {rd?.facts.movements ?? 0} movements){later.length > 0 && !keepLater ? `, and ${later.length} figure${later.length === 1 ? ' the register doesn’t support is' : 's the register doesn’t support are'} removed` : ''}. If you changed a match above, press “Update the preview” first.</p>
+            {!fromRegister && <label class="flex items-start gap-3 text-sm text-white/80"><input type="checkbox" name="from_register" checked class="mt-0.5 size-4 accent-lk-blue" /><span>From now on, {company!.display_name}’s holdings come from its register of members<span class="block text-xs text-white/50">The workbook import will only check them, and changing them on screen will ask why.</span></span></label>}
             <label class="flex items-center gap-3 text-sm text-white/80"><input type="checkbox" name="reviewed" required class="size-4 accent-lk-blue" /> I’ve reviewed the matches and the changes above.</label>
             <button name="intent" value="apply" class="btn-primary">Import the register</button>
           </form>

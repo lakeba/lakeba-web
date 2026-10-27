@@ -25,7 +25,10 @@ if (Astro.request.method === 'POST') {
     const raw = field(form, 'official_on_issue').replace(/[,\s]/g, '');
     const asAt = field(form, 'official_as_at');
     const clear = raw === '';
-    if (!clear && (!/^\d+$/.test(raw) || !/^\d{4}-\d{2}-\d{2}$/.test(asAt))) error = 'Enter a whole number of shares and the date it is correct as at.';
+    const { data: cls } = await supabase.from('share_classes').select('entities(display_name, holdings_from_register)').eq('id', field(form, 'class_id')).maybeSingle();
+    const owner = cls?.entities as unknown as { display_name: string; holdings_from_register: boolean } | null;
+    if (owner?.holdings_from_register) error = `${owner.display_name}’s shares on issue come from its register of members: import a newer register to change them.`;
+    else if (!clear && (!/^\d+$/.test(raw) || !/^\d{4}-\d{2}-\d{2}$/.test(asAt))) error = 'Enter a whole number of shares and the date it is correct as at.';
     else {
       const { error: updateError } = await supabase.from('share_classes')
         .update({ official_on_issue: clear ? null : Number(raw), official_as_at: clear ? null : asAt })

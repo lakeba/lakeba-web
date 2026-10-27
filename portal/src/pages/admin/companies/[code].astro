@@ -107,6 +107,7 @@ if (Astro.request.method === 'POST') {
       if (!(next.kind in CLASS_KINDS)) return 'Choose the type.';
       if (field(form, 'official_on_issue') !== '' && official == null) return 'The official number on issue is a whole number.';
       if ((next.official_on_issue == null) !== (next.official_as_at == null)) return 'The official number on issue and its date go together.';
+      if (old && c.holdings_from_register && (Number(next.official_on_issue ?? -1) !== Number(old.official_on_issue ?? -1) || next.official_as_at !== old.official_as_at)) return `${c.display_name}’s shares on issue come from its register of members: import a newer register to change them (Import data → Register of members).`;
       if (!old && (await svc.from('share_classes').select('id').eq('entity_id', c.id).eq('code', next.code).maybeSingle()).data) return `${c.code}-${next.code} already exists.`;
       const labels = { name: 'Name', kind: 'Type', voting: 'Voting', counts_toward_pct: 'Counts toward %', currency: 'Currency', official_on_issue: 'Official on issue', official_as_at: 'Official as at' };
       const lines = old ? changes(old, next, labels, (k, v) => (k === 'kind' ? CLASS_KINDS[v as keyof typeof CLASS_KINDS] ?? fmt(v) : fmt(v)))

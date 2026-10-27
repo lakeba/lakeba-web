@@ -42,11 +42,13 @@ export function parseHoldingsCsv(text: string) {
 export async function previewImport(supabase: SupabaseClient, rows: ImportRow[], parseErrors: string[]): Promise<Preview> {
   const errors = [...parseErrors];
   const [{ data: classes }, { data: holders }, { data: holdings }] = await Promise.all([
-    supabase.from('share_classes').select('id, code'),
+    supabase.from('share_classes').select('id, code, entities(display_name, holdings_from_register)'),
     supabase.from('holders').select('id, registry_ref'),
     supabase.from('holdings').select('holder_id, share_class_id, shares, as_at').order('as_at', { ascending: false }),
   ]);
   const classByCode = new Map((classes ?? []).map((c) => [c.code, c.id]));
+  // Holdings of a company that come from its register of members are set by importing the register.
+  const registerCompany = new Map((classes ?? []).map((c) => { const e = c.entities as unknown as { display_name: string; holdings_from_register: boolean } | null; return [c.id, e?.holdings_from_register ? e.display_name : null]; }));
   const holderByRef = new Map((holders ?? []).map((h) => [h.registry_ref, h.id]));
   const latest = new Map<string, number>();
   for (const h of holdings ?? []) {
@@ -58,6 +60,7 @@ export async function previewImport(supabase: SupabaseClient, rows: ImportRow[],
   for (const row of rows) {
     const classId = classByCode.get(row.share_class_code);
     if (!classId) { errors.push(`Line ${row.line}: unknown share class ${row.share_class_code}`); continue; }
+    if (registerCompany.get(classId)) { errors.push(`Line ${row.line}: ${registerCompany.get(classId)}’s holdings come from its register of members: import the register instead (Import data → Register of members).`); continue; }
     const holderId = holderByRef.get(row.registry_ref) ?? null;
     const previous = holderId ? latest.get(`${holderId}|${classId}`) ?? null : null;
     const change = !holderId ? 'new-holder' : previous === null ? 'added' : previous === row.shares ? 'unchanged' : 'changed';

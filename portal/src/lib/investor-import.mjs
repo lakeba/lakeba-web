@@ -21,6 +21,10 @@
 // are kept as they are, and nobody is given access to a shared holder).
 // Relationship, portal access and Lakeba's stake stay Lakeba's; no roles are
 // given or taken, and no company admins added. Removals stay inside it.
+//
+// A company whose holdings come from its register of members (Import data →
+// Register of members) keeps them: the file's holdings and official shares on
+// issue for it are only compared, and differences are listed, not applied.
 import { readXlsx } from './xlsx-read.mjs';
 
 /** @typedef {{ sheet: string, action: 'add' | 'update' | 'remove' | 'keep', item: string, details: string[] }} Change */
@@ -330,9 +334,19 @@ export async function runImport({ data, name, svc, apply, target, remove = false
   }
   for (const e of dbEntities) if (!companyCodes.has(e.code) && !scope) keep('Companies', `${e.code} ${e.display_name}`, 'Not in the file. Companies are never removed by an import (their documents, news and meetings would go too).');
 
+  // Companies whose holdings come from their register of members: compared only.
+  const fromRegister = new Set(dbEntities.filter((e) => e.holdings_from_register).map((e) => e.id));
+  const registerClass = (classId) => fromRegister.has(classById.get(classId)?.entity_id);
+  const notApplied = new Map(); // company code → [what the file would have changed]
+  const skip = (classId, what) => { const code = entityById.get(classById.get(classId).entity_id).code; notApplied.set(code, [...(notApplied.get(code) ?? []), what]); };
+
   // Share classes
   for (const c of classes) {
     const db = dbClassOf(c.full);
+    if (db && registerClass(db.id) && (Number(c.official_on_issue ?? NaN) !== Number(db.official_on_issue ?? NaN) || (c.official_as_at ?? null) !== (db.official_as_at ?? null))) {
+      if (c.official_on_issue != null || db.official_on_issue != null) skip(db.id, `${c.full} official on issue`);
+      c.official_on_issue = db.official_on_issue; c.official_as_at = db.official_as_at;
+    }
     if (!db) add('Share classes', `${c.full} ${c.name ?? ''}`.trim(), [c.kind, c.voting ? 'voting' : 'non-voting']);
     else upd('Share classes', `${c.full} ${c.name ?? ''}`.trim(), fieldChanges(c, db, [['name', 'Name'], ['kind', 'Type'], ['voting', 'Voting'], ['counts_toward_pct', 'Counts toward %'], ['official_on_issue', 'Official on issue'], ['official_as_at', 'Official as at'], ['currency', 'Currency']]));
   }
@@ -384,6 +398,12 @@ export async function runImport({ data, name, svc, apply, target, remove = false
     const db = holder && dbClass && dbHoldingMap.get(holdingKey(holder.id, dbClass.id, h.as_at));
     if (holder && dbClass) fileHoldingKeys.add(holdingKey(holder.id, dbClass.id, h.as_at));
     const item = `${h.ref} ${h.full} as at ${h.as_at}`;
+    // From the register: the shares and their dates stay; exercise price and expiry still come from the file.
+    if (dbClass && registerClass(dbClass.id) && (!db || Number(db.shares) !== h.shares)) {
+      h.fromRegister = true;
+      skip(dbClass.id, `${item}: ${db ? `${show(Number(db.shares))} → ` : ''}${show(h.shares)}`);
+      continue;
+    }
     const before = changes.length;
     if (!db) add('Holdings', item, [`${show(h.shares)} shares`, h.exercise_price != null ? `exercise ${show(h.exercise_price)}` : '', h.expires_on ? `expires ${h.expires_on}` : ''].filter(Boolean));
     else upd('Holdings', item, fieldChanges({ ...h, expires_on: h.expires_on === 'invalid' ? null : h.expires_on }, db, [['shares', 'Shares'], ['exercise_price', 'Exercise price'], ['expires_on', 'Expires on']]));
@@ -452,7 +472,9 @@ export async function runImport({ data, name, svc, apply, target, remove = false
   for (const m of dbMembers) if (ownHolder(m.holder_id) && !fileMemberKeys.has(memberKey(m.user_id, m.holder_id)) && profileById.get(m.user_id) && !profileById.get(m.user_id).email.toLowerCase().endsWith('@lakeba.test')) {
     removal.members.push(m); del('Access', `${profileById.get(m.user_id).email} → ${refOfId(m.holder_id)}`, [m.access]);
   }
-  for (const h of dbHoldings) if (ownClass(h.share_class_id) && !fileHoldingKeys.has(holdingKey(h.holder_id, h.share_class_id, h.as_at))) {
+  for (const h of dbHoldings) if (ownClass(h.share_class_id) && registerClass(h.share_class_id) && !fileHoldingKeys.has(holdingKey(h.holder_id, h.share_class_id, h.as_at))) skip(h.share_class_id, `${refOfId(h.holder_id)} ${classFull(classById.get(h.share_class_id))} as at ${h.as_at}: not in the file`);
+  for (const [code, list] of notApplied) warn.push(`${entityByCode.get(code)?.display_name ?? code}’s holdings come from its register of members, so the file’s ${list.length} difference${list.length === 1 ? '' : 's'} in its holdings or shares on issue ${list.length === 1 ? 'isn’t' : 'aren’t'} imported (import a newer register instead): ${list.slice(0, 8).join('; ')}${list.length > 8 ? `; and ${list.length - 8} more` : ''}.`);
+  for (const h of dbHoldings) if (ownClass(h.share_class_id) && !registerClass(h.share_class_id) && !fileHoldingKeys.has(holdingKey(h.holder_id, h.share_class_id, h.as_at))) {
     removal.holdings.push(h); del('Holdings', `${refOfId(h.holder_id)} ${classById.get(h.share_class_id) ? classFull(classById.get(h.share_class_id)) : '?'} as at ${h.as_at}`, [`${show(Number(h.shares))} shares`]);
   }
   for (const b of dbBoard) if ((!scope || b.entity_id === scope.entityId) && !fileBoardKeys.has(boardKey(b.entity_id, b.user_id, b.position)) && profileById.get(b.user_id)) {
@@ -589,7 +611,7 @@ export async function runImport({ data, name, svc, apply, target, remove = false
       if (sharedHolder(holderByRef.get(a.ref).id)) continue; // unchanged (checked above)
       await svc.from('holder_members').upsert({ holder_id: holderByRef.get(a.ref).id, user_id: profileByEmail.get(a.email).id, access: a.access }, { onConflict: 'holder_id,user_id' }).throwOnError();
     }
-    const holdingRows = holdings.map((h) => {
+    const holdingRows = holdings.filter((h) => !h.fromRegister).map((h) => {
       const cls = classByFull.get(h.full); const e = entityByCode.get(cls.company);
       return { holder_id: holderByRef.get(h.ref).id, share_class_id: dbClassByKey.get(classKey(e.id, cls.code)).id, shares: h.shares, as_at: h.as_at, exercise_price: h.exercise_price, expires_on: h.expires_on };
     });
