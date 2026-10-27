@@ -50,7 +50,7 @@ export default defineConfig({
       // Venture addresses: the portal's own domain (investors.lakeba.com). Ventures are reached at
       // {slug}.<this>, sign-in happens here, and the session is shared across them. Empty: one address, as before.
       PORTAL_DOMAIN: envField.string({ context: 'server', access: 'secret', optional: true }),
-      // Tests on this Mac only: "investors.mist.localhost=investors.lakeba.localhost" (comma-separated) stands in for DNS records.
+      // Tests on this Mac only: "investors.mist.localhost=giuseppe-macbook-pro.tail21d16f.ts.net" (comma-separated) stands in for DNS records.
       DNS_TEST_RECORDS: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Tests only: a JSON file of DNS answers ({"cname": {"name": ["target"]}, "a", "mx", "ns", "txt"}) used instead of real lookups.
       DNS_TEST_FILE: envField.string({ context: 'server', access: 'secret', optional: true }),

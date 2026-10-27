@@ -1,0 +1,90 @@
+---
+import '@scalar/api-reference/style.css';
+import Mark from '../../../../src/components/Mark.astro';
+import ThemeInit from '../../../../src/components/ThemeInit.astro';
+
+// The interactive API reference (Scalar), public: made from /api/v1/openapi.json. "Try it" sends requests from the
+// browser straight to this portal (no outside relay), with a key that isn't saved. On a venture's own domain it
+// moves to the central address, where the API is.
+const central = Astro.locals.site?.central;
+if (central && central !== Astro.url.origin) return Astro.redirect(`${central}/developers/reference`);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <ThemeInit />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
+    <title>API reference · Lakeba Investor Portal</title>
+  </head>
+  <body>
+    <header class="lk-bar">
+      <a href="/developers" class="lk-brand"><Mark class="lk-mark" /><span class="lk-name">lakeba</span><span class="lk-chip">API reference</span></a>
+      <nav><a href="/developers">Guide</a><a href="/api/v1/openapi.json">OpenAPI</a></nav>
+    </header>
+    <div id="reference"></div>
+    <script>
+      import { createApiReference } from '@scalar/api-reference';
+
+      // The portal's own light/dark choice (ThemeInit), else the device's.
+      const choice = document.documentElement.dataset.theme;
+      const dark = choice ? choice === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches;
+      createApiReference('#reference', {
+        url: '/api/v1/openapi.json',
+        darkMode: dark,
+        withDefaultFonts: false,
+        // Nothing leaves the portal: no relay, no telemetry, no AI chat or MCP buttons, the key isn't kept.
+        persistAuth: false,
+        telemetry: false,
+        agent: { disabled: true },
+        mcp: { disabled: true },
+        showDeveloperTools: 'never',
+        hideClientButton: true,
+        documentDownloadType: 'json',
+        authentication: { preferredSecurityScheme: 'key' },
+        defaultHttpClient: { targetKey: 'shell', clientKey: 'curl' },
+        metaData: { title: 'API reference · Lakeba Investor Portal' },
+        customCss: `
+          .scalar-app, .scalar-api-reference { --scalar-custom-header-height: 52px; }
+          .light-mode, .light-mode .scalar-app {
+            --scalar-color-accent: #276ae7; --scalar-background-1: #ffffff; --scalar-background-2: #f4f7fc; --scalar-background-3: #e9eef7;
+            --scalar-background-accent: #276ae71a; --scalar-color-1: #0b1424; --scalar-color-2: #3b4758; --scalar-color-3: #6b7685; --scalar-border-color: #dfe5ef;
+          }
+          .dark-mode, .dark-mode .scalar-app {
+            --scalar-color-accent: #6b9cff; --scalar-background-1: #050b16; --scalar-background-2: #0a1324; --scalar-background-3: #111c33;
+            --scalar-background-accent: #276ae726; --scalar-color-1: #f3f6fb; --scalar-color-2: #b6c0cf; --scalar-color-3: #7c889a; --scalar-border-color: #1b2740;
+          }
+          .scalar-app, .scalar-api-reference { --scalar-font: "Inter", ui-sans-serif, system-ui, sans-serif; --scalar-font-code: "JetBrains Mono", ui-monospace, monospace; }
+          .section-header, .scalar-api-reference h1, .scalar-api-reference h2 { font-family: "Montserrat", "Inter", sans-serif; }
+          .scalar-api-reference .http-method-get, .scalar-api-reference .method-get { --method-color: #276ae7; }
+          .scalar-api-reference .http-method-post, .scalar-api-reference .method-post { --method-color: #35a954; }
+          .scalar-api-reference .http-method-patch, .scalar-api-reference .http-method-put { --method-color: #eb802b; }
+          .scalar-api-reference .http-method-delete, .scalar-api-reference .method-delete { --method-color: #dd3b2d; }
+        `,
+      });
+    </script>
+    <style is:global>
+      body { margin: 0; background: #ffffff; }
+      :root[data-theme='dark'] body { background: #050b16; }
+      @media (prefers-color-scheme: dark) { :root:not([data-theme='light']) body { background: #050b16; } }
+      .lk-bar {
+        position: sticky; top: 0; z-index: 10; height: 52px; box-sizing: border-box; display: flex; align-items: center; justify-content: space-between; gap: 16px;
+        padding: 0 16px; font: 500 14px/1 Inter, ui-sans-serif, system-ui, sans-serif; background: #050b16; color: #f3f6fb; border-bottom: 1px solid #1b2740;
+      }
+      .lk-brand { display: flex; align-items: center; gap: 10px; color: inherit; text-decoration: none; }
+      .lk-mark { width: 26px; height: 26px; }
+      .lk-name { font: 700 19px/1 Montserrat, Inter, sans-serif; }
+      .lk-chip { border-radius: 6px; background: rgba(255, 255, 255, 0.1); padding: 4px 7px; font-size: 11px; color: rgba(255, 255, 255, 0.75); }
+      .lk-bar nav { display: flex; gap: 16px; }
+      .lk-bar nav a { color: rgba(255, 255, 255, 0.75); text-decoration: none; }
+      .lk-bar nav a:hover { color: #fff; }
+      @media (max-width: 480px) { .lk-chip { display: none; } }
+    </style>
+  </body>
+</html>

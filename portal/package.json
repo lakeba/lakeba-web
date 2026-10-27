@@ -26,6 +26,7 @@
     "@anthropic-ai/sdk": "^0.137.0",
     "@astrojs/node": "^11.1.9",
     "@huggingface/transformers": "^4.3.1",
+    "@scalar/api-reference": "1.73.1",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.118.0",
     "@tailwindcss/vite": "^4.3.3",
@@ -57,5 +58,11 @@
     "@types/sanitize-html": "^2.16.2",
     "supabase": "^2.121.0",
     "yaml": "^2.9.1"
+  },
+  "overrides": {
+    "@scalar/json-magic": {
+      "undici": "^7.30.1"
+    },
+    "@ai-sdk/provider-utils": "^4.0.33"
   }
 }

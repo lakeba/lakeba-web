@@ -7,9 +7,8 @@ export const KNOWN_HOSTS = [
   { hostname: '127.0.0.1' },
   { hostname: '192.168.1.141' }, // this Mac on the local network (plain HTTP)
   { hostname: '100.117.227.8' }, // this Mac on the Tailscale network
-  { hostname: 'giuseppe-macbook-pro.tail21d16f.ts.net', protocol: 'https' }, // same, via Tailscale HTTPS
+  { hostname: 'giuseppe-macbook-pro.tail21d16f.ts.net', protocol: 'https' }, // same, via Tailscale HTTPS: staging's central address (PORTAL_DOMAIN)
   { hostname: 'investors.lakeba.com', protocol: 'https' }, // production (Caddy in front, HTTPS only)
-  { hostname: 'investors.lakeba.localhost' }, // own domains tested on this Mac (PORTAL_DOMAIN=investors.lakeba.localhost)
 ];
 
 /** Whether a host name is one of the known ones (exactly, or one level under a "*." name). */

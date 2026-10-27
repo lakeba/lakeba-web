@@ -2,8 +2,13 @@
 
 How companies connect their other tools to the portal: the company API, outgoing and incoming
 webhooks, HubSpot, Xero and apps (OAuth). Everything is per company and run by that company's
-Admins in **Admin → Companies → the company → Integrations**; the public documentation is at
-`/developers` and the machine-readable description at `/api/v1/openapi.json`.
+Admins in **Admin → Companies → the company → Integrations**; the public guide is at `/developers`, the
+interactive reference (Scalar, with examples and “Try it”) at `/developers/reference`, and the machine-readable
+description at `/api/v1/openapi.json`. All three come from `src/lib/api/spec.ts`.
+
+The reference uses `@scalar/api-reference` (pinned, bundled into the portal): no outside relay, no telemetry, AI chat
+and MCP off, and the key typed for “Try it” isn’t saved in the browser. `undici` and `@ai-sdk/provider-utils` are
+overridden in package.json to fixed versions (they come with Scalar).
 
 ## Rules everything follows
 

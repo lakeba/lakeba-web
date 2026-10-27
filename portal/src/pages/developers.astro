@@ -31,7 +31,7 @@ const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at
 ---
 
 <Auth title="Lakeba portal API" subtitle="For a company’s other tools: its register, investors, documents, news, meetings, Board Q&A, data rooms and newsletter." wide>
-  <nav class="mb-8 flex flex-wrap gap-2 text-sm">{['Start', 'Scopes', 'Requests', 'Endpoints', 'Webhooks', 'Events', 'Incoming', 'Apps', 'Connectors'].map((s) => <a href={`#${s.toLowerCase()}`} class="rounded-full border border-white/10 px-3 py-1 text-white/70 hover:text-white">{s}</a>)}<a href="/api/v1/openapi.json" class="rounded-full border border-white/10 px-3 py-1 text-white/70 hover:text-white">OpenAPI ↗</a></nav>
+  <nav class="mb-8 flex flex-wrap gap-2 text-sm">{['Start', 'Scopes', 'Requests', 'Endpoints', 'Webhooks', 'Events', 'Incoming', 'Apps', 'Connectors'].map((s) => <a href={`#${s.toLowerCase()}`} class="rounded-full border border-white/10 px-3 py-1 text-white/70 hover:text-white">{s}</a>)}<a href="/developers/reference" class="rounded-full bg-lk-blue px-3 py-1 font-medium text-[#fff] hover:bg-[#3a78ee]">API reference, with “Try it” →</a><a href="/api/v1/openapi.json" class="rounded-full border border-white/10 px-3 py-1 text-white/70 hover:text-white">OpenAPI ↗</a></nav>
   <div class="prose-sm space-y-10 text-sm leading-relaxed text-white/75">
     <section id="start">
       <h2 class="font-display text-xl font-bold text-white">Start</h2>
@@ -60,7 +60,7 @@ const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at
 
     <section id="endpoints">
       <h2 class="font-display text-xl font-bold text-white">Endpoints</h2>
-      <p class="mt-2">All under <span class="font-mono text-white">{api}</span>.</p>
+      <p class="mt-2">All under <span class="font-mono text-white">{api}</span>. The <a href="/developers/reference" class="text-lk-blue underline underline-offset-2">API reference</a> has examples of every request and answer, code in several languages, and “Try it” with your key.</p>
       {tags.map(([tag, ops]) => (
         <div class="mt-6">
           <h3 class="font-semibold text-white">{tag}</h3>
