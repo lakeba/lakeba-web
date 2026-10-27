@@ -73,6 +73,23 @@ if (Astro.request.method === 'POST') {
     error = 'Enter their email address.';
   } else if (!holderId) {
     error = 'Choose the holder they invest through. To add staff (Admin, Board, Marketing…), use System → Users.';
+  } else if (field(form, 'send') === 'later') {
+    // Added now, invited later (the welcome list above, or their page): no email is sent.
+    const { data: existing } = await svc.from('profiles').select('id').eq('email', email).maybeSingle();
+    let userId = existing?.id ?? null;
+    if (!userId) {
+      const { data, error: e } = await svc.auth.admin.createUser({ email, email_confirm: true, user_metadata: { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') } });
+      if (e || !data.user) error = e?.message ?? 'Could not add them.';
+      else {
+        userId = data.user.id;
+        await svc.from('profiles').update({ first_name: field(form, 'first_name') || null, last_name: field(form, 'last_name') || null }).eq('id', userId).throwOnError();
+      }
+    }
+    if (userId) {
+      await svc.from('holder_members').upsert({ holder_id: holderId, user_id: userId, access: field(form, 'access') === 'viewer' ? 'viewer' : 'owner' }).throwOnError();
+      await supabase.rpc('log_event', { event_action: 'admin_added_investor', event_detail: { email, role: 'investor', holder_id: holderId, existing: Boolean(existing) } });
+      notice = existing ? `${email} already had an account; they can now see this holder too. No email was sent.` : `Added ${email}. No email was sent: invite them when you’re ready, from their page or with the welcome emails.`;
+    }
   } else {
     const { error: inviteError, userId, url: inviteUrl } = await sendInvite(email, Astro.url.origin, { first_name: field(form, 'first_name'), last_name: field(form, 'last_name') }, brandOf(welcomeCompany));
     if (inviteError || !userId) {
@@ -221,7 +238,7 @@ import ShareLink from '../../../components/ShareLink.astro';
   ) : scope.companies.length > 1 && <p class="mb-6 text-sm text-white/50">Pick a company above to send welcome emails to its shareholders.</p>}
 
   <details class="card mb-6" open={Boolean(error)}>
-    <summary class="cursor-pointer font-display text-lg font-bold text-white">Invite an investor</summary>
+    <summary class="cursor-pointer font-display text-lg font-bold text-white">Add an investor</summary>
     <p class="mt-2 text-sm text-white/55">Adding staff (Admin, Board, Marketing, Legal, Compliance…)? Use <a href="/admin/system/users/new" class="text-lk-blue hover:underline">System → Users → Add person</a>.</p>
     <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
       <div class="sm:col-span-2"><label class="label" for="email">Email</label><input class="field" id="email" name="email" type="email" required /></div>
@@ -231,7 +248,8 @@ import ShareLink from '../../../components/ShareLink.astro';
         <select class="field" id="holder_id" name="holder_id" required><option value="">Choose…</option>{(holders ?? []).map((h) => <option value={h.id}>{h.name}</option>)}</select></div>
       <div><label class="label" for="access">Access</label>
         <select class="field" id="access" name="access"><option value="owner">Owner (can vote)</option><option value="viewer">Viewer (read only)</option></select></div>
-      <div class="sm:col-span-2"><button class="btn-primary">Send invitation</button></div>
+      <div class="flex flex-wrap items-center gap-3 sm:col-span-2"><button class="btn-primary">Add and send invitation</button><button name="send" value="later" class="btn-ghost">Add without inviting</button>
+        <span class="text-xs text-white/45">Without inviting, no email is sent: invite them later from their page or with the welcome emails.</span></div>
     </form>
   </details>
 

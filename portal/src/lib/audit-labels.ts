@@ -16,11 +16,11 @@ const LABELS: Record<string, string> = {
   newsletter_subscribed: 'Someone subscribed to the newsletter', newsletter_unsubscribed: 'Someone unsubscribed from the newsletter',
   press_unsubscribed: 'A journalist unsubscribed from press emails',
   investor_data_imported: 'Investor data imported', investor_welcomed: 'Welcome email sent',
-  data_room_nda_accepted: 'A data room guest accepted the terms',
+  data_room_nda_accepted: 'A data room guest accepted the terms', data_room_deleted: 'Deleted a data room',
   shareholder_email_auto_cancelled: 'An automatic reply was cancelled', shareholder_email_to_board_qa: 'A shareholder email was moved to Board Q&A',
   approval_requested: 'Asked for approval', approval_withdrawn: 'Withdrew an approval request', approval_given: 'Approved', approval_changes_requested: 'Asked for changes',
   admin_granted_role: 'Gave a role', admin_removed_role: 'Removed a role', admin_changed_role_permissions: 'Changed a role’s permissions',
-  admin_created_role: 'Created a role', admin_deleted_role: 'Deleted a role', admin_invited_user: 'Invited someone', admin_deleted_user: 'Deleted an account',
+  admin_created_role: 'Created a role', admin_deleted_role: 'Deleted a role', admin_invited_user: 'Invited someone', admin_added_investor: 'Added an investor (not invited yet)', admin_deleted_user: 'Deleted an account', admin_deleted_meeting: 'Deleted a meeting',
   admin_reset_mfa: 'Reset someone’s two-step sign-in', admin_exported_investor_data: 'Downloaded the investor data workbook',
   admin_checked_import: 'Checked an import file', admin_applied_import: 'Applied an import',
 };

@@ -27,6 +27,24 @@ async function myRoom(id: string) {
   return data && scope.companies.some((c) => c.id === data.entity_id) ? data : null;
 }
 const log = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: detail });
+/** Only Admins (the group's, or this company's) may delete a room. */
+const isAdminFor = (entityId: string) => Astro.locals.access.groupAdmin
+  || (Astro.locals.access.roles.some((r) => r.role_key === 'admin' && r.entity_id === entityId) && Astro.locals.access.can('documents.do', entityId));
+
+/**
+ * The room's TEST link for its admins: a test guest in the signed-in admin's name.
+ * Each time it's opened it gets a new token and asks for the terms again, so the
+ * room can be checked exactly as a guest sees it. No email is sent.
+ */
+async function testLink(room: { id: string }) {
+  const { token, tokenHash } = newGuestToken();
+  const { data: me } = await svc.from('profiles').select('first_name, last_name, email').eq('id', userId).single();
+  const guest = { name: `${me?.first_name ?? ''} ${me?.last_name ?? ''}`.trim() || 'Test', email: me?.email ?? Astro.locals.user!.email ?? '', organisation: '', token_hash: tokenHash, expires_at: new Date(Date.now() + 30 * 86_400_000).toISOString(), nda_accepted_at: null, nda_accepted_ip: null, revoked_at: null };
+  const { data: existing } = await svc.from('data_room_guests').select('id').eq('room_id', room.id).eq('is_test', true).maybeSingle();
+  if (existing) await svc.from('data_room_guests').update(guest).eq('id', existing.id).throwOnError();
+  else await svc.from('data_room_guests').insert({ ...guest, room_id: room.id, is_test: true, invited_by: userId }).throwOnError();
+  return `/room/${token}`;
+}
 
 async function invite(room: { id: string; entity_id: string; name: string }, guest: { name: string; email: string; organisation: string }, days: number) {
   const { token, tokenHash } = newGuestToken();
@@ -57,12 +75,27 @@ if (Astro.request.method === 'POST') {
     else {
       const { data: room, error: e } = await svc.from('data_rooms').insert({ entity_id: company.id, name, description: field(form, 'description'), nda_text: field(form, 'nda_text') || DEFAULT_NDA, created_by: userId }).select('id').single();
       if (e || !room) error = e?.message ?? 'Could not create the room.';
-      else { await log('data_room_created', { room_id: room.id, entity_id: company.id }); return Astro.redirect(withCompany(scope, `/admin/data-rooms?room=${room.id}`), 303); }
+      else {
+        await testLink(room);
+        await log('data_room_created', { room_id: room.id, entity_id: company.id });
+        return Astro.redirect(withCompany(scope, `/admin/data-rooms?room=${room.id}&created=1`), 303);
+      }
     }
   } else {
     const room = await myRoom(field(form, 'room_id'));
     if (!room) error = 'That data room was not found.';
-    else if (intent === 'save') {
+    else if (intent === 'test') {
+      if (room.closed_at) error = 'Reopen the room first.';
+      else return Astro.redirect(await testLink(room), 303);
+    } else if (intent === 'delete') {
+      if (!room.closed_at) error = 'Close the room before deleting it.';
+      else if (!isAdminFor(room.entity_id)) error = 'Only Admins can delete a data room.';
+      else {
+        await svc.from('data_rooms').delete().eq('id', room.id).throwOnError();
+        await log('data_room_deleted', { room_id: room.id, entity_id: room.entity_id, name: room.name });
+        return Astro.redirect(withCompany(scope, `/admin/data-rooms?deleted=${encodeURIComponent(room.name)}`), 303);
+      }
+    } else if (intent === 'save') {
       await svc.from('data_rooms').update({ name: field(form, 'name') || room.name, description: field(form, 'description'), nda_text: field(form, 'nda_text') || DEFAULT_NDA }).eq('id', room.id).throwOnError();
       notice = 'Saved. Guests who already agreed are not asked again.';
     } else if (intent === 'documents') {
@@ -86,7 +119,7 @@ if (Astro.request.method === 'POST') {
         if (r.error) error = r.error; else { notice = `Invitation sent to ${email}.`; inviteLink = r.link!; }
       }
     } else if (intent === 'resend' || intent === 'revoke') {
-      const { data: g } = await svc.from('data_room_guests').select('id, name, email, organisation, expires_at').eq('id', field(form, 'guest_id')).eq('room_id', room.id).maybeSingle();
+      const { data: g } = await svc.from('data_room_guests').select('id, name, email, organisation, expires_at').eq('id', field(form, 'guest_id')).eq('room_id', room.id).eq('is_test', false).maybeSingle();
       if (!g) error = 'Guest not found.';
       else {
         // Either way the old link stops working.
@@ -105,19 +138,19 @@ if (Astro.request.method === 'POST') {
   }
 }
 
-const { data: rooms } = await svc.from('data_rooms').select('id, entity_id, name, closed_at, created_at, data_room_guests(id, revoked_at), data_room_documents(document_id)').in('entity_id', scope.ids.length ? scope.ids : ['00000000-0000-0000-0000-000000000000']).order('created_at', { ascending: false });
+const { data: rooms } = await svc.from('data_rooms').select('id, entity_id, name, closed_at, created_at, data_room_guests(id, revoked_at, is_test), data_room_documents(document_id)').in('entity_id', scope.ids.length ? scope.ids : ['00000000-0000-0000-0000-000000000000']).order('created_at', { ascending: false });
 const current = await myRoom(Astro.url.searchParams.get('room') ?? '');
 const companyOf = (id: string) => scope.companies.find((c) => c.id === id);
 
 let candidates: { id: string; title: string; category: string; published_at: string | null }[] = [];
 let chosen = new Set<string>();
-let guests: { id: string; name: string; email: string; organisation: string; expires_at: string; nda_accepted_at: string | null; revoked_at: string | null; last_seen_at: string | null; created_at: string }[] = [];
+let guests: { id: string; name: string; email: string; organisation: string; expires_at: string; nda_accepted_at: string | null; revoked_at: string | null; last_seen_at: string | null; created_at: string; is_test: boolean }[] = [];
 let views: { guest_id: string; document_id: string | null; viewed_at: string }[] = [];
 if (current) {
   const [{ data: docs }, { data: inRoom }, { data: g }] = await Promise.all([
     svc.from('documents').select('id, title, category, published_at').eq('entity_id', current.entity_id).eq('mime_type', 'application/pdf').neq('audience', 'holder').order('created_at', { ascending: false }),
     svc.from('data_room_documents').select('document_id').eq('room_id', current.id),
-    svc.from('data_room_guests').select('id, name, email, organisation, expires_at, nda_accepted_at, revoked_at, last_seen_at, created_at').eq('room_id', current.id).order('created_at', { ascending: false }),
+    svc.from('data_room_guests').select('id, name, email, organisation, expires_at, nda_accepted_at, revoked_at, last_seen_at, created_at, is_test').eq('room_id', current.id).order('is_test', { ascending: false }).order('created_at', { ascending: false }),
   ]);
   candidates = docs ?? [];
   chosen = new Set((inRoom ?? []).map((d) => d.document_id));
@@ -126,7 +159,7 @@ if (current) {
 }
 const titleOf = new Map(candidates.map((d) => [d.id, d.title]));
 const viewsBy = Map.groupBy(views, (v) => v.guest_id);
-const status = (g: (typeof guests)[number]) => g.revoked_at ? 'Revoked' : new Date(g.expires_at) < new Date() ? 'Expired' : g.nda_accepted_at ? 'Agreed' : 'Invited';
+const status = (g: (typeof guests)[number]) => g.is_test ? (g.nda_accepted_at ? 'Opened' : 'Not opened yet') : g.revoked_at ? 'Revoked' : new Date(g.expires_at) < new Date() ? 'Expired' : g.nda_accepted_at ? 'Agreed' : 'Invited';
 ---
 
 <Admin title="Data rooms">
@@ -134,6 +167,8 @@ const status = (g: (typeof guests)[number]) => g.revoked_at ? 'Revoked' : new Da
   <AdminCompanyFilter scope={scope} />
   {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+  {Astro.url.searchParams.get('deleted') && <div class="mb-4"><Alert tone="success">Deleted the data room “{Astro.url.searchParams.get('deleted')}”.</Alert></div>}
+  {current && Astro.url.searchParams.get('created') && !notice && !error && <div class="mb-4"><Alert tone="success">Room created. Add its documents, then use the TEST link to check it as a guest will see it before you invite anyone.</Alert></div>}
   {inviteLink && <div class="mb-4"><Alert>Their personal link (only share it with them): <span class="break-all font-mono text-xs">{inviteLink}</span></Alert></div>}
 
   {!current ? (
@@ -147,7 +182,7 @@ const status = (g: (typeof guests)[number]) => g.revoked_at ? 'Revoked' : new Da
                 <td class="px-5 py-3"><a class="font-medium text-white hover:underline" href={withCompany(scope, `/admin/data-rooms?room=${r.id}`)}>{r.name}</a>{r.closed_at && <span class="ml-2 rounded-full bg-white/10 px-2 py-0.5 text-[11px] text-white/55">Closed</span>}</td>
                 <td class="px-5 py-3 text-white/60">{companyOf(r.entity_id)?.display_name}</td>
                 <td class="px-5 py-3 text-right tabular-nums text-white/75">{(r.data_room_documents as unknown[]).length}</td>
-                <td class="px-5 py-3 text-right tabular-nums text-white/75">{(r.data_room_guests as { revoked_at: string | null }[]).filter((g) => !g.revoked_at).length}</td>
+                <td class="px-5 py-3 text-right tabular-nums text-white/75">{(r.data_room_guests as { revoked_at: string | null; is_test: boolean }[]).filter((g) => !g.revoked_at && !g.is_test).length}</td>
                 <td class="px-5 py-3 text-white/50">{shortDate.format(new Date(r.created_at))}</td>
               </tr>
             ))}
@@ -172,9 +207,13 @@ const status = (g: (typeof guests)[number]) => g.revoked_at ? 'Revoked' : new Da
       <p class="mb-4 text-sm"><a class="text-lk-blue hover:underline" href={withCompany(scope, '/admin/data-rooms')}>← All data rooms</a></p>
       <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h2 class="font-display text-2xl font-bold">{current.name} <span class="text-base font-normal text-white/45">· {companyOf(current.entity_id)?.display_name}</span></h2>
-        <form method="post"><input type="hidden" name="room_id" value={current.id} /><button name="intent" value={current.closed_at ? 'reopen' : 'close'} class="btn-ghost px-3 py-2 text-xs">{current.closed_at ? 'Reopen room' : 'Close room'}</button></form>
+        <div class="flex flex-wrap gap-2">
+          {!current.closed_at && <form method="post" target="_blank"><input type="hidden" name="room_id" value={current.id} /><button name="intent" value="test" class="btn-ghost px-3 py-2 text-xs" title="Opens the room as a guest sees it, in your name. No email is sent.">Open TEST link</button></form>}
+          <form method="post"><input type="hidden" name="room_id" value={current.id} /><button name="intent" value={current.closed_at ? 'reopen' : 'close'} class="btn-ghost px-3 py-2 text-xs">{current.closed_at ? 'Reopen room' : 'Close room'}</button></form>
+          {current.closed_at && isAdminFor(current.entity_id) && <form method="post" onsubmit="return confirm('Delete this data room, its guest list and its record of views? The documents themselves stay in Documents. This can’t be undone.')"><input type="hidden" name="room_id" value={current.id} /><button name="intent" value="delete" class="btn-ghost px-3 py-2 text-xs text-lk-red">Delete room</button></form>}
+        </div>
       </div>
-      {current.closed_at && <div class="mb-4"><Alert>Closed {shortDate.format(new Date(current.closed_at))}: guests can't open it.</Alert></div>}
+      {current.closed_at && <div class="mb-4"><Alert>Closed {shortDate.format(new Date(current.closed_at))}: guests can't open it.{isAdminFor(current.entity_id) ? ' You can delete it.' : ' Admins can delete it.'}</Alert></div>}
 
       <div class="grid gap-6 xl:grid-cols-2">
         <section class="card">
@@ -195,12 +234,12 @@ const status = (g: (typeof guests)[number]) => g.revoked_at ? 'Revoked' : new Da
                 <li class="py-3 text-sm">
                   <div class="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p class="font-medium text-white">{g.name}{g.organisation && <span class="font-normal text-white/50"> · {g.organisation}</span>}</p>
-                      <p class="text-xs text-white/45">{g.email} · invited {shortDate.format(new Date(g.created_at))} · until {shortDate.format(new Date(g.expires_at))}</p>
-                      <p class="mt-1 text-xs text-white/55"><span class:list={['rounded-full px-2 py-0.5', st === 'Agreed' ? 'bg-lk-green/15 text-lk-green' : st === 'Invited' ? 'bg-white/10 text-white/60' : 'bg-lk-red/15 text-lk-red']}>{st}</span>
+                      <p class="font-medium text-white">{g.is_test && <span class="mr-2 rounded-full bg-lk-orange/15 px-2 py-0.5 text-[11px] font-semibold text-lk-orange">TEST</span>}{g.name}{!g.is_test && g.organisation && <span class="font-normal text-white/50"> · {g.organisation}</span>}</p>
+                      <p class="text-xs text-white/45">{g.is_test ? (current.closed_at ? 'The admins’ TEST link (reopen the room to use it). Not counted as a guest; no email is sent.' : 'The admins’ TEST link: the “Open TEST link” button above. Not counted as a guest; no email is sent.') : <>{g.email} · invited {shortDate.format(new Date(g.created_at))} · until {shortDate.format(new Date(g.expires_at))}</>}</p>
+                      <p class="mt-1 text-xs text-white/55"><span class:list={['rounded-full px-2 py-0.5', st === 'Agreed' || st === 'Opened' ? 'bg-lk-green/15 text-lk-green' : st === 'Invited' || st === 'Not opened yet' ? 'bg-white/10 text-white/60' : 'bg-lk-red/15 text-lk-red']}>{st}</span>
                         {g.nda_accepted_at && ` agreed ${dateTime.format(new Date(g.nda_accepted_at))}`}{g.last_seen_at && ` · last seen ${dateTime.format(new Date(g.last_seen_at))}`} · {vs.length} view{vs.length === 1 ? '' : 's'}</p>
                     </div>
-                    {!g.revoked_at && (
+                    {!g.revoked_at && !g.is_test && (
                       <form method="post" class="flex gap-2"><input type="hidden" name="room_id" value={current.id} /><input type="hidden" name="guest_id" value={g.id} />
                         <button name="intent" value="resend" class="btn-ghost px-3 py-1.5 text-xs">New link</button>
                         <button name="intent" value="revoke" class="btn-ghost px-3 py-1.5 text-xs text-lk-red">Revoke</button>
@@ -215,7 +254,7 @@ const status = (g: (typeof guests)[number]) => g.revoked_at ? 'Revoked' : new Da
                 </li>
               );
             })}
-            {!guests.length && <li class="py-4 text-sm text-white/45">No guests yet.</li>}
+            {!guests.some((g) => !g.is_test) && <li class="py-4 text-sm text-white/45">No guests yet.</li>}
           </ul>
         </section>
 

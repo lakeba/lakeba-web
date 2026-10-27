@@ -38,6 +38,7 @@ const { data: meetings } = await supabase.from('meetings').select('id, entity_id
   <PageHeader title="Meetings" subtitle="AGMs and EGMs: notices, resolutions, proxy votes and shareholder questions." />
   <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {Astro.url.searchParams.get('deleted') && <div class="mb-6"><Alert tone="success">Deleted the meeting “{Astro.url.searchParams.get('deleted')}”.</Alert></div>}
 
   <details class="card mb-6" open={Boolean(error)}>
     <summary class="cursor-pointer font-display text-lg font-bold text-white">New meeting</summary>

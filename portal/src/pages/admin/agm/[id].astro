@@ -65,6 +65,21 @@ if (Astro.request.method === 'POST') {
     await supabase.from('resolutions').delete().eq('id', field(form, 'resolution_id')).throwOnError();
     await reapprove();
     notice = 'Resolution deleted.';
+  } else if (intent === 'delete-meeting') {
+    // Proxy votes are part of the company's records: a meeting that has them is kept.
+    const { data: rs } = await supabase.from('resolutions').select('id').eq('meeting_id', id!);
+    const { count: votes } = rs?.length ? await svc.from('proxy_votes').select('resolution_id', { count: 'exact', head: true }).in('resolution_id', rs.map((r) => r.id)) : { count: 0 };
+    const { data: before } = await supabase.from('meetings').select('title, entity_id').eq('id', id!).single();
+    if (votes) error = `Proxy votes have been lodged for this meeting (${votes}), so it stays as part of the company’s records. Change its status instead.`;
+    else {
+      const { data: gone, error: e } = await supabase.from('meetings').delete().eq('id', id!).select('id');
+      if (e || !gone?.length) error = e?.message ?? 'You can’t delete this meeting.';
+      else {
+        await svc.from('approvals').delete().eq('item_type', 'meeting').eq('item_id', id!);
+        await supabase.rpc('log_event', { event_action: 'admin_deleted_meeting', event_detail: { meeting_id: id, title: before?.title, entity_id: before?.entity_id } });
+        return Astro.redirect(`/admin/agm?deleted=${encodeURIComponent(before?.title ?? 'the meeting')}`, 303);
+      }
+    }
   } else if (intent === 'answer') {
     const { data: answered } = await supabase.from('meeting_questions').update({ answer: field(form, 'answer'), answered_at: new Date().toISOString() }).eq('id', field(form, 'question_id')).select('user_id, meetings(title, entity_id)').single().throwOnError();
     await log('admin_answered_meeting_question');
@@ -170,5 +185,13 @@ const votedShares = (rid: string) => ['for', 'against'].reduce((a, v) => a + Num
       ))}
       {!questions?.length && <p class="text-sm text-white/45">No questions yet.</p>}
     </div>
+  </section>
+
+  <section class="card mt-6">
+    <h2 class="text-lg font-bold">Delete meeting</h2>
+    <p class="mt-1 text-sm text-white/55">Removes the meeting, its resolutions and the questions sent for it. The notice and minutes stay in Documents. A meeting with proxy votes can’t be deleted: it’s part of the company’s records.</p>
+    <form method="post" class="mt-4" onsubmit="return confirm('Delete this meeting, its resolutions and its questions? This can’t be undone.')">
+      <button name="intent" value="delete-meeting" class="btn-ghost !border-lk-red/40 !text-lk-red">Delete meeting</button>
+    </form>
   </section>
 </Admin>

@@ -132,6 +132,7 @@ export default {
     // Data room
     'Tick the box and type your name exactly as “{name}” to continue.': 'Marque la casilla y escriba su nombre exactamente como «{name}» para continuar.',
     'Data room': 'Sala de datos',
+    'TEST link: this is what your guests will see. Nothing here is sent to anyone.': 'Enlace de PRUEBA: esto es lo que verán sus invitados. No se envía nada a nadie.',
     'This data room link has expired.': 'Este enlace a la sala de datos ha caducado.',
     'This data room link is not valid or has been closed.': 'Este enlace a la sala de datos no es válido o se ha cerrado.',
     'Please contact the person who invited you.': 'Póngase en contacto con la persona que le invitó.',
@@ -282,6 +283,7 @@ export default {
     // Data room
     'Tick the box and type your name exactly as “{name}” to continue.': 'Spunta la casella e scrivi il tuo nome esattamente come «{name}» per continuare.',
     'Data room': 'Data room',
+    'TEST link: this is what your guests will see. Nothing here is sent to anyone.': 'Link di PROVA: questo è ciò che vedranno i tuoi ospiti. Non viene inviato nulla a nessuno.',
     'This data room link has expired.': 'Questo link alla data room è scaduto.',
     'This data room link is not valid or has been closed.': 'Questo link alla data room non è valido o è stato chiuso.',
     'Please contact the person who invited you.': 'Contatta la persona che ti ha invitato.',
@@ -432,6 +434,7 @@ export default {
     // Data room
     'Tick the box and type your name exactly as “{name}” to continue.': '请勾选方框，并完全按照“{name}”输入您的姓名以继续。',
     'Data room': '资料室',
+    'TEST link: this is what your guests will see. Nothing here is sent to anyone.': '测试链接：这就是您的访客将看到的内容。不会向任何人发送任何内容。',
     'This data room link has expired.': '此资料室链接已过期。',
     'This data room link is not valid or has been closed.': '此资料室链接无效或已关闭。',
     'Please contact the person who invited you.': '请联系邀请您的人。',

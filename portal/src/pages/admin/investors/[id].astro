@@ -3,7 +3,7 @@ import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
 import Alert from '../../../components/Alert.astro';
 import { serviceClient } from '../../../lib/admin';
-import { sendPasswordReset } from '../../../lib/admin-auth';
+import { sendPasswordReset, sendWelcome } from '../../../lib/admin-auth';
 import { field } from '../../../lib/forms';
 import { displayName } from '../../../lib/admin-forms';
 import { aud, audPrecise, dateTime, holderKinds, percent, shares, shortDate } from '../../../lib/format';
@@ -102,6 +102,14 @@ if (Astro.request.method === 'POST') {
       if (delError) error = delError.message;
       else return Astro.redirect(`/admin/investors?deleted=${encodeURIComponent(target.email)}`, 303);
     }
+  } else if (intent === 'invite') {
+    // Someone added without an invitation: the welcome email with a link to choose a password.
+    const { error: e, url } = await sendWelcome(target.email, Astro.url.origin);
+    if (e) error = e;
+    else {
+      await svc.from('audit_log').insert({ user_id: Astro.locals.user!.id, action: 'investor_welcomed', detail: { user_id: id, email: target.email } });
+      notice = `Invitation sent to ${target.email}.`; shareLink = url ?? '';
+    }
   } else if (intent === 'reset-password') {
     const { error: resetError, url: resetUrl } = await sendPasswordReset(target.email, Astro.url.origin);
     if (resetError) error = resetError;
@@ -130,6 +138,9 @@ const [{ count: ownQueries }, { count: ownMeetingQuestions }, { count: lodgedVot
 ]);
 const boardOn = profile?.board_qa_enabled !== false;
 const auth = authData?.user;
+// Added without an invitation (Admin → Investors) and not welcomed since.
+const { count: welcomes } = await svc.from('audit_log').select('id', { count: 'exact', head: true }).eq('action', 'investor_welcomed').eq('detail->>user_id', id!);
+const notInvited = !auth?.last_sign_in_at && !auth?.invited_at && !welcomes;
 const banned = Boolean(auth?.banned_until && new Date(auth.banned_until) > new Date());
 const mfaOn = (factorData?.factors ?? []).some((f) => f.status === 'verified');
 const linked = new Set((links ?? []).map((l) => l.holder_id));
@@ -159,7 +170,7 @@ const readOnly = !Astro.locals.access.groupAdmin;
     <section class="card">
       <h2 class="text-lg font-bold">Account</h2>
       <dl class="mt-4 grid grid-cols-2 gap-4 text-sm">
-        <div><dt class="text-white/40">Status</dt><dd class:list={[banned ? 'text-lk-red' : 'text-white/80']}>{banned ? 'Disabled' : auth?.last_sign_in_at ? 'Active' : 'Invited'}</dd></div>
+        <div><dt class="text-white/40">Status</dt><dd class:list={[banned ? 'text-lk-red' : 'text-white/80']}>{banned ? 'Disabled' : auth?.last_sign_in_at ? 'Active' : notInvited ? 'Not invited yet' : 'Invited'}</dd></div>
         <div><dt class="text-white/40">Two-step</dt><dd class:list={[mfaOn ? 'text-lk-green' : 'text-white/50']}>{mfaOn ? 'On' : 'Off'}</dd></div>
         <div><dt class="text-white/40">Browser notifications</dt><dd class:list={[pushDevices ? 'text-lk-green' : 'text-white/50']}>{pushDevices ? `On (${pushDevices} device${pushDevices === 1 ? '' : 's'})` : 'Off'}</dd></div>
         <div><dt class="text-white/40">Passkeys</dt><dd class:list={[passkeys.length ? 'text-lk-green' : 'text-white/50']}>{passkeys.length || 'None'}</dd></div>
@@ -171,7 +182,8 @@ const readOnly = !Astro.locals.access.groupAdmin;
         <a href={`/admin/system/users/${id}`} class="btn-ghost !py-1.5 text-sm">Roles and permissions</a>
       </div>
       <form method="post" class="mt-6 flex flex-wrap gap-3 border-t border-white/5 pt-6">
-        <button name="intent" value="reset-password" class="btn-ghost">Send password reset</button>
+        {notInvited && !banned ? <button name="intent" value="invite" class="btn-primary">Send invitation</button>
+          : <button name="intent" value="reset-password" class="btn-ghost">Send password reset</button>}
         {!self && mfaOn && <button name="intent" value="reset-mfa" class="btn-ghost">Reset two-step</button>}
         {!self && (banned
           ? <button name="intent" value="enable" class="btn-ghost">Restore access</button>

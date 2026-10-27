@@ -46,6 +46,7 @@ Astro.response.headers.set('Referrer-Policy', 'no-referrer');
   </Auth>
 ) : !guest.nda_accepted_at ? (
   <Auth title={room.name} subtitle={t('{company} · Confidential data room for {name}', { company: companyName, name: guest.name })} wide>
+    {guest.is_test && <div class="mb-5"><Alert>{t('TEST link: this is what your guests will see. Nothing here is sent to anyone.')}</Alert></div>}
     {error && <div class="mb-5"><Alert tone="error">{error}</Alert></div>}
     <h2 class="text-sm font-semibold uppercase tracking-widest text-white/45">{t('Confidentiality')}</h2>
     <div class="mt-3 max-h-80 overflow-y-auto whitespace-pre-line rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm leading-relaxed text-white/75">{room.nda_text}</div>
@@ -57,6 +58,7 @@ Astro.response.headers.set('Referrer-Policy', 'no-referrer');
   </Auth>
 ) : (
   <Auth title={room.name} subtitle={t('{company} · Confidential · for {name}', { company: companyName, name: guest.name })} wide>
+    {guest.is_test && <div class="mb-5"><Alert>{t('TEST link: this is what your guests will see. Nothing here is sent to anyone.')}</Alert></div>}
     {room.description && <p class="mb-5 whitespace-pre-line text-sm text-white/65">{room.description}</p>}
     <ul class="divide-y divide-white/5 rounded-xl border border-white/10">
       {docs.map((d) => (

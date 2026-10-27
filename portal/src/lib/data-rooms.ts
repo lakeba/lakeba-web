@@ -19,13 +19,13 @@ export function newGuestToken() {
   return { token, tokenHash: hashToken(token) };
 }
 
-export type Guest = { id: string; room_id: string; name: string; email: string; organisation: string; expires_at: string; nda_accepted_at: string | null; revoked_at: string | null };
+export type Guest = { id: string; room_id: string; name: string; email: string; organisation: string; expires_at: string; nda_accepted_at: string | null; revoked_at: string | null; is_test: boolean };
 export type Room = { id: string; entity_id: string; name: string; description: string; nda_text: string; closed_at: string | null };
 
 /** The guest and room for a link, or why it can't be used. */
 export async function guestForToken(svc: Svc, token: string) {
   if (!token || token.length > 100) return { problem: 'invalid' as const };
-  const { data: guest } = await svc.from('data_room_guests').select('id, room_id, name, email, organisation, expires_at, nda_accepted_at, revoked_at').eq('token_hash', hashToken(token)).maybeSingle();
+  const { data: guest } = await svc.from('data_room_guests').select('id, room_id, name, email, organisation, expires_at, nda_accepted_at, revoked_at, is_test').eq('token_hash', hashToken(token)).maybeSingle();
   if (!guest) return { problem: 'invalid' as const };
   const { data: room } = await svc.from('data_rooms').select('id, entity_id, name, description, nda_text, closed_at').eq('id', guest.room_id).single();
   if (!room || room.closed_at || guest.revoked_at) return { problem: 'closed' as const };
