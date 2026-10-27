@@ -230,7 +230,13 @@ export function openApi(origin: string) {
     const params = [...(op.path.match(/\{(\w+)\}/g) ?? []).map((p) => {
       const name = p.slice(1, -1);
       return { name, in: 'path', required: true, description: name === 'system' ? 'Your system’s name, e.g. crm or hubspot.' : 'The ID.', schema: { type: 'string' }, example: name === 'system' ? 'crm' : undefined };
-    }), ...(op.query ?? []).map((q) => ({ name: q.name, in: 'query', required: false, description: q.description, schema: { type: q.type }, ...(q.example !== undefined ? { example: q.example } : {}) }))];
+    }), ...(op.query ?? []).map((q) => (
+      // A filter's example goes in its description: as an "example", "Try it" fills it in and switches it on, so
+      // a list comes back empty (e.g. updated_since in the future). Only "limit" is safe to fill in.
+      q.name === 'limit' || q.example === undefined
+        ? { name: q.name, in: 'query', required: false, description: q.description, schema: { type: q.type }, ...(q.example !== undefined ? { example: q.example } : {}) }
+        : { name: q.name, in: 'query', required: false, description: `${q.description} For example: \`${q.example}\`.`, schema: { type: q.type } }
+    ))];
     if (op.method !== 'GET') params.push({ name: 'Idempotency-Key', in: 'header', required: false, description: 'Your ID for this request: a repeat with the same key gets the first answer again (for a day).', schema: { type: 'string' }, example: undefined });
     const example = op.body && Object.fromEntries(op.body.filter((b) => b.example !== undefined).map((b) => [b.name, b.example]));
     const body = op.bodyType ? { required: true, content: { [op.bodyType]: { schema: { type: 'string', format: 'binary' } } } }
