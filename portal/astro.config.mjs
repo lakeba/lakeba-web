@@ -56,6 +56,9 @@ export default defineConfig({
       DNS_TEST_FILE: envField.string({ context: 'server', access: 'secret', optional: true }),
       // Staging on this Mac only: every sign-in counts as two-step (ignored unless the database is the local one).
       TWO_STEP_OFF_FOR_TESTING: envField.boolean({ context: 'server', access: 'secret', default: false }),
+      // Staging: read the real shareholder mailboxes, but never send from them or change them (no replies,
+      // automatic or not, no Outlook categories or Gmail labels). Never set in production.
+      MAILBOXES_READ_ONLY: envField.boolean({ context: 'server', access: 'secret', default: false }),
       // Ventures on Google Workspace. Sending: Google's SMTP relay (the venture allows this server's address).
       // GOOGLE_RELAY_URL replaces it in tests (e.g. smtp://127.0.0.1:54325).
       GOOGLE_RELAY_URL: envField.string({ context: 'server', access: 'secret', optional: true }),

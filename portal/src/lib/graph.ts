@@ -1,7 +1,7 @@
 import { createHash, createSign, randomUUID, X509Certificate } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { serviceClient } from './admin';
-import { MS_CLIENT_CERT_FILE, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_GRAPH_BASE, MS_LOGIN_BASE, MS_TENANT_ID } from 'astro:env/server';
+import { MAILBOXES_READ_ONLY, MS_CLIENT_CERT_FILE, MS_CLIENT_ID, MS_CLIENT_SECRET, MS_GRAPH_BASE, MS_LOGIN_BASE, MS_TENANT_ID } from 'astro:env/server';
 
 // Microsoft Graph for the shareholder mailboxes. The app ("Lakeba Investor
 // Portal – Mail") is limited in Exchange to those mailboxes only. It signs in
@@ -79,7 +79,11 @@ async function tenantOf(mailbox: string | null) {
 /** After a venture connects or disconnects its Microsoft 365. */
 export const forgetTenants = () => { tenantsAt = 0; };
 
+/** Staging (MAILBOXES_READ_ONLY): mailboxes are read, never sent from or changed. */
+export const READ_ONLY_MESSAGE = 'This server only reads mailboxes: it doesn’t send from them or change them.';
+
 export async function graph<T = unknown>(path: string, init: RequestInit & { prefer?: string } = {}): Promise<T> {
+  if (MAILBOXES_READ_ONLY && (init.method ?? 'GET').toUpperCase() !== 'GET') throw new Error(READ_ONLY_MESSAGE);
   const url = path.startsWith('http') ? path : `${MS_GRAPH_BASE}${path}`;
   const mailbox = /\/users\/([^/?]+)/.exec(new URL(url).pathname)?.[1];
   const headers: Record<string, string> = { authorization: `Bearer ${await accessToken(await tenantOf(mailbox ? decodeURIComponent(mailbox) : null))}`, ...(init.body ? { 'content-type': 'application/json' } : {}) };

@@ -1,7 +1,7 @@
 import { serviceClient } from './admin';
 import { client as claude } from './ask';
 import type { GraphMessage } from './graph';
-import { anyMailboxes, getMailboxMessage, labelMessage, mailboxReady, newMailboxMessages, replyToMessage } from './mailboxes';
+import { anyMailboxes, getMailboxMessage, labelMessage, mailboxReady, mailboxesReadOnly, newMailboxMessages, replyToMessage } from './mailboxes';
 import { companyFor } from './mail-routing';
 import { notifyAdmins } from './notify';
 import { createSignInLink } from './sign-in-links';
@@ -230,6 +230,8 @@ export async function prepare(svc: Svc, emailId: string, origin: string) {
     const urgent = reading.flags.some((f) => URGENT_FLAGS.includes(f));
     // Unknown or unverified senders get a fixed reply (no AI wording, nothing about holdings).
     if (!trusted) reading.reply = UNVERIFIED_REPLY;
+    // Staging reads only: a reply that would go automatically is left as a draft.
+    if (mailboxesReadOnly && decision.auto) Object.assign(decision, { auto: false, reason: 'This server only reads mailboxes, so the reply is left as a draft.' });
     const status = reading.category === 'automated' ? 'ignored' : decision.auto ? 'auto_scheduled' : selfService ? 'draft_ready' : 'needs_person';
     await svc.from('shareholder_emails').update({
       category: reading.category, confidence: Math.max(0, Math.min(1, reading.confidence)), summary: reading.summary.slice(0, 500),
@@ -337,6 +339,7 @@ export const LINK_HOURS = 1;
 export async function sendReplyFor(svc: Svc, { emailId, body, links, sentBy, origin, automatic = false }: {
   emailId: string; body: string; links: { label: string; path: string }[]; sentBy: string | null; origin: string; automatic?: boolean;
 }) {
+  if (mailboxesReadOnly) throw new Error('This server only reads mailboxes, so replies aren’t sent from it. Answer from the live portal.');
   const { data: e } = await svc.from('shareholder_emails').select('*, entities(code, display_name, email_signature, relationship)').eq('id', emailId).single();
   if (!e) throw new Error('Email not found.');
   const company = e.entities as unknown as { code: string; display_name: string; email_signature: string; relationship: string };

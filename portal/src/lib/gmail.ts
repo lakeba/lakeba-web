@@ -1,7 +1,7 @@
 import { createSign } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { GMAIL_API_BASE, GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_TOKEN_URL } from 'astro:env/server';
-import type { GraphMessage } from './graph';
+import { GMAIL_API_BASE, GOOGLE_SERVICE_ACCOUNT_FILE, GOOGLE_TOKEN_URL, MAILBOXES_READ_ONLY } from 'astro:env/server';
+import { READ_ONLY_MESSAGE, type GraphMessage } from './graph';
 
 // Gmail for ventures on Google Workspace: their shareholder mailbox, read with
 // Lakeba's Google service account, which the venture's Google administrator
@@ -43,6 +43,7 @@ async function tokenFor(mailbox: string) {
 }
 
 async function gmail<T = unknown>(mailbox: string, path: string, init: RequestInit = {}): Promise<T> {
+  if (MAILBOXES_READ_ONLY && (init.method ?? 'GET').toUpperCase() !== 'GET') throw new Error(READ_ONLY_MESSAGE);
   const res = await fetch(`${GMAIL_API_BASE}/users/${encodeURIComponent(mailbox)}${path}`, {
     ...init, headers: { authorization: `Bearer ${await tokenFor(mailbox)}`, ...(init.body ? { 'content-type': 'application/json' } : {}) },
   });

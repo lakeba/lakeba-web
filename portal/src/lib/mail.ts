@@ -1,5 +1,6 @@
 import nodemailer from 'nodemailer';
-import { GOOGLE_RELAY_URL, MAIL_FROM, PORTAL_DOMAIN, SMTP_URL } from 'astro:env/server';
+import { GOOGLE_RELAY_URL, MAIL_FROM, MAILBOXES_READ_ONLY, PORTAL_DOMAIN, SMTP_URL } from 'astro:env/server';
+import { READ_ONLY_MESSAGE } from './graph';
 import { brandOf, type Brand } from './brand';
 import { sendAs } from './graph';
 
@@ -11,6 +12,7 @@ const googleRelay = GOOGLE_RELAY_URL ? nodemailer.createTransport(GOOGLE_RELAY_U
 
 /** Sends through Google's SMTP relay from a venture's own address (also its test email). */
 export async function sendViaGoogle(m: { from: string; name?: string | null; to: string; subject: string; html: string; text?: string; replyTo?: string | null }) {
+  if (MAILBOXES_READ_ONLY) throw new Error(READ_ONLY_MESSAGE);
   await googleRelay.sendMail({ from: m.name ? `"${m.name.replace(/["\\<>\r\n]/g, '')}" <${m.from}>` : m.from, replyTo: m.replyTo ?? undefined, to: m.to, subject: m.subject, html: m.html, text: m.text });
 }
 

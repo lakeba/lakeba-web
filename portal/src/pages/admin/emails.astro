@@ -5,7 +5,7 @@ import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
 import { dateTime } from '../../lib/format';
 import { serviceClient } from '../../lib/admin';
-import { anyMailboxes, inboxCount } from '../../lib/mailboxes';
+import { anyMailboxes, inboxCount, mailboxesReadOnly } from '../../lib/mailboxes';
 import { adminScope } from '../../lib/admin-company';
 import { AUTO_CONFIDENCE, AUTO_DELAY_MS, AUTO_PER_DAY, CATEGORIES, FLAGS, type Flag, SELF_SERVICE, STATUS_LABELS, cancelAutoReply, pollMailboxes, prepare, sendReplyFor, shareholderContext, toBoardQa, type Category } from '../../lib/shareholder-email';
 
@@ -142,6 +142,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
 <Admin title="Shareholder emails">
   <PageHeader title="Shareholder emails" subtitle="Emails to each company’s shareholder mailbox, sorted, matched to the shareholder and with a draft reply. A person sends every reply for now." />
   {!anyMailboxes() && <div class="mb-6"><Alert tone="error">Neither Microsoft 365 nor Google is connected on this server yet, so no mailbox is read.</Alert></div>}
+  {mailboxesReadOnly && <div class="mb-6"><Alert tone="info">This server only reads the mailboxes: emails are sorted and get a draft, but no reply is sent from here (automatic or not) and nothing in the mailboxes is changed. Answer from the live portal.</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 
@@ -198,7 +199,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
               </div>
             ) : <p class="mt-3 text-xs text-lk-orange">No portal links: the sender isn’t a verified, registered shareholder.</p>}
             <div class="mt-5 flex flex-wrap gap-2">
-              <button name="intent" value="send" class="btn-primary" onclick="return confirm('Send this reply now?')">Send reply</button>
+              {mailboxesReadOnly ? <button type="button" disabled class="btn-primary cursor-not-allowed opacity-50" title="This server only reads mailboxes">Send reply</button> : <button name="intent" value="send" class="btn-primary" onclick="return confirm('Send this reply now?')">Send reply</button>}
               <button name="intent" value="redraft" formnovalidate class="btn-ghost">Draft again</button>
               {trusted && !current.query_id && <button name="intent" value="board" formnovalidate class="btn-ghost">Turn into Board Q&amp;A</button>}
               <button name="intent" value="handled" formnovalidate class="btn-ghost">Mark handled</button>
