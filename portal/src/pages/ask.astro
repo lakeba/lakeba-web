@@ -1,5 +1,6 @@
 ---
 import Portal from '../layouts/Portal.astro';
+import PageHeader from '../components/PageHeader.astro';
 import Mark from '../../../src/components/Mark.astro';
 import { askEnabled } from '../lib/ask';
 import { clientStrings } from '../lib/i18n';
@@ -22,7 +23,7 @@ const examples = isGroup ? [
   t('What has {company} announced recently?', { company: name }),
 ];
 // Texts the browser script shows.
-const i18n = clientStrings(t, ['No conversations yet.', 'Delete', 'Delete this conversation?', 'Thanks for the feedback.', 'Could not save your feedback.', 'Sources', '+{n} more', '{name} is unavailable right now.', 'Stopped.', 'That answer didn’t finish. Your question is back in the box: send it again.']);
+const i18n = clientStrings(t, ['No conversations yet.', 'No conversations match.', 'Your conversations', 'Your conversations ({n})', 'Today', 'This week', 'Earlier', '1 question', '{n} questions', 'Delete', 'Delete this conversation?', 'Thanks for the feedback.', 'Could not save your feedback.', 'Sources', '+{n} more', '{name} is unavailable right now.', 'Stopped.', 'That answer didn’t finish. Your question is back in the box: send it again.']);
 const isAdmin = Astro.locals.access.groupAdmin;
 ---
 
@@ -34,58 +35,80 @@ const isAdmin = Astro.locals.access.groupAdmin;
       <p class="mt-3 text-white/60">{t('Ask isn’t switched on for your account.')} {t('For help, email')} <a href="mailto:info@lakeba.com" class="text-lk-blue hover:underline">info@lakeba.com</a>.</p>
     </div>
   ) : (
-  <div class="mx-auto flex min-h-[calc(100dvh-14rem)] max-w-3xl flex-col" data-chat data-company={company.code} data-name={title} data-i18n={i18n}>
-    <div class="flex items-center justify-between gap-4">
-      <div>
-        <p class="eyebrow">{title} · AI</p>
-        <h1 class="mt-3 text-3xl font-extrabold">{isGroup ? t('Ask about your company') : t('Ask about {company}', { company: name })}</h1>
-      </div>
-      <div class="flex shrink-0 gap-2">
-        <button type="button" data-history-open class="btn-ghost px-4 py-2 text-sm" aria-expanded="false" aria-controls="ask-history">{t('Your conversations')}</button>
-        <button type="button" data-new-chat class="btn-ghost px-4 py-2 text-sm" hidden>{t('New chat')}</button>
-      </div>
+  <div data-chat data-company={company.code} data-name={title} data-i18n={i18n}>
+    <PageHeader eyebrow={`${title} · AI`} title={isGroup ? t('Ask about your company') : t('Ask about {company}', { company: name })} subtitle={isGroup ? t('Answers come only from the documents in this portal and the news on Lakeba’s website, with links to the sources.') : t('Answers come only from {company}’s documents in this portal and news about {company}, with links to the sources.', { company: name })} />
+
+    <div class="grid gap-8 lg:grid-cols-[14rem_1fr]">
+      {/* Earlier conversations (kept 12 months), like the document categories: open one to read it and carry on. */}
+      <aside class="space-y-6">
+        <div class="flex gap-2">
+          <button type="button" data-new-chat class="btn-primary flex-1 justify-center py-2.5 text-sm">+ {t('New conversation')}</button>
+          <button type="button" data-history-open class="btn-ghost shrink-0 py-2.5 text-sm lg:hidden" aria-expanded="false" aria-controls="ask-history">{t('Your conversations')}</button>
+        </div>
+        <div class="hidden space-y-6 lg:block" data-history-box>
+          <div>
+            <label for="ask-search" class="label">{t('Search conversations')}</label>
+            <input id="ask-search" data-history-search type="search" placeholder={t('e.g. dividends')} class="field" />
+          </div>
+          <nav aria-label={t('Your conversations')} class="flex flex-col gap-1 text-sm" data-history-list></nav>
+          <p class="px-3 text-xs text-white/40">{t('Kept for 12 months. Only you can see your conversations here.')}</p>
+        </div>
+      </aside>
+
+      <section class="flex min-h-[calc(100dvh-20rem)] min-w-0 flex-col">
+        <div data-chat-head class="flex items-center justify-between gap-4 border-b border-white/10 pb-4" hidden>
+          <div class="min-w-0">
+            <p class="text-xs text-white/40" data-chat-meta></p>
+            <h2 class="mt-1 truncate text-lg font-bold" data-chat-title></h2>
+          </div>
+          <button type="button" data-delete-current class="btn-ghost shrink-0 !px-3 !py-2 text-sm">{t('Delete')}</button>
+        </div>
+
+        <div data-empty class="flex flex-1 flex-col items-center justify-center py-12 text-center">
+          <Mark class="size-14" animated />
+          <div class="mt-8 grid w-full max-w-2xl gap-2 sm:grid-cols-2">
+            {examples.map((e) => <button type="button" data-example class="glass rounded-2xl px-4 py-3 text-left text-sm text-white/75 transition hover:text-white">{e}</button>)}
+          </div>
+          {Astro.locals.features.boardQa && <p class="mt-8 text-sm text-white/50">{t('Need a person to answer?')} <a href="/board" class="text-lk-blue hover:underline">{t('Ask the board in Board Q&A')} →</a></p>}
+        </div>
+
+        <ol data-messages class="flex-1 space-y-6 py-8" aria-live="polite"></ol>
+
+        <form data-form class="sticky bottom-20 mt-4 sm:bottom-4">
+          <div class="glass flex items-end gap-2 rounded-3xl p-2 shadow-2xl shadow-black/30">
+            <label for="question" class="sr-only">{t('Your question')}</label>
+            <textarea id="question" data-input rows="1" maxlength="4000" placeholder={isGroup ? t('Ask about results, shares, meetings or ventures…') : t('Ask about results, shares or meetings…')} class="max-h-48 min-h-11 flex-1 resize-none bg-transparent px-3 py-2.5 text-white outline-none placeholder:text-white/35"></textarea>
+            <button type="submit" data-send class="btn-primary size-11 shrink-0 rounded-2xl p-0" aria-label={t('Send')}>
+              <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
+            </button>
+            <button type="button" data-stop class="btn-ghost size-11 shrink-0 rounded-2xl p-0" aria-label={t('Stop')} hidden>
+              <svg viewBox="0 0 24 24" class="size-4" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
+            </button>
+          </div>
+          <p class="mt-2 text-center text-xs text-white/35">
+            {t('AI answers from company documents. Check the sources; this is not financial advice.')}
+            {!askEnabled && isAdmin && ` ${t('AI answers are off: set ANTHROPIC_API_KEY.')}`}
+          </p>
+        </form>
+      </section>
     </div>
 
-    {/* Earlier conversations (kept 12 months): open one to read it and carry on. */}
+    {/* On phones the list opens as a panel (on wider screens it's in the sidebar). */}
     <div id="ask-history" data-history-panel class="fixed inset-0 z-50" hidden>
       <div class="absolute inset-0 bg-black/40" data-history-close></div>
-      <aside class="absolute inset-y-0 right-0 flex w-full max-w-sm flex-col border-l border-white/10 bg-ink shadow-2xl" aria-label={t('Your conversations')}>
+      <aside class="absolute inset-y-0 right-0 flex w-full max-w-sm flex-col border-l border-white/10 bg-ink shadow-2xl" aria-label={t('Your conversations')} data-history-box>
         <div class="flex items-center justify-between border-b border-white/10 px-5 py-4">
           <h2 class="font-display text-lg font-bold">{t('Your conversations')}</h2>
           <button type="button" class="text-sm text-white/55 hover:text-white" data-history-close>{t('Close')} ✕</button>
         </div>
-        <ul class="flex-1 divide-y divide-white/5 overflow-y-auto" data-history-list></ul>
+        <div class="px-5 pt-4">
+          <label for="ask-search-panel" class="sr-only">{t('Search conversations')}</label>
+          <input id="ask-search-panel" data-history-search type="search" placeholder={t('e.g. dividends')} class="field" />
+        </div>
+        <nav class="flex flex-1 flex-col gap-1 overflow-y-auto px-3 py-4 text-sm" data-history-list></nav>
         <p class="border-t border-white/10 px-5 py-3 text-xs text-white/40">{t('Kept for 12 months. Only you can see your conversations here.')}</p>
       </aside>
     </div>
-
-    <div data-empty class="flex flex-1 flex-col items-center justify-center py-12 text-center">
-      <Mark class="size-14" animated />
-      <p class="mt-6 max-w-md text-white/60">{isGroup ? t('Answers come only from the documents in this portal and the news on Lakeba’s website, with links to the sources.') : t('Answers come only from {company}’s documents in this portal and news about {company}, with links to the sources.', { company: name })}</p>
-      <div class="mt-8 grid w-full gap-2 sm:grid-cols-2">
-        {examples.map((e) => <button type="button" data-example class="glass rounded-2xl px-4 py-3 text-left text-sm text-white/75 transition hover:text-white">{e}</button>)}
-      </div>
-      {Astro.locals.features.boardQa && <p class="mt-8 text-sm text-white/50">{t('Need a person to answer?')} <a href="/board" class="text-lk-blue hover:underline">{t('Ask the board in Board Q&A')} →</a></p>}
-    </div>
-
-    <ol data-messages class="flex-1 space-y-6 py-8" aria-live="polite"></ol>
-
-    <form data-form class="sticky bottom-4 mt-4">
-      <div class="glass flex items-end gap-2 rounded-3xl p-2 shadow-2xl shadow-black/30">
-        <label for="question" class="sr-only">{t('Your question')}</label>
-        <textarea id="question" data-input rows="1" maxlength="4000" placeholder={isGroup ? t('Ask about results, shares, meetings or ventures…') : t('Ask about results, shares or meetings…')} class="max-h-48 min-h-11 flex-1 resize-none bg-transparent px-3 py-2.5 text-white outline-none placeholder:text-white/35"></textarea>
-        <button type="submit" data-send class="btn-primary size-11 shrink-0 rounded-2xl p-0" aria-label={t('Send')}>
-          <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5M5 12l7-7 7 7" /></svg>
-        </button>
-        <button type="button" data-stop class="btn-ghost size-11 shrink-0 rounded-2xl p-0" aria-label={t('Stop')} hidden>
-          <svg viewBox="0 0 24 24" class="size-4" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="2" /></svg>
-        </button>
-      </div>
-      <p class="mt-2 text-center text-xs text-white/35">
-        {t('AI answers from company documents. Check the sources; this is not financial advice.')}
-        {!askEnabled && isAdmin && ` ${t('AI answers are off: set ANTHROPIC_API_KEY.')}`}
-      </p>
-    </form>
   </div>
 
   <template data-user-template>
@@ -245,7 +268,10 @@ const isAdmin = Astro.locals.access.groupAdmin;
     return { li, text, sources };
   };
 
-  const refresh = () => { empty.hidden = turns.length > 0; newChat.hidden = turns.length === 0; };
+  // Earlier conversations (from the server), for the sidebar and the chat's heading.
+  type Conv = { id: string; title: string; updatedAt: string; questions: number };
+  let convs: Conv[] = [];
+  const refresh = () => { empty.hidden = turns.length > 0; renderLists(); updateHead(); };
   const busy = (on: boolean) => { send.hidden = on; stop.hidden = !on; input.disabled = on; };
   const scrollDown = () => window.scrollTo({ top: document.body.scrollHeight, behavior: 'smooth' });
 
@@ -344,48 +370,79 @@ const isAdmin = Astro.locals.access.groupAdmin;
       busy(false);
       controller = null;
       input.focus();
+      loadList();
     }
   }
 
-  // Your conversations: list, open (and carry on), delete.
-  const panel = document.querySelector<HTMLElement>('[data-history-panel]')!;
-  const listEl = panel.querySelector<HTMLUListElement>('[data-history-list]')!;
+  // Your conversations: in the sidebar (on phones, a panel), grouped by when, like the document categories.
+  // Open one to read it and carry on; the open one can be deleted from its heading.
+  const panel = root.querySelector<HTMLElement>('[data-history-panel]')!;
   const openBtn = root.querySelector<HTMLButtonElement>('[data-history-open]')!;
-  const when = new Intl.DateTimeFormat(document.documentElement.lang || undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' });
-  const closePanel = () => { panel.hidden = true; openBtn.setAttribute('aria-expanded', 'false'); openBtn.focus(); };
+  const closePanel = () => { if (panel.hidden) return; panel.hidden = true; openBtn.setAttribute('aria-expanded', 'false'); openBtn.focus(); };
+  // Function declarations: refresh() runs before this part of the script.
+  function groupOf(iso: string) {
+    const d = new Date(iso), now = new Date();
+    if (d.toDateString() === now.toDateString()) return tr('Today');
+    return now.getTime() - d.getTime() < 7 * 86_400_000 ? tr('This week') : tr('Earlier');
+  }
+  function renderLists() {
+    root.querySelectorAll<HTMLElement>('[data-history-box]').forEach((box) => {
+      const q = (box.querySelector<HTMLInputElement>('[data-history-search]')?.value ?? '').trim().toLowerCase();
+      const shown = convs.filter((c) => !q || c.title.toLowerCase().includes(q));
+      const out: HTMLElement[] = [];
+      let group = '';
+      for (const c of shown) {
+        const g = groupOf(c.updatedAt);
+        if (g !== group) { group = g; out.push(Object.assign(document.createElement('p'), { className: 'mt-3 px-3 text-xs uppercase tracking-wide text-white/35 first:mt-0', textContent: g })); }
+        const b = document.createElement('button');
+        const active = c.id === conversationId;
+        b.type = 'button'; b.title = c.title;
+        b.className = `flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-left ${active ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white'}`;
+        if (active) b.setAttribute('aria-current', 'true');
+        b.innerHTML = `<span class="truncate">${escape(c.title)}</span><span class="shrink-0 text-white/35">${c.questions}</span>`;
+        b.addEventListener('click', () => openConversation(c.id));
+        out.push(b);
+      }
+      if (!shown.length) out.push(Object.assign(document.createElement('p'), { className: 'px-3 py-2 text-white/45', textContent: convs.length ? tr('No conversations match.') : tr('No conversations yet.') }));
+      box.querySelector('[data-history-list]')!.replaceChildren(...out);
+    });
+    root.querySelector('[data-history-open]')!.textContent = convs.length ? tr('Your conversations ({n})', { n: convs.length }) : tr('Your conversations');
+  }
+  function updateHead() {
+    const head = root.querySelector<HTMLElement>('[data-chat-head]')!;
+    head.hidden = turns.length === 0;
+    if (!turns.length) return;
+    const c = convs.find((x) => x.id === conversationId);
+    const questions = turns.filter((x) => x.role === 'user').length;
+    head.querySelector('[data-chat-title]')!.textContent = c?.title ?? turns.find((x) => x.role === 'user')?.content ?? '';
+    const date = new Intl.DateTimeFormat(document.documentElement.lang || undefined, { day: 'numeric', month: 'short', hour: 'numeric', minute: '2-digit' }).format(c ? new Date(c.updatedAt) : new Date());
+    head.querySelector('[data-chat-meta]')!.textContent = `${date} · ${questions === 1 ? tr('1 question') : tr('{n} questions', { n: questions })}`;
+  }
   async function loadList() {
     const data = await fetch(`/api/ask-history?company=${encodeURIComponent(COMPANY)}&list=1`).then((r) => r.json()).catch(() => null);
-    const items = (data?.conversations ?? []) as { id: string; title: string; updatedAt: string; questions: number }[];
-    listEl.replaceChildren(...(items.length ? items.map((c) => {
-      const li = document.createElement('li');
-      li.className = 'flex items-start gap-2 px-5 py-3' + (c.id === conversationId ? ' bg-white/5' : '');
-      const open = document.createElement('button');
-      open.type = 'button'; open.className = 'min-w-0 flex-1 text-left';
-      open.innerHTML = `<span class="block truncate text-sm text-white/85">${escape(c.title)}</span><span class="text-xs text-white/40">${escape(when.format(new Date(c.updatedAt)))} · ${c.questions}</span>`;
-      open.addEventListener('click', async () => {
-        if (controller || polling) return;
-        const d = await fetch(`/api/ask-history?company=${encodeURIComponent(COMPANY)}&conversation=${c.id}`).then((r) => r.json()).catch(() => null);
-        if (!d?.conversationId) return;
-        conversationId = d.conversationId;
-        turns = (d.turns as Turn[]).map((t) => (t.role === 'assistant' && t.content === 'Stopped.' ? { ...t, content: tr('Stopped.') } : t));
-        save(); renderAll(); closePanel(); scrollDown(); input.focus();
-        if (d.pending) { hasSession = true; turns.push({ role: 'user', content: d.pending.question }); save(); resume(); }
-      });
-      const del = document.createElement('button');
-      del.type = 'button'; del.className = 'shrink-0 px-1 text-xs text-white/35 hover:text-lk-red'; del.textContent = tr('Delete'); del.setAttribute('aria-label', `${tr('Delete')}: ${c.title}`);
-      del.addEventListener('click', async () => {
-        if (!confirm(tr('Delete this conversation?'))) return;
-        await fetch(`/api/ask-history?company=${encodeURIComponent(COMPANY)}&conversation=${c.id}`, { method: 'DELETE' });
-        if (c.id === conversationId) newChat.click();
-        loadList();
-      });
-      li.append(open, del);
-      return li;
-    }) : [Object.assign(document.createElement('li'), { className: 'px-5 py-6 text-sm text-white/45', textContent: tr('No conversations yet.') })]));
+    convs = (data?.conversations ?? []) as Conv[];
+    renderLists(); updateHead();
   }
+  async function openConversation(id: string) {
+    if (controller || polling) return;
+    const d = await fetch(`/api/ask-history?company=${encodeURIComponent(COMPANY)}&conversation=${id}`).then((r) => r.json()).catch(() => null);
+    if (!d?.conversationId) return;
+    conversationId = d.conversationId;
+    turns = (d.turns as Turn[]).map((t) => (t.role === 'assistant' && t.content === 'Stopped.' ? { ...t, content: tr('Stopped.') } : t));
+    save(); renderAll(); closePanel(); scrollDown(); input.focus();
+    if (d.pending) { hasSession = true; turns.push({ role: 'user', content: d.pending.question }); save(); resume(); }
+  }
+  root.querySelector('[data-delete-current]')!.addEventListener('click', async () => {
+    if (controller || polling || !confirm(tr('Delete this conversation?'))) return;
+    await fetch(`/api/ask-history?company=${encodeURIComponent(COMPANY)}&conversation=${conversationId}`, { method: 'DELETE' });
+    newChat.click();
+    loadList();
+  });
+  root.querySelectorAll<HTMLInputElement>('[data-history-search]').forEach((x) => x.addEventListener('input', renderLists));
   openBtn.addEventListener('click', () => { panel.hidden = false; openBtn.setAttribute('aria-expanded', 'true'); loadList(); });
   panel.querySelectorAll('[data-history-close]').forEach((x) => x.addEventListener('click', closePanel));
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !panel.hidden) closePanel(); });
+  loadList();
 
   form.addEventListener('submit', (e) => {
     e.preventDefault();
