@@ -9,6 +9,8 @@ import { adminScope } from '../../lib/admin-company';
 import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
 import { waitingFor } from '../../lib/approvals';
+import GettingStarted from '../../components/GettingStarted.astro';
+import { gettingStarted, venturesGettingStarted } from '../../lib/getting-started';
 
 const supabase = Astro.locals.supabase;
 const scope = await adminScope(Astro.locals, Astro.url);
@@ -44,6 +46,11 @@ const todo = (await Promise.all([
   access.canAny('meetings.view') ? (async () => ({ n: await count(svc.from('meetings').select('id', { count: 'exact', head: true }).in('status', ['upcoming', 'open']).gt('proxy_deadline', now).lt('proxy_deadline', soon).in('entity_id', ids)), label: 'meetings whose proxy voting closes this week', href: '/admin/agm' }))() : null,
 ])).filter((x): x is { n: number; label: string; href: string; alert?: boolean } => Boolean(x && x.n > 0));
 
+// Getting started: what's left to run each venture (group Admins: every venture), unless hidden for now.
+const { data: mine } = await svc.from('profiles').select('getting_started_hidden_until').eq('id', Astro.locals.user!.id).maybeSingle();
+const gsHidden = Boolean(mine?.getting_started_hidden_until && mine.getting_started_hidden_until > now);
+const [gsCards, gsVentures] = gsHidden ? [[], []] : await Promise.all([gettingStarted(svc, access), access.groupAdmin ? venturesGettingStarted(svc) : Promise.resolve([])]);
+
 const stats = [
   { label: 'Investor accounts', value: investors.count ?? 0 },
   { label: 'Holding entities', value: holders.count ?? 0 },
@@ -56,6 +63,7 @@ const stats = [
 <Admin title="Overview">
   <PageHeader title="Portal administration" subtitle={scope.isGroupAdmin ? 'Investors, holdings, documents and shareholder questions.' : `Administration for ${scope.companies.map((c) => c.display_name).join(', ')}.`} />
   <AdminCompanyFilter scope={scope} />
+  <GettingStarted cards={gsCards} ventures={gsVentures} />
 
   <section class="card mb-4" aria-labelledby="todo-title">
     <h2 id="todo-title" class="font-display text-lg font-bold">To do</h2>
