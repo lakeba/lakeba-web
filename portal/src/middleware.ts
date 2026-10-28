@@ -102,8 +102,10 @@ export const onRequest = defineMiddleware(async (context, next) => {
     return redirect(`/login?next=${encodeURIComponent(path + url.search)}`);
   }
 
-  const { data: aal } = await locals.supabase.auth.mfa.getAuthenticatorAssuranceLevel();
-  locals.mfaEnrolled = aal?.nextLevel === 'aal2';
+  // From the auth server, not the cookie: the cookie's copy of the person's factors isn't signed, so
+  // someone could remove them there to skip two-step.
+  const { data: factors } = await serviceClient().auth.admin.mfa.listFactors({ userId: locals.user.id });
+  locals.mfaEnrolled = (factors?.factors ?? []).some((f) => f.status === 'verified');
 
   // Enrolled users must complete MFA for this session before anything else.
   if (locals.mfaEnrolled && locals.user.aal !== 'aal2' && !twoStepOff && !matches(path, MFA_PATHS)) {
