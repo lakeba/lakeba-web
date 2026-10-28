@@ -39,10 +39,14 @@ const groups = [
     { href: '/admin/ventures', label: 'Ventures & prices' },
     { href: '/admin/trading', label: 'Secondary trading' },
   ] },
-  { label: 'System', items: [
+  { label: 'Settings', items: [
     { href: '/admin/system/users', label: 'Users' },
     { href: '/admin/system/roles', label: 'Roles' },
     { href: '/admin/audit', label: 'Audit log' },
+    { href: '/admin/integrations', label: 'Integrations' },
+    // The developers' pages are public, so everyone with the admin menu sees them.
+    { href: '/developers', label: 'Developers docs', open: true },
+    { href: '/developers/reference', label: 'APIs reference', open: true },
   ] },
 ];
 // Approvals: for anyone who prepares or approves; the count is what waits for them.
@@ -51,7 +55,7 @@ const waitingCount = approvalsOpen ? (await waitingFor(serviceClient(), access, 
 const active = (href: string) => (href === '/admin' ? path === '/admin' : path === href || path.startsWith(`${href}/`));
 // Only the sections this person's roles open; empty groups are left out.
 const visible = groups
-  .map((g) => ({ ...g, items: g.items.filter((i) => mayOpenItem(access, i.href)) }))
+  .map((g) => ({ ...g, items: g.items.filter((i) => ('open' in i && i.open) || mayOpenItem(access, i.href)) }))
   .filter((g) => g.items.length);
 const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.label ?? (path === '/admin' ? 'Overview' : active('/admin/approvals') ? 'Approvals' : title);
 ---

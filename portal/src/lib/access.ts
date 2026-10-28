@@ -75,6 +75,8 @@ export const formAction = (form: FormData | null) => (form?.get('then') === 'sen
 export function adminMayRequest(a: Access, path: string, writing: boolean, action = '') {
   if (a.groupAdmin) return true;
   if (GROUP_ADMIN_ONLY.some((p) => under(path, p))) return false;
+  // Integrations: the list for any company Admin (each company's page checks its own Admins).
+  if (under(path, '/admin/integrations')) return !writing && a.roles.some((r) => r.role_key === 'admin');
   // Import data: the whole platform for group Admins; one company's workbook for whoever manages a company's register (lib/import-scope.ts).
   if (under(path, '/admin/import')) return a.canAny('investors.do');
   if (path.startsWith('/admin/investors/')) return !writing && a.can('investors.view', null);
