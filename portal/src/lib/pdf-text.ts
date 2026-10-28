@@ -6,6 +6,11 @@ export type Chunk = { page: number; content: string };
 export async function pdfChunks(bytes: Uint8Array, size = 1200): Promise<Chunk[]> {
   const pdf = await getDocumentProxy(bytes);
   const { text } = await extractText(pdf, { mergePages: false });
+  return pageChunks(text, size);
+}
+
+/** The same passages from text already split into pages (page 1 first). */
+export function pageChunks(text: string[], size = 1200): Chunk[] {
   const chunks: Chunk[] = [];
   text.forEach((pageText, i) => {
     const clean = pageText.replace(/\s+/g, ' ').trim();

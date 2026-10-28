@@ -106,12 +106,15 @@ if (Astro.request.method === 'POST') {
   } else if (intent === 'publish' && heldBack(await getApproval(serviceClient(), 'document', id), 'document')) {
     error = heldBack(await getApproval(serviceClient(), 'document', id), 'document')!;
   } else if (intent === 'publish' || intent === 'unpublish') {
+    // A document about the past (imported, with its own date over 90 days ago) is published quietly under that date.
+    const { data: before } = await supabase.from('documents').select('document_date').eq('id', id).single();
+    const old = intent === 'publish' && before?.document_date && before.document_date < new Date(Date.now() - 90 * 86_400_000).toISOString().slice(0, 10);
     const { data: doc } = await supabase.from('documents')
-      .update({ published_at: intent === 'publish' ? new Date().toISOString() : null }).eq('id', id).select('title, summary, audience, entity_id, shared_with_group').single();
+      .update({ published_at: intent === 'publish' ? (old ? new Date(`${before!.document_date}T09:00:00+10:00`).toISOString() : new Date().toISOString()) : null }).eq('id', id).select('title, summary, audience, entity_id, shared_with_group').single();
     if (doc) {
       await supabase.rpc('log_event', { event_action: `admin_${intent}ed_document`, event_detail: { document_id: id, title: doc.title } });
-      if (intent === 'publish' && doc.audience === 'all_investors') await announce(doc.title, doc.summary, doc.entity_id, doc.shared_with_group);
-      notice = intent === 'publish' ? `Published “${doc.title}”.` : `“${doc.title}” is now a draft.`;
+      if (intent === 'publish' && !old && doc.audience === 'all_investors') await announce(doc.title, doc.summary, doc.entity_id, doc.shared_with_group);
+      notice = intent === 'publish' ? `Published “${doc.title}”${old ? ' under its own date, without telling investors' : ''}.` : `“${doc.title}” is now a draft.`;
     }
   } else if (intent === 'share-on' || intent === 'share-off') {
     const { data: doc } = await supabase.from('documents').update({ shared_with_group: intent === 'share-on' }).eq('id', id).select('title').single();
@@ -152,7 +155,9 @@ const docApprovals = await approvalsFor(serviceClient(), 'document', (docs ?? []
 ---
 
 <Admin title="Documents">
-  <PageHeader title="Documents" subtitle="Files are stored privately; investors get short-lived links only for documents they are allowed to see." />
+  <PageHeader title="Documents" subtitle="Files are stored privately; investors get short-lived links only for documents they are allowed to see.">
+    <a href="/admin/documents/import" class="btn-primary text-sm">Import documents</a>
+  </PageHeader>
   <AdminCompanyFilter scope={scope} />
   <section class="card mb-6 !p-5">
     <div class="flex flex-wrap items-center justify-between gap-3">

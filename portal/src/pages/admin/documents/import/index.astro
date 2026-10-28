@@ -1,0 +1,334 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Alert from '../../../../components/Alert.astro';
+import { field } from '../../../../lib/forms';
+import { categoryLabels, fileSize } from '../../../../lib/format';
+import { serviceClient } from '../../../../lib/admin';
+import { ASK_YEARS, clearLeftovers, IMPORT_CATEGORIES, importCompanies, importItems, MAX_FILES, type Choice, type Settings } from '../../../../lib/document-import';
+
+// Import documents: many files at once, read and filed by Lakeba AI, checked by the admin
+// (lib/document-import.ts). One import per visit; unfinished ones can be picked up later.
+const svc = serviceClient();
+const me = Astro.locals.user!.id;
+const companies = await importCompanies(Astro.locals.access);
+if (!companies.length) return Astro.redirect('/admin/documents');
+const id = Astro.url.searchParams.get('id');
+let step = Astro.url.searchParams.get('step') === 'confirm' ? 'confirm' : 'check';
+let error = '';
+let notice = '';
+
+const loadImport = async () => id
+  ? (await svc.from('document_imports').select('id, entity_id, settings, status, created_at').eq('id', id).eq('created_by', me).maybeSingle()).data
+  : null;
+let imp = await loadImport();
+if (id && !imp) return Astro.redirect('/admin/documents/import');
+
+if (Astro.request.method === 'POST' && imp && imp.status === 'open') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  if (intent === 'save' || intent === 'continue') {
+    const { data: rows } = await svc.from('document_import_items').select('id, chosen, chunks').eq('import_id', imp.id).neq('status', 'imported');
+    for (const r of rows ?? []) {
+      if (!form.has(`title_${r.id}`)) continue;
+      const entity = companies.find((c) => c.id === field(form, `entity_${r.id}`)) ?? null;
+      const category = IMPORT_CATEGORIES.includes(field(form, `category_${r.id}`)) ? field(form, `category_${r.id}`) : 'other';
+      const audience = category === 'register' || category === 'board_papers' || field(form, `audience_${r.id}`) !== 'all_investors' ? 'board' : 'all_investors';
+      const date = /^\d{4}-\d{2}-\d{2}$/.test(field(form, `date_${r.id}`)) ? field(form, `date_${r.id}`) : null;
+      const hasText = ((r.chunks ?? []) as unknown[]).length > 0;
+      const chosen: Choice = {
+        entity_id: entity?.id ?? null, title: field(form, `title_${r.id}`).slice(0, 200) || (r.chosen as Choice).title, category, document_date: date, audience,
+        summary: (r.chosen as Choice).summary, ask: hasText && audience === 'all_investors' && form.get(`ask_${r.id}`) === 'on',
+      };
+      await svc.from('document_import_items').update({ chosen, include: form.get(`include_${r.id}`) === 'on' }).eq('id', r.id);
+    }
+    if (intent === 'continue') return Astro.redirect(`/admin/documents/import?id=${imp.id}&step=confirm`);
+    notice = 'Saved.';
+  } else if (intent === 'import') {
+    const made = await importItems(svc, Astro.locals.supabase, imp as { id: string; settings: Settings }, companies, me);
+    await clearLeftovers(svc, imp.id);
+    await svc.from('document_imports').update({ status: 'imported', finished_at: new Date().toISOString() }).eq('id', imp.id);
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_imported_documents', event_detail: { import_id: imp.id, documents: made } });
+    imp = await loadImport();
+    notice = `Imported ${made} document${made === 1 ? '' : 's'}.`;
+  } else if (intent === 'discard') {
+    await clearLeftovers(svc, imp.id);
+    await svc.from('document_imports').update({ status: 'discarded', finished_at: new Date().toISOString() }).eq('id', imp.id);
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_discarded_document_import', event_detail: { import_id: imp.id } });
+    return Astro.redirect('/admin/documents/import');
+  }
+}
+
+type Item = { id: string; file_name: string; folder: string; size_bytes: number; pages: number | null; text_source: string; status: string; error: string | null; chosen: Choice; include: boolean; notes: string[]; cost_usd: number; document_id: string | null; chunks?: { content: string }[] };
+const { data: itemRows } = imp ? await svc.from('document_import_items').select('id, file_name, folder, size_bytes, pages, text_source, status, error, chosen, include, notes, cost_usd, document_id').eq('import_id', imp.id).order('created_at') : { data: [] };
+const items = (itemRows ?? []) as Item[];
+const settings = (imp?.settings ?? {}) as Settings;
+const nameOf = (eid: string | null) => companies.find((c) => c.id === eid)?.display_name ?? 'No company';
+const needsYou = (it: Item) => it.status === 'error' || (it.include && (!it.chosen.entity_id || it.notes.length > 0));
+const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD', maximumFractionDigits: 2 });
+
+// The confirm step: what will be made, per company, and how much Lakeba AI's knowledge grows.
+const chosenItems = items.filter((it) => it.include && it.status === 'ready' && it.chosen.entity_id);
+const missing = items.filter((it) => it.include && it.status === 'ready' && !it.chosen.entity_id);
+type Line = { name: string; docs: number; all: number; board: number; ask: number; addTokens: number; nowTokens: number };
+let lines: Line[] = [];
+if (imp && step === 'confirm') {
+  const ids = [...new Set(chosenItems.map((it) => it.chosen.entity_id!))];
+  const { data: askChunks } = await svc.from('document_import_items').select('chosen, chunks').eq('import_id', imp.id).eq('include', true).eq('status', 'ready');
+  const now = new Date().toISOString();
+  lines = await Promise.all(ids.map(async (eid) => {
+    const mine = chosenItems.filter((it) => it.chosen.entity_id === eid);
+    const add = (askChunks ?? []).filter((r) => (r.chosen as Choice).entity_id === eid && (r.chosen as Choice).ask)
+      .reduce((n, r) => n + ((r.chunks ?? []) as { content: string }[]).reduce((m, ch) => m + ch.content.length, 0), 0);
+    const { data: current } = await svc.from('documents').select('document_chunks(content)').eq('entity_id', eid).eq('in_knowledge_base', true).eq('audience', 'all_investors').lte('published_at', now);
+    const have = (current ?? []).reduce((n, d) => n + ((d.document_chunks ?? []) as { content: string }[]).reduce((m, ch) => m + ch.content.length, 0), 0);
+    return { name: nameOf(eid), docs: mine.length, all: mine.filter((it) => it.chosen.audience === 'all_investors').length, board: mine.filter((it) => it.chosen.audience === 'board').length, ask: mine.filter((it) => it.chosen.ask).length, addTokens: Math.round(add / 2.8), nowTokens: Math.round(have / 2.8) };
+  }));
+}
+// Same estimate as Documents: warm cache, Opus 5.5 cache reads at $0.20/M plus ~1,500 output tokens at $20/M.
+const perQuestion = (tokens: number) => usd.format((tokens * 0.2 + 1500 * 20) / 1e6);
+const k = (n: number) => `${Math.max(1, Math.round(n / 1000))}k`;
+
+const { data: open } = imp ? { data: [] } : await svc.from('document_imports').select('id, created_at, document_import_items(count)').eq('created_by', me).eq('status', 'open').order('created_at', { ascending: false }).limit(5);
+const cost = items.reduce((n, it) => n + Number(it.cost_usd), 0);
+---
+
+<Admin title="Import documents">
+  <a href="/admin/documents" class="text-sm text-white/50 hover:text-white">← Documents</a>
+  <PageHeader title="Import documents" subtitle="Many files at once. Lakeba AI reads each one and suggests its company, name, category, date and who sees it; you check everything before anything is saved." />
+  <div class="mb-6 space-y-3">{error && <Alert tone="error">{error}</Alert>}{notice && <Alert tone="success">{notice}</Alert>}</div>
+
+  {!imp && (
+    <>
+      {(open ?? []).length > 0 && (
+        <section class="card mb-4 !p-5">
+          <h2 class="text-lg font-bold">Unfinished imports</h2>
+          <ul class="mt-3 grid gap-2 text-sm">
+            {(open ?? []).map((o) => <li class="flex items-center justify-between gap-3 rounded-xl border border-white/10 px-4 py-2.5"><span>Started {new Date(o.created_at).toLocaleString('en-AU', { timeZone: 'Australia/Sydney', dateStyle: 'medium', timeStyle: 'short' })} · {(o.document_import_items as unknown as { count: number }[])[0]?.count ?? 0} files</span><a href={`/admin/documents/import?id=${o.id}`} class="btn-ghost !px-3 !py-1.5 text-xs">Continue →</a></li>)}
+          </ul>
+        </section>
+      )}
+      <form class="card" id="import-start" data-max={MAX_FILES}>
+        <div id="drop" class="rounded-2xl border-[1.5px] border-dashed border-lk-blue/55 bg-lk-blue/[0.06] px-5 py-10 text-center">
+          <p class="font-display text-lg font-bold text-white">Drop PDFs or whole folders here</p>
+          <p class="mx-auto mt-2 max-w-xl text-sm text-white/55">Up to {MAX_FILES} files at a time, 50 MB each. Folder names help: a folder called “DoxAI” or “EziFin” tells Lakeba AI the company.</p>
+          <div class="mt-4 flex flex-wrap justify-center gap-2">
+            <label class="btn-primary cursor-pointer text-sm">Choose files<input type="file" id="pick-files" multiple class="hidden" /></label>
+            <label class="btn-ghost cursor-pointer text-sm">Choose a folder<input type="file" id="pick-folder" webkitdirectory multiple class="hidden" /></label>
+          </div>
+          <p id="picked" class="mt-3 text-sm text-white/70"></p>
+        </div>
+        <div class="mt-6 grid gap-5 sm:grid-cols-2">
+          <div>
+            <label class="label" for="entity_id">Company</label>
+            <select class="field" id="entity_id" name="entity_id"><option value="">Let Lakeba AI work it out</option>{companies.map((c) => <option value={c.id}>All for {c.display_name}</option>)}</select>
+            <p class="mt-1.5 text-xs text-white/45">From the folder names and the documents themselves. Only companies with their own portal where you may add documents.</p>
+          </div>
+          <div>
+            <label class="label" for="financials_audience">Financial statements go to</label>
+            <select class="field" id="financials_audience" name="financials_audience"><option value="all_investors">All of that company’s investors</option><option value="board">The board only</option></select>
+            <p class="mt-1.5 text-xs text-white/45">Board minutes and board papers always go to the board only. Drafts and unsigned versions are kept for the board until you change them.</p>
+          </div>
+          <div>
+            <label class="label" for="publish">After import</label>
+            <select class="field" id="publish" name="publish"><option value="draft">Keep as drafts: I publish them myself</option><option value="quiet">Publish now under their own dates, without telling investors</option></select>
+            <p class="mt-1.5 text-xs text-white/45">Old documents published later from Documents also go out quietly under their own date.</p>
+          </div>
+          <div class="grid content-start gap-3">
+            <label class="flex items-start gap-3 text-sm text-white/75"><input type="checkbox" name="use_in_ask" checked class="mt-0.5 size-4 accent-lk-blue" /><span>Use for Lakeba AI where it fits <span class="text-white/45">(documents all investors can see; financial statements from the last {ASK_YEARS} years)</span></span></label>
+            <label class="flex items-start gap-3 text-sm text-white/75"><input type="checkbox" name="share_with_group" class="mt-0.5 size-4 accent-lk-blue" /><span>Also show ventures’ documents to Lakeba Group’s shareholders <span class="text-white/45">(and Lakeba Group’s Lakeba AI); a venture Lakeba doesn’t control should agree first</span></span></label>
+          </div>
+        </div>
+        <div class="mt-6 flex flex-wrap items-center justify-between gap-3">
+          <span class="text-xs text-white/45">Reading costs about a cent per document; scanned ones a few cents.</span>
+          <button class="btn-primary" id="go" disabled>Read files →</button>
+        </div>
+        <div id="progress" class="mt-6 hidden">
+          <div class="flex justify-between text-sm"><span id="progress-text"></span><span class="text-white/45">Keep this page open. Files already read are kept.</span></div>
+          <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"><div id="progress-bar" class="h-full rounded-full bg-gradient-to-r from-lk-blue to-lk-green" style="width:0%"></div></div>
+          <ul id="progress-errors" class="mt-3 grid gap-1 text-xs text-lk-orange"></ul>
+        </div>
+      </form>
+    </>
+  )}
+
+  {imp && imp.status !== 'open' && (
+    <section class="card">
+      <h2 class="text-xl font-bold">{imp.status === 'imported' ? `${items.filter((it) => it.status === 'imported').length} documents imported` : 'This import was discarded'}</h2>
+      {imp.status === 'imported' && <p class="mt-2 text-sm text-white/60">{settings.publish === 'quiet' ? 'They are published under their own dates; nobody was notified.' : 'They are drafts in Documents: publish them there when you’re ready.'}</p>}
+      <div class="mt-5 flex flex-wrap gap-2"><a href="/admin/documents" class="btn-primary">Documents</a><a href="/admin/documents/import" class="btn-ghost">Import more</a></div>
+    </section>
+  )}
+
+  {imp && imp.status === 'open' && step === 'check' && (
+    <form method="post" class="card" id="check">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 class="text-xl font-bold">{items.length} file{items.length === 1 ? '' : 's'} read · {items.filter((it) => !needsYou(it)).length} ready · {items.filter(needsYou).length} need you</h2>
+          <p class="mt-1 text-sm text-white/55">Change anything in the table. Names follow one style: <span class="text-white">Company – What it is Period</span>. Unticked rows aren’t imported.</p>
+        </div>
+        <div class="flex flex-wrap gap-2">
+          <button name="intent" value="save" class="btn-ghost">Save</button>
+          <button name="intent" value="continue" class="btn-primary">Continue →</button>
+        </div>
+      </div>
+      <div class="mt-4 flex flex-wrap gap-1.5 text-xs" id="filters">
+        <button type="button" data-filter="" class="rounded-full bg-lk-blue/15 px-3 py-1 font-semibold text-lk-blue">All {items.length}</button>
+        <button type="button" data-filter="need" class="rounded-full bg-lk-orange/15 px-3 py-1 font-semibold text-lk-orange">Need you {items.filter(needsYou).length}</button>
+        {companies.filter((c) => items.some((it) => it.chosen.entity_id === c.id)).map((c) => <button type="button" data-filter={c.id} class="rounded-full bg-white/10 px-3 py-1 font-semibold text-white/60">{c.display_name} {items.filter((it) => it.chosen.entity_id === c.id).length}</button>)}
+      </div>
+      <div class="-mx-6 mt-4 overflow-x-auto px-6 sm:-mx-8 sm:px-8">
+        <table class="w-full min-w-[1100px] text-left text-[13px]">
+          <thead class="text-[11px] uppercase tracking-widest text-white/40"><tr class="border-b border-white/10">
+            <th class="w-7 py-2 pr-2 font-medium" title="Import">In</th><th class="py-2 pr-2 font-medium">Name</th><th class="w-36 py-2 pr-2 font-medium">Company</th><th class="w-44 py-2 pr-2 font-medium">Category</th><th class="w-36 py-2 pr-2 font-medium">Date</th><th class="w-36 py-2 pr-2 font-medium">Who sees it</th><th class="w-20 py-2 font-medium">Lakeba AI</th>
+          </tr></thead>
+          <tbody>
+            {items.map((it) => {
+              const c = it.chosen;
+              const locked = c.category === 'register' || c.category === 'board_papers';
+              return (
+                <tr data-row data-entity={c.entity_id ?? ''} data-need={needsYou(it) ? '1' : ''} class:list={['border-b border-white/5 align-top', needsYou(it) && 'bg-lk-orange/[0.05]', !it.include && 'opacity-60']}>
+                  <td class="py-2.5 pr-2"><input type="checkbox" name={`include_${it.id}`} checked={it.include} disabled={it.status === 'error'} class="mt-2 size-4 accent-lk-blue" aria-label={`Import ${c.title}`} /></td>
+                  <td class="py-2.5 pr-2">
+                    <input class="field !py-1.5 !text-[13px]" name={`title_${it.id}`} value={c.title} maxlength="200" aria-label="Name" />
+                    <p class="mt-1 break-all text-xs text-white/40">{it.folder ? `${it.folder}/` : ''}{it.file_name} · {fileSize(it.size_bytes)}{it.pages ? ` · ${it.pages} page${it.pages === 1 ? '' : 's'}` : ''}{it.text_source === 'ocr' ? ' · read from the scan' : ''}</p>
+                    {c.summary && <p class="mt-1 text-xs text-white/55">{c.summary}</p>}
+                    {it.status === 'error' && <p class="mt-1 text-xs text-lk-orange">Lakeba AI couldn’t read it: {it.error}</p>}
+                    {it.notes.map((n) => <p class="mt-1 text-xs text-lk-orange">{n}</p>)}
+                  </td>
+                  <td class="py-2.5 pr-2"><select class="field !py-1.5 !text-[13px]" name={`entity_${it.id}`} aria-label="Company"><option value="">Choose…</option>{companies.map((co) => <option value={co.id} selected={co.id === c.entity_id}>{co.display_name}</option>)}</select></td>
+                  <td class="py-2.5 pr-2"><select class="field !py-1.5 !text-[13px]" name={`category_${it.id}`} aria-label="Category">{IMPORT_CATEGORIES.map((k) => <option value={k} selected={k === c.category}>{categoryLabels[k]}</option>)}</select></td>
+                  <td class="py-2.5 pr-2"><input type="date" class="field !py-1.5 !text-[13px]" name={`date_${it.id}`} value={c.document_date ?? ''} aria-label="Date" /></td>
+                  <td class="py-2.5 pr-2"><select class="field !py-1.5 !text-[13px]" name={`audience_${it.id}`} aria-label="Who sees it" disabled={locked}><option value="all_investors" selected={c.audience === 'all_investors'}>All investors</option><option value="board" selected={c.audience === 'board'}>Board only</option></select>{locked && <input type="hidden" name={`audience_${it.id}`} value="board" />}</td>
+                  <td class="py-2.5">{locked || it.text_source === 'none' ? <span class="mt-2 inline-block text-xs text-white/40">{locked ? 'Never' : 'Can’t read'}</span> : <input type="checkbox" name={`ask_${it.id}`} checked={c.ask} class="mt-2 size-4 accent-lk-blue" aria-label="Use for Lakeba AI" />}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+      <p class="mt-4 text-xs text-white/40">Lakeba AI is only used for documents all investors can see. Reading these files cost {usd.format(cost)}.</p>
+      <div class="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-white/5 pt-5">
+        <button name="intent" value="discard" formnovalidate class="btn-ghost text-sm" onclick="return confirm('Discard this import? The files read so far are removed; no documents are made.')">Discard this import</button>
+        <a href={`#add-more`} id="add-more-link" class="text-sm text-lk-blue hover:underline">Add more files</a>
+      </div>
+    </form>
+  )}
+
+  {imp && imp.status === 'open' && step === 'check' && (
+    <form class="card mt-4" id="import-start" data-import={imp.id} data-max={MAX_FILES}>
+      <h2 id="add-more" class="text-lg font-bold">Add more files to this import</h2>
+      <div id="drop" class="mt-4 rounded-2xl border-[1.5px] border-dashed border-lk-blue/55 bg-lk-blue/[0.06] px-5 py-6 text-center">
+        <div class="flex flex-wrap justify-center gap-2">
+          <label class="btn-ghost cursor-pointer text-sm">Choose files<input type="file" id="pick-files" multiple class="hidden" /></label>
+          <label class="btn-ghost cursor-pointer text-sm">Choose a folder<input type="file" id="pick-folder" webkitdirectory multiple class="hidden" /></label>
+        </div>
+        <p id="picked" class="mt-3 text-sm text-white/70"></p>
+      </div>
+      <div class="mt-4 flex justify-end"><button class="btn-primary" id="go" disabled>Read files →</button></div>
+      <div id="progress" class="mt-4 hidden">
+        <div class="flex justify-between text-sm"><span id="progress-text"></span><span class="text-white/45">Keep this page open.</span></div>
+        <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"><div id="progress-bar" class="h-full rounded-full bg-gradient-to-r from-lk-blue to-lk-green" style="width:0%"></div></div>
+        <ul id="progress-errors" class="mt-3 grid gap-1 text-xs text-lk-orange"></ul>
+      </div>
+    </form>
+  )}
+
+  {imp && imp.status === 'open' && step === 'confirm' && (
+    <form method="post" class="card">
+      <h2 class="text-xl font-bold">Ready to import {chosenItems.length} document{chosenItems.length === 1 ? '' : 's'}</h2>
+      <p class="mt-1 text-sm text-white/55">{settings.publish === 'quiet' ? 'Published under their own dates; nobody is notified.' : 'Kept as drafts: they appear in Documents for you to publish. Nothing is sent to investors.'}</p>
+      <div class="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <div class="rounded-2xl border border-white/10 px-4 py-3"><p class="font-display text-2xl font-bold text-white">{chosenItems.length}</p><p class="text-sm text-white/55">documents across {lines.length} compan{lines.length === 1 ? 'y' : 'ies'}</p></div>
+        <div class="rounded-2xl border border-white/10 px-4 py-3"><p class="font-display text-2xl font-bold text-white">{chosenItems.filter((it) => it.chosen.audience === 'all_investors').length}</p><p class="text-sm text-white/55">for all investors</p></div>
+        <div class="rounded-2xl border border-white/10 px-4 py-3"><p class="font-display text-2xl font-bold text-white">{chosenItems.filter((it) => it.chosen.audience === 'board').length}</p><p class="text-sm text-white/55">board only</p></div>
+        <div class="rounded-2xl border border-white/10 px-4 py-3"><p class="font-display text-2xl font-bold text-white">{chosenItems.filter((it) => it.chosen.ask).length}</p><p class="text-sm text-white/55">used by Lakeba AI{settings.publish === 'quiet' ? '' : ' once published'}</p></div>
+      </div>
+      <ul class="mt-5 grid gap-1.5 text-sm text-white/70">
+        {lines.map((l) => <li><span class="font-semibold text-white">{l.name}</span> · {l.docs} document{l.docs === 1 ? '' : 's'} ({l.all} for all investors, {l.board} board only){l.ask > 0 && l.addTokens >= 1000 && <> · Lakeba AI’s documents grow from about {k(l.nowTokens)} to {k(l.nowTokens + l.addTokens)} tokens, so a question costs about {perQuestion(l.nowTokens + l.addTokens)} instead of {perQuestion(l.nowTokens)}</>}</li>)}
+        {missing.length > 0 && <li class="text-lk-orange">{missing.length} ticked file{missing.length === 1 ? ' has' : 's have'} no company and won’t be imported: go back to choose one.</li>}
+        {items.filter((it) => !it.include).length > 0 && <li class="text-white/45">Left out: {items.filter((it) => !it.include).length} unticked file{items.filter((it) => !it.include).length === 1 ? '' : 's'}.</li>}
+      </ul>
+      <div class="mt-6 flex flex-wrap items-center justify-between gap-3">
+        <a href={`/admin/documents/import?id=${imp.id}`} class="btn-ghost">← Back to the table</a>
+        <button name="intent" value="import" class="btn-primary" disabled={!chosenItems.length}>Import {chosenItems.length} document{chosenItems.length === 1 ? '' : 's'}</button>
+      </div>
+    </form>
+  )}
+</Admin>
+
+<script>
+  // Filters on the table.
+  document.querySelectorAll<HTMLButtonElement>('#filters [data-filter]').forEach((b) => b.addEventListener('click', () => {
+    const f = b.dataset.filter;
+    document.querySelectorAll<HTMLElement>('[data-row]').forEach((r) => { r.hidden = Boolean(f) && (f === 'need' ? !r.dataset.need : r.dataset.entity !== f); });
+  }));
+
+  // Adding files: picked or dropped (folders too), then sent one by one, two at a time.
+  const form = document.querySelector<HTMLFormElement>('#import-start');
+  if (form) {
+    type Picked = { file: File; folder: string };
+    let picked: Picked[] = [];
+    const max = Number(form.dataset.max);
+    const go = form.querySelector<HTMLButtonElement>('#go')!;
+    const label = form.querySelector('#picked')!;
+    const show = () => {
+      picked = picked.filter((p) => !p.file.name.startsWith('.')).slice(0, max);
+      label.textContent = picked.length ? `${picked.length} file${picked.length === 1 ? '' : 's'} chosen` : '';
+      go.disabled = !picked.length;
+      go.textContent = picked.length ? `Read ${picked.length} file${picked.length === 1 ? '' : 's'} →` : 'Read files →';
+    };
+    const dir = (f: File) => ((f as File & { webkitRelativePath?: string }).webkitRelativePath || '').split('/').slice(0, -1).join('/');
+    form.querySelector<HTMLInputElement>('#pick-files')!.addEventListener('change', (e) => { picked.push(...[...(e.target as HTMLInputElement).files!].map((file) => ({ file, folder: '' }))); show(); });
+    form.querySelector<HTMLInputElement>('#pick-folder')!.addEventListener('change', (e) => { picked.push(...[...(e.target as HTMLInputElement).files!].map((file) => ({ file, folder: dir(file) }))); show(); });
+
+    const walk = async (entry: FileSystemEntry, path: string): Promise<Picked[]> => {
+      if (entry.isFile) return [{ file: await new Promise<File>((ok, no) => (entry as FileSystemFileEntry).file(ok, no)), folder: path }];
+      const reader = (entry as FileSystemDirectoryEntry).createReader();
+      const all: FileSystemEntry[] = [];
+      for (;;) { const batch = await new Promise<FileSystemEntry[]>((ok, no) => reader.readEntries(ok, no)); if (!batch.length) break; all.push(...batch); }
+      const inside = path ? `${path}/${entry.name}` : entry.name;
+      return (await Promise.all(all.map((e) => walk(e, inside)))).flat();
+    };
+    const drop = form.querySelector<HTMLElement>('#drop')!;
+    drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('bg-lk-blue/15'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('bg-lk-blue/15'));
+    drop.addEventListener('drop', async (e) => {
+      e.preventDefault(); drop.classList.remove('bg-lk-blue/15');
+      const entries = [...(e.dataTransfer?.items ?? [])].map((i) => i.webkitGetAsEntry()).filter(Boolean) as FileSystemEntry[];
+      picked.push(...(await Promise.all(entries.map((en) => walk(en, '')))).flat());
+      show();
+    });
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!picked.length) return;
+      go.disabled = true;
+      const progress = form.querySelector('#progress')!, text = form.querySelector('#progress-text')!, bar = form.querySelector<HTMLElement>('#progress-bar')!, errors = form.querySelector('#progress-errors')!;
+      progress.classList.remove('hidden');
+      let id = form.dataset.import;
+      if (!id) {
+        const start = new FormData(form); start.set('intent', 'start');
+        const res = await fetch('/admin/documents/import/file', { method: 'POST', body: start });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || !body.id) { const li = document.createElement('li'); li.textContent = body.error ?? 'The import could not be started.'; errors.replaceChildren(li); go.disabled = false; return; }
+        id = body.id as string;
+      }
+      let done = 0;
+      const queue = [...picked];
+      text.textContent = `0 of ${queue.length} read`;
+      const worker = async () => {
+        for (let p = queue.shift(); p; p = queue.shift()) {
+          const fd = new FormData(); fd.set('intent', 'file'); fd.set('import_id', id!); fd.set('file', p.file); fd.set('folder', p.folder);
+          const res = await fetch('/admin/documents/import/file', { method: 'POST', body: fd }).catch(() => null);
+          if (!res?.ok) { const li = document.createElement('li'); li.textContent = `${p.file.name}: ${(await res?.json().catch(() => null))?.error ?? 'could not be sent'}`; errors.append(li); }
+          done++;
+          text.textContent = `${done} of ${picked.length} read`;
+          bar.style.width = `${(done / picked.length) * 100}%`;
+        }
+      };
+      await Promise.all([worker(), worker()]);
+      location.href = `/admin/documents/import?id=${id}`;
+    });
+  }
+</script>

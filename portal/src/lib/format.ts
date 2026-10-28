@@ -12,7 +12,7 @@ export const fileSize = (bytes: number | null | undefined) =>
   bytes == null ? '' : bytes < 1e6 ? `${Math.max(1, Math.round(bytes / 1e3))} KB` : `${(bytes / 1e6).toFixed(1)} MB`;
 
 export const categoryLabels: Record<string, string> = {
-  report: 'Reports', agm: 'AGM', update: 'Shareholder updates', governance: 'Governance', register: 'Registers', video: 'Videos', other: 'Other',
+  report: 'Reports', financials: 'Financial statements', agm: 'AGM', update: 'Shareholder updates', governance: 'Governance', board_papers: 'Board papers', register: 'Registers', video: 'Videos', other: 'Other',
 };
 
 export const holderKinds: Record<string, string> = { individual: 'Individual', company: 'Company', trust: 'Trust', super_fund: 'Super fund' };
