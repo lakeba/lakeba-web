@@ -176,6 +176,10 @@ export const UNVERIFIED_REPLY = 'Hello,\n\nThank you for your email. For your se
 
 const textOf = (m: GraphMessage) => (m.body?.content ?? '').replace(/\r/g, '').replace(/\n{3,}/g, '\n\n').trim();
 
+/** The portal account with this email address, if any. */
+const accountFor = async (svc: Svc, address: string) =>
+  (await svc.from('profiles').select('id').ilike('email', address.replace(/[%_]/g, '\\$&')).maybeSingle()).data?.id ?? null;
+
 export async function ingest(svc: Svc, entityId: string, mailbox: string, message: GraphMessage, origin: string) {
   const from = message.from?.emailAddress;
   if (!from?.address) return null;
@@ -184,12 +188,12 @@ export async function ingest(svc: Svc, entityId: string, mailbox: string, messag
   const full = message.internetMessageHeaders ? message : await getMailboxMessage(mailbox, message.id);
   const checks = senderChecks(full);
   const automated = isAutomated(full);
-  const { data: profile } = await svc.from('profiles').select('id, email, first_name').ilike('email', from.address.replace(/[%_]/g, '\\$&')).maybeSingle();
+  const userId = await accountFor(svc, from.address);
   const { data: row, error } = await svc.from('shareholder_emails').insert({
     entity_id: entityId, mailbox, graph_id: message.id, internet_message_id: full.internetMessageId, conversation_id: full.conversationId,
     from_address: from.address.toLowerCase(), from_name: from.name ?? '', subject: (full.subject ?? '').slice(0, 500), body_text: textOf(full).slice(0, 20000),
     received_at: full.receivedDateTime, auth_spf: checks.spf, auth_dkim: checks.dkim, auth_dmarc: checks.dmarc,
-    sender_verified: checks.verified, automated, user_id: profile?.id ?? null, status: automated ? 'ignored' : 'new',
+    sender_verified: checks.verified, automated, user_id: userId, status: automated ? 'ignored' : 'new',
   }).select('id').single();
   if (error) throw error;
   if (automated) {
@@ -204,6 +208,12 @@ export async function ingest(svc: Svc, entityId: string, mailbox: string, messag
 export async function prepare(svc: Svc, emailId: string, origin: string) {
   const { data: e } = await svc.from('shareholder_emails').select('*').eq('id', emailId).single();
   if (!e) return;
+  // The sender is looked up again each time: an account made or linked after the email came in counts for a new draft.
+  const userId = await accountFor(svc, e.from_address);
+  if (userId !== e.user_id) {
+    await svc.from('shareholder_emails').update({ user_id: userId }).eq('id', emailId);
+    e.user_id = userId;
+  }
   const trusted = Boolean(e.sender_verified && e.user_id);
   try {
     const { data: profile } = e.user_id ? await svc.from('profiles').select('first_name').eq('id', e.user_id).single() : { data: null };
