@@ -1,0 +1,49 @@
+---
+import { BS_LINES, PL_LINES, totals, type Figures } from '../lib/reporting';
+// A reporting pack's figures: as inputs while it can be changed, as text
+// otherwise. Inputs are named pl.<line>.period, pl.<line>.ytd and bs.<line>
+// (read back with figuresFrom).
+interface Props { figures: Figures; editable: boolean; currency: string; previous?: Figures | null }
+const { figures, editable, currency, previous } = Astro.props;
+const money = (v: number | null | undefined) => (v == null ? '' : new Intl.NumberFormat('en-AU', { maximumFractionDigits: 0 }).format(v));
+const t = totals(figures);
+const cell = 'px-3 py-1.5 text-right tabular-nums';
+const input = 'field !rounded-lg !px-2 !py-1 text-right tabular-nums';
+---
+<div class="grid gap-6 lg:grid-cols-2">
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-3 py-2 text-left">Profit and loss ({currency})</th><th class="px-3 py-2 text-right">Period</th><th class="px-3 py-2 text-right">Year to date</th>{previous && <th class="px-3 py-2 text-right">Last period</th>}</tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {Object.entries(PL_LINES).map(([k, label]) => {
+          const v = figures.pl?.[k as keyof typeof PL_LINES];
+          return (
+            <tr class:list={[k === 'net_profit' && 'font-semibold']}>
+              <td class="px-3 py-1.5 text-white/75">{label}</td>
+              <td class={cell}>{editable ? <input class={input} name={`pl.${k}.period`} value={money(v?.period)} inputmode="decimal" aria-label={`${label}, period`} /> : money(v?.period)}</td>
+              <td class={cell}>{editable ? <input class={input} name={`pl.${k}.ytd`} value={money(v?.ytd)} inputmode="decimal" aria-label={`${label}, year to date`} /> : money(v?.ytd)}</td>
+              {previous && <td class:list={[cell, 'text-white/45']}>{money(previous.pl?.[k as keyof typeof PL_LINES]?.period)}</td>}
+            </tr>
+          );
+        })}
+        <tr class="text-white/50"><td class="px-3 py-1.5">Gross profit (worked out)</td><td class={cell}>{money(t.gross('period'))}</td><td class={cell}>{money(t.gross('ytd'))}</td>{previous && <td></td>}</tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="overflow-x-auto">
+    <table class="w-full text-sm">
+      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-3 py-2 text-left">Balance sheet ({currency})</th><th class="px-3 py-2 text-right">Period end</th>{previous && <th class="px-3 py-2 text-right">Last period</th>}</tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {Object.entries(BS_LINES).map(([k, label]) => (
+          <tr class:list={[k === 'equity' && 'font-semibold']}>
+            <td class="px-3 py-1.5 text-white/75">{label}</td>
+            <td class={cell}>{editable ? <input class={input} name={`bs.${k}`} value={money(figures.bs?.[k as keyof typeof BS_LINES])} inputmode="decimal" aria-label={label} /> : money(figures.bs?.[k as keyof typeof BS_LINES])}</td>
+            {previous && <td class:list={[cell, 'text-white/45']}>{money(previous.bs?.[k as keyof typeof BS_LINES])}</td>}
+          </tr>
+        ))}
+        <tr class="text-white/50"><td class="px-3 py-1.5">Net assets (worked out)</td><td class={cell}>{money(t.netAssets)}</td>{previous && <td></td>}</tr>
+      </tbody>
+    </table>
+    <p class="mt-2 px-3 text-xs text-white/40">Whole {currency}; expenses as positive numbers; a loss as a negative net profit, e.g. -12,500.</p>
+  </div>
+</div>

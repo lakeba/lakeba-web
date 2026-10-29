@@ -1,0 +1,44 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Empty from '../../../components/Empty.astro';
+import { serviceClient } from '../../../lib/admin';
+import { shortDate } from '../../../lib/format';
+import { PACK_STATES, ensurePacks, periodLabel, senderCompanies, todayIn, type Pack } from '../../../lib/reporting';
+
+// Admin → Reporting packs: a venture's profit and loss and balance sheet for
+// each period on its schedule, to send to Lakeba (for whoever has the Finance
+// role, or Admin, at that company).
+const svc = serviceClient();
+const companies = await senderCompanies(svc, Astro.locals.access);
+const ids = companies.map((c) => c.id);
+await ensurePacks(svc, ids);
+const { data } = ids.length ? await svc.from('reporting_packs').select('id, entity_id, period_end, cadence, due_on, status, submitted_at').in('entity_id', ids).order('period_end', { ascending: false }).limit(300) : { data: [] };
+const rows = (data ?? []) as Pick<Pack, 'id' | 'entity_id' | 'period_end' | 'cadence' | 'due_on' | 'status' | 'submitted_at'>[];
+const todo = rows.filter((r) => r.status === 'open' || r.status === 'returned').sort((a, b) => a.due_on.localeCompare(b.due_on));
+const done = rows.filter((r) => !todo.includes(r));
+const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+const today = todayIn();
+const day = (d: string) => shortDate.format(new Date(`${d}T12:00:00+10:00`));
+---
+
+<Admin title="Reporting packs">
+  <PageHeader title="Reporting packs" subtitle="Your company's profit and loss and balance sheet for each period, sent to Lakeba. Upload your management accounts: Lakeba AI reads the figures for you to check." />
+  {todo.length ? (
+    <section class="card mb-6 p-0"><h2 class="px-5 pt-5 font-display text-lg font-bold">To send</h2>
+      <ul class="mt-2 divide-y divide-white/5">{todo.map((r) => (
+        <li><a class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3 hover:bg-white/[0.04]" href={`/admin/reporting/${r.id}`}>
+          <span><span class="font-medium text-white">{periodLabel(r.period_end, r.cadence)}</span><span class="block text-xs text-white/45">{companies.length > 1 && `${nameOf.get(r.entity_id)} · `}due {day(r.due_on)}</span></span>
+          <span class:list={['text-sm', r.status === 'returned' || r.due_on < today ? 'text-lk-orange' : 'text-white/55']}>{r.status === 'returned' ? PACK_STATES.returned : r.due_on < today ? 'Overdue' : PACK_STATES.open}</span>
+        </a></li>
+      ))}</ul>
+    </section>
+  ) : <div class="mb-6"><Empty title="Nothing to send">{companies.length ? 'Packs appear here as each period ends.' : 'Lakeba hasn’t set a reporting schedule for your company yet.'}</Empty></div>}
+  {done.length > 0 && (
+    <section class="card p-0"><h2 class="px-5 pt-5 font-display text-lg font-bold">Sent</h2>
+      <ul class="mt-2 divide-y divide-white/5">{done.map((r) => (
+        <li><a class="flex flex-wrap justify-between gap-2 px-5 py-3 text-sm hover:bg-white/[0.04]" href={`/admin/reporting/${r.id}`}><span class="text-white">{periodLabel(r.period_end, r.cadence)}{companies.length > 1 && <span class="text-white/45"> · {nameOf.get(r.entity_id)}</span>}</span><span class:list={[r.status === 'accepted' ? 'text-lk-green' : 'text-white/55']}>{PACK_STATES[r.status]}</span></a></li>
+      ))}</ul>
+    </section>
+  )}
+</Admin>

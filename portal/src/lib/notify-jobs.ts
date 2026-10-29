@@ -14,6 +14,7 @@ import { cleanupIntegrations, deliverWebhooks } from './integrations/events';
 import { syncConnections } from './integrations/worker';
 import { processInbound } from './integrations/inbound';
 import { legalReminders } from './legal';
+import { reportingReminders } from './reporting';
 
 // The notification worker inside the portal process: sends queued pushes and
 // runs the scheduled notifications. Each scheduled job claims a key in
@@ -179,7 +180,7 @@ export function startNotificationWorker() {
       await sendQueuedPitches(serviceClient(), lastOrigin); // press pitches to journalists, a few at a time
       await deliverWebhooks(lastOrigin); // integrations: outgoing webhooks that are due
       await processInbound(lastOrigin); // integrations: incoming webhooks just received
-      if (ticks++ % 40 === 0) { await proxyReminders(); await votesSummary(); await weeklyDigest(); await legalReminders(serviceClient(), lastOrigin); await cleanup(); }
+      if (ticks++ % 40 === 0) { await proxyReminders(); await votesSummary(); await weeklyDigest(); await legalReminders(serviceClient(), lastOrigin); await reportingReminders(serviceClient(), lastOrigin); await cleanup(); }
     } catch (e) {
       console.error('notification worker', (e as Error).message);
     }

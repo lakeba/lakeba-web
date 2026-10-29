@@ -1,0 +1,142 @@
+---
+import { randomUUID } from 'node:crypto';
+import Admin from '../../../layouts/Admin.astro';
+import Alert from '../../../components/Alert.astro';
+import PackFigures from '../../../components/PackFigures.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { dateTime, fileSize, shortDate } from '../../../lib/format';
+import { PACK_COLUMNS, PACK_STATES, checks, figuresFrom, financeTeam, periodLabel, previousPack, readPack, senderCompanies, type FileRef, type Pack, type Schedule } from '../../../lib/reporting';
+import { notifyMembers } from '../../../lib/notify';
+
+// A venture's reporting pack: upload the management accounts, check the
+// figures Lakeba AI read, add a note and send; answer Lakeba's questions.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await senderCompanies(svc, access);
+const { data: row } = await svc.from('reporting_packs').select(PACK_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
+let p = row as Pack | null;
+const company = p ? companies.find((c) => c.id === p!.entity_id) : null;
+if (!p || !company) return Astro.redirect('/admin/reporting');
+const mayDo = access.can('reporting.do', company.id);
+const { data: sched } = await svc.from('reporting_schedules').select('*').eq('entity_id', company.id).maybeSingle();
+const schedule = sched as Schedule | null;
+const currency = schedule?.currency ?? 'AUD';
+const label = periodLabel(p.period_end, p.cadence);
+const userId = Astro.locals.user!.id;
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, pack_id: p!.id, ...detail } });
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const editable = p.status === 'open' || p.status === 'returned';
+  try {
+    if (intent === 'message') {
+      const body = field(form, 'body');
+      if (!body) throw new Error('Write a message.');
+      await svc.from('reporting_pack_messages').insert({ pack_id: p.id, author_id: userId, body: body.slice(0, 5000) }).throwOnError();
+      await notifyMembers({ kind: 'reporting', userIds: await financeTeam(svc), origin: Astro.url.origin, link: `/admin/accounting/packs/${p.id}`, title: `${company.display_name}: message on the ${label} pack`, body: body.slice(0, 500) }).catch(() => 0);
+      ok = 'Sent to Lakeba.';
+    } else {
+      if (!editable) throw new Error('This pack is with Lakeba; send them a message instead.');
+      if (intent === 'upload') {
+        const files = form.getAll('files').filter((f): f is File => f instanceof File && f.size > 0);
+        if (!files.length) throw new Error('Choose the file(s): Excel, CSV or PDF.');
+        const added: FileRef[] = [];
+        for (const f of files.slice(0, 6)) {
+          if (!/\.(xlsx|csv|pdf)$/i.test(f.name)) throw new Error(`${f.name}: send Excel (.xlsx), CSV or PDF.`);
+          if (f.size > 20 * 1024 * 1024) throw new Error(`${f.name} is larger than 20 MB.`);
+          const path = `${company.id}/reporting/${p.id}/${randomUUID()}-${f.name.replace(/[^\p{L}\p{N} ._()-]/gu, '').slice(-120)}`;
+          const { error: e } = await svc.storage.from('legal').upload(path, new Uint8Array(await f.arrayBuffer()), { contentType: f.type || 'application/octet-stream' });
+          if (e) throw new Error(`${f.name} could not be stored.`);
+          added.push({ path, name: f.name.slice(0, 200), size: f.size });
+        }
+        p = { ...p, files: [...p.files, ...added] };
+        await svc.from('reporting_packs').update({ files: p.files, updated_at: new Date().toISOString() }).eq('id', p.id).throwOnError();
+        const { figures, notes, costUsd } = await readPack(svc, p, company.display_name, schedule);
+        await svc.from('reporting_packs').update({ figures, ai_notes: notes, source: 'upload', ai_cost_usd: Number(p.ai_cost_usd) + costUsd, updated_at: new Date().toISOString() }).eq('id', p.id).throwOnError();
+        await log('uploaded_reporting_pack', { files: added.map((a) => a.name) });
+        ok = 'Lakeba AI read the figures: check them below, then send.';
+      } else if (intent === 'remove-file') {
+        const path = field(form, 'path');
+        if (!p.files.some((f) => f.path === path)) throw new Error('That file isn’t on this pack.');
+        await svc.storage.from('legal').remove([path]);
+        await svc.from('reporting_packs').update({ files: p.files.filter((f) => f.path !== path) }).eq('id', p.id).throwOnError();
+        ok = 'Removed the file.';
+      } else if (intent === 'save' || intent === 'send') {
+        const figures = figuresFrom(form);
+        const note = field(form, 'note').slice(0, 5000);
+        const filled = Object.values(figures.pl ?? {}).some((v) => v?.period != null) || Object.values(figures.bs ?? {}).some((v) => v != null);
+        if (intent === 'send' && !filled) throw new Error('Fill in the figures (or upload the accounts) before sending.');
+        const sending = intent === 'send';
+        await svc.from('reporting_packs').update({
+          figures, note, source: p.source ?? 'typed', updated_at: new Date().toISOString(),
+          ...(sending ? { status: 'submitted', submitted_by: userId, submitted_at: new Date().toISOString() } : {}),
+        }).eq('id', p.id).throwOnError();
+        if (sending) {
+          await notifyMembers({ kind: 'reporting', userIds: await financeTeam(svc), origin: Astro.url.origin, link: `/admin/accounting/packs/${p.id}`, title: `${company.display_name} sent its ${label} pack`, body: `${company.display_name}’s profit and loss and balance sheet for ${label} are ready to review.` }).catch(() => 0);
+          await log('sent_reporting_pack');
+          ok = 'Sent to Lakeba. Thank you.';
+        } else ok = 'Saved.';
+      }
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  p = (await svc.from('reporting_packs').select(PACK_COLUMNS).eq('id', p.id).single()).data as Pack;
+}
+
+const [previous, { data: msgRows }] = await Promise.all([previousPack(svc, p), svc.from('reporting_pack_messages').select('id, author_id, body, created_at').eq('pack_id', p.id).order('created_at')]);
+const ids = [...new Set((msgRows ?? []).map((m) => m.author_id).filter(Boolean))] as string[];
+const { data: people } = ids.length ? await svc.from('profiles').select('id, first_name, last_name, email').in('id', ids) : { data: [] };
+const nameOf = (id: string | null) => { const x = (people ?? []).find((y) => y.id === id); return x ? [x.first_name, x.last_name].filter(Boolean).join(' ') || x.email : 'Someone'; };
+const editable = mayDo && (p.status === 'open' || p.status === 'returned');
+const flags = checks(p.figures, previous);
+const lastQuestion = p.status === 'returned' ? (msgRows ?? []).at(-1) : null;
+---
+
+<Admin title={`Reporting pack · ${label}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/reporting" class="hover:text-white">Reporting packs</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{company.display_name} · {label}</h1>
+    <p class="mt-1 text-sm text-white/55">Due {shortDate.format(new Date(`${p.due_on}T12:00:00+10:00`))} · {PACK_STATES[p.status]}{p.submitted_at && ` · sent ${dateTime.format(new Date(p.submitted_at))}`}</p>
+  </div>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  {lastQuestion && <div class="mb-6"><Alert tone="info">Lakeba asks: {lastQuestion.body}</Alert></div>}
+
+  {editable && (
+    <form method="post" enctype="multipart/form-data" class="card mb-6 grid gap-3" data-busy>
+      <h2 class="font-display text-lg font-bold">1. Upload the management accounts</h2>
+      <p class="text-sm text-white/55">The profit and loss and balance sheet for {label}, as Excel, CSV or PDF (from Xero, MYOB or your accountant). Lakeba AI reads them into the lines below.</p>
+      <div class="flex flex-wrap items-center gap-3"><input class="field !w-auto !py-1.5 text-sm" type="file" name="files" multiple accept=".xlsx,.csv,.pdf" /><button class="btn-primary" name="intent" value="upload" data-busy-label="Reading…">Upload and read</button></div>
+    </form>
+  )}
+  {p.files.length > 0 && (
+    <ul class="card mb-6 grid gap-1 !py-4 text-sm">{p.files.map((f) => (
+      <li class="flex items-center gap-3"><a class="text-lk-blue hover:underline" href={`/admin/reporting/file?path=${encodeURIComponent(f.path)}`}>{f.name}</a><span class="text-white/40">{fileSize(f.size)}</span>
+        {editable && <form method="post"><input type="hidden" name="path" value={f.path} /><button class="text-xs text-lk-red hover:underline" name="intent" value="remove-file">Remove</button></form>}</li>
+    ))}</ul>
+  )}
+
+  <form method="post" class="card mb-6 grid gap-5">
+    <h2 class="font-display text-lg font-bold">{editable ? '2. Check the figures' : 'Figures'}</h2>
+    {p.ai_notes.length > 0 && editable && <Alert tone="info">To check: {p.ai_notes.join(' · ')}</Alert>}
+    {flags.length > 0 && <ul class="grid gap-1 text-sm text-lk-orange">{flags.map((f) => <li>• {f}</li>)}</ul>}
+    <PackFigures figures={p.figures} editable={editable} currency={currency} previous={previous} />
+    <div><label class="label" for="note">{editable ? '3. A short note on the period' : 'Note'}</label>
+      {editable ? <textarea class="field min-h-24" id="note" name="note" placeholder="What happened this period: big wins, one-offs, anything Lakeba should know.">{p.note}</textarea> : <p class="whitespace-pre-line text-sm text-white/75">{p.note || '—'}</p>}</div>
+    {editable && <div class="flex flex-wrap gap-3"><button class="btn-ghost" name="intent" value="save">Save</button><button class="btn-primary" name="intent" value="send">Send to Lakeba</button></div>}
+  </form>
+
+  <section class="card grid max-w-3xl gap-3">
+    <h2 class="font-display text-lg font-bold">Messages with Lakeba</h2>
+    {(msgRows ?? []).map((m) => <article class="rounded-2xl bg-white/[0.04] p-4"><p class="text-xs text-white/45">{nameOf(m.author_id)} · {dateTime.format(new Date(m.created_at))}</p><p class="mt-1 whitespace-pre-line text-sm text-white/85">{m.body}</p></article>)}
+    {mayDo && <form method="post" class="grid gap-2"><textarea class="field min-h-20" name="body" aria-label="Message" placeholder="A question or an answer for Lakeba"></textarea><div><button class="btn-ghost" name="intent" value="message">Send message</button></div></form>}
+  </section>
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLFormElement>('form[data-busy]').forEach((f) => f.addEventListener('submit', (e) => { const b = (e as SubmitEvent).submitter as HTMLButtonElement | null; if (b?.dataset.busyLabel) { b.textContent = b.dataset.busyLabel; setTimeout(() => (b.disabled = true)); } }));
+</script>

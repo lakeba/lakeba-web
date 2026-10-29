@@ -36,6 +36,7 @@ export const CATEGORIES: Category[] = [
   { key: 'admin_ask', audience: 'admin', label: 'Ask Lakeba', description: 'An answer was rated 👎, or a cost or usage limit was reached.', email: true, push: true, kinds: ['ask_alert', 'admin_ask_feedback'] },
   { key: 'admin_legal', audience: 'admin', label: 'Legal deadlines', description: 'Each morning, what is overdue or due soon (in 30, 7 and 1 days) for the companies you look after as Legal.', email: true, push: true, kinds: ['admin_legal'] },
   { key: 'legal_requests', audience: 'admin', label: 'Legal requests', description: 'A legal request was sent, answered or changed.', email: true, push: true, kinds: ['legal_request'] },
+  { key: 'reporting', audience: 'admin', label: 'Reporting packs', description: 'A reporting pack is due, overdue, sent, accepted or has a question.', email: true, push: true, kinds: ['reporting'] },
   { key: 'admin_setup', audience: 'admin', label: 'Venture set-up', description: 'A venture’s own address or email finished a set-up step, or a venture asked Lakeba for help with it.', email: true, push: true, kinds: ['admin_setup'] },
   { key: 'admin_integrations', audience: 'admin', label: 'Integrations', description: 'An integration needs a look: a webhook was switched off, something received waits for review, or a HubSpot or Xero connection has a problem.', email: true, push: true, kinds: ['admin_integrations'] },
   { key: 'admin_security', audience: 'admin', label: 'Admin security', description: 'An admin account signed in from a new device, or someone’s two-step was reset.', email: true, push: true, locked: true, kinds: ['admin_security'] },
@@ -74,6 +75,7 @@ export function pushText(kind: string, brand: string, detail?: string): { title:
     case 'ask_alert': case 'admin_ask_feedback': return { title: 'Ask Lakeba needs a look', body: open };
     case 'board_sign': return { title: 'A document is waiting for your signature', body: open };
     case 'legal_request': return { title: 'Legal request: an update', body: open };
+    case 'reporting': return { title: 'Reporting packs: an update', body: open };
     case 'admin_legal': return { title: 'Legal: deadlines to look at', body: open };
     case 'admin_setup': return { title: 'Venture set-up: an update', body: open };
     case 'admin_integrations': return { title: 'Integrations: something needs a look', body: open };

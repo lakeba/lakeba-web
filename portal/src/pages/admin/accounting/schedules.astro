@@ -1,0 +1,80 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import AccountingNav from '../../../components/AccountingNav.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { ensurePacks, monthEnd, senders, todayIn, type Schedule } from '../../../lib/reporting';
+
+// Admin → Accounting → Schedules: how often each venture sends its pack, when
+// it is due, from which period, in which currency; and who sends it.
+const svc = serviceClient();
+const mayDo = Astro.locals.access.can('accounting.do', null);
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const entityId = field(form, 'entity_id');
+  try {
+    if (field(form, 'intent') === 'stop') {
+      await svc.from('reporting_schedules').update({ active: false, updated_by: Astro.locals.user!.id, updated_at: new Date().toISOString() }).eq('entity_id', entityId).throwOnError();
+      ok = 'Stopped: no new packs open for it (those already open stay).';
+    } else {
+      const first = field(form, 'first_period');
+      if (!/^\d{4}-\d{2}$/.test(first)) throw new Error('Choose the first period.');
+      const due = Math.round(Number(field(form, 'due_days')));
+      if (!(due >= 1 && due <= 120)) throw new Error('Due between 1 and 120 days after period end.');
+      const currency = field(form, 'currency').toUpperCase() || 'AUD';
+      if (!/^[A-Z]{3}$/.test(currency)) throw new Error('A currency is three letters, e.g. AUD.');
+      await svc.from('reporting_schedules').upsert({
+        entity_id: entityId, cadence: field(form, 'cadence') === 'quarterly' ? 'quarterly' : 'monthly', due_days: due, first_period: monthEnd(`${first}-01`),
+        currency, year_end_month: Math.min(12, Math.max(1, Number(field(form, 'year_end_month')) || 6)), active: true, updated_by: Astro.locals.user!.id, updated_at: new Date().toISOString(),
+      }).throwOnError();
+      await ensurePacks(svc, [entityId]);
+      ok = 'Saved. Packs for finished periods are open for the venture.';
+    }
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_saved_reporting_schedule', event_detail: { entity_id: entityId } });
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const [{ data: entities }, { data: rows }] = await Promise.all([
+  svc.from('entities').select('id, code, display_name, relationship').neq('relationship', 'group').order('sort'),
+  svc.from('reporting_schedules').select('entity_id, cadence, due_days, first_period, currency, year_end_month, active'),
+]);
+const scheduleOf = new Map(((rows ?? []) as Schedule[]).map((s) => [s.entity_id, s]));
+const sendersOf = new Map(await Promise.all((entities ?? []).map(async (e) => [e.id, (await senders(svc, e.id)).length] as const)));
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const lastMonth = monthEnd(todayIn(), -1).slice(0, 7);
+---
+
+<Admin title="Accounting · Schedules">
+  <PageHeader title="Accounting" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
+  <AccountingNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  <p class="mb-4 max-w-3xl text-sm text-white/55">A venture's packs are sent by whoever has its <strong class="text-white">Finance</strong> role (or Admin): give it in Settings → Users, for that company. They're reminded before the due day and chased when it passes.</p>
+  <div class="grid gap-4">
+    {(entities ?? []).map((e) => { const s = scheduleOf.get(e.id); return (
+      <details class="card !p-5" open={false}>
+        <summary class="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-2">
+          <span class="font-medium text-white">{e.display_name}</span>
+          <span class="text-sm text-white/55">{s?.active ? `${s.cadence === 'quarterly' ? 'Quarterly' : 'Monthly'}, due ${s.due_days} days after period end${s.currency !== 'AUD' ? ` · ${s.currency}` : ''}` : s ? 'Stopped' : 'No schedule'} · <span class:list={[!sendersOf.get(e.id) && s?.active && 'text-lk-orange']}>{sendersOf.get(e.id) ? `${sendersOf.get(e.id)} sender${sendersOf.get(e.id) === 1 ? '' : 's'}` : 'nobody to send it'}</span></span>
+        </summary>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-5">
+          <fieldset disabled={!mayDo} class="contents">
+            <input type="hidden" name="entity_id" value={e.id} />
+            <div><label class="label" for={`c-${e.id}`}>How often</label><select class="field" id={`c-${e.id}`} name="cadence"><option value="monthly">Monthly</option><option value="quarterly" selected={s?.cadence === 'quarterly'}>Quarterly</option></select></div>
+            <div><label class="label" for={`d-${e.id}`}>Due (days after)</label><input class="field" type="number" min="1" max="120" id={`d-${e.id}`} name="due_days" value={s?.due_days ?? 10} /></div>
+            <div><label class="label" for={`f-${e.id}`}>First period</label><input class="field" type="month" id={`f-${e.id}`} name="first_period" value={s?.first_period.slice(0, 7) ?? lastMonth} /></div>
+            <div><label class="label" for={`y-${e.id}`}>Year ends</label><select class="field" id={`y-${e.id}`} name="year_end_month">{MONTHS.map((m, i) => <option value={i + 1} selected={(s?.year_end_month ?? 6) === i + 1}>{m}</option>)}</select></div>
+            <div><label class="label" for={`cur-${e.id}`}>Currency</label><input class="field uppercase" id={`cur-${e.id}`} name="currency" maxlength="3" value={s?.currency ?? 'AUD'} /></div>
+            {mayDo && <div class="flex flex-wrap gap-3 sm:col-span-5"><button class="btn-primary !py-2" name="intent" value="save">{s?.active ? 'Save' : 'Start'}</button>{s?.active && <button class="btn-ghost !py-2" name="intent" value="stop">Stop</button>}</div>}
+          </fieldset>
+        </form>
+      </details>
+    ); })}
+  </div>
+</Admin>

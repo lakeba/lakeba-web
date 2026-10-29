@@ -1,0 +1,107 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import AccountingNav from '../../../../components/AccountingNav.astro';
+import PackFigures from '../../../../components/PackFigures.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime, fileSize, shortDate } from '../../../../lib/format';
+import { notifyMembers } from '../../../../lib/notify';
+import { PACK_COLUMNS, checks, periodLabel, previousPack, senders, type Pack, type Schedule } from '../../../../lib/reporting';
+
+// Admin → Accounting → a reporting pack: the figures (beside the last
+// period's), the checks, the files and note; accept it, or send it back with
+// a question.
+const svc = serviceClient();
+const { data: row } = await svc.from('reporting_packs').select(`${PACK_COLUMNS}, entities(display_name)`).eq('id', Astro.params.id ?? '').maybeSingle();
+if (!row) return Astro.redirect('/admin/accounting/packs');
+let p = row as unknown as Pack & { entities: { display_name: string } | null };
+const company = p.entities?.display_name ?? '';
+const mayDo = Astro.locals.access.can('accounting.do', null);
+const label = periodLabel(p.period_end, p.cadence);
+const userId = Astro.locals.user!.id;
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const body = field(form, 'body').slice(0, 5000);
+  try {
+    const tell = async (title: string, text: string) => notifyMembers({ kind: 'reporting', userIds: await senders(svc, p.entity_id), origin: Astro.url.origin, link: `/admin/reporting/${p.id}`, entityId: p.entity_id, title, body: text }).catch(() => 0);
+    if (intent === 'accept') {
+      if (p.status !== 'submitted') throw new Error('Only a sent pack can be accepted.');
+      await svc.from('reporting_packs').update({ status: 'accepted', reviewed_by: userId, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', p.id).throwOnError();
+      if (body) await svc.from('reporting_pack_messages').insert({ pack_id: p.id, author_id: userId, body }).throwOnError();
+      await tell(`${company}: ${label} pack accepted`, `Lakeba accepted ${company}’s ${label} reporting pack.${body ? `\n\n${body}` : ''}`);
+      ok = 'Accepted.';
+    } else if (intent === 'return') {
+      if (!body) throw new Error('Write the question for the venture.');
+      if (!['submitted', 'accepted'].includes(p.status)) throw new Error('It is already with the venture.');
+      await svc.from('reporting_pack_messages').insert({ pack_id: p.id, author_id: userId, body }).throwOnError();
+      await svc.from('reporting_packs').update({ status: 'returned', reviewed_by: userId, reviewed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', p.id).throwOnError();
+      await tell(`${company}: question on the ${label} pack`, `Lakeba asks about ${company}’s ${label} reporting pack:\n\n${body}`);
+      ok = 'Sent back to the venture with your question.';
+    } else if (intent === 'message') {
+      if (!body) throw new Error('Write a message.');
+      await svc.from('reporting_pack_messages').insert({ pack_id: p.id, author_id: userId, body }).throwOnError();
+      await tell(`${company}: message on the ${label} pack`, body);
+      ok = 'Sent.';
+    }
+    await Astro.locals.supabase.rpc('log_event', { event_action: `admin_${intent}_reporting_pack`, event_detail: { entity_id: p.entity_id, pack_id: p.id } });
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  p = { ...((await svc.from('reporting_packs').select(PACK_COLUMNS).eq('id', p.id).single()).data as Pack), entities: p.entities };
+}
+
+const [previous, { data: sched }, { data: msgRows }] = await Promise.all([
+  previousPack(svc, p),
+  svc.from('reporting_schedules').select('currency').eq('entity_id', p.entity_id).maybeSingle(),
+  svc.from('reporting_pack_messages').select('id, author_id, body, created_at').eq('pack_id', p.id).order('created_at'),
+]);
+const ids = [...new Set([...(msgRows ?? []).map((m) => m.author_id), p.submitted_by].filter(Boolean))] as string[];
+const { data: people } = ids.length ? await svc.from('profiles').select('id, first_name, last_name, email').in('id', ids) : { data: [] };
+const nameOf = (id: string | null) => { const x = (people ?? []).find((y) => y.id === id); return x ? [x.first_name, x.last_name].filter(Boolean).join(' ') || x.email : 'Someone'; };
+const flags = checks(p.figures, previous);
+const states = { open: 'Waiting for the venture', submitted: 'Sent: to review', returned: 'Question sent to the venture', accepted: 'Accepted' };
+---
+
+<Admin title={`Accounting · ${company} · ${label}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/accounting/packs" class="hover:text-white">Accounting · Reporting packs</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{company} · {label}</h1>
+    <p class="mt-1 text-sm text-white/55">{states[p.status]} · due {shortDate.format(new Date(`${p.due_on}T12:00:00+10:00`))}{p.submitted_at && ` · sent by ${nameOf(p.submitted_by)} ${dateTime.format(new Date(p.submitted_at))}`}{p.source && ` · from ${p.source === 'upload' ? 'an upload read by Lakeba AI' : p.source === 'xero' ? 'Xero' : 'typed figures'}`}</p>
+  </div>
+  <AccountingNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
+    <div class="grid content-start gap-6">
+      <section class="card grid gap-4">
+        {flags.length > 0 && <ul class="grid gap-1 text-sm text-lk-orange">{flags.map((f) => <li>• {f}</li>)}</ul>}
+        <PackFigures figures={p.figures} editable={false} currency={sched?.currency ?? 'AUD'} previous={previous} />
+        <div><p class="label">The venture's note</p><p class="whitespace-pre-line text-sm text-white/75">{p.note || '—'}</p></div>
+      </section>
+      <section class="card grid gap-3">
+        <h2 class="font-display text-lg font-bold">Messages</h2>
+        {(msgRows ?? []).length ? (msgRows ?? []).map((m) => <article class="rounded-2xl bg-white/[0.04] p-4"><p class="text-xs text-white/45">{nameOf(m.author_id)} · {dateTime.format(new Date(m.created_at))}</p><p class="mt-1 whitespace-pre-line text-sm text-white/85">{m.body}</p></article>) : <p class="text-sm text-white/50">None yet.</p>}
+      </section>
+    </div>
+    <aside class="grid content-start gap-6">
+      <section class="card grid gap-2 text-sm">
+        <h2 class="font-display text-lg font-bold">Files</h2>
+        {p.files.length ? p.files.map((f) => <a class="text-lk-blue hover:underline" href={`/admin/accounting/file?path=${encodeURIComponent(f.path)}`}>{f.name} <span class="text-white/40">{fileSize(f.size)}</span></a>) : <p class="text-white/50">None: the figures were typed.</p>}
+      </section>
+      {mayDo && (
+        <form method="post" class="card grid gap-3 text-sm">
+          <label class="label" for="body">Message or question</label>
+          <textarea class="field min-h-28" id="body" name="body" placeholder="Optional when accepting"></textarea>
+          {p.status === 'submitted' && <button class="btn-primary" name="intent" value="accept">Accept</button>}
+          {['submitted', 'accepted'].includes(p.status) && <button class="btn-ghost" name="intent" value="return">Send back with this question</button>}
+          <button class="btn-ghost" name="intent" value="message">Send as a message only</button>
+        </form>
+      )}
+    </aside>
+  </div>
+</Admin>

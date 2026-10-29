@@ -22,6 +22,8 @@ export const AREAS: Area[] = [
   { key: 'ask', label: 'Ask Lakeba', description: 'Answers to review, the knowledge Ask uses, its tests.', levels: ['view', 'do'], menu: ['/admin/ask-review', '/admin/ask-knowledge', '/admin/ask-tests'] },
   { key: 'meetings', label: 'Meetings', description: 'Meetings, AGMs, proxy voting and questions.', levels: ['view', 'do', 'approve'], menu: ['/admin/agm'] },
   { key: 'legal', label: 'Legal and company secretary', description: 'Company records, officers registers and the deadlines calendar. Lakeba only for now.', levels: ['view', 'do', 'approve'], menu: ['/admin/legal'], groupOnly: true },
+  { key: 'reporting', label: 'Reporting packs', description: 'Sending a company’s profit and loss and balance sheet to Lakeba, and answering its questions.', levels: ['view', 'do'], menu: ['/admin/reporting'] },
+  { key: 'accounting', label: 'Accounting (Lakeba)', description: 'Reporting schedules, reviewing the ventures’ packs, the group view. Lakeba only.', levels: ['view', 'do', 'approve'], menu: ['/admin/accounting'], groupOnly: true },
   { key: 'capital', label: 'Ventures, prices and trading', description: 'Ventures and reference prices, the secondary trading board.', levels: ['view', 'do', 'approve'], menu: ['/admin/ventures', '/admin/trading'] },
   { key: 'audit', label: 'Audit log', description: 'Who did what, when. “Do” allows deleting entries.', levels: ['view', 'do'], menu: ['/admin/audit'], groupOnly: true },
   { key: 'users', label: 'Users and roles', description: 'Giving and taking roles, custom roles and their permissions.', levels: ['view', 'do'], menu: ['/admin/system'], groupOnly: true },
@@ -34,10 +36,11 @@ export const ALL_PERMISSIONS = AREAS.flatMap((a) => a.levels.map((l) => `${a.key
 const P = (spec: Record<string, string>) => Object.entries(spec).flatMap(([area, levels]) => levels.split('').map((c) => `${area}.${({ v: 'view', d: 'do', a: 'approve' } as Record<string, string>)[c]}`));
 export const BUILT_IN_ROLES: { key: string; name: string; description: string; permissions: string[] }[] = [
   { key: 'admin', name: 'Admin', description: 'Runs the portal: everything, including users and roles. For one company: everything about that company.', permissions: ALL_PERMISSIONS },
-  { key: 'board', name: 'Board', description: 'Board members: see the register, documents, meetings and ventures; answer Board Q&A.', permissions: P({ investors: 'v', documents: 'v', inbox: 'vd', meetings: 'vd', capital: 'v' }) },
+  { key: 'board', name: 'Board', description: 'Board members: see the register, documents, meetings and ventures; answer Board Q&A.', permissions: P({ investors: 'v', documents: 'v', inbox: 'vd', meetings: 'vd', accounting: 'v', capital: 'v' }) },
   { key: 'marketing', name: 'Marketing', description: 'Prepares news, press releases, newsletters and the LinkedIn campaign; approvers publish.', permissions: P({ news: 'vd', press: 'vd', newsletters: 'vd' }) },
   { key: 'legal', name: 'Legal', description: 'Company secretary work (company records, officers, deadlines); reviews and approves documents, press releases and meeting materials; sees the register and the audit log.', permissions: P({ investors: 'v', documents: 'va', news: 'v', press: 'va', inbox: 'v', ask: 'v', meetings: 'va', legal: 'vda', capital: 'v', audit: 'v' }) },
-  { key: 'compliance', name: 'Compliance', description: 'Approves newsletters and secondary trades; sees the register, communications and the audit log.', permissions: P({ investors: 'v', documents: 'v', press: 'v', newsletters: 'va', inbox: 'v', ask: 'v', meetings: 'v', legal: 'v', capital: 'va', audit: 'v', users: 'v' }) },
+  { key: 'finance', name: 'Finance', description: 'Does a company’s books: sends its reporting packs (profit and loss, balance sheet) and answers Lakeba’s questions about them.', permissions: P({ reporting: 'vd' }) },
+  { key: 'compliance', name: 'Compliance', description: 'Approves newsletters and secondary trades; sees the register, communications and the audit log.', permissions: P({ investors: 'v', documents: 'v', press: 'v', newsletters: 'va', inbox: 'v', ask: 'v', meetings: 'v', legal: 'v', accounting: 'v', capital: 'va', audit: 'v', users: 'v' }) },
 ];
 
 /** Does this set of permissions allow it? "do" and "approve" include "view". */

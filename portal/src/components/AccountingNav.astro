@@ -1,0 +1,12 @@
+---
+// Tabs across Admin → Accounting.
+const path = Astro.url.pathname;
+const tabs = [
+  { href: '/admin/accounting', label: 'Group view', on: path === '/admin/accounting' },
+  { href: '/admin/accounting/packs', label: 'Reporting packs', on: path.startsWith('/admin/accounting/packs') },
+  { href: '/admin/accounting/schedules', label: 'Schedules', on: path.startsWith('/admin/accounting/schedules') },
+];
+---
+<nav class="mb-6 flex flex-wrap gap-1 border-b border-white/10 text-sm" aria-label="Accounting">
+  {tabs.map((t) => <a href={t.href} aria-current={t.on ? 'page' : undefined} class:list={['-mb-px border-b-2 px-3 py-2', t.on ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{t.label}</a>)}
+</nav>
