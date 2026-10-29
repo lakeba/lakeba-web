@@ -51,8 +51,8 @@ const lastMonth = monthEnd(todayIn(), -1).slice(0, 7);
 ---
 
 <Admin title="Accounting · Schedules">
-  <PageHeader title="Accounting" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
   <AccountingNav />
+  <PageHeader title="Reporting schedules" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
   <p class="mb-4 max-w-3xl text-sm text-white/55">A venture's packs are sent by whoever has its <strong class="text-white">Finance</strong> role (or Admin): give it in Settings → Users, for that company. They're reminded before the due day and chased when it passes.</p>

@@ -152,8 +152,8 @@ const statusStyle: Record<string, string> = { unreviewed: 'bg-white/10 text-whit
 ---
 
 <Admin title="Ask review">
-  <PageHeader title="Ask review" subtitle={`Every question and answer, for checking and correcting. Only admins can see who asked; records are deleted after ${RETENTION_MONTHS} months.`} />
   <SystemNav />
+  <PageHeader title="Ask review" subtitle={`Every question and answer, for checking and correcting. Only admins can see who asked; records are deleted after ${RETENTION_MONTHS} months.`} />
   <AskNav />
   <AdminCompanyFilter scope={scope} />
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}

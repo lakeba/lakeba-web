@@ -51,12 +51,12 @@ if (Astro.request.method === 'POST') {
 ---
 
 <Admin title={`Legal · ${company.display_name} · ${template.label}`}>
+  <BoardNav />
   <div class="mb-6">
-    <p class="text-sm text-white/45"><a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> · <a href={back} class="hover:text-white">{company.display_name}</a></p>
+    <p class="text-sm text-white/45"><a href="/admin/board" class="hover:text-white">Board meetings</a> · <a href={back} class="hover:text-white">{company.display_name}</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">{template.label}</h1>
     <p class="mt-1 text-sm text-white/55">{template.description}</p>
   </div>
-  <BoardNav />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {directors.length === 0 && <div class="mb-6"><Alert tone="info">No directors are recorded for {company.display_name}. Add them on the Officers tab before sending a resolution for signing.</Alert></div>}
   <form method="post" class="card grid max-w-3xl gap-4 sm:grid-cols-2">

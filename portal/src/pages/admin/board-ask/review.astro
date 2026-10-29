@@ -24,8 +24,8 @@ const spent = (month ?? []).reduce((n, m) => n + Number(m.cost_usd), 0);
 ---
 
 <Admin title="Board Ask · Questions asked">
-  <PageHeader title="Board Ask" subtitle="Everyone’s questions and answers, to check how it is doing. Answers marked wrong come first to look at." />
   <BoardNav />
+  <PageHeader title="Board Ask" subtitle="Everyone’s questions and answers, to check how it is doing. Answers marked wrong come first to look at." />
   <BoardAskNav />
   <div class="mb-4 flex flex-wrap items-center gap-3 text-sm">
     <span class="text-white/55">This month: {(month ?? []).length} questions, ${spent.toFixed(2)}.</span>

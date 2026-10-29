@@ -52,9 +52,9 @@ const day = (d: string | null) => (d ? shortDate.format(new Date(`${d}T12:00:00+
 const link = (k: string, v: string) => { const p = new URLSearchParams(q); p.set(k, v); return `?${p}`; };
 ---
 
-<Admin title="HR">
-  <PageHeader title="HR" subtitle="People, their onboarding and leaving, equity grants, policies and documents. Pay, leave and tax details stay in the payroll system." />
+<Admin title="People">
   <HrNav />
+  <PageHeader title="People" subtitle="People, their onboarding and leaving, equity grants, policies and documents. Pay, leave and tax details stay in the payroll system." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   <div class="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm">
     <nav class="flex flex-wrap gap-2" aria-label="Who">{[['current', 'Current'], ['left', 'Left'], ['all', 'All']].map(([k, l]) => <a href={link('show', k)} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}</nav>

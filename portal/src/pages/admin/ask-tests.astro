@@ -115,8 +115,8 @@ const running = run?.status === 'running';
 <Admin title="Ask tests">
   {running && <meta http-equiv="refresh" content="5" />}
   <AdminCompanyFilter scope={scope} />
-  <PageHeader title="Ask test set" subtitle="Re-run these questions after changing documents, house rules, approved answers, the prompt or the model, and see what got worse." />
   <SystemNav />
+  <PageHeader title="Ask test set" subtitle="Re-run these questions after changing documents, house rules, approved answers, the prompt or the model, and see what got worse." />
   <AskNav />
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}

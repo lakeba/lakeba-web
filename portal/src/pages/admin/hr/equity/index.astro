@@ -85,8 +85,8 @@ const person = forPerson ? (people ?? []).find((x) => x.id === forPerson) : null
 ---
 
 <Admin title="HR · Equity plans">
-  <PageHeader title="HR" subtitle="People, their onboarding and leaving, equity grants, policies and documents. Pay, leave and tax details stay in the payroll system." />
   <HrNav />
+  <PageHeader title="Equity plans" subtitle="People, their onboarding and leaving, equity grants, policies and documents. Pay, leave and tax details stay in the payroll system." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 
   {plans.length ? (

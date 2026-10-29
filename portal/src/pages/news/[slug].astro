@@ -18,7 +18,7 @@ const siteHref = `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${post.slug}/`;
   <article class="mx-auto max-w-2xl">
     <a href="/news" class="text-sm text-white/50 hover:text-white">← {t('All news')}</a>
     <p class="mt-8 text-sm text-white/45">{isPublic && venture && <><span class="font-semibold text-lk-blue">{venture}</span> · </>}{fmt.longDate.format(new Date(post.published_at!))}</p>
-    <h1 class="mt-2 text-4xl font-extrabold">{post.title}</h1>
+    <h1 class="mt-2 font-display text-3xl font-bold">{post.title}</h1>
     {post.excerpt && <p class="mt-4 text-lg text-white/65">{post.excerpt}</p>}
     {post.cover_url && <img src={post.cover_url} alt="" class="mt-8 w-full rounded-3xl" />}
     {!post.external && <div class="mt-8"><NewsBody html={post.body_html} markdown={post.body_md} /></div>}

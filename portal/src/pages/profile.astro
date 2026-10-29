@@ -96,7 +96,7 @@ const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder
 ---
 
 <Portal title={t('Profile')}>
-  <AccountNav title={t('Your details')} />
+  <AccountNav title={t('Profile')} />
   {!owned.length && shareError && <div class="mb-4 max-w-4xl"><Alert tone="error">{shareError}</Alert></div>}
   <div class="grid max-w-4xl gap-4 lg:grid-cols-2">
     <form method="post" class="card space-y-4">

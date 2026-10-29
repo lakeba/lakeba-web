@@ -78,12 +78,12 @@ const clauses = [area('change_of_control', 'Change of control'), area('assignmen
 ---
 
 <Admin title={`Legal · ${c.title}`}>
+  <LegalNav />
   <div class="mb-6">
     <p class="text-sm text-white/45"><a href="/admin/legal/contracts" class="hover:text-white">Legal · Contracts</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">{c.title}</h1>
     <p class="mt-1 text-sm text-white/55">{c.counterparty}{c.checked_at ? ` · checked ${day(c.checked_at.slice(0, 10))}` : ' · waiting to be checked'}</p>
   </div>
-  <LegalNav />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
   {!c.checked_at && c.ai_notes.length > 0 && <div class="mb-6"><Alert tone="info">To check: {c.ai_notes.join(' · ')}</Alert></div>}

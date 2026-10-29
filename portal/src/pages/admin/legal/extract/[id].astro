@@ -111,12 +111,12 @@ if (Astro.request.method === 'POST' && read.status === 'open') {
 ---
 
 <Admin title={`Legal · ${company.display_name} · ASIC extract`}>
+  <LegalNav />
   <div class="mb-6">
-    <p class="text-sm text-white/45"><a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> · <a href={back} class="hover:text-white">{company.display_name}</a></p>
+    <p class="text-sm text-white/45"><a href="/admin/companies" class="hover:text-white">Companies</a> · <a href={back} class="hover:text-white">{company.display_name}</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">ASIC extract</h1>
     <p class="mt-1 text-sm text-white/55">{read.file_name}{isDate(c.extract_date) && ` · dated ${day(c.extract_date)}`} · read by Lakeba AI · <a class="text-lk-blue hover:underline" href={`/admin/legal/file?path=${encodeURIComponent(read.file_path)}`}>open the PDF</a></p>
   </div>
-  <LegalNav />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {read.status !== 'open' && <div class="mb-6"><Alert tone="info">This reading was {read.status}. <a class="underline" href={back}>Back to {company.display_name}</a>.</Alert></div>}
   {!reading.is_asic_extract && <div class="mb-6"><Alert tone="error">This doesn't look like an ASIC company extract. Check the file before saving anything.</Alert></div>}

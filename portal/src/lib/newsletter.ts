@@ -229,6 +229,7 @@ export async function audienceOf(svc: Svc, issue: Pick<Issue, 'audience' | 'enti
   if (!ids.length) return [];
   const [{ data: people }, { data: optedOut }, { data: auth }] = await Promise.all([
     svc.from('profiles').select('id, email, first_name, last_name').in('id', ids),
+    // @notifies newsletter (by email only, to everyone who hasn't switched it off)
     svc.from('notification_preferences').select('user_id').eq('category', 'newsletter').eq('email', false).in('user_id', ids),
     svc.auth.admin.listUsers({ perPage: 1000 }),
   ]);

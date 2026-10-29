@@ -5,6 +5,8 @@ import type { Catalogue } from '../lib/i18n';
 export default {
   es: {
     'Dashboard': 'Inicio',
+    'My HR': 'Mis RR. HH.',
+    'To sign': 'Para firmar',
     'Documents': 'Documentos',
     'Portfolio': 'Cartera',
     'Meetings': 'Juntas',
@@ -95,6 +97,8 @@ export default {
   },
   it: {
     'Dashboard': 'Home',
+    'My HR': 'Le mie risorse umane',
+    'To sign': 'Da firmare',
     'Documents': 'Documenti',
     'Portfolio': 'Portafoglio',
     'Meetings': 'Assemblee',
@@ -183,6 +187,8 @@ export default {
   },
   zh: {
     'Dashboard': '首页',
+    'My HR': '我的人事',
+    'To sign': '待签署',
     'Documents': '文件',
     'Portfolio': '投资组合',
     'Meetings': '股东大会',

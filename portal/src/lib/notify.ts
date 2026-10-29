@@ -109,6 +109,17 @@ export async function adminIds(entityId?: string | null) {
   return [...new Set([...(admins ?? []).map((a) => a.id), ...(companyAdmins ?? []).map((a) => a.user_id)])];
 }
 
+/** Staff with one of these permissions for this company (group roles count for every company), now. */
+export async function staffIds(permissions: string[], entityId: string | null) {
+  const svc = serviceClient();
+  const { data: perms } = await svc.from('role_permissions').select('role_key').in('permission', permissions);
+  const keys = [...new Set(['admin', ...(perms ?? []).map((p) => p.role_key)])];
+  let q = svc.from('user_roles').select('user_id').in('role_key', keys).or(`expires_at.is.null,expires_at.gt.${new Date().toISOString()}`);
+  q = entityId ? q.or(`entity_id.is.null,entity_id.eq.${entityId}`) : q.is('entity_id', null);
+  const { data } = await q;
+  return [...new Set((data ?? []).map((r) => r.user_id as string))];
+}
+
 /** Tells admins (and that company's admins) about something investors did. Never throws: it must not break the investor's action. */
 export async function notifyAdmins({ kind, title, body, link, origin, entityId, pushDetail }: {
   kind: string; title: string; body: string; link: string; origin: string; entityId?: string | null; pushDetail?: string;

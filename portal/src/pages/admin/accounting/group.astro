@@ -25,8 +25,8 @@ const sumOf = (fn: (i: (typeof inside)[number]) => number) => inside.reduce((t, 
 ---
 
 <Admin title="Accounting · Consolidated">
-  <PageHeader title="Accounting" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
   <AccountingNav />
+  <PageHeader title="Consolidated" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
   {periods.length ? (
     <>
       <form method="get" class="mb-4 flex flex-wrap items-end gap-3 text-sm">

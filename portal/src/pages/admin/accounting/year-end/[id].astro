@@ -54,12 +54,12 @@ const tone = { requested: 'text-white/50', provided: 'text-lk-blue', accepted: '
 ---
 
 <Admin title={`Accounting · ${r.title}`}>
+  <AccountingNav />
   <div class="mb-6">
     <p class="text-sm text-white/45"><a href="/admin/accounting/year-end" class="hover:text-white">Accounting · Year-end</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">{r.title}</h1>
     <p class="mt-1 text-sm text-white/55">Due {shortDate.format(new Date(`${r.due_on}T12:00:00+10:00`))}{r.auditor && ` · ${r.auditor}`} · {done} of {items.length} done{r.status === 'done' && ' · closed'}</p>
   </div>
-  <AccountingNav />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
   <div class="mb-4 flex flex-wrap gap-3">

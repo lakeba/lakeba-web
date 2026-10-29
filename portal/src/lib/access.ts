@@ -77,6 +77,8 @@ export function adminMayRequest(a: Access, path: string, writing: boolean, actio
   if (GROUP_ADMIN_ONLY.some((p) => under(path, p))) return false;
   // Legal requests: anyone with a staff role sends and follows them (each page checks the company).
   if (under(path, '/admin/legal-requests')) return a.roles.length > 0;
+  // What's new: every staff member (each entry checks its area).
+  if (under(path, '/admin/whats-new')) return !writing && a.roles.length > 0;
   // Integrations: the list for any company Admin (each company's page checks its own Admins).
   if (under(path, '/admin/integrations')) return !writing && a.roles.some((r) => r.role_key === 'admin');
   // Import data: the whole platform for group Admins; one company's workbook for whoever manages a company's register (lib/import-scope.ts).

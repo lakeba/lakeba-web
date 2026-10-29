@@ -1,13 +1,15 @@
 ---
+// A page's title: the same compact heading on every page (title, one line of explanation, its main buttons
+// on the right), under the section's tabs where it has them.
 interface Props { eyebrow?: string; title: string; subtitle?: string }
 const { eyebrow, title, subtitle } = Astro.props;
 ---
 
-<div class="mb-10 flex flex-wrap items-end justify-between gap-6">
+<div class="mb-6 flex flex-wrap items-start justify-between gap-4">
   <div>
-    {eyebrow && <p class="eyebrow">{eyebrow}</p>}
-    <h1 class:list={['text-4xl font-extrabold sm:text-5xl', eyebrow && 'mt-4']}>{title}</h1>
-    {subtitle && <p class="mt-3 max-w-2xl text-white/55">{subtitle}</p>}
+    {eyebrow && <p class="text-sm text-white/45">{eyebrow}</p>}
+    <h1 class:list={['font-display text-3xl font-bold', eyebrow && 'mt-1']}>{title}</h1>
+    {subtitle && <p class="mt-1 max-w-3xl text-sm text-white/55">{subtitle}</p>}
   </div>
   <slot />
 </div>

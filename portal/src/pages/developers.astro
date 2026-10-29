@@ -10,6 +10,9 @@ import { AUTHS, DEFAULT_MAP, KINDS } from '../lib/integrations/inbound';
 const origin = Astro.locals.site?.central ?? Astro.url.origin;
 const api = `${origin}/api/v1`;
 const tags = [...Map.groupBy(OPS, (o) => o.tag)];
+// What the API covers, from the reference itself (so it can't go out of date).
+const names = tags.map(([tag]) => tag).filter((tag) => tag !== 'Events and webhooks').map((tag) => (/^[A-Z]{2}|Q&A/.test(tag) ? tag : tag.toLowerCase()));
+const covers = `${names.slice(0, -1).join(', ')} and ${names.at(-1)}, with events and webhooks`;
 const sections: { id: string; label: string; count?: number }[] = [
   { id: 'start', label: 'Getting started' }, { id: 'scopes', label: 'Scopes', count: API_SCOPES.length }, { id: 'requests', label: 'Requests' },
   { id: 'endpoints', label: 'Endpoints', count: OPS.length }, { id: 'webhooks', label: 'Outgoing webhooks' }, { id: 'events', label: 'Events', count: Object.keys(EVENTS).length },
@@ -37,7 +40,7 @@ const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at
 ---
 
 <Auth title="Lakeba portal API" page>
-  <PageHeader eyebrow="Developers" title="Lakeba portal API" subtitle="For a company’s other tools: its register, investors, documents, news, meetings, Board Q&A, data rooms, newsletter, legal records and deadlines, reporting packs, board meetings and HR." />
+  <PageHeader eyebrow="Developers" title="Lakeba portal API" subtitle={`For a company’s other tools: ${covers}.`} />
 
   <div class="grid gap-8 lg:grid-cols-[14rem_1fr]">
     {/* The sections, like the document categories; the one being read is highlighted. */}

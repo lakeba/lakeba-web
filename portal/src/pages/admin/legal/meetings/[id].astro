@@ -158,7 +158,7 @@ if (Astro.request.method === 'POST' && mayDo) {
       if (!readyProviders().includes(provider)) throw new Error('That transcription service isn’t set up.');
       if (meeting.audio_deleted_at) throw new Error('The recording was deleted when the minutes were signed.');
       await svc.from('board_meetings').update({ recording_status: 'processing', recording_error: null }).eq('id', meeting.id);
-      void transcribeMeeting(svc, meeting.id, provider).catch((e) => console.error('observer transcription', e));
+      void transcribeMeeting(svc, meeting.id, provider, Astro.locals.site?.central ?? Astro.url.origin).catch((e) => console.error('observer transcription', e));
       await log('admin_transcribed_meeting_recording', { provider });
       return Astro.redirect(`/admin/board/meetings/${meeting.id}#observer`);
     } else if (intent === 'delete') {
@@ -204,13 +204,13 @@ const guests = meeting.attendees.filter((a) => !a.officer_id).map((a) => a.name)
 const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 'Guest' };
 ---
 
-<Admin title={`Legal · ${meeting.title}`}>
+<Admin title={meeting.title}>
+  {legalView && <BoardNav />}
   <div class="mb-6">
-    <p class="text-sm text-white/45">{legalView ? <a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> : <a href="/admin/board" class="hover:text-white">Boardroom</a>} · <a href={back} class="hover:text-white">{company.display_name}</a></p>
+    <p class="text-sm text-white/45"><a href="/admin/board" class="hover:text-white">Board meetings</a> · <a href={`/admin/board#company-${company.code}`} class="hover:text-white">{company.display_name}</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">{meeting.title}</h1>
     <p class="mt-1 text-sm text-white/55">Directors’ meeting · {minutes ? <a class="text-lk-blue hover:underline" href={`/admin/board/papers/${minutes.id}`}>minutes {reference(minutes)}: {minutes.status === 'draft' ? 'draft' : minutes.status === 'signing' ? 'waiting for the chair' : 'signed'}</a> : 'no minutes yet'}</p>
   </div>
-  {legalView && <BoardNav />}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
 

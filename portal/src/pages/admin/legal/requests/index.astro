@@ -31,8 +31,8 @@ const tone = { urgent: 'text-lk-red', high: 'text-lk-orange', normal: 'text-whit
 ---
 
 <Admin title="Legal · Requests">
-  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
   <LegalNav />
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
   <nav class="mb-4 flex flex-wrap gap-2 text-sm" aria-label="Which requests">
     {[['open', 'Open'], ['mine', 'Mine'], ['unassigned', 'Not given to anyone'], ['closed', 'Closed']].map(([k, l]) => <a href={`?show=${k}`} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}
   </nav>

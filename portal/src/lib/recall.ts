@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import { RECALL_API_BASE, RECALL_API_KEY, RECALL_WEBHOOK_SECRET } from 'astro:env/server';
 import type { serviceClient } from './admin';
-import { consentWording, transcribeMeeting, type Take } from './observer';
+import { consentWording, tellBoardroom, transcribeMeeting, type Take } from './observer';
 import { outbound } from './outbound';
 import { botPass, releaseTablet } from './tablets';
 import { readyProviders } from './transcription';
@@ -112,7 +112,7 @@ const STATUS_OF: Record<string, string> = {
 };
 
 /** A status change from Recall: the meeting page shows it; when the call is over, the recording finishes and the pass ends. */
-export async function recallEvent(svc: Svc, event: { event?: string; data?: { data?: { code?: string; sub_code?: string | null; updated_at?: string }; bot?: { id?: string } } }) {
+export async function recallEvent(svc: Svc, origin: string, event: { event?: string; data?: { data?: { code?: string; sub_code?: string | null; updated_at?: string }; bot?: { id?: string } } }) {
   const status = STATUS_OF[event.event ?? ''];
   const botId = event.data?.bot?.id;
   if (!status || !botId) return { ignored: true };
@@ -124,6 +124,7 @@ export async function recallEvent(svc: Svc, event: { event?: string; data?: { da
   const sub = event.data?.data?.sub_code ?? null;
   const error = status === 'refused' ? 'The meeting’s host didn’t allow recording.' : status === 'failed' ? `Lex couldn’t join${sub ? ` (${sub.replaceAll('_', ' ')})` : ''}.` : bot.error ?? null;
   await svc.from('board_meetings').update({ online_bot: { ...bot, status, status_at: new Date().toISOString(), error } }).eq('id', m.id).throwOnError();
+  if (['failed', 'refused'].includes(status) && bot.status !== status) await tellBoardroom(svc, m.id, origin, (title) => ({ title: `Lex couldn’t stay in the online meeting: ${title}`, body: error ?? 'Lex left the meeting.' }));
   if (['ended', 'done', 'failed', 'refused'].includes(status)) {
     await releaseTablet(svc, bot.tablet_id, 'Lex left the online meeting.');
     // The call is over: the recording finishes and the full transcript is made, as "Finish" does on the tablet.
@@ -133,7 +134,7 @@ export async function recallEvent(svc: Svc, event: { event?: string; data?: { da
       await svc.from('board_meetings').update({ recording_status: 'processing', recording_takes: takes, updated_at: now }).eq('id', m.id).throwOnError();
       await svc.from('audit_log').insert({ user_id: bot.sent_by, action: 'admin_finished_meeting_recording', detail: { entity_id: m.entity_id, meeting_id: m.id, takes: takes.length, via: 'online_meeting' } });
       const provider = readyProviders()[0];
-      if (provider) void transcribeMeeting(svc, m.id, provider).catch((e) => console.error('observer transcription', e));
+      if (provider) void transcribeMeeting(svc, m.id, provider, origin).catch((e) => console.error('observer transcription', e));
     }
   }
   return { ok: true, status };

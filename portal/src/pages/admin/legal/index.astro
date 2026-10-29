@@ -46,8 +46,8 @@ const unassignedRequests = (requests ?? []).filter((r) => !r.assignee_id).length
 ---
 
 <Admin title="Legal">
-  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group. The portal reminds and keeps the proof; lodging with ASIC stays with you." />
   <LegalNav />
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group. The portal reminds and keeps the proof; lodging with ASIC stays with you." />
   {result?.error && <div class="mb-6"><Alert tone="error">{result.error}</Alert></div>}
   {result?.ok && <div class="mb-6"><Alert tone="success">{result.ok}</Alert></div>}
 

@@ -45,10 +45,10 @@ const shows: [string, string][] = [['active', 'In force'], ['ending', 'Ending in
 ---
 
 <Admin title="Legal · Contracts">
+  <LegalNav />
   <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group.">
     {mayImport && <a class="btn-primary" href={`/admin/legal/contracts/import${pick ? `?company=${pick.code}` : ''}`}>Import contracts</a>}
   </PageHeader>
-  <LegalNav />
   <nav class="mb-4 flex flex-wrap gap-2 text-sm" aria-label="Which contracts">
     {shows.map(([k, l]) => <a href={link('show', k)} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white', k === 'check' && toCheck && show !== k && 'text-lk-orange']}>{l}</a>)}
   </nav>

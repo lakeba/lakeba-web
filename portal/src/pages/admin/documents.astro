@@ -41,6 +41,7 @@ async function indexPdf(documentId: string, bytes: Uint8Array) {
 
 // Tells that company's shareholders (and the group's, when shared with the group).
 const announce = async (title: string, summary: string | null, entityId: string, shared: boolean) => {
+  // @notifies document
   const note = { kind: 'document', title: `New document: ${title}`, body: summary || `“${title}” has been added to your documents.`, link: '/documents', origin: Astro.url.origin, pushDetail: title };
   await notifyMembers({ ...note, entityId });
   const group = scope.companies.find((c) => c.relationship === 'group');

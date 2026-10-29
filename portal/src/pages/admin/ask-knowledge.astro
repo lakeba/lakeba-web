@@ -160,8 +160,8 @@ const expired = (d: string) => d < today;
 ---
 
 <Admin title="Ask knowledge">
-  <PageHeader title={`${askName(company)} knowledge`} subtitle={`Approved answers and house rules shape what ${askName(company)} says. Changes apply from the next question.`} />
   <SystemNav />
+  <PageHeader title={`${askName(company)} knowledge`} subtitle={`Approved answers and house rules shape what ${askName(company)} says. Changes apply from the next question.`} />
   <AskNav />
   <AdminCompanyFilter scope={scope} allowAll={false} />
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}

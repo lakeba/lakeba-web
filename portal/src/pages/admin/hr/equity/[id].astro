@@ -89,12 +89,12 @@ const legalHref = `/admin/legal/papers/new?${new URLSearchParams({ company: comp
 ---
 
 <Admin title={`HR · ${g.holder_name} · ${plan.name}`}>
+  <HrNav />
   <div class="mb-6">
     <p class="text-sm text-white/45"><a href="/admin/hr/equity" class="hover:text-white">HR · Equity plans</a>{g.person_id && <> · <a href={`/admin/hr/people/${g.person_id}`} class="hover:text-white">{g.holder_name}</a></>}</p>
     <h1 class="mt-2 font-display text-3xl font-bold">{n(g.number)} {plan.kind} · {g.holder_name}</h1>
     <p class="mt-1 text-sm text-white/55">{plan.name} · {company.display_name} · {GRANT_STATES[g.status]}{g.accepted_at ? ` · accepted ${day(g.accepted_at)}` : g.status === 'granted' ? ' · not accepted yet' : ''}</p>
   </div>
-  <HrNav />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
   {g.vesting_stopped_on && <div class="mb-6"><Alert tone="info">Left on {day(g.vesting_stopped_on)}: vesting stopped, {n(pos.forfeited)} lapsed; vested ones may be exercised until {day(g.exercise_by)}.</Alert></div>}

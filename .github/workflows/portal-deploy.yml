@@ -37,6 +37,10 @@ jobs:
       - run: npm ci
       - run: npm ci
         working-directory: portal
+      # Notifications, API reference, webhook events, admin pages and translations in step with the code.
+      - name: Check the portal's lists
+        run: npm run check:portal
+        working-directory: portal
       - name: Build
         run: npm run build
         working-directory: portal

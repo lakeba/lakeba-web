@@ -58,12 +58,12 @@ const screen = `/admin/legal/meetings/${deck.meeting_id}/screen?deck=${deck.id}`
 ---
 
 <Admin title={`Legal · ${deck.title}`}>
+  {access.can('legal.view', company.id) && <BoardNav />}
   <div class="mb-6">
-    <p class="text-sm text-white/45">{access.can('legal.view', company.id) ? <a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> : <a href="/admin/board" class="hover:text-white">Boardroom</a>} · {company.display_name} · <a href={back} class="hover:text-white">the meeting</a></p>
+    <p class="text-sm text-white/45"><a href="/admin/board" class="hover:text-white">Board meetings</a> · {company.display_name} · <a href={back} class="hover:text-white">the meeting</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">{deck.title}</h1>
     <p class="mt-1 text-sm text-white/55">Lex presents it {ROLES[deck.role].on} · {deck.source === 'drafted' ? 'drafted by Lex' : 'uploaded PDF'} · {deck.slides.length} slides, about {Math.max(1, Math.round(words / 150))} minutes · {deck.status === 'approved' ? `approved by ${approverName || 'someone'}` : deck.status === 'preparing' ? 'being prepared' : deck.status === 'failed' ? 'failed' : 'draft'}{deck.presented_at && ' · presented'}</p>
   </div>
-  {access.can('legal.view', company.id) && <BoardNav />}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
   {deck.status === 'preparing' && <Alert tone="info">Lex is {deck.source === 'drafted' ? 'drafting this deck from the records' : 'reading the deck and writing what to say'}. This takes a minute or so; <a class="underline" href="">refresh</a>.</Alert>}

@@ -18,6 +18,7 @@
     "test:rls": "node --env-file=.env scripts/check-rls.mjs",
     "start": "node --env-file=.env dist/server/entry.mjs",
     "test:entities": "node --env-file=.env scripts/check-entities.mjs",
+    "check:portal": "node scripts/check-portal.mjs",
     "dev:demo": "astro dev --mode demo --port 4324",
     "demo:db": "supabase start --workdir demo-db",
     "seed:demo": "node --env-file=.env.demo scripts/seed-demo.mjs"

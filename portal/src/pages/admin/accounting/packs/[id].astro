@@ -68,12 +68,12 @@ const states = { open: 'Waiting for the venture', submitted: 'Sent: to review', 
 ---
 
 <Admin title={`Accounting · ${company} · ${label}`}>
+  <AccountingNav />
   <div class="mb-6">
     <p class="text-sm text-white/45"><a href="/admin/accounting/packs" class="hover:text-white">Accounting · Reporting packs</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">{company} · {label}</h1>
     <p class="mt-1 text-sm text-white/55">{states[p.status]} · due {shortDate.format(new Date(`${p.due_on}T12:00:00+10:00`))}{p.submitted_at && ` · sent by ${nameOf(p.submitted_by)} ${dateTime.format(new Date(p.submitted_at))}`}{p.source && ` · from ${p.source === 'upload' ? 'an upload read by Lakeba AI' : p.source === 'xero' ? 'Xero' : 'typed figures'}`}</p>
   </div>
-  <AccountingNav />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
 

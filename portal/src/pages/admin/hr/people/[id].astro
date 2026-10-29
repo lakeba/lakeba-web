@@ -103,12 +103,12 @@ const checklist = (kind: 'onboarding' | 'offboarding') => (tasks ?? []).filter((
 ---
 
 <Admin title={`HR · ${p.full_name}`}>
+  <HrNav />
   <div class="mb-6">
     <p class="text-sm text-white/45"><a href="/admin/hr" class="hover:text-white">HR · People</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">{p.full_name}</h1>
     <p class="mt-1 text-sm text-white/55">{company.display_name} · {p.job_title || EMPLOYMENT[p.employment_type]} · {PERSON_STATES[p.status]}{p.start_date && ` · started ${day(p.start_date)}`}{p.end_date && ` · last day ${day(p.end_date)}`}{p.user_id && p.status !== 'left' ? ' · in the portal' : ''}</p>
   </div>
-  <HrNav />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
 

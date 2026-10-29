@@ -4,7 +4,7 @@ import SystemNav from '../../../../components/SystemNav.astro';
 import Alert from '../../../../components/Alert.astro';
 import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
-import { AREAS } from '../../../../lib/permissions';
+import { AREAS, BUILT_IN_ROLES, summarise } from '../../../../lib/permissions';
 import { loadRoles } from '../../../../lib/roles-admin';
 
 // System → Roles: the roles (edit, delete, new), who holds each, and a
@@ -63,7 +63,7 @@ const mark = (perms: string[], area: string) => ['view', 'do', 'approve'].map((l
         {roles.map((r) => (
           <tr>
             <td class="px-5 py-3"><a href={`/admin/system/roles/${r.key}`} class="font-medium text-white hover:text-lk-blue">{r.name}</a><span class="block text-xs text-white/40">{r.builtin ? 'Built-in' : 'Custom'} · {r.permissions.length} permission{r.permissions.length === 1 ? '' : 's'}</span></td>
-            <td class="max-w-md px-5 py-3 text-white/60">{r.description || '—'}</td>
+            <td class="max-w-md px-5 py-3 text-white/60">{(r.builtin && BUILT_IN_ROLES.find((b) => b.key === r.key)?.description) || r.description || '—'}<span class="mt-1 block text-xs text-white/40">{summarise(r.permissions)}</span></td>
             <td class="px-5 py-3"><a href={`/admin/system/users?role=${r.key}`} class="text-white/75 hover:text-white">{holders(r.key)}</a></td>
             <td class="px-5 py-3">
               <div class="flex items-center justify-end gap-2">

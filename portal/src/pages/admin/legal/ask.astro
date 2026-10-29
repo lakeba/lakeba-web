@@ -39,8 +39,8 @@ const followsOn = history.length > 0 && Date.now() - new Date(history.at(-1)!.cr
 ---
 
 <Admin title="Legal · Legal Ask">
-  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
   <LegalNav />
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
   <div class="grid max-w-3xl gap-4">
     <p class="text-sm text-white/55">Ask about the companies' contracts, records, officers, deadlines, signed resolutions, minutes and governance documents. Lakeba AI answers from what is in the portal, with links to its sources; it finds and summarises, it doesn't give legal advice. A few cents a question.</p>
     {history.map((h, i) => (

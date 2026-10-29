@@ -3,6 +3,7 @@ import type { serviceClient } from './admin';
 import { mayMeeting } from './boardroom';
 import type { Attendee, Meeting } from './legal-board';
 import { correct, correctionsOf, termOf } from './heard-as';
+import { notifyMembers, staffIds } from './notify';
 import { playable } from './playable';
 import { PROVIDERS, transcribeRecording, type Provider, type Segment } from './transcription';
 
@@ -92,7 +93,15 @@ export async function saveSegments(svc: Svc, meetingId: string, source: string, 
  * speakers, keeps the result and makes it the meeting's transcript. Runs in
  * the background; the meeting's state says how it went.
  */
-export async function transcribeMeeting(svc: Svc, meetingId: string, provider: Provider) {
+/** Tells the people who run this company's board meetings (Boardroom or Legal "do") about one. */
+export async function tellBoardroom(svc: Svc, meetingId: string, origin: string, say: (title: string) => { title: string; body: string }) {
+  const { data: m } = await svc.from('board_meetings').select('id, entity_id, title').eq('id', meetingId).single();
+  if (!m) return 0;
+  const userIds = await staffIds(['boardroom.do', 'legal.do'], m.entity_id);
+  return notifyMembers({ kind: 'board_meeting', ...say(m.title), link: `/admin/board/meetings/${m.id}`, origin, userIds, entityId: m.entity_id }).catch(() => 0);
+}
+
+export async function transcribeMeeting(svc: Svc, meetingId: string, provider: Provider, origin: string) {
   const { data } = await svc.from('board_meetings').select(`id, entity_id, attendees, transcript, speaker_names, ${RECORDING_COLUMNS}`).eq('id', meetingId).single();
   const m = data as unknown as RecordingMeeting;
   try {
@@ -116,8 +125,10 @@ export async function transcribeMeeting(svc: Svc, meetingId: string, provider: P
     const use = !m.transcript_source || m.transcript_source.startsWith('live') ? source : m.transcript_source;
     await useTranscript(svc, m.id, use);
     await svc.from('board_meetings').update({ recording_status: 'done', recording_error: null, updated_at: new Date().toISOString() }).eq('id', m.id);
+    await tellBoardroom(svc, m.id, origin, (title) => ({ title: `Recording and transcript ready: ${title}`, body: 'The meeting’s recording can be played and its transcript is ready for the minutes.' }));
   } catch (e) {
     await svc.from('board_meetings').update({ recording_status: 'failed', recording_error: (e as Error).message.slice(0, 500) }).eq('id', m.id);
+    await tellBoardroom(svc, m.id, origin, (title) => ({ title: `The transcript couldn’t be made: ${title}`, body: `${(e as Error).message.slice(0, 300)} Open the meeting to try again.` }));
     throw e;
   }
 }

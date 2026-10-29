@@ -1,0 +1,29 @@
+name: Portal checks
+
+# The portal's lists in step with its features (portal/scripts/check-portal.mjs): on every push to main
+# that touches the portal, and on the 1st of each month. A failed run emails the person who pushed
+# (or, for the monthly run, the repository's admins). The deploy runs the same check first.
+on:
+  push:
+    branches: [main]
+    paths: ['portal/**']
+  schedule:
+    - cron: '0 22 1 * *' # 1st of the month, 22:00 UTC (morning in Sydney)
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 50
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Check the portal's lists
+        run: node scripts/check-portal.mjs
+        working-directory: portal

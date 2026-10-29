@@ -71,7 +71,7 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
         await svc.from('board_meetings').update({ recording_status: finishing ? 'processing' : 'paused', recording_takes: ended, updated_at: now }).eq('id', m.id).throwOnError();
         if (finishing) {
           await log('admin_finished_meeting_recording', { takes: ended.length, provider });
-          if (provider) void transcribeMeeting(svc, m.id, provider).catch((e) => console.error('observer transcription', e));
+          if (provider) void transcribeMeeting(svc, m.id, provider, locals.site?.central ?? url.origin).catch((e) => console.error('observer transcription', e));
           // The meeting is over: its tablets let go of it.
           for (const t of await tabletsOf(svc, m.id)) await releaseTablet(svc, t.id, 'The meeting is finished.');
         }

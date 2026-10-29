@@ -62,8 +62,8 @@ const tone: Record<string, string> = { pass: 'text-lk-green', partial: 'text-lk-
 ---
 
 <Admin title="Board Ask · Tests">
-  <PageHeader title="Board Ask" subtitle="Questions with what a good answer must say. Run them before and after changing the law library or Board Ask, and compare." />
   <BoardNav />
+  <PageHeader title="Board Ask" subtitle="Questions with what a good answer must say. Run them before and after changing the law library or Board Ask, and compare." />
   <BoardAskNav />
   {error && <Alert tone="error">{error}</Alert>}
   {ok && <Alert tone="success">{ok}</Alert>}

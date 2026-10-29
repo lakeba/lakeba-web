@@ -56,8 +56,8 @@ const groups = state === 'open'
 ---
 
 <Admin title="Legal · Calendar">
-  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
   <BoardNav />
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
   {result?.error && <div class="mb-6"><Alert tone="error">{result.error}</Alert></div>}
   {result?.ok && <div class="mb-6"><Alert tone="success">{result.ok}</Alert></div>}
 

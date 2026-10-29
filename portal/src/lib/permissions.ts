@@ -48,6 +48,14 @@ export const BUILT_IN_ROLES: { key: string; name: string; description: string; p
   { key: 'compliance', name: 'Compliance', description: 'Approves newsletters and secondary trades; sees the register, communications and the audit log.', permissions: P({ investors: 'v', documents: 'v', press: 'v', newsletters: 'va', inbox: 'v', ask: 'v', meetings: 'v', legal: 'v', accounting: 'v', boardask: 'v', capital: 'va', audit: 'v', users: 'v' }) },
 ];
 
+/** What a set of permissions allows, in words, made from the areas (so it stays right when areas change). */
+export function summarise(perms: string[]) {
+  if (ALL_PERMISSIONS.every((p) => perms.includes(p))) return 'Everything.';
+  const at = (level: Level) => AREAS.filter((a) => perms.includes(`${a.key}.${level}`) && (level !== 'view' || !perms.includes(`${a.key}.do`))).map((a) => a.label.toLowerCase());
+  const parts = [['Sees', at('view')], ['Works on', at('do')], ['Approves', at('approve')]] as const;
+  return parts.filter(([, list]) => list.length).map(([verb, list]) => `${verb} ${list.join(', ')}.`).join(' ') || 'Nothing yet.';
+}
+
 /** Does this set of permissions allow it? "do" and "approve" include "view". */
 export const allows = (perms: Set<string>, perm: string) => perms.has(perm);
 

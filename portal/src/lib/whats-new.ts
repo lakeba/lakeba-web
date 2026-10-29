@@ -1,0 +1,21 @@
+// What's new in the admin (Admin → What's new): one entry per change people would notice, newest first.
+// Add one with each such change (AGENTS.md); npm run check:portal reminds when pages changed after the
+// newest entry. `area` is a permission area (lib/permissions.ts): the entry shows to people who can see it
+// (no area: everyone with a staff role).
+
+export type Entry = { date: string; title: string; body: string; link?: string; area?: string };
+
+export const WHATS_NEW: Entry[] = [
+  { date: '2026-10-30', title: 'Notifications fit what you do', body: 'Profile → Notifications now lists only the topics that can reach you, grouped like the admin menu. New topic: Board meetings (recording and transcript ready, or Lex couldn’t join an online meeting).', link: '/account/notifications' },
+  { date: '2026-10-30', title: 'One look for every page', body: 'Every page has the same compact title, with its section’s tabs above it. Your account pages (Profile, Security, Notifications, Inbox) share one set of tabs.' },
+  { date: '2026-10-30', title: 'The admin menu, by what people do', body: 'Eight sections: Investors, Communications, Documents, Board & governance, Legal, Finance, People and Settings. Board meetings, papers, the minute book and deadlines are together; each company’s pages are under Companies. Old addresses still work.' },
+  { date: '2026-10-30', title: 'Lex in online meetings', body: 'Send Lex to a Teams, Zoom, Google Meet or Webex call from a board meeting: it records (with consent), transcribes and answers aloud. Recordings play in the portal.', link: '/admin/board', area: 'boardroom' },
+  { date: '2026-10-29', title: 'Boardroom tablets and the Lex app', body: 'Connect a tablet to a meeting with a six-digit code, or use the Lex app for Android. Lex answers directors aloud, with its face and sources on screen.', link: '/admin/board', area: 'boardroom' },
+  { date: '2026-10-29', title: 'Board Ask', body: 'Directors’ questions answered from the portal, live Xero figures and a law library, with a source for every fact.', link: '/admin/board/ask', area: 'boardask' },
+  { date: '2026-10-29', title: 'API for Legal, reporting packs, the Boardroom and HR', body: 'The company API and its webhooks now cover company records, deadlines, reporting packs, board meetings and HR.', link: '/developers', area: 'users' },
+  { date: '2026-10-29', title: 'HR', body: 'People, equity plans with vesting, policies employees accept, documents, My HR and HR Ask.', link: '/admin/hr', area: 'hr' },
+  { date: '2026-10-29', title: 'Finance', body: 'Reporting packs from the ventures, Xero figures, the consolidated group view, the board summary and year-end.', link: '/admin/accounting', area: 'accounting' },
+  { date: '2026-10-29', title: 'Legal and company secretary', body: 'Company records, the deadlines calendar, contracts read by Lakeba AI, requests from the ventures and Legal Ask; resolutions signed in the portal.', link: '/admin/legal', area: 'legal' },
+  { date: '2026-10-28', title: 'Integrations', body: 'A company API, webhooks in and out, HubSpot, Xero and apps, under Settings → Integrations.', link: '/admin/integrations', area: 'users' },
+  { date: '2026-10-27', title: 'Register of members import', body: 'Read the company secretary’s PDF, match it to the holders and bring holdings to its figures, keeping its history.', link: '/admin/import', area: 'investors' },
+];

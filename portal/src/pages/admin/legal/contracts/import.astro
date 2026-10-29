@@ -15,8 +15,8 @@ const pick = companies.find((c) => c.code === Astro.url.searchParams.get('compan
 ---
 
 <Admin title="Legal · Import contracts">
-  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
   <LegalNav />
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
   <section class="card grid max-w-3xl gap-4">
     <h2 class="font-display text-lg font-bold">Import contracts</h2>
     <p class="text-sm text-white/55">PDF or Word (.docx) files, up to {MAX_CONTRACT_BYTES / 1024 / 1024} MB each; scans are read too. Lakeba AI reads each one's parties, dates, renewal and notice terms and the clauses worth knowing (about 1 to 5 cents a contract). Nothing goes on the calendar until a person has checked it.</p>

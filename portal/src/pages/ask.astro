@@ -31,7 +31,7 @@ const isAdmin = Astro.locals.access.groupAdmin;
   {off ? (
     <div class="mx-auto max-w-xl py-16 text-center">
       <p class="eyebrow">{title}</p>
-      <h1 class="mt-4 text-3xl font-extrabold">{t('Not available for your account')}</h1>
+      <h1 class="mt-4 font-display text-3xl font-bold">{t('Not available for your account')}</h1>
       <p class="mt-3 text-white/60">{t('Ask isn’t switched on for your account.')} {t('For help, email')} <a href="mailto:info@lakeba.com" class="text-lk-blue hover:underline">info@lakeba.com</a>.</p>
     </div>
   ) : (

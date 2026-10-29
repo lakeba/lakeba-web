@@ -48,9 +48,9 @@ const spark = (vals: (number | null)[]) => {
 const stateOf = (r: (typeof rows)[number]) => !r.pack ? { t: 'No pack yet', c: 'text-white/35' } : r.pack.status === 'accepted' ? { t: 'Accepted', c: 'text-lk-green' } : r.pack.status === 'submitted' ? { t: 'To review', c: 'text-lk-blue' } : r.pack.due_on < today ? { t: 'Overdue', c: 'text-lk-red' } : { t: PACK_STATES[r.pack.status], c: 'text-white/50' };
 ---
 
-<Admin title="Accounting">
-  <PageHeader title="Accounting" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
+<Admin title="Group view">
   <AccountingNav />
+  <PageHeader title="Group view" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
   {companies.length ? (
     <>
       <form method="get" class="mb-4 flex flex-wrap items-end gap-3 text-sm">

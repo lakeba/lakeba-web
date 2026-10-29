@@ -55,8 +55,8 @@ if (Astro.request.method === 'POST' && mayDo) {
 ---
 
 <Admin title="Accounting · Board summary">
-  <PageHeader title="Accounting" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
   <AccountingNav />
+  <PageHeader title="Board summary" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
   {periods.length ? (

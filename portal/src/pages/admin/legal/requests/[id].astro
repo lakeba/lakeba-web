@@ -75,12 +75,12 @@ const t = r.triage;
 ---
 
 <Admin title={`Legal · ${r.title}`}>
+  <LegalNav />
   <div class="mb-6">
     <p class="text-sm text-white/45"><a href="/admin/legal/requests" class="hover:text-white">Legal · Requests</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">{r.title}</h1>
     <p class="mt-1 text-sm text-white/55">{company.display_name} · from {nameOf(r.requested_by)} · {dateTime.format(new Date(r.created_at))}{r.needed_by && ` · needed by ${shortDate.format(new Date(`${r.needed_by}T12:00:00+10:00`))}`}</p>
   </div>
-  <LegalNav />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
 

@@ -5,14 +5,33 @@ import Alert from '../../components/Alert.astro';
 import { field } from '../../lib/forms';
 import { clientStrings } from '../../lib/i18n';
 import { serviceClient } from '../../lib/admin';
-import { CATEGORIES } from '../../lib/notification-events';
+import { ADMIN_SECTIONS, CATEGORIES, type Category } from '../../lib/notification-events';
+import { ALL_PERMISSIONS } from '../../lib/permissions';
+import { tradingEnabled } from '../../lib/trading';
 import { processOutbox, pushEnabled, queuePush, vapidPublicKey } from '../../lib/push';
 
 const supabase = Astro.locals.supabase;
 const { t, fmt } = Astro.locals;
 const userId = Astro.locals.user!.id;
-const isAdmin = Astro.locals.access.mayOpen('/admin');
-const categories = CATEGORIES.filter((c) => c.audience === 'investor' || isAdmin);
+// Only what can reach this person: admin topics by the areas they work in, investor ones by what they have.
+const { access, companies } = Astro.locals;
+const svc = serviceClient();
+const [{ count: employments }, { count: signatures }, { count: boards }, trading] = await Promise.all([
+  svc.from('people').select('id', { count: 'exact', head: true }).eq('user_id', userId),
+  svc.from('board_signatures').select('id', { count: 'exact', head: true }).eq('user_id', userId),
+  svc.from('entity_board').select('user_id', { count: 'exact', head: true }).eq('user_id', userId),
+  Promise.all(companies.map((c) => tradingEnabled(svc, c.id))).then((on) => on.some(Boolean)),
+]);
+const has = { trading, employee: Boolean(employments), signer: Boolean(signatures || boards) };
+const isAdmin = access.groupAdmin || access.roles.some((r) => r.role_key === 'admin');
+const reaches = (c: Category) => {
+  if (c.audience === 'investor') return !c.when || has[c.when];
+  if (Astro.locals.investorView.on) return false;
+  if (access.groupAdmin) return true;
+  if (!c.for) return isAdmin;
+  return c.for.some((f) => (f === 'staff' ? access.roles.length > 0 : f === 'approvers' ? ALL_PERMISSIONS.some((p) => !p.endsWith('.view') && access.canAny(p)) : access.canAny(`${f}.view`)));
+};
+const categories = CATEGORIES.filter(reaches);
 const tested = Astro.url.searchParams.get('tested');
 const testedDevices = Number(Astro.url.searchParams.get('devices') ?? 0);
 let notice = tested ? t.n(testedDevices, 'Test sent to {n} device. It should appear in a few seconds.', 'Test sent to {n} devices. It should appear in a few seconds.') : '';
@@ -45,10 +64,11 @@ const [{ data: saved }, { data: devices }] = await Promise.all([
   supabase.from('push_subscriptions').select('id, device, created_at, last_success_at').eq('user_id', userId).order('created_at'),
 ]);
 const pref = (c: (typeof categories)[number]) => saved?.find((s) => s.category === c.key) ?? { email: c.email, push: c.push };
+// Admin topics under the admin menu's sections, in its order.
 const groups = [
-  { title: 'Updates for you', items: categories.filter((c) => c.audience === 'investor') },
-  ...(isAdmin ? [{ title: 'For admins', items: categories.filter((c) => c.audience === 'admin') }] : []),
-];
+  { title: t('Updates for you'), items: categories.filter((c) => c.audience === 'investor') },
+  ...ADMIN_SECTIONS.map((section) => ({ title: `Admin · ${section}`, items: categories.filter((c) => c.audience === 'admin' && c.section === section) })),
+].filter((g) => g.items.length);
 // Texts the browser script shows (push state, the test check, and errors from turning notifications on).
 const pushStrings = clientStrings(t, [
   'On', 'Off', 'Blocked', 'Not available', 'Home Screen needed',
@@ -134,7 +154,7 @@ const pushStrings = clientStrings(t, [
       <h2 class="text-lg font-bold">{t('What to tell you about')}</h2>
       {groups.map((g) => (
         <div class="mt-5">
-          <h3 class="text-xs font-semibold uppercase tracking-widest text-white/40">{t(g.title)}</h3>
+          <h3 class="text-xs font-semibold uppercase tracking-widest text-white/40">{g.title}</h3>
           <div class="mt-2 overflow-x-auto">
             <table class="w-full text-left text-sm">
               <thead class="text-xs text-white/40"><tr><th class="py-2 pr-4 font-medium"></th><th class="w-20 py-2 text-center font-medium">{t('Email')}</th><th class="w-20 py-2 text-center font-medium">{t('Browser')}</th></tr></thead>

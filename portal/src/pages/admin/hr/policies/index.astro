@@ -38,8 +38,8 @@ const states = { draft: 'Draft', published: 'Published', archived: 'Archived' } 
 ---
 
 <Admin title="HR · Policies">
-  <PageHeader title="HR" subtitle="People, their onboarding and leaving, equity grants, policies and documents. Pay, leave and tax details stay in the payroll system." />
   <HrNav />
+  <PageHeader title="Policies" subtitle="People, their onboarding and leaving, equity grants, policies and documents. Pay, leave and tax details stay in the payroll system." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {(data ?? []).length ? (
     <section class="card mb-6 overflow-x-auto p-0">

@@ -42,8 +42,8 @@ const local = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Australia/Sydney', y
 ---
 
 <Admin title="Board meetings">
-  <PageHeader title="Board meetings" subtitle="Directors’ meetings: record them with the Observer (in the room or online), ask Lex at the table, have Lex present the CFO or risk report, and get the minutes drafted." />
   <BoardNav />
+  <PageHeader title="Board meetings" subtitle="Directors’ meetings: record them with the Observer (in the room or online), ask Lex at the table, have Lex present the CFO or risk report, and get the minutes drafted." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {!companies.length && <p class="text-sm text-white/55">No company’s board is yours to run here.</p>}
   <div class="grid gap-6">

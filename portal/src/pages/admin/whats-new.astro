@@ -1,0 +1,34 @@
+---
+import Admin from '../../layouts/Admin.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import { WHATS_NEW } from '../../lib/whats-new';
+import { mayOpenItem } from '../../lib/access';
+import { toPage } from '../../lib/admin-paths';
+
+// Admin → What's new: the changes people would notice, newest first (lib/whats-new.ts). Each person sees the
+// entries for the areas they can open.
+const access = Astro.locals.access;
+const entries = WHATS_NEW.filter((e) => !e.area || access.groupAdmin || access.canAny(`${e.area}.view`));
+const date = new Intl.DateTimeFormat('en-AU', { day: 'numeric', month: 'long', year: 'numeric' });
+const days = [...Map.groupBy(entries, (e) => e.date)];
+---
+
+<Admin title="What's new">
+  <PageHeader title="What's new" subtitle="Changes to the portal you may notice, newest first." />
+  <div class="grid max-w-3xl gap-6">
+    {days.map(([day, list]) => (
+      <section>
+        <h2 class="text-xs font-semibold uppercase tracking-widest text-white/40">{date.format(new Date(`${day}T00:00:00`))}</h2>
+        <ul class="mt-2 grid gap-3">
+          {list.map((e) => (
+            <li class="card">
+              <p class="font-semibold text-white">{e.title}</p>
+              <p class="mt-1 text-sm text-white/60">{e.body}</p>
+              {e.link && (!e.link.startsWith('/admin') || mayOpenItem(access, toPage(e.link))) && <a href={e.link} class="mt-2 inline-block text-sm text-lk-blue hover:underline">Open →</a>}
+            </li>
+          ))}
+        </ul>
+      </section>
+    ))}
+  </div>
+</Admin>

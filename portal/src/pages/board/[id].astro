@@ -38,7 +38,7 @@ const sent = Astro.url.searchParams.get('sent') === '1';
 <Portal title={query.subject}>
   <div class="mx-auto max-w-3xl">
     <a href="/board" class="text-sm text-white/50 hover:text-white">← {t('Board Q&A')}</a>
-    <h1 class="mt-6 text-3xl font-extrabold">{query.subject}</h1>
+    <h1 class="mt-6 font-display text-3xl font-bold">{query.subject}</h1>
     <p class="mt-2 text-sm text-white/45">
       {t('Asked {date}', { date: fmt.shortDate.format(new Date(query.created_at)) })} ·
       {query.status === 'open' ? t('Reply due by {date}', { date: fmt.shortDate.format(new Date(query.due_at)) }) : query.status === 'answered' ? t('Answered') : t('Closed')}

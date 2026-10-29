@@ -52,8 +52,8 @@ const sourceIcon: Record<string, string> = { law: '§', web: '↗', document: '�
 ---
 
 <Admin title="Board Ask">
-  <PageHeader title="Board Ask" subtitle="Ask about the companies, their figures, records and contracts, and the law that applies. Every answer shows where it comes from." />
   <BoardNav />
+  <PageHeader title="Board Ask" subtitle="Ask about the companies, their figures, records and contracts, and the law that applies. Every answer shows where it comes from." />
   <BoardAskNav />
   {!askEnabled && <Alert tone="info">Lakeba AI isn’t configured on this server (no Lakeba AI key), so Board Ask can’t answer yet.</Alert>}
   {error && <Alert tone="error">{error}</Alert>}

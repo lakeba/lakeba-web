@@ -27,8 +27,8 @@ const day = (d: string) => shortDate.format(new Date(`${d.slice(0, 10)}T12:00:00
 ---
 
 <Admin title="Accounting · Reporting packs">
-  <PageHeader title="Accounting" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
   <AccountingNav />
+  <PageHeader title="Reporting packs" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
   <nav class="mb-4 flex flex-wrap gap-2 text-sm" aria-label="Which packs">
     {[['review', `To review${toReview ? ` (${toReview})` : ''}`], ['late', `Overdue${late ? ` (${late})` : ''}`], ['open', 'Waiting for the venture'], ['accepted', 'Accepted'], ['all', 'All']].map(([k, l]) => <a href={`?show=${k}`} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white', k === 'late' && late && show !== k && 'text-lk-red']}>{l}</a>)}
   </nav>
