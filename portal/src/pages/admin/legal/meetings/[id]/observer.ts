@@ -1,6 +1,6 @@
 import type { APIRoute } from 'astro';
 import { serviceClient } from '../../../../../lib/admin';
-import { consentWording, observerMeeting, saveSegments, transcribeMeeting, type Take } from '../../../../../lib/observer';
+import { consentWording, meetingTerms, observerMeeting, saveSegments, transcribeMeeting, type Take } from '../../../../../lib/observer';
 import { liveSession, PROVIDERS, readyProviders, type Provider } from '../../../../../lib/transcription';
 
 /**
@@ -42,7 +42,7 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
         if (m.audio_deleted_at) return Response.json({ error: 'This meeting’s minutes are signed; its recording is closed.' }, { status: 400 });
         if (!provider) return Response.json({ error: 'No transcription service is set up yet (Deepgram or AssemblyAI key).' }, { status: 503 });
         // The live connection first: if the service refuses, nothing is recorded as started.
-        const live = await liveSession(provider, present.length);
+        const live = await liveSession(provider, present.length, await meetingTerms(svc, m.entity_id, m.attendees));
         const take: Take = open ?? { take: takes.length + 1, started_at: now, ended_at: null, chunks: 0, path: null, bytes: 0, mime: String(b.mime ?? 'audio/webm').slice(0, 60) };
         const next = open ? takes : [...takes, take];
         await svc.from('board_meetings').update({ recording_status: 'recording', recording_takes: next, recording_error: null, updated_at: now }).eq('id', m.id).throwOnError();
@@ -51,7 +51,7 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
       }
       case 'token': {
         if (!provider || !open) return Response.json({ error: 'Not recording.' }, { status: 400 });
-        return Response.json({ live: await liveSession(provider, present.length) });
+        return Response.json({ live: await liveSession(provider, present.length, await meetingTerms(svc, m.entity_id, m.attendees)) });
       }
       case 'segments': {
         const take = Number(b.take);

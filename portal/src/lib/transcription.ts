@@ -17,6 +17,10 @@ export type Segment = { start_ms: number; end_ms: number; speaker: string; text:
 export const SAMPLE_RATE = 16_000;
 const ws = (base: string) => base.replace(/^http/, 'ws');
 
+/** Key terms (company and people's names) the services should listen for: at most 100, each a few words. */
+export const MAX_TERMS = 100;
+const cleanTerms = (terms: string[]) => [...new Map(terms.map((t) => t.replace(/\s+/g, ' ').trim().slice(0, 50)).filter((t) => t.length >= 2).map((t) => [t.toLowerCase(), t])).values()].slice(0, MAX_TERMS);
+
 const json = (text: string) => { try { return JSON.parse(text); } catch { return null; } };
 function failed(provider: Provider, status: number, text: string) {
   const j = json(text) as { err_msg?: string; error?: string; message?: string } | null;
@@ -24,23 +28,27 @@ function failed(provider: Provider, status: number, text: string) {
 }
 
 /** Where and how the tablet connects for live text: the address (with its settings) and, for Deepgram, the WebSocket protocols carrying the token. */
-export async function liveSession(provider: Provider, speakers: number) {
+export async function liveSession(provider: Provider, speakers: number, terms: string[] = []) {
+  const keyterms = cleanTerms(terms);
   if (provider === 'deepgram') {
     const res = await outbound('POST', `${DEEPGRAM_API_BASE}/v1/auth/grant`, { headers: { authorization: `Token ${DEEPGRAM_API_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ ttl_seconds: 60 }) });
     if (res.status >= 400) throw failed(provider, res.status, res.text);
     const q = new URLSearchParams({ model: 'nova-3', language: 'en-AU', diarize: 'true', punctuate: 'true', smart_format: 'true', interim_results: 'true', utterance_end_ms: '1500', encoding: 'linear16', sample_rate: String(SAMPLE_RATE), channels: '1' });
+    for (const t of keyterms) q.append('keyterm', t);
     return { url: `${ws(DEEPGRAM_API_BASE)}/v1/listen?${q}`, protocols: ['bearer', json(res.text).access_token as string] };
   }
   const res = await outbound('GET', `${ASSEMBLYAI_STREAMING_BASE}/v3/token?expires_in_seconds=600&max_session_duration_seconds=10800`, { headers: { authorization: ASSEMBLYAI_API_KEY ?? '' } });
   if (res.status >= 400) throw failed(provider, res.status, res.text);
-  const q = new URLSearchParams({ token: json(res.text).token as string, sample_rate: String(SAMPLE_RATE), encoding: 'pcm_s16le', format_turns: 'true', speaker_labels: 'true', ...(speakers >= 1 && speakers <= 10 ? { max_speakers: String(speakers) } : {}) });
+  const q = new URLSearchParams({ token: json(res.text).token as string, sample_rate: String(SAMPLE_RATE), encoding: 'pcm_s16le', format_turns: 'true', speaker_labels: 'true', ...(speakers >= 1 && speakers <= 10 ? { max_speakers: String(speakers) } : {}), ...(keyterms.length ? { keyterms_prompt: JSON.stringify(keyterms) } : {}) });
   return { url: `${ws(ASSEMBLYAI_STREAMING_BASE)}/v3/ws?${q}`, protocols: [] as string[] };
 }
 
 /** The whole recording, with speakers: a list of who said what, when. */
-export async function transcribeRecording(provider: Provider, audio: Buffer, mime: string, speakers: number): Promise<Segment[]> {
+export async function transcribeRecording(provider: Provider, audio: Buffer, mime: string, speakers: number, terms: string[] = []): Promise<Segment[]> {
+  const keyterms = cleanTerms(terms);
   if (provider === 'deepgram') {
     const q = new URLSearchParams({ model: 'nova-3', language: 'en-AU', diarize: 'true', utterances: 'true', punctuate: 'true', smart_format: 'true', paragraphs: 'true' });
+    for (const t of keyterms) q.append('keyterm', t);
     const res = await outbound('POST', `${DEEPGRAM_API_BASE}/v1/listen?${q}`, { headers: { authorization: `Token ${DEEPGRAM_API_KEY}`, 'content-type': mime }, body: audio, max: 50_000_000, timeout: 900_000 });
     if (res.status >= 400) throw failed(provider, res.status, res.text);
     const u = (json(res.text)?.results?.utterances ?? []) as { start: number; end: number; speaker?: number; transcript: string }[];
@@ -49,7 +57,7 @@ export async function transcribeRecording(provider: Provider, audio: Buffer, mim
   const key = ASSEMBLYAI_API_KEY ?? '';
   const up = await outbound('POST', `${ASSEMBLYAI_API_BASE}/v2/upload`, { headers: { authorization: key, 'content-type': 'application/octet-stream' }, body: audio, timeout: 900_000 });
   if (up.status >= 400) throw failed(provider, up.status, up.text);
-  const created = await outbound('POST', `${ASSEMBLYAI_API_BASE}/v2/transcript`, { headers: { authorization: key, 'content-type': 'application/json' }, body: JSON.stringify({ audio_url: json(up.text).upload_url, speaker_labels: true, language_code: 'en_au', punctuate: true, format_text: true, ...(speakers >= 2 && speakers <= 10 ? { speakers_expected: speakers } : {}) }) });
+  const created = await outbound('POST', `${ASSEMBLYAI_API_BASE}/v2/transcript`, { headers: { authorization: key, 'content-type': 'application/json' }, body: JSON.stringify({ audio_url: json(up.text).upload_url, speaker_labels: true, language_code: 'en_au', punctuate: true, format_text: true, ...(speakers >= 2 && speakers <= 10 ? { speakers_expected: speakers } : {}), ...(keyterms.length ? { keyterms_prompt: keyterms } : {}) }) });
   if (created.status >= 400) throw failed(provider, created.status, created.text);
   const id = json(created.text).id as string;
   // A meeting takes AssemblyAI a fraction of its length; wait up to an hour.

@@ -81,6 +81,8 @@ export default defineConfig({
       // Lex's voice (the board assistant on the Observer tablet): an ElevenLabs key; the voice and model can be changed here.
       ELEVENLABS_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       ELEVENLABS_VOICE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // How fast Lex speaks: 0.7 (slow) to 1.2 (fast); 1 is the voice's own pace.
+      ELEVENLABS_SPEED: envField.number({ context: 'server', access: 'secret', default: 1.15 }),
       ELEVENLABS_MODEL: envField.string({ context: 'server', access: 'secret', default: 'eleven_flash_v2_5' }),
       ELEVENLABS_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.elevenlabs.io' }),
       // Lex's lifelike face on the Observer tablet: Anam and/or Simli (key + the avatar or face made for Lex).

@@ -27,6 +27,20 @@ export const consentWording = (company: string) =>
 const audioFolder = (m: Pick<Meeting, 'entity_id' | 'id'>) => `${m.entity_id}/meetings/${m.id}/audio`;
 const pad = (n: number) => String(n).padStart(6, '0');
 
+/**
+ * Words the speech to text listens for at this company's meetings, so names come out right
+ * ("DoxAI", not "Doc AI"): Lex, the group's companies, the people at the meeting and the
+ * company's own words (Admin → Companies → Board assistant).
+ */
+export async function meetingTerms(svc: Svc, entityId: string, attendees: Attendee[]) {
+  const { data } = await svc.from('entities').select('id, display_name, speech_terms').order('sort');
+  const companies = data ?? [];
+  const own = companies.find((c) => c.id === entityId);
+  // "Lakeba Group" also as "Lakeba": the first word of a company's name is often said on its own.
+  const names = companies.flatMap((c) => [c.display_name, ...(c.display_name.includes(' ') && c.display_name.split(' ')[0].length > 3 ? [c.display_name.split(' ')[0]] : [])]);
+  return ['Lex', ...(own?.speech_terms ?? []), ...attendees.map((a) => a.name), ...names];
+}
+
 /** Keeps a piece of audio as it arrives from the tablet. */
 export async function storeChunk(svc: Svc, m: RecordingMeeting, take: number, seq: number, bytes: Uint8Array, mime: string) {
   if (bytes.length > MAX_CHUNK) throw new Error('That piece of audio is too large.');
@@ -79,11 +93,12 @@ export async function transcribeMeeting(svc: Svc, meetingId: string, provider: P
     await svc.from('board_meetings').update({ recording_takes: takes }).eq('id', m.id);
     const speakers = m.attendees.filter((a) => a.present).length;
     const source = `batch:${provider}`;
+    const terms = await meetingTerms(svc, m.entity_id, m.attendees);
     await svc.from('board_meeting_segments').delete().eq('meeting_id', m.id).eq('source', source);
     for (const t of takes.filter((x) => x.path && x.bytes)) {
       const { data: blob } = await svc.storage.from('legal').download(t.path!);
       if (!blob) throw new Error(`Take ${t.take}'s recording is missing.`);
-      const segments = await transcribeRecording(provider, Buffer.from(await blob.arrayBuffer()), t.mime, speakers);
+      const segments = await transcribeRecording(provider, Buffer.from(await blob.arrayBuffer()), t.mime, speakers, terms);
       const offset = offsetOf(takes, t);
       await saveSegments(svc, m.id, source, t.take, segments.map((s, i) => ({ ...s, start_ms: s.start_ms + offset, end_ms: s.end_ms + offset, seq: i })));
     }

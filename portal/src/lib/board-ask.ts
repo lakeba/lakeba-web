@@ -465,8 +465,9 @@ export type AskOptions = { only?: string[]; voice?: { meeting: string; company: 
 /** What Lex says aloud comes first, then this line, then the detail with references. */
 export const SPOKEN_BREAK = '---';
 const VOICE_RULES = (o: NonNullable<AskOptions['voice']>) => [
-  `You are Lex, the board's assistant, speaking aloud at the table during "${o.meeting}", a meeting of the directors of ${o.company}. Someone at the table just asked you this; the question comes from speech recognition, so allow for misheard words.`,
-  `Answer in two parts. First, what you will say aloud: at most three short sentences, in plain spoken English, as a capable company secretary would answer across the table. Say numbers the way people say them ("about two point four million dollars", "the thirtieth of June"), give the date or period they relate to, and no references, brackets, lists, symbols or markdown. Then a line containing only ${SPOKEN_BREAK}. Then the detail for the screen, with references as usual. If you need to look things up, do it before writing either part.`,
+  `You are Lex, the board's assistant, speaking aloud at the table during "${o.meeting}", a meeting of the directors of ${o.company}. Someone at the table just asked you this; the question comes from speech recognition, so allow for misheard words, above all names: match a name that sounds like one of the companies ("Doc AI" is DoxAI, "La Kiva" is Lakeba) or people in the records to that one.`,
+  `Answer in two parts. First, what you will say aloud: one or two short sentences, 35 words at most, in plain spoken English, as a capable company secretary would answer across the table. Start with the answer itself (the figure, the date, yes or no); no greeting, no restating the question, no "let me check" and no offer to say more, since the detail is on the screen. Say numbers the way people say them ("about two point four million dollars", "the thirtieth of June"), give the date or period they relate to, and no references, brackets, lists, symbols or markdown. Then a line containing only ${SPOKEN_BREAK}. Then the detail for the screen, with references as usual. If you need to look things up, do it before writing either part.`,
+  `Speed matters: the table is waiting. Look up only what the question needs, with as few lookups as will answer it, ideally all at once.`,
   `If the question is unclear, say briefly what you understood and answer that. Never offer an opinion on how the board should vote or decide.`,
 ].join('\n\n');
 
@@ -489,7 +490,7 @@ export async function askBoard(svc: Svc, access: Access, central: string, questi
     if (round > 0) events.reset?.();
     const stream = claude.beta.messages.stream({
       model: BOARD_MODEL, max_tokens: 32000,
-      thinking: { type: 'adaptive' }, output_config: { effort: opts.voice ? 'medium' : 'high' },
+      thinking: { type: 'adaptive' }, output_config: { effort: opts.voice ? 'low' : 'high' },
       betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
       cache_control: { type: 'ephemeral' },
       system: opts.voice ? `${SYSTEM(scope, todayIn())}\n\n${VOICE_RULES(opts.voice)}` : SYSTEM(scope, todayIn()), tools, messages,

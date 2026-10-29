@@ -1,4 +1,4 @@
-import { ELEVENLABS_API_BASE, ELEVENLABS_API_KEY, ELEVENLABS_MODEL, ELEVENLABS_VOICE_ID } from 'astro:env/server';
+import { ELEVENLABS_API_BASE, ELEVENLABS_API_KEY, ELEVENLABS_MODEL, ELEVENLABS_SPEED, ELEVENLABS_VOICE_ID } from 'astro:env/server';
 import { outbound } from './outbound';
 import { SPOKEN_BREAK } from './board-ask';
 
@@ -56,7 +56,7 @@ export async function speak(text: string, format: 'mp3' | 'pcm' = 'mp3') {
   if (kept) return kept;
   const res = await outbound('POST', `${ELEVENLABS_API_BASE}/v1/text-to-speech/${await voiceId()}?output_format=${format === 'pcm' ? 'pcm_16000' : 'mp3_44100_128'}`, {
     headers: { 'xi-api-key': ELEVENLABS_API_KEY ?? '', 'content-type': 'application/json', accept: format === 'pcm' ? 'audio/pcm' : 'audio/mpeg' },
-    body: JSON.stringify({ text: t, model_id: ELEVENLABS_MODEL, voice_settings: { stability: 0.55, similarity_boost: 0.75 } }),
+    body: JSON.stringify({ text: t, model_id: ELEVENLABS_MODEL, voice_settings: { stability: 0.55, similarity_boost: 0.75, speed: Math.min(1.2, Math.max(0.7, ELEVENLABS_SPEED)) } }),
     max: 10_000_000, timeout: 60_000,
   });
   if (res.status >= 400) throw new Error(`ElevenLabs: ${res.status} ${res.text.slice(0, 200)}`);

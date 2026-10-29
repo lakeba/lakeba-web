@@ -195,7 +195,7 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
         if (msg.type === 'Results') {
           const alt = msg.channel?.alternatives?.[0];
           if (!alt?.transcript) return;
-          if (!msg.is_final) { if (interim) interim.textContent = alt.transcript; return; }
+          if (!msg.is_final) { if (interim) interim.textContent = alt.transcript; hearing(); return; }
           if (interim) interim.textContent = '';
           // One segment per run of words by the same speaker.
           let cur: { speaker: string; words: string[]; start: number; end: number } | null = null;
@@ -206,7 +206,7 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
           }
           if (cur) segment(cur.speaker, cur.words.join(' '), cur.start, cur.end);
         } else if (msg.type === 'Turn') {
-          if (!msg.end_of_turn || !msg.turn_is_formatted) { if (interim) interim.textContent = msg.transcript ?? ''; return; }
+          if (!msg.end_of_turn || !msg.turn_is_formatted) { if (interim) interim.textContent = msg.transcript ?? ''; if (msg.transcript) hearing(); return; }
           if (interim) interim.textContent = '';
           const w = msg.words ?? [];
           if (msg.transcript) segment(msg.speaker_label && msg.speaker_label !== 'UNKNOWN' ? `Speaker ${msg.speaker_label}` : '', msg.transcript, w[0]?.start ?? 0, w.at(-1)?.end ?? 0, msg.turn_order);
@@ -365,6 +365,14 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
         setLex('listening');
         collect.timer = window.setTimeout(finishQuestion, collect.text.trim().split(/\s+/).length >= 4 ? 1800 : 4000);
       };
+      // Someone is still talking (text not yet final): Lex keeps listening, so "Lex." then a pause, then the question, still works.
+      const hearing = () => {
+        if (!collect) return;
+        if (collect.timer) clearTimeout(collect.timer);
+        collect.timer = window.setTimeout(finishQuestion, 3000);
+        if (collect.giveUp) clearTimeout(collect.giveUp);
+        collect.giveUp = window.setTimeout(() => { collect = null; setLex('idle'); }, 15000);
+      };
       $('lex-ask')?.addEventListener('click', () => {
         ensureOut();
         if (run?.playing) pauseDeck('answering');
@@ -453,7 +461,6 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
         $('lex-question')!.textContent = `“${question}”`; $('lex-spoken')!.textContent = ''; $('lex-steps')!.innerHTML = ''; $('lex-detail')!.innerHTML = ''; $('lex-sources')!.innerHTML = '';
         let speaking: Promise<void> | null = null;
         const speakOnce = (text: string) => { if (speaking) return; $('lex-spoken')!.textContent = text; setLex('speaking'); speaking = say(text).catch((e) => problem((e as Error).message)); };
-        const holding = window.setTimeout(() => { if (!speaking && lexState === 'thinking') void say('One moment.').catch(() => undefined); }, 1200);
         try {
           const res = await fetch(`${base}/lex`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, how, offset_ms: at, context: run ? slideContext() : undefined }) });
           if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error ?? 'Lex couldn’t answer.');
@@ -479,7 +486,7 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
           await speaking;
         } catch (e) { problem((e as Error).message); }
         finally {
-          clearTimeout(holding); setLex('idle');
+          setLex('idle');
           if (run && !run.playing) { await say('Shall I carry on with the presentation?').catch(() => undefined); void showSlide('paused'); }
         }
       };
