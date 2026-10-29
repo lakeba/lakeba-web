@@ -1,4 +1,6 @@
+import type { Access } from './access';
 import type { serviceClient } from './admin';
+import { mayMeeting } from './boardroom';
 import type { Attendee, Meeting } from './legal-board';
 import { PROVIDERS, transcribeRecording, type Provider, type Segment } from './transcription';
 
@@ -169,9 +171,10 @@ export async function deleteSignedAudio(svc: Svc) {
 }
 
 /** The meeting, for the Observer's requests: only for those who do legal work for its company. */
-export async function observerMeeting(svc: Svc, access: { can: (p: string, e?: string | null) => boolean }, id: string) {
+export async function observerMeeting(svc: Svc, access: Access, id: string) {
   if (!/^[0-9a-f-]{36}$/.test(id)) return null;
-  const { data } = await svc.from('board_meetings').select(`id, entity_id, title, held_at, location, attendees, chair_officer_id, agenda, notes, transcript, transcript_path, ${RECORDING_COLUMNS}`).eq('id', id).maybeSingle();
-  if (!data || !access.can('legal.do', data.entity_id as string)) return null;
+  const { data } = await svc.from('board_meetings').select(`id, entity_id, title, held_at, location, attendees, chair_officer_id, agenda, notes, transcript, transcript_path, ${RECORDING_COLUMNS}, entities(board_assistant)`).eq('id', id).maybeSingle();
+  // The company's Legal or Boardroom people, and only where the board assistant is switched on.
+  if (!data || !mayMeeting(access, data.entity_id as string, 'do') || !(data.entities as unknown as { board_assistant: boolean } | null)?.board_assistant) return null;
   return data as unknown as RecordingMeeting;
 }

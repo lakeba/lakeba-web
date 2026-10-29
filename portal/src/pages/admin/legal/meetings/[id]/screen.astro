@@ -1,0 +1,123 @@
+---
+import '../../../../../styles/portal.css';
+import { serviceClient } from '../../../../../lib/admin';
+import { mayMeeting } from '../../../../../lib/boardroom';
+
+// The room screen (boardroom TV or projector, any browser): shows the slide
+// Lex is presenting from the Observer tablet, following it as it moves.
+// ?deck=<id> previews one deck, with the arrow keys to move through it.
+const svc = serviceClient();
+const { data: m } = await svc.from('board_meetings').select('id, entity_id, title, entities(display_name)').eq('id', Astro.params.id ?? '').maybeSingle();
+if (!m || !mayMeeting(Astro.locals.access, m.entity_id)) return Astro.redirect('/admin');
+const company = (m.entities as unknown as { display_name: string } | null)?.display_name ?? '';
+---
+
+<!doctype html>
+<html lang="en-AU" data-theme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>Room screen · {m.title}</title>
+  </head>
+  <body class="min-h-dvh overflow-hidden bg-[#050b16]">
+    <main class="flex h-dvh flex-col px-[5vw] py-[4vh]" id="screen" data-id={m.id} data-preview={Astro.url.searchParams.get('deck') ?? ''}>
+      <header class="flex items-center justify-between text-[1.4vw] text-white/45">
+        <span id="who">{company} · {m.title}</span>
+        <span id="state" class="flex items-center gap-2"></span>
+      </header>
+      <section class="relative flex flex-1 flex-col justify-center" id="stage">
+        <div id="idle" class="text-center">
+          <p class="font-display text-[4vw] font-bold text-white">{company}</p>
+          <p class="mt-2 text-[1.8vw] text-white/50">{m.title}</p>
+        </div>
+        <div id="slide" hidden class="grid gap-[3vh]">
+          <p class="text-[1.3vw] uppercase tracking-widest text-lk-blue" id="kicker"></p>
+          <h1 class="font-display text-[3.6vw] font-bold leading-tight text-white" id="title"></h1>
+          <div class="grid grid-cols-[1.2fr_1fr] gap-[4vw]">
+            <ul class="grid content-start gap-[1.6vh] text-[1.9vw] leading-snug text-white/85" id="points"></ul>
+            <div class="grid content-start gap-[2vh]" id="figures"></div>
+          </div>
+        </div>
+        <canvas id="page" hidden class="mx-auto max-h-[82vh] max-w-full rounded-lg bg-white shadow-2xl"></canvas>
+      </section>
+      <footer class="flex items-center justify-between text-[1.2vw] text-white/35"><span id="deck"></span><span id="count"></span></footer>
+    </main>
+    <script>
+      import { getDocumentProxy } from 'unpdf';
+      type Deck = { id: string; title: string; role: string; source: string; file: string | null; slides: { title: string; points: string[]; figures: { label: string; value: string; note: string }[]; page: number | null }[] };
+      const root = document.getElementById('screen')!;
+      const id = root.dataset.id!, preview = root.dataset.preview;
+      const $ = <T extends HTMLElement>(x: string) => document.getElementById(x) as T;
+      let deck: Deck | null = null, slide = -1, shownKey = '', pdf: Awaited<ReturnType<typeof getDocumentProxy>> | null = null, pdfFor = '';
+
+      const renderPage = async (n: number) => {
+        if (!deck?.file) return;
+        if (pdfFor !== deck.id) { const r = await fetch(deck.file); pdf = await getDocumentProxy(new Uint8Array(await r.arrayBuffer())); pdfFor = deck.id; }
+        const page = await pdf!.getPage(n);
+        const base = page.getViewport({ scale: 1 });
+        const scale = Math.min((innerWidth * 0.9) / base.width, (innerHeight * 0.82) / base.height) * devicePixelRatio;
+        const vp = page.getViewport({ scale });
+        const c = $<HTMLCanvasElement>('page');
+        c.width = vp.width; c.height = vp.height; c.style.width = `${vp.width / devicePixelRatio}px`;
+        const g = c.getContext('2d')!;
+        // A white sheet behind the page: PDFs often leave the background transparent.
+        g.fillStyle = '#ffffff'; g.fillRect(0, 0, c.width, c.height);
+        await page.render({ canvasContext: g, viewport: vp } as Parameters<typeof page.render>[0]).promise;
+      };
+      const show = async () => {
+        const has = deck && slide >= 0 && slide < deck.slides.length;
+        $('idle').hidden = Boolean(has);
+        if (!has) { $('slide').hidden = true; $('page').hidden = true; $('deck').textContent = ''; $('count').textContent = ''; return; }
+        const s = deck!.slides[slide];
+        $('deck').textContent = `${deck!.title} · presented by Lex${deck!.role !== 'Presenter' ? ` on behalf of the ${deck!.role}` : ''}`;
+        $('count').textContent = `${slide + 1} / ${deck!.slides.length}`;
+        if (deck!.source === 'uploaded' && s.page) {
+          $('slide').hidden = true; $('page').hidden = false;
+          await renderPage(s.page).catch(() => { $('page').hidden = true; });
+          return;
+        }
+        $('page').hidden = true; $('slide').hidden = false;
+        $('kicker').textContent = deck!.role !== 'Presenter' ? deck!.role : '';
+        $('title').textContent = s.title;
+        const ul = $('points'); ul.innerHTML = '';
+        for (const p of s.points) { const li = document.createElement('li'); li.className = 'flex gap-3'; li.innerHTML = '<span class="mt-[1.1vh] size-[0.8vw] shrink-0 rounded-full bg-lk-blue"></span>'; li.append(document.createTextNode(p)); ul.append(li); }
+        const figs = $('figures'); figs.innerHTML = '';
+        for (const f of s.figures) {
+          const d = document.createElement('div'); d.className = 'rounded-2xl border border-white/10 bg-white/[0.04] px-[1.6vw] py-[1.6vh]';
+          const l = document.createElement('p'); l.className = 'text-[1.1vw] text-white/50'; l.textContent = f.label;
+          const v = document.createElement('p'); v.className = 'font-display text-[3vw] font-bold text-white'; v.textContent = f.value;
+          const n = document.createElement('p'); n.className = 'text-[0.9vw] text-white/40'; n.textContent = f.note;
+          d.append(l, v, n); figs.append(d);
+        }
+      };
+      const stateLabel: Record<string, string> = { presenting: '<span class="size-[0.7vw] rounded-full bg-lk-green"></span>Lex is presenting', paused: 'Paused', answering: 'Lex is answering a question', done: 'Presentation finished' };
+      const poll = async () => {
+        try {
+          const r = await fetch(`/admin/legal/meetings/${id}/presenter${preview ? `?deck=${preview}` : ''}`);
+          if (r.ok) {
+            const j = await r.json();
+            const key = JSON.stringify([j.deck?.id, j.presentation?.slide, j.presentation?.state, j.deck?.slides?.length]);
+            if (preview) { if (!deck) { deck = j.deck; slide = 0; await show(); } }
+            else if (key !== shownKey) {
+              shownKey = key;
+              deck = j.presentation && j.presentation.state !== 'done' ? j.deck : null;
+              slide = j.presentation?.slide ?? -1;
+              $('state').innerHTML = j.presentation ? stateLabel[j.presentation.state] ?? '' : '';
+              await show();
+            }
+          }
+        } catch { /* try again */ }
+        if (!preview) setTimeout(poll, 1000);
+      };
+      void poll();
+      // In a preview, the arrow keys move through the deck.
+      addEventListener('keydown', (e) => {
+        if (!preview || !deck) return;
+        if (e.key === 'ArrowRight' || e.key === ' ') { slide = Math.min(deck.slides.length - 1, slide + 1); void show(); }
+        if (e.key === 'ArrowLeft') { slide = Math.max(0, slide - 1); void show(); }
+      });
+      addEventListener('resize', () => { void show(); });
+    </script>
+  </body>
+</html>

@@ -44,18 +44,22 @@ function voiceId() {
 }
 
 const said = new Map<string, Buffer>();
-/** Lex's voice for a piece of text, as MP3. Short fixed phrases are kept, so "One moment" plays at once. */
-export async function speak(text: string) {
+/**
+ * Lex's voice for a piece of text: MP3, or raw 16 kHz 16-bit mono PCM for a
+ * lifelike face to lip-sync. Short fixed phrases are kept, so "One moment" plays at once.
+ */
+export async function speak(text: string, format: 'mp3' | 'pcm' = 'mp3') {
   const t = text.trim().slice(0, MAX_SPOKEN);
   if (!t) throw new Error('Nothing to say.');
-  const kept = said.get(t);
+  const key = `${format}:${t}`;
+  const kept = said.get(key);
   if (kept) return kept;
-  const res = await outbound('POST', `${ELEVENLABS_API_BASE}/v1/text-to-speech/${await voiceId()}?output_format=mp3_44100_128`, {
-    headers: { 'xi-api-key': ELEVENLABS_API_KEY ?? '', 'content-type': 'application/json', accept: 'audio/mpeg' },
+  const res = await outbound('POST', `${ELEVENLABS_API_BASE}/v1/text-to-speech/${await voiceId()}?output_format=${format === 'pcm' ? 'pcm_16000' : 'mp3_44100_128'}`, {
+    headers: { 'xi-api-key': ELEVENLABS_API_KEY ?? '', 'content-type': 'application/json', accept: format === 'pcm' ? 'audio/pcm' : 'audio/mpeg' },
     body: JSON.stringify({ text: t, model_id: ELEVENLABS_MODEL, voice_settings: { stability: 0.55, similarity_boost: 0.75 } }),
     max: 10_000_000, timeout: 60_000,
   });
   if (res.status >= 400) throw new Error(`ElevenLabs: ${res.status} ${res.text.slice(0, 200)}`);
-  if (t.length <= 40) { if (said.size > 50) said.clear(); said.set(t, res.bytes); }
+  if (t.length <= 40) { if (said.size > 50) said.clear(); said.set(key, res.bytes); }
   return res.bytes;
 }

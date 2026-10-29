@@ -1,0 +1,109 @@
+---
+import Admin from '../../../../../../layouts/Admin.astro';
+import Alert from '../../../../../../components/Alert.astro';
+import LegalNav from '../../../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../../../lib/admin';
+import { field } from '../../../../../../lib/forms';
+import { mayMeeting, meetingCompanies } from '../../../../../../lib/boardroom';
+import { DECK_COLUMNS, ROLES, type Deck, type Slide } from '../../../../../../lib/decks';
+
+// Admin → Legal → a meeting → a deck Lex will present: each slide's title,
+// points, figures and what Lex says (the speaker notes), to check and change;
+// approval lets Lex present it. Changing an approved deck takes it back to a draft.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const { data: row } = await svc.from('board_decks').select(DECK_COLUMNS).eq('id', Astro.params.deck ?? '').eq('meeting_id', Astro.params.id ?? '').maybeSingle();
+const companies = await meetingCompanies(svc, access);
+const company = row ? companies.find((c) => c.id === row.entity_id) : null;
+if (!row || !company) return Astro.redirect('/admin/legal/companies');
+let deck = row as unknown as Deck;
+const mayDo = mayMeeting(access, company.id, 'do');
+const back = `/admin/legal/meetings/${deck.meeting_id}#decks`;
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, deck_id: deck.id, ...detail } });
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (intent === 'save' || intent === 'approve') {
+      if (deck.status === 'preparing') throw new Error('Lex is still preparing this deck.');
+      const slides: Slide[] = [];
+      deck.slides.forEach((s, i) => {
+        if (form.get(`delete-${i}`) === 'on') return;
+        const figures = field(form, `figures-${i}`).split('\n').map((l) => l.split('|').map((x) => x.trim())).filter((p) => p[0] && p[1]).slice(0, 6).map(([label, value, note]) => ({ label: label.slice(0, 80), value: value.slice(0, 40), note: (note ?? '').slice(0, 120) }));
+        slides.push({ ...s, title: field(form, `title-${i}`).slice(0, 200) || s.title, points: field(form, `points-${i}`).split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 8).map((l) => l.slice(0, 200)), figures, notes: field(form, `notes-${i}`).slice(0, 2000) });
+      });
+      if (!slides.length) throw new Error('A deck needs at least one slide.');
+      const title = field(form, 'deck-title').slice(0, 200) || deck.title;
+      const approve = intent === 'approve';
+      const patch = { title, slides, status: approve ? 'approved' : 'draft', approved_by: approve ? Astro.locals.user!.id : null, approved_at: approve ? new Date().toISOString() : null, updated_at: new Date().toISOString() };
+      await svc.from('board_decks').update(patch).eq('id', deck.id).throwOnError();
+      await log(approve ? 'admin_approved_board_deck' : 'admin_saved_board_deck', { slides: slides.length });
+      ok = approve ? 'Approved: Lex can present it at the meeting.' : deck.status === 'approved' ? 'Saved. The deck is a draft again: approve it before the meeting.' : 'Saved.';
+    } else if (intent === 'delete') {
+      if (deck.file_path) await svc.storage.from('legal').remove([deck.file_path]);
+      await svc.from('board_decks').delete().eq('id', deck.id).throwOnError();
+      await log('admin_deleted_board_deck', { title: deck.title });
+      return Astro.redirect(back);
+    }
+  } catch (e) { error = (e as Error).message; }
+  deck = (await svc.from('board_decks').select(DECK_COLUMNS).eq('id', deck.id).single()).data as unknown as Deck;
+}
+
+const { data: approver } = deck.approved_by ? await svc.from('profiles').select('first_name, last_name, email').eq('id', deck.approved_by).maybeSingle() : { data: null };
+const approverName = approver ? [approver.first_name, approver.last_name].filter(Boolean).join(' ') || approver.email : '';
+const words = deck.slides.reduce((n, s) => n + s.notes.split(/\s+/).filter(Boolean).length, 0);
+const screen = `/admin/legal/meetings/${deck.meeting_id}/screen?deck=${deck.id}`;
+---
+
+<Admin title={`Legal · ${deck.title}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45">{access.can('legal.view', company.id) ? <a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> : <a href="/admin/boardroom" class="hover:text-white">Boardroom</a>} · {company.display_name} · <a href={back} class="hover:text-white">the meeting</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{deck.title}</h1>
+    <p class="mt-1 text-sm text-white/55">Lex presents it {ROLES[deck.role].on} · {deck.source === 'drafted' ? 'drafted by Lex' : 'uploaded PDF'} · {deck.slides.length} slides, about {Math.max(1, Math.round(words / 150))} minutes · {deck.status === 'approved' ? `approved by ${approverName || 'someone'}` : deck.status === 'preparing' ? 'being prepared' : deck.status === 'failed' ? 'failed' : 'draft'}{deck.presented_at && ' · presented'}</p>
+  </div>
+  {access.can('legal.view', company.id) && <LegalNav />}
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  {deck.status === 'preparing' && <Alert tone="info">Lex is {deck.source === 'drafted' ? 'drafting this deck from the records' : 'reading the deck and writing what to say'}. This takes a minute or so; <a class="underline" href="">refresh</a>.</Alert>}
+  {deck.status === 'failed' && <Alert tone="error">{deck.error}</Alert>}
+
+  {deck.slides.length > 0 && (
+    <form method="post" class="grid gap-4">
+      <fieldset disabled={!mayDo} class="contents">
+        <div class="card flex flex-wrap items-end gap-3">
+          <div class="min-w-64 flex-1"><label class="label" for="deck-title">Title</label><input class="field" id="deck-title" name="deck-title" value={deck.title} maxlength="200" /></div>
+          <a class="btn-ghost" href={screen} target="_blank" rel="noopener">Preview on the room screen</a>
+        </div>
+        {deck.slides.map((s, i) => (
+          <section class="card grid gap-3">
+            <div class="flex items-center justify-between gap-3">
+              <p class="text-xs uppercase tracking-wider text-white/40">Slide {i + 1}{s.page && ` · page ${s.page} of the PDF`}</p>
+              <label class="flex items-center gap-2 text-xs text-white/45"><input type="checkbox" name={`delete-${i}`} class="accent-lk-red" /> Remove</label>
+            </div>
+            <input class="field font-semibold" name={`title-${i}`} value={s.title} maxlength="200" aria-label="Slide title" />
+            {deck.source === 'drafted' && (
+              <div class="grid gap-3 md:grid-cols-2">
+                <div><label class="label" for={`points-${i}`}>Points (one per line)</label><textarea class="field min-h-28 text-sm" id={`points-${i}`} name={`points-${i}`}>{s.points.join('\n')}</textarea></div>
+                <div><label class="label" for={`figures-${i}`}>Figures (label | value | note)</label><textarea class="field min-h-28 font-mono text-xs" id={`figures-${i}`} name={`figures-${i}`}>{s.figures.map((f) => `${f.label} | ${f.value} | ${f.note}`).join('\n')}</textarea></div>
+              </div>
+            )}
+            <div><label class="label" for={`notes-${i}`}>What Lex says</label><textarea class="field min-h-24 text-sm" id={`notes-${i}`} name={`notes-${i}`}>{s.notes}</textarea></div>
+          </section>
+        ))}
+        {mayDo && (
+          <div class="card flex flex-wrap items-center gap-3">
+            <button class="btn-ghost" name="intent" value="save">Save</button>
+            <button class="btn-primary" name="intent" value="approve">{deck.status === 'approved' ? 'Save and keep approved' : 'Approve for the meeting'}</button>
+            <span class="text-xs text-white/45">Check every figure against its source before approving: Lex says exactly what is written here.</span>
+            <button class="btn-ghost ml-auto text-lk-red" name="intent" value="delete" formnovalidate onclick="return confirm('Delete this deck?')">Delete the deck</button>
+          </div>
+        )}
+      </fieldset>
+    </form>
+  )}
+  {deck.slides.length === 0 && mayDo && deck.status !== 'preparing' && (
+    <form method="post" class="mt-4"><button class="btn-ghost text-lk-red" name="intent" value="delete" onclick="return confirm('Delete this deck?')">Delete the deck</button></form>
+  )}
+</Admin>

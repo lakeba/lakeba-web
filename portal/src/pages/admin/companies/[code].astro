@@ -60,6 +60,17 @@ if (Astro.request.method === 'POST') {
         return 'Details saved.';
       } };
     }
+    if (op === 'board-assistant') {
+      // The board assistant is rolled out board by board, by Lakeba.
+      if (!mayGroup) return 'Only Lakeba switches the board assistant on or off.';
+      const want = form.get('board_assistant') === 'on';
+      if (want === Boolean(c.board_assistant)) return 'Nothing changed.';
+      return { title: want ? `Switch the board assistant on for ${c.display_name}?` : `Switch the board assistant off for ${c.display_name}?`, lines: [`Board assistant: ${want ? 'Off → On' : 'On → Off'}`, want ? 'Its board can record meetings with the Observer, ask Lex and have Lex present decks (Admin → Boardroom).' : 'Recording, Lex and decks stop for its board; existing transcripts and minutes stay.'], apply: async () => {
+        await svc.from('entities').update({ board_assistant: want }).eq('id', c.id).throwOnError();
+        await log('company_board_assistant_switched', { on: want });
+        return want ? 'The board assistant is on for this board.' : 'The board assistant is off for this board.';
+      } };
+    }
     if (op === 'venture') {
       const text = (k: string, max: number) => field(form, k).trim().slice(0, max) || null;
       const email = (k: string) => field(form, k).trim().toLowerCase() || null;
@@ -382,6 +393,14 @@ const sel = 'field !py-1.5 text-sm';
         </div>
         {mayEdit && <button name="intent" value="review" class="btn-ghost w-full">Check and save</button>}
       </form>
+      {mayGroup && (
+        <form method="post" class="card mt-6 space-y-3">
+          <h2 class="font-display text-lg font-bold">Board assistant</h2>
+          <input type="hidden" name="op" value="board-assistant" />
+          <label class="flex items-start gap-3 text-sm"><input type="checkbox" name="board_assistant" checked={c.board_assistant} class="mt-0.5 size-4 accent-lk-blue" /><span>On for {c.display_name}’s board<span class="block text-xs text-white/40">The Observer, Lex and the decks it presents, in Admin → Boardroom. Switched on by Lakeba, board by board; its company secretary needs the Company secretary role for {c.display_name}.</span></span></label>
+          <button name="intent" value="review" class="btn-ghost w-full">Check and save</button>
+        </form>
+      )}
     </aside>
   </div>
 </Admin>

@@ -23,6 +23,7 @@
     "seed:demo": "node --env-file=.env.demo scripts/seed-demo.mjs"
   },
   "dependencies": {
+    "@anam-ai/js-sdk": "^4.29.1",
     "@anthropic-ai/sdk": "^0.137.0",
     "@astrojs/node": "^11.1.9",
     "@huggingface/transformers": "^4.3.1",
@@ -49,6 +50,7 @@
     "pdf-lib": "^1.17.1",
     "sanitize-html": "^2.18.1",
     "sharp": "^0.35.5",
+    "simli-client": "^3.2.0",
     "tailwindcss": "^4.3.3",
     "unpdf": "^1.9.1",
     "web-push": "^3.6.7"

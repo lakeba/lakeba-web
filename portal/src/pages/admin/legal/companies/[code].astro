@@ -1,4 +1,5 @@
 ---
+import { createMeeting } from '../../../../lib/boardroom';
 import Admin from '../../../../layouts/Admin.astro';
 import Alert from '../../../../components/Alert.astro';
 import LegalNav from '../../../../components/LegalNav.astro';
@@ -144,19 +145,9 @@ if (Astro.request.method === 'POST') {
     }
 
     else if (intent === 'meeting-add') {
-      const heldAt = field(form, 'held_at');
-      if (!heldAt || field(form, 'title').length < 3) throw new Error('Give the meeting a title and when it was held.');
-      const held = fromSydney(heldAt);
-      if (!held) throw new Error('Check when the meeting was held.');
-      const officers = (await svc.from('company_officers').select('id, full_name, position, appointed_on, ceased_on').eq('entity_id', company.id)).data ?? [];
-      const day = heldAt.slice(0, 10);
-      const attendees = officers.filter((o) => o.position !== 'alternate_director' && (!o.appointed_on || o.appointed_on <= day) && (!o.ceased_on || o.ceased_on > day))
-        .map((o) => ({ officer_id: o.id, name: o.full_name, role: o.position === 'secretary' ? 'secretary' : 'director', present: true }));
-      const { data: m } = await svc.from('board_meetings').insert({ entity_id: company.id, title: field(form, 'title').slice(0, 200), held_at: held.toISOString(), location: field(form, 'location').slice(0, 200), attendees, created_by: userId }).select('id').single().throwOnError();
-      await svc.from('legal_obligations').insert({ entity_id: company.id, kind: 'minutes', source_key: `minutes:${m!.id}`, due_on: addDays(day, 30), created_by: userId,
-        title: `Minutes of “${field(form, 'title').slice(0, 200)}” signed by the chair`, detail: 'Minutes of directors’ meetings are recorded in the minute book within one month and signed by the chair.' });
-      await log('admin_added_board_meeting', { meeting_id: m!.id });
-      return Astro.redirect(`/admin/legal/meetings/${m!.id}`);
+      const id = await createMeeting(svc, company.id, { title: field(form, 'title'), heldAt: field(form, 'held_at'), location: field(form, 'location') }, userId);
+      await log('admin_added_board_meeting', { meeting_id: id });
+      return Astro.redirect(`/admin/legal/meetings/${id}`);
     }
 
     else if (intent === 'officer-remove') {

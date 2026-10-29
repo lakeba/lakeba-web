@@ -1,4 +1,5 @@
 ---
+import { assistantOn, mayMeeting, meetingCompanies } from '../../../../lib/boardroom';
 import Admin from '../../../../layouts/Admin.astro';
 import Alert from '../../../../components/Alert.astro';
 import LegalNav from '../../../../components/LegalNav.astro';
@@ -9,6 +10,7 @@ import { fileOf, storeLegalFile } from '../../../../lib/legal-actions';
 import { RECORDING_COLUMNS, SOURCE_LABEL, removeAudio, segmentsOf, speakersOf, transcribeMeeting, useTranscript, type RecordingMeeting } from '../../../../lib/observer';
 import { PROVIDERS, readyProviders, type Provider } from '../../../../lib/transcription';
 import { answerHtml, type Source as BoardSource } from '../../../../lib/board-ask';
+import { DECK_COLUMNS, MAX_DECK_FILE, ROLES, draftDeck, readUploadedDeck, type Deck, type Role } from '../../../../lib/decks';
 import { MEETING_COLUMNS, PAPER_COLUMNS, TRANSCRIPT_CHARS, draftMinutes, reference, transcriptText, type Attendee, type Meeting, type Paper } from '../../../../lib/legal-board';
 
 // Admin → Legal → a company → Board → a meeting: who was there, the agenda,
@@ -17,12 +19,14 @@ import { MEETING_COLUMNS, PAPER_COLUMNS, TRANSCRIPT_CHARS, draftMinutes, referen
 const svc = serviceClient();
 const access = Astro.locals.access;
 const { data: row } = await svc.from('board_meetings').select(`${MEETING_COLUMNS}, ${RECORDING_COLUMNS}`).eq('id', Astro.params.id ?? '').maybeSingle();
-const companies = await legalCompanies(svc, access);
+const companies = await meetingCompanies(svc, access);
 const company = row ? companies.find((c) => c.id === row.entity_id) : null;
 if (!row || !company) return Astro.redirect('/admin/legal/companies');
 let meeting = row as unknown as RecordingMeeting;
-const mayDo = access.can('legal.do', company.id);
-const back = `/admin/legal/companies/${company.code}?tab=board`;
+const mayDo = mayMeeting(access, company.id, 'do');
+const legalView = access.can('legal.view', company.id);
+const back = legalView ? `/admin/legal/companies/${company.code}?tab=board` : '/admin/boardroom';
+const assistant = await assistantOn(svc, company.id);
 const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, meeting_id: meeting.id, ...detail } });
 const minutesQuery = () => svc.from('board_papers').select(PAPER_COLUMNS).eq('meeting_id', meeting.id).neq('status', 'withdrawn').maybeSingle();
 let minutes = (await minutesQuery()).data as Paper | null;
@@ -59,8 +63,13 @@ if (Astro.request.method === 'POST' && mayDo) {
       if (intent === 'draft') {
         if (minutes && minutes.status !== 'draft') throw new Error('The minutes were already sent for signing; take them back to a draft first.');
         const { data: lex } = await svc.from('board_meeting_assistant').select('question, spoken, answer').eq('meeting_id', meeting.id).eq('status', 'done').order('created_at');
-        if (!meeting.agenda && !meeting.notes && !meeting.transcript && !lex?.length) throw new Error('Add the agenda, notes or a transcript for Lakeba AI to draft from.');
-        const { body, costUsd } = await draftMinutes(meeting, company.legal_name ?? company.display_name, lex ?? []);
+        const { data: shown } = await svc.from('board_decks').select('title, role, approved_by').eq('meeting_id', meeting.id).not('presented_at', 'is', null).order('presented_at');
+        const ids = [...new Set((shown ?? []).map((d) => d.approved_by).filter(Boolean))] as string[];
+        const { data: approvers } = ids.length ? await svc.from('profiles').select('id, first_name, last_name, email').in('id', ids) : { data: [] };
+        const nameOf = (id: string | null) => { const p = (approvers ?? []).find((x) => x.id === id); return p ? [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email : ''; };
+        const presented = (shown ?? []).map((d) => ({ title: d.title as string, on: ROLES[d.role as Role].on, approvedBy: nameOf(d.approved_by as string | null) }));
+        if (!meeting.agenda && !meeting.notes && !meeting.transcript && !lex?.length && !presented.length) throw new Error('Add the agenda, notes or a transcript for Lakeba AI to draft from.');
+        const { body, costUsd } = await draftMinutes(meeting, company.legal_name ?? company.display_name, lex ?? [], presented);
         const title = `Minutes – ${meeting.title}`.slice(0, 300);
         if (minutes) await svc.from('board_papers').update({ body, title, ai_cost_usd: costUsd, updated_at: new Date().toISOString() }).eq('id', minutes.id).throwOnError();
         else {
@@ -82,6 +91,28 @@ if (Astro.request.method === 'POST' && mayDo) {
       await useTranscript(svc, meeting.id, source);
       await log(intent === 'use-transcript' ? 'admin_chose_meeting_transcript' : 'admin_named_meeting_speakers', { source });
       return Astro.redirect(`/admin/legal/meetings/${meeting.id}#observer`);
+    } else if (intent === 'draft-deck' || intent === 'upload-deck') {
+      const role = field(form, 'role') as Role;
+      if (!(role in ROLES)) throw new Error('Choose whose deck it is.');
+      const { data: other } = await svc.from('board_decks').select('id').eq('meeting_id', meeting.id).eq('status', 'preparing').limit(1);
+      if (other?.length) throw new Error('Another deck is being prepared; wait for it to finish.');
+      const base = { meeting_id: meeting.id, entity_id: company.id, role, created_by: Astro.locals.user!.id, status: 'preparing' };
+      if (intent === 'draft-deck') {
+        if (role === 'other') throw new Error('Lex drafts CFO and Chief Risk Officer decks.');
+        const { data: d } = await svc.from('board_decks').insert({ ...base, source: 'drafted', title: `${ROLES[role].name} report – ${meeting.title}`.slice(0, 200) }).select('id').single().throwOnError();
+        void draftDeck(svc, Astro.locals.access, Astro.locals.site?.central ?? Astro.url.origin, d!.id).catch((e) => console.error('deck draft', e));
+        await log('admin_drafted_board_deck', { deck_id: d!.id, role });
+      } else {
+        const file = fileOf(form, 'deck');
+        if (!file || !/\.pdf$/i.test(file.name)) throw new Error('Choose the deck as a PDF (from PowerPoint or Keynote: Export or Save as PDF).');
+        if (file.size > MAX_DECK_FILE) throw new Error('The deck is larger than 30 MB.');
+        const title = field(form, 'title') || file.name.replace(/\.pdf$/i, '');
+        const path = await storeLegalFile(svc, company.id, `meetings/${meeting.id}/decks`, file);
+        const { data: d } = await svc.from('board_decks').insert({ ...base, source: 'uploaded', title: title.slice(0, 200), file_path: path }).select('id').single().throwOnError();
+        void readUploadedDeck(svc, d!.id).catch((e) => console.error('deck upload', e));
+        await log('admin_uploaded_board_deck', { deck_id: d!.id, role });
+      }
+      return Astro.redirect(`/admin/legal/meetings/${meeting.id}#decks`);
     } else if (intent === 'full-pass') {
       const provider = field(form, 'provider') as Provider;
       if (!readyProviders().includes(provider)) throw new Error('That transcription service isn’t set up.');
@@ -94,6 +125,9 @@ if (Astro.request.method === 'POST' && mayDo) {
       if (minutes && minutes.status === 'signed') throw new Error('Signed minutes stay in the minute book, with their meeting.');
       await svc.from('legal_obligations').delete().eq('source_key', `minutes:${meeting.id}`).eq('status', 'open');
       await removeAudio(svc, meeting);
+      const { data: decksOf } = await svc.from('board_decks').select('file_path').eq('meeting_id', meeting.id);
+      const deckFiles = (decksOf ?? []).map((d) => d.file_path).filter(Boolean) as string[];
+      if (deckFiles.length) await svc.storage.from('legal').remove(deckFiles);
       await svc.from('board_meetings').delete().eq('id', meeting.id).throwOnError();
       await log('admin_deleted_board_meeting', { title: meeting.title });
       return Astro.redirect(back);
@@ -112,6 +146,8 @@ const speakers = current ? speakersOf(await segmentsOf(svc, meeting.id, current)
 const names = current ? meeting.speaker_names[current] ?? {} : {};
 const people = meeting.attendees.filter((a) => a.present).map((a) => a.name);
 const ready = readyProviders();
+const { data: deckRows } = await svc.from('board_decks').select(DECK_COLUMNS).eq('meeting_id', meeting.id).order('created_at');
+const decks = (deckRows ?? []) as unknown as Deck[];
 const { data: lexRows } = await svc.from('board_meeting_assistant').select('id, how, offset_ms, question, spoken, answer, sources, status, error, created_at').eq('meeting_id', meeting.id).order('created_at');
 const lexAnswers = (lexRows ?? []) as { id: string; how: string; offset_ms: number | null; question: string; spoken: string; answer: string; sources: BoardSource[]; status: string; error: string | null; created_at: string }[];
 const recordedMinutes = Math.round(meeting.recording_takes.reduce((n, t) => n + (t.ended_at ? Date.parse(t.ended_at) - Date.parse(t.started_at) : 0), 0) / 60000);
@@ -122,11 +158,11 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
 
 <Admin title={`Legal · ${meeting.title}`}>
   <div class="mb-6">
-    <p class="text-sm text-white/45"><a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> · <a href={back} class="hover:text-white">{company.display_name}</a></p>
+    <p class="text-sm text-white/45">{legalView ? <a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> : <a href="/admin/boardroom" class="hover:text-white">Boardroom</a>} · <a href={back} class="hover:text-white">{company.display_name}</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">{meeting.title}</h1>
     <p class="mt-1 text-sm text-white/55">Directors’ meeting · {minutes ? <a class="text-lk-blue hover:underline" href={`/admin/legal/papers/${minutes.id}`}>minutes {reference(minutes)}: {minutes.status === 'draft' ? 'draft' : minutes.status === 'signing' ? 'waiting for the chair' : 'signed'}</a> : 'no minutes yet'}</p>
   </div>
-  <LegalNav />
+  {legalView && <LegalNav />}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
 
@@ -166,6 +202,50 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
       </aside>
     </fieldset>
   </form>
+
+  {!assistant && (
+    <section class="card mt-6 text-sm text-white/55" id="observer">The board assistant (the Observer, Lex and the decks it presents) isn’t switched on for {company.display_name} yet. Lakeba’s Admins switch it on in Admin → Companies.</section>
+  )}
+  {assistant && <>
+  <section class="card mt-6 grid gap-4" id="decks">
+    <div>
+      <h2 class="font-display text-lg font-bold">Decks Lex presents</h2>
+      <p class="text-sm text-white/55">Lex presents an approved deck at the meeting, slide by slide, in its own voice, on behalf of the CFO or the Chief Risk Officer, with the slides on the room screen. Directors can interrupt with “Lex, …”.</p>
+    </div>
+    {decks.length > 0 && (
+      <ul class="grid gap-2 text-sm">
+        {decks.map((d) => (
+          <li class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white/[0.03] px-4 py-3">
+            <span>
+              <a class="text-white hover:underline" href={`/admin/legal/meetings/${meeting.id}/decks/${d.id}`}>{d.title}</a>
+              <span class="block text-xs text-white/45">{ROLES[d.role].name} · {d.source === 'drafted' ? 'drafted by Lex' : 'uploaded'} · {d.status === 'preparing' ? (d.source === 'drafted' ? 'Lex is drafting it…' : 'Lex is reading it…') : d.status === 'failed' ? `failed: ${d.error}` : `${d.slides.length} slides · ${d.status === 'approved' ? 'approved' : 'draft, to check and approve'}`}{d.presented_at && ' · presented'}</span>
+            </span>
+            {d.status === 'preparing' && <a class="text-xs text-lk-blue hover:underline" href={`/admin/legal/meetings/${meeting.id}#decks`}>Refresh</a>}
+          </li>
+        ))}
+      </ul>
+    )}
+    {mayDo && (
+      <div class="grid gap-4 md:grid-cols-2">
+        <form method="post" class="grid content-start gap-2 rounded-xl bg-white/[0.03] p-4" data-busy>
+          <p class="text-sm text-white">Lex drafts a deck</p>
+          <p class="text-xs text-white/45">From the reporting packs, the group view, legal records, contracts and deadlines, with what to say for each slide. A few cents; a minute or so. You check and approve it.</p>
+          <div class="flex flex-wrap gap-2">
+            <button class="btn-ghost !py-2 text-sm" name="role" value="cfo" data-busy-label="Starting…">CFO report</button>
+            <button class="btn-ghost !py-2 text-sm" name="role" value="cro" data-busy-label="Starting…">Risk report</button>
+          </div>
+          <input type="hidden" name="intent" value="draft-deck" />
+        </form>
+        <form method="post" enctype="multipart/form-data" class="grid content-start gap-2 rounded-xl bg-white/[0.03] p-4" data-busy>
+          <p class="text-sm text-white">Present your own deck</p>
+          <input class="field !py-1.5 text-sm" name="title" placeholder="Title (optional)" maxlength="200" />
+          <div class="flex flex-wrap gap-2"><select class="field !w-auto !py-1.5 text-sm" name="role">{Object.entries(ROLES).map(([k, r]) => <option value={k}>{k === 'other' ? 'Another presenter' : `On behalf of the ${r.name}`}</option>)}</select><input class="field !py-1.5 text-sm" type="file" name="deck" accept=".pdf,application/pdf" required /></div>
+          <p class="text-xs text-white/45">A PDF (export it from PowerPoint or Keynote). Lex writes what to say for each page; you check and approve it.</p>
+          <div><button class="btn-ghost !py-2 text-sm" name="intent" value="upload-deck" data-busy-label="Uploading…">Upload</button></div>
+        </form>
+      </div>
+    )}
+  </section>
 
   <section class="card mt-6 grid gap-4" id="observer">
     <div class="flex flex-wrap items-center justify-between gap-3">
@@ -246,6 +326,7 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
       </div>
     )}
   </section>
+  </>}
 </Admin>
 
 <script>

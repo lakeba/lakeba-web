@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { serviceClient } from '../../../lib/admin';
+import { mayMeeting } from '../../../lib/boardroom';
 
 /**
  * Opens a file from the private legal bucket (an ASIC extract, a consent, a
@@ -10,7 +11,7 @@ export const GET: APIRoute = async ({ url, locals, redirect }) => {
   const path = url.searchParams.get('path') ?? '';
   const entityId = path.split('/')[0];
   // "unassigned/…": a contract whose company isn't chosen yet, for those who see every company's.
-  const allowed = entityId === 'unassigned' ? locals.access.can('legal.view', null) : /^[0-9a-f-]{36}$/.test(entityId) && locals.access.can('legal.view', entityId);
+  const allowed = entityId === 'unassigned' ? locals.access.can('legal.view', null) : /^[0-9a-f-]{36}$/.test(entityId) && (locals.access.can('legal.view', entityId) || (path.split('/')[1] === 'meetings' && mayMeeting(locals.access, entityId)));
   if (!allowed || path.includes('..')) return new Response('Not found', { status: 404 });
   const { data } = await serviceClient().storage.from('legal').createSignedUrl(path, 60);
   if (!data?.signedUrl) return new Response('Not found', { status: 404 });

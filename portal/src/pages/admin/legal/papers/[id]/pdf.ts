@@ -1,5 +1,6 @@
 import type { APIRoute } from 'astro';
 import { serviceClient } from '../../../../../lib/admin';
+import { mayMeeting } from '../../../../../lib/boardroom';
 import { PAPER_COLUMNS, POSITION_WORD, currentOfficers, reference, type Paper } from '../../../../../lib/legal-board';
 import { paperPdf } from '../../../../../lib/legal-pdf';
 import { madeUnder } from '../../../../../lib/legal-templates';
@@ -9,7 +10,7 @@ export const GET: APIRoute = async ({ params, locals }) => {
   const svc = serviceClient();
   const { data } = await svc.from('board_papers').select(PAPER_COLUMNS).eq('id', params.id ?? '').maybeSingle();
   const paper = data as Paper | null;
-  if (!paper || !locals.access.can('legal.view', paper.entity_id)) return new Response('Not found', { status: 404 });
+  if (!paper || !(paper.kind === 'minutes' ? mayMeeting(locals.access, paper.entity_id) : locals.access.can('legal.view', paper.entity_id))) return new Response('Not found', { status: 404 });
   const [{ data: ent }, { data: rec }, officers, { data: meeting }] = await Promise.all([
     svc.from('entities').select('display_name, legal_name').eq('id', paper.entity_id).single(),
     svc.from('company_records').select('acn').eq('entity_id', paper.entity_id).maybeSingle(),

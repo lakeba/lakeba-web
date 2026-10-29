@@ -83,6 +83,13 @@ export default defineConfig({
       ELEVENLABS_VOICE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
       ELEVENLABS_MODEL: envField.string({ context: 'server', access: 'secret', default: 'eleven_flash_v2_5' }),
       ELEVENLABS_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.elevenlabs.io' }),
+      // Lex's lifelike face on the Observer tablet: Anam and/or Simli (key + the avatar or face made for Lex).
+      ANAM_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      ANAM_AVATAR_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      ANAM_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.anam.ai' }),
+      SIMLI_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      SIMLI_FACE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      SIMLI_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.simli.ai' }),
       XERO_AUTH_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://login.xero.com/identity/connect' }),
       XERO_TOKEN_URL: envField.string({ context: 'server', access: 'secret', default: 'https://identity.xero.com/connect/token' }),
       XERO_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.xero.com' }),

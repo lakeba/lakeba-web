@@ -1,4 +1,5 @@
 ---
+import { mayMeeting, meetingCompanies } from '../../../../lib/boardroom';
 import Admin from '../../../../layouts/Admin.astro';
 import Alert from '../../../../components/Alert.astro';
 import LegalNav from '../../../../components/LegalNav.astro';
@@ -13,12 +14,14 @@ import { PAPER_COLUMNS, POSITION_WORD, SIGNATURE_COLUMNS, askToSign, currentOffi
 const svc = serviceClient();
 const access = Astro.locals.access;
 const { data: row } = await svc.from('board_papers').select(PAPER_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
-const companies = await legalCompanies(svc, access);
+// Minutes are open to the company's Boardroom people too; resolutions stay with Legal.
+const companies = row?.kind === 'minutes' ? await meetingCompanies(svc, access) : await legalCompanies(svc, access);
 const company = row ? companies.find((c) => c.id === row.entity_id) : null;
 if (!row || !company) return Astro.redirect('/admin/legal/companies');
 let paper = row as Paper;
-const mayDo = access.can('legal.do', company.id);
-const back = `/admin/legal/companies/${company.code}?tab=board`;
+const legalView = access.can('legal.view', company.id);
+const mayDo = paper.kind === 'minutes' ? mayMeeting(access, company.id, 'do') : access.can('legal.do', company.id);
+const back = !access.canAny('legal.view') && paper.meeting_id ? `/admin/legal/meetings/${paper.meeting_id}` : `/admin/legal/companies/${company.code}?tab=board`;
 const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, paper_id: paper.id, ...detail } });
 let error = '', ok = '';
 
@@ -84,7 +87,7 @@ const states = { draft: 'Draft', signing: 'Waiting for signatures', signed: 'Sig
     <h1 class="mt-2 font-display text-3xl font-bold">{paper.title}</h1>
     <p class="mt-1 text-sm text-white/55">{paper.kind === 'minutes' ? 'Minutes' : 'Directors’ resolution'} · {reference(paper)} · {states[paper.status]}</p>
   </div>
-  <LegalNav />
+  {legalView && <LegalNav />}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
 

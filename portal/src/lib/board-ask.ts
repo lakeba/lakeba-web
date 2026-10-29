@@ -428,6 +428,22 @@ async function runTool(s: Session, name: string, input: Input): Promise<string> 
   }
 }
 
+/**
+ * Board Ask's lookups run directly, without a question (decks Lex drafts):
+ * each call is a tool name and its input; returns their text, with the
+ * sources the text refers to as [S1].
+ */
+export async function boardFacts(svc: Svc, access: Access, central: string, only: string[] | undefined, calls: [string, Record<string, unknown>][]) {
+  const full = await boardScope(svc, access);
+  const scope: Scope = only ? { companies: full.companies.filter((c) => only.includes(c.id)), all: false } : full;
+  const s = new Session(svc, access, scope, central);
+  const parts: string[] = [];
+  for (const [name, input] of calls) {
+    try { parts.push(await runTool(s, name, input)); } catch (e) { parts.push(`(${name}: ${(e as Error).message})`); }
+  }
+  return { text: parts.join('\n\n---\n\n'), sources: s.sources };
+}
+
 // --- The answer --------------------------------------------------------------
 export const SYSTEM = (scope: Scope, today: string) => [
   `You are Board Ask, Lakeba Group's board assistant in its portal, answering directors and the company secretary of Lakeba Group Limited and its ventures. Australian companies; Australian law and accounting standards. Today is ${today} (Sydney).`,

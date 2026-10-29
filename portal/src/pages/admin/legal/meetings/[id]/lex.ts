@@ -18,7 +18,9 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
   const svc = serviceClient();
   const m = await observerMeeting(svc, locals.access, params.id ?? '');
   if (!m) return Response.json({ error: 'Not found.' }, { status: 404 });
-  const b = await request.json().catch(() => ({})) as { question?: unknown; how?: unknown; offset_ms?: unknown };
+  const b = await request.json().catch(() => ({})) as { question?: unknown; how?: unknown; offset_ms?: unknown; context?: unknown };
+  // During a presentation: the slide on screen, so "this" and "that figure" make sense.
+  const context = typeof b.context === 'string' ? b.context.slice(0, 3000) : '';
   const question = typeof b.question === 'string' ? b.question.trim().slice(0, 2000) : '';
   if (question.length < 3) return Response.json({ error: 'Ask a question.' }, { status: 400 });
   const how = ['voice', 'tap', 'typed'].includes(String(b.how)) ? String(b.how) : 'typed';
@@ -37,7 +39,7 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
       // The spoken part goes out the moment its closing line is written, so Lex can start talking while the detail is still being written.
       let draft = '', spokenSent = false;
       try {
-        const r = await askBoard(svc, locals.access, central, question, (earlier ?? []).reverse().map((e) => ({ question: e.question, answer: e.answer })), {
+        const r = await askBoard(svc, locals.access, central, context ? `${context}\n\nQuestion: ${question}` : question, (earlier ?? []).reverse().map((e) => ({ question: e.question, answer: e.answer })), {
           step: (s) => send({ step: s.label }),
           reset: () => { draft = ''; },
           text: (d) => {

@@ -1,0 +1,79 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { dateTime } from '../../../lib/format';
+import { createMeeting, mayMeeting, meetingCompanies } from '../../../lib/boardroom';
+
+// Admin → Boardroom: each board this person runs (Lakeba's Legal team: every
+// company; a venture's company secretary: its own), its directors' meetings,
+// and a new meeting. From a meeting: the Observer, Lex, the decks it presents,
+// and the minutes.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await meetingCompanies(svc, access);
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    const company = companies.find((c) => c.id === field(form, 'company'));
+    if (!company || !mayMeeting(access, company.id, 'do')) throw new Error('Choose one of your companies.');
+    const id = await createMeeting(svc, company.id, { title: field(form, 'title'), heldAt: field(form, 'held_at'), location: field(form, 'location') }, Astro.locals.user!.id);
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_added_board_meeting', event_detail: { entity_id: company.id, meeting_id: id } });
+    return Astro.redirect(`/admin/legal/meetings/${id}`);
+  } catch (e) { error = (e as Error).message; }
+}
+
+const ids = companies.map((c) => c.id);
+const [{ data: flags }, { data: meetings }, { data: minutes }] = await Promise.all([
+  svc.from('entities').select('id, board_assistant').in('id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']),
+  svc.from('board_meetings').select('id, entity_id, title, held_at, recording_status').in('entity_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']).order('held_at', { ascending: false }).limit(200),
+  svc.from('board_papers').select('meeting_id, status').eq('kind', 'minutes').neq('status', 'withdrawn').in('entity_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']),
+]);
+const on = (id: string) => Boolean((flags ?? []).find((f) => f.id === id)?.board_assistant);
+const minutesOf = (id: string) => (minutes ?? []).find((p) => p.meeting_id === id)?.status;
+const minutesWord: Record<string, string> = { draft: 'minutes drafted', signing: 'minutes with the chair', signed: 'minutes signed' };
+const now = new Date();
+const local = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(now).replace(' ', 'T');
+---
+
+<Admin title="Boardroom">
+  <PageHeader title="Boardroom" subtitle="Directors’ meetings: record them with the Observer, ask Lex at the table, have Lex present the CFO or risk report, and get the minutes drafted." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {!companies.length && <p class="text-sm text-white/55">No company’s board is yours to run here.</p>}
+  <div class="grid gap-6">
+    {companies.map((c) => {
+      const list = (meetings ?? []).filter((m) => m.entity_id === c.id);
+      return (
+        <section class="card grid gap-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <h2 class="font-display text-xl font-bold">{c.display_name}</h2>
+            <span class:list={['rounded-full px-3 py-1 text-xs', on(c.id) ? 'bg-lk-green/15 text-lk-green' : 'bg-white/5 text-white/50']}>{on(c.id) ? 'Board assistant on' : 'Board assistant not switched on yet'}</span>
+          </div>
+          {list.length ? (
+            <ul class="divide-y divide-white/5 text-sm">
+              {list.slice(0, 12).map((m) => (
+                <li class="flex flex-wrap items-center justify-between gap-3 py-2">
+                  <a class="text-white hover:underline" href={`/admin/legal/meetings/${m.id}`}>{m.title}</a>
+                  <span class="text-xs text-white/45">{dateTime.format(new Date(m.held_at))}{m.recording_status !== 'none' && ' · recorded'}{minutesOf(m.id) && ` · ${minutesWord[minutesOf(m.id)!] ?? ''}`}</span>
+                </li>
+              ))}
+            </ul>
+          ) : <p class="text-sm text-white/55">No meetings yet.</p>}
+          {mayMeeting(access, c.id, 'do') && (
+            <form method="post" class="grid gap-3 rounded-xl bg-white/[0.03] p-4 sm:grid-cols-[1fr_14rem_1fr_auto] sm:items-end">
+              <input type="hidden" name="company" value={c.id} />
+              <div><label class="label" for={`t-${c.id}`}>New meeting</label><input class="field" id={`t-${c.id}`} name="title" required minlength="3" maxlength="200" placeholder="Board meeting – November 2026" /></div>
+              <div><label class="label" for={`h-${c.id}`}>When (Sydney time)</label><input class="field" type="datetime-local" id={`h-${c.id}`} name="held_at" required value={local} /></div>
+              <div><label class="label" for={`l-${c.id}`}>Where</label><input class="field" id={`l-${c.id}`} name="location" maxlength="200" placeholder="Boardroom" /></div>
+              <button class="btn-primary">Add</button>
+            </form>
+          )}
+        </section>
+      );
+    })}
+  </div>
+</Admin>

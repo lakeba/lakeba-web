@@ -5,6 +5,8 @@ import { serviceClient } from '../../../../../lib/admin';
 import { consentWording, observerMeeting } from '../../../../../lib/observer';
 import { PROVIDERS, readyProviders } from '../../../../../lib/transcription';
 import { voiceReady } from '../../../../../lib/lex';
+import { FACES, readyFaces } from '../../../../../lib/face';
+import { ROLES, type Slide } from '../../../../../lib/decks';
 
 // The Observer on the boardroom tablet (full screen): the chair confirms
 // everyone present agreed to the recording, then the tablet records the
@@ -12,7 +14,7 @@ import { voiceReady } from '../../../../../lib/lex';
 // "Finish" ends the recording and the full transcript follows on the meeting page.
 const svc = serviceClient();
 const m = await observerMeeting(svc, Astro.locals.access, Astro.params.id ?? '');
-if (!m) return Astro.redirect('/admin/legal/companies');
+if (!m) return Astro.redirect(`/admin/legal/meetings/${Astro.params.id}`);
 const { data: company } = await svc.from('entities').select('display_name, legal_name').eq('id', m.entity_id).single();
 const companyName = company?.legal_name ?? company?.display_name ?? '';
 const present = m.attendees.filter((a) => a.present);
@@ -21,7 +23,10 @@ const chairName = present.find((a) => a.officer_id === m.chair_officer_id)?.name
 const providers = readyProviders();
 const back = `/admin/legal/meetings/${m.id}`;
 const closed = Boolean(m.audio_deleted_at) || m.recording_status === 'processing' || m.recording_status === 'done';
-const state = { id: m.id, voice: voiceReady(), consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
+const { data: deckRows } = await svc.from('board_decks').select('id, title, role, slides').eq('meeting_id', m.id).eq('status', 'approved').order('created_at');
+const decks = (deckRows ?? []).map((d) => ({ id: d.id as string, title: d.title as string, role: d.role === 'other' ? '' : ROLES[d.role as 'cfo' | 'cro'].name, slides: (d.slides as Slide[]).map((x) => ({ title: x.title, points: x.points, notes: x.notes })) }));
+const faces = readyFaces().map((f) => ({ id: f, name: FACES[f].name }));
+const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
 ---
 
 <!doctype html>
@@ -91,10 +96,29 @@ const state = { id: m.id, voice: voiceReady(), consented: Boolean(m.recording_co
             </section>
             <aside class="card grid content-start gap-4 !p-5" id="lex">
               <canvas id="orb" width="400" height="400" class="mx-auto size-52" aria-hidden="true"></canvas>
+              <video id="face" class="mx-auto hidden aspect-square w-full max-w-80 rounded-2xl bg-black object-cover" playsinline autoplay></video>
+              <audio id="face-audio" autoplay hidden></audio>
+              {faces.length > 0 && (
+                <label class="flex items-center justify-center gap-2 text-xs text-white/45">Lex’s face
+                  <select class="field !w-auto !py-1 text-xs" id="face-pick"><option value="">Orb</option>{faces.map((f) => <option value={f.id}>{f.name}</option>)}</select>
+                </label>
+              )}
               <p id="lex-state" class="text-center text-sm text-white/55">Say “Lex, …” or tap Ask while recording.</p>
               <button class="btn-primary !py-3 text-base" id="lex-ask">Ask Lex</button>
               <form class="flex gap-2" id="lex-type"><input class="field !py-2 text-sm" id="lex-q" maxlength="2000" placeholder="Or type a question" autocomplete="off" /><button class="btn-ghost !py-2 text-sm">Ask</button></form>
               {!state.voice && <p class="text-xs text-white/40">Lex answers on screen only: its voice needs an ElevenLabs key on the server.</p>}
+              {decks.length > 0 && (
+                <div class="grid gap-2 rounded-xl bg-white/[0.04] p-3 text-sm" id="present">
+                  <p class="text-white">Present a deck</p>
+                  <div class="flex gap-2"><select class="field !py-2 text-sm" id="deck-pick">{decks.map((d) => <option value={d.id}>{d.title}</option>)}</select><button class="btn-ghost !py-2 text-sm" id="deck-go">Present</button></div>
+                  <div class="hidden grid gap-2" id="deck-run">
+                    <p class="text-xs text-white/55" id="deck-now"></p>
+                    <div class="flex gap-2"><button class="btn-ghost flex-1 !py-2 text-sm" id="deck-prev">Back</button><button class="btn-ghost flex-1 !py-2 text-sm" id="deck-pause">Pause</button><button class="btn-ghost flex-1 !py-2 text-sm" id="deck-next">Next</button><button class="btn-ghost !py-2 text-sm text-lk-red" id="deck-stop">Stop</button></div>
+                    <p class="text-xs text-white/40">While Lex is speaking: “Lex, next slide”, “Lex, stop”, or “Lex, …” with a question. When paused: “next slide”, “go back”, “carry on”.</p>
+                  </div>
+                  <a class="text-xs text-lk-blue hover:underline" href={`/admin/legal/meetings/${m.id}/screen`} target="_blank" rel="noopener">Open the room screen (for the TV or projector)</a>
+                </div>
+              )}
               <div class="grid gap-2 text-sm" id="lex-answer" hidden>
                 <p class="text-xs text-white/45" id="lex-question"></p>
                 <p class="text-base leading-relaxed text-white" id="lex-spoken"></p>
@@ -108,7 +132,8 @@ const state = { id: m.id, voice: voiceReady(), consented: Boolean(m.recording_co
     </main>
 
     <script>
-      type State = { id: string; voice: boolean; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
+      type DeckLite = { id: string; title: string; role: string; slides: { title: string; points: string[]; notes: string }[] };
+      type State = { id: string; decks: DeckLite[]; faces: { id: string; name: string }[]; voice: boolean; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
       const root = document.getElementById('observer')!;
       const st: State = JSON.parse(root.dataset.state!);
       const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
@@ -326,6 +351,7 @@ const state = { id: m.id, voice: voiceReady(), consented: Boolean(m.recording_co
         if (q.split(/\s+/).length >= 2) void askLex(q, c.how, c.at); else setLex('idle');
       };
       const heard = (text: string) => {
+        if (run && deckSpeech(text)) return;
         if (lexState === 'thinking' || lexState === 'speaking') return;
         if (collect) {
           collect.text += ` ${text}`;
@@ -341,6 +367,7 @@ const state = { id: m.id, voice: voiceReady(), consented: Boolean(m.recording_co
       };
       $('lex-ask')?.addEventListener('click', () => {
         ensureOut();
+        if (run?.playing) pauseDeck('answering');
         if (!recording) { problem('Start recording first: Lex listens through the meeting’s microphone. Or type the question.'); return; }
         collect = { text: '', at: offsetNow() ?? 0, how: 'tap', timer: null, giveUp: window.setTimeout(() => { collect = null; setLex('idle'); }, 12000) };
         setLex('listening');
@@ -348,6 +375,7 @@ const state = { id: m.id, voice: voiceReady(), consented: Boolean(m.recording_co
       $('lex-type')?.addEventListener('submit', (e) => {
         e.preventDefault(); ensureOut();
         const q = $<HTMLInputElement>('lex-q')!; const text = q.value.trim();
+        if (run?.playing) pauseDeck('answering');
         if (text.length >= 3 && lexState !== 'thinking' && lexState !== 'speaking') { q.value = ''; void askLex(text, 'typed', offsetNow()); }
       });
 
@@ -359,12 +387,65 @@ const state = { id: m.id, voice: voiceReady(), consented: Boolean(m.recording_co
       };
       const say = async (text: string) => {
         if (!st.voice || !text.trim()) return;
+        if (face) {
+          const r = await fetch(`${base}/lex-voice?format=pcm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'Lex’s voice is unavailable.');
+          return face.speak(new Uint8Array(await r.arrayBuffer()));
+        }
         ensureOut();
         const r = await fetch(`${base}/lex-voice`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'Lex’s voice is unavailable.');
         const buf = await outCtx!.decodeAudioData(await r.arrayBuffer());
-        await new Promise<void>((done) => { const src = outCtx!.createBufferSource(); src.buffer = buf; src.connect(outLevel!); src.onended = () => done(); src.start(); });
+        await new Promise<void>((done) => { const src = outCtx!.createBufferSource(); current = src; src.buffer = buf; src.connect(outLevel!); src.onended = () => { if (current === src) current = null; done(); }; src.start(); });
       };
+      let current: AudioBufferSourceNode | null = null;
+      const hush = () => { try { current?.stop(); } catch { /* ended */ } current = null; face?.hush(); };
+
+      // Lex's lifelike face (Anam or Simli): it lip-syncs Lex's own voice, sent as 16 kHz 16-bit mono audio, and plays it.
+      type Face = { speak: (pcm: Uint8Array) => Promise<void>; hush: () => void; stop: () => Promise<void> };
+      let face: Face | null = null;
+      // A face's speech ends when its audio has played: wait that long, or until hushed.
+      let speaking: { done: () => void; timer: number } | null = null;
+      const waitFor = (ms: number) => new Promise<void>((done) => { speaking = { done, timer: window.setTimeout(() => { speaking = null; done(); }, ms) }; });
+      const endWait = () => { if (speaking) { clearTimeout(speaking.timer); const d = speaking.done; speaking = null; d(); } };
+      const msOf = (pcm: Uint8Array) => (pcm.length / 32000) * 1000 + 600;
+      const openFace = async (kind: string) => {
+        const r = await fetch(`${base}/face`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider: kind }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error ?? 'The face is unavailable.');
+        const video = $<HTMLVideoElement>('face')!;
+        if (kind === 'anam') {
+          const { createClient } = await import('@anam-ai/js-sdk');
+          const client = createClient(j.token, { disableInputAudio: true });
+          await client.streamToVideoElement('face');
+          const input = client.createAgentAudioInputStream({ encoding: 'pcm_s16le', sampleRate: 16000, channels: 1 });
+          return {
+            speak: async (pcm) => { for (let i = 0; i < pcm.length; i += 32000) input.sendAudioChunk(pcm.slice(i, i + 32000)); input.endSequence(); await waitFor(msOf(pcm)); },
+            hush: () => { try { client.interruptPersona(); input.endSequence(); } catch { /* idle */ } endWait(); },
+            stop: async () => { await client.stopStreaming(); },
+          } satisfies Face;
+        }
+        const { SimliClient, LogLevel } = await import('simli-client');
+        const client = new SimliClient(j.token, video, $<HTMLAudioElement>('face-audio')!, null, LogLevel.ERROR);
+        await client.start();
+        return {
+          speak: async (pcm) => { for (let i = 0; i < pcm.length; i += 6000) client.sendAudioData(pcm.slice(i, i + 6000)); await waitFor(msOf(pcm)); },
+          hush: () => { try { client.ClearBuffer(); } catch { /* idle */ } endWait(); },
+          stop: async () => { await client.stop(); },
+        } satisfies Face;
+      };
+      $('face-pick')?.addEventListener('change', async (e) => {
+        const kind = (e.target as HTMLSelectElement).value;
+        const old = face; face = null;
+        await old?.stop().catch(() => undefined);
+        $('face')!.classList.add('hidden'); $('orb')!.classList.remove('hidden');
+        if (!kind) return;
+        try {
+          problem('');
+          face = await openFace(kind);
+          $('orb')!.classList.add('hidden'); $('face')!.classList.remove('hidden');
+        } catch (err) { problem(`Lex’s face: ${(err as Error).message}`); (e.target as HTMLSelectElement).value = ''; }
+      });
 
       const askLex = async (question: string, how: 'voice' | 'tap' | 'typed', at: number | null) => {
         setLex('thinking'); problem('');
@@ -374,7 +455,7 @@ const state = { id: m.id, voice: voiceReady(), consented: Boolean(m.recording_co
         const speakOnce = (text: string) => { if (speaking) return; $('lex-spoken')!.textContent = text; setLex('speaking'); speaking = say(text).catch((e) => problem((e as Error).message)); };
         const holding = window.setTimeout(() => { if (!speaking && lexState === 'thinking') void say('One moment.').catch(() => undefined); }, 1200);
         try {
-          const res = await fetch(`${base}/lex`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, how, offset_ms: at }) });
+          const res = await fetch(`${base}/lex`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, how, offset_ms: at, context: run ? slideContext() : undefined }) });
           if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error ?? 'Lex couldn’t answer.');
           const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
           for (;;) {
@@ -397,7 +478,95 @@ const state = { id: m.id, voice: voiceReady(), consented: Boolean(m.recording_co
           }
           await speaking;
         } catch (e) { problem((e as Error).message); }
-        finally { clearTimeout(holding); setLex('idle'); }
+        finally {
+          clearTimeout(holding); setLex('idle');
+          if (run && !run.playing) { await say('Shall I carry on with the presentation?').catch(() => undefined); void showSlide('paused'); }
+        }
+      };
+
+
+      // Presenting a deck: Lex says each slide's notes while the room screen shows it, then moves on.
+      let run: { deck: DeckLite; i: number; playing: boolean; token: number } | null = null;
+      const parts = (notes: string, max = 500) => {
+        const sentences = notes.replace(/\s+/g, ' ').trim().match(/[^.!?]+[.!?]+["”’)]*\s*|[^.!?]+$/g) ?? [];
+        const out: string[] = []; let cur = '';
+        for (const x of sentences) { if (cur && cur.length + x.length > max) { out.push(cur.trim()); cur = ''; } cur += x; }
+        if (cur.trim()) out.push(cur.trim());
+        return out;
+      };
+      const slideContext = () => {
+        if (!run) return '';
+        const s = run.deck.slides[run.i];
+        return `Asked while Lex was presenting "${run.deck.title}"${run.deck.role ? ` on behalf of the ${run.deck.role}` : ''}, slide ${run.i + 1} of ${run.deck.slides.length}: "${s.title}". On the slide: ${s.points.join('; ') || '(see notes)'}. What Lex said: ${s.notes}`;
+      };
+      const showSlide = async (state: 'presenting' | 'paused' | 'answering' | 'done') => {
+        if (!run) return;
+        $('deck-now')!.textContent = `${run.deck.title} · slide ${run.i + 1} of ${run.deck.slides.length}: ${run.deck.slides[run.i].title}${state === 'paused' ? ' · paused' : ''}`;
+        $('deck-pause')!.textContent = state === 'presenting' ? 'Pause' : 'Carry on';
+        await fetch(`${base}/presenter`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'show', deck_id: run.deck.id, slide: run.i, state }) }).catch(() => undefined);
+      };
+      const present = async (i: number) => {
+        if (!run) return;
+        const token = ++run.token;
+        run.i = Math.max(0, Math.min(run.deck.slides.length - 1, i)); run.playing = true;
+        await showSlide('presenting');
+        setLex('speaking');
+        for (const part of parts(run.deck.slides[run.i].notes)) {
+          if (!run || run.token !== token) return;
+          await say(part).catch((e) => problem((e as Error).message));
+        }
+        if (!run || run.token !== token) return;
+        setLex('idle');
+        if (run.i < run.deck.slides.length - 1) { await new Promise((r) => setTimeout(r, 900)); if (run && run.token === token && run.playing) void present(run.i + 1); }
+        else {
+          await say('That is the end of the presentation. I will hand back to the chair.').catch(() => undefined);
+          await showSlide('done'); finishDeck(false);
+        }
+      };
+      const pauseDeck = (state: 'paused' | 'answering' = 'paused') => { if (!run) return; run.token++; run.playing = false; hush(); setLex('idle'); void showSlide(state); };
+      const finishDeck = (clear = true) => {
+        if (run) { run.token++; hush(); }
+        run = null; setLex('idle');
+        $('deck-run')!.classList.add('hidden'); $('deck-go')!.removeAttribute('disabled');
+        if (clear) void fetch(`${base}/presenter`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'clear' }) });
+      };
+      $('deck-go')?.addEventListener('click', () => {
+        ensureOut();
+        const deck = st.decks.find((d) => d.id === $<HTMLSelectElement>('deck-pick')!.value);
+        if (!deck) return;
+        run = { deck, i: 0, playing: true, token: 0 };
+        $('deck-run')!.classList.remove('hidden'); $('deck-go')!.setAttribute('disabled', '');
+        void present(0);
+      });
+      $('deck-next')?.addEventListener('click', () => { if (run) void present(run.i + 1); });
+      $('deck-prev')?.addEventListener('click', () => { if (run) void present(run.i - 1); });
+      $('deck-pause')?.addEventListener('click', () => { if (!run) return; if (run.playing) pauseDeck(); else void present(run.i); });
+      $('deck-stop')?.addEventListener('click', () => finishDeck());
+
+      // Spoken commands during a presentation. While Lex is speaking, only "Lex, …" counts (its own voice reaches the microphone).
+      const COMMANDS: [RegExp, 'next' | 'back' | 'stop' | 'pause' | 'resume'][] = [
+        [/^(next( slide)?|move on)\b/i, 'next'],
+        [/^(go back|previous( slide)?|back one|last slide)\b/i, 'back'],
+        [/^(stop( the)?( presentation)?|end( the)? presentation|that'?s enough)\b/i, 'stop'],
+        [/^(pause|hold on|wait|one moment)\b/i, 'pause'],
+        [/^(carry on|continue|go on|keep going|resume|yes,? (please )?(carry on|continue|go on))\b/i, 'resume'],
+      ];
+      const deckSpeech = (text: string) => {
+        if (!run) return false;
+        const m = WAKE.exec(text);
+        const after = (m ? text.slice(m.index + m[0].length) : text).replace(/^[\s,.:!?-]+/, '').trim();
+        const cmd = COMMANDS.find(([re]) => re.test(after))?.[1];
+        if (cmd && (m || !run.playing)) {
+          if (cmd === 'next') void present(run.i + 1);
+          else if (cmd === 'back') void present(run.i - 1);
+          else if (cmd === 'stop') { finishDeck(); void say('Stopping the presentation.').catch(() => undefined); }
+          else if (cmd === 'pause') pauseDeck();
+          else void present(run.i);
+          return true;
+        }
+        // "Lex, …" with a question: pause the slide, then the usual listening takes the question.
+        if (m && run.playing) { pauseDeck('answering'); return false; }
+        return false;
       };
 
       // The orb: breathes when idle, follows the room when listening, shimmers while thinking, moves with Lex's voice.
