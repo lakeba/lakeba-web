@@ -1,0 +1,290 @@
+---
+import '../../../../../styles/portal.css';
+import ThemeInit from '../../../../../../../src/components/ThemeInit.astro';
+import { serviceClient } from '../../../../../lib/admin';
+import { consentWording, observerMeeting } from '../../../../../lib/observer';
+import { PROVIDERS, readyProviders } from '../../../../../lib/transcription';
+
+// The Observer on the boardroom tablet (full screen): the chair confirms
+// everyone present agreed to the recording, then the tablet records the
+// meeting and shows the transcript live, with speakers. Pause at any time;
+// "Finish" ends the recording and the full transcript follows on the meeting page.
+const svc = serviceClient();
+const m = await observerMeeting(svc, Astro.locals.access, Astro.params.id ?? '');
+if (!m) return Astro.redirect('/admin/legal/companies');
+const { data: company } = await svc.from('entities').select('display_name, legal_name').eq('id', m.entity_id).single();
+const companyName = company?.legal_name ?? company?.display_name ?? '';
+const present = m.attendees.filter((a) => a.present);
+const directors = present.filter((a) => a.role === 'director');
+const chairName = present.find((a) => a.officer_id === m.chair_officer_id)?.name ?? '';
+const providers = readyProviders();
+const back = `/admin/legal/meetings/${m.id}`;
+const closed = Boolean(m.audio_deleted_at) || m.recording_status === 'processing' || m.recording_status === 'done';
+const state = { id: m.id, consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
+---
+
+<!doctype html>
+<html lang="en-AU">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <meta name="theme-color" content="#050b16" />
+    <ThemeInit />
+    <title>Observer · {m.title}</title>
+  </head>
+  <body class="min-h-dvh">
+    <main class="mx-auto flex min-h-dvh max-w-5xl flex-col gap-5 px-5 py-6" id="observer" data-state={JSON.stringify(state)}>
+      <header class="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p class="text-sm text-white/50">{company?.display_name} · Observer</p>
+          <h1 class="font-display text-2xl font-bold">{m.title}</h1>
+        </div>
+        <div class="flex items-center gap-4">
+          <span id="indicator" class="hidden items-center gap-2 rounded-full bg-lk-red/15 px-3 py-1.5 text-sm font-semibold text-lk-red"><span class="size-2.5 animate-pulse rounded-full bg-lk-red"></span>Recording <span id="clock" class="tabular-nums">00:00:00</span></span>
+          <a class="text-sm text-white/50 hover:text-white" href={back} id="leave">Meeting page</a>
+        </div>
+      </header>
+
+      {closed ? (
+        <section class="card text-center">
+          <p class="text-white">{m.audio_deleted_at ? 'The minutes of this meeting are signed; its recording is closed.' : m.recording_status === 'processing' ? 'The recording has finished. The full transcript is being prepared and will appear on the meeting page.' : 'This meeting’s recording is finished.'}</p>
+          <a class="btn-primary mt-4 inline-flex" href={back}>Open the meeting</a>
+        </section>
+      ) : !present.length ? (
+        <section class="card"><p class="text-white">Tick who is at the meeting on the <a class="text-lk-blue underline" href={back}>meeting page</a> first: everyone present must agree to the recording.</p></section>
+      ) : !providers.length ? (
+        <section class="card"><p class="text-white">No transcription service is set up yet. A Deepgram or AssemblyAI key is needed on the server.</p></section>
+      ) : (
+        <>
+          <section class="card grid gap-4" id="consent" hidden={state.consented}>
+            <h2 class="font-display text-xl font-bold">Before recording</h2>
+            <p class="rounded-xl bg-white/5 p-4 text-lg leading-relaxed text-white/90">{consentWording(companyName)}</p>
+            <p class="text-sm text-white/60">The chair reads this out. Tick each person once they have agreed:</p>
+            <div class="grid gap-2 sm:grid-cols-2">
+              {present.map((a) => <label class="flex items-center gap-3 rounded-xl bg-white/5 px-4 py-3 text-white"><input type="checkbox" class="size-5 accent-lk-blue" data-agree value={a.name} />{a.name}</label>)}
+            </div>
+            <div class="flex flex-wrap items-end gap-3">
+              <div><label class="label" for="chair">Chair</label><select class="field" id="chair">{directors.map((a) => <option selected={a.name === chairName}>{a.name}</option>)}</select></div>
+              <button class="btn-primary !px-6 !py-3 text-base" id="agree" disabled>Everyone has agreed</button>
+            </div>
+          </section>
+
+          <section class="grid gap-4" id="controls" hidden={!state.consented}>
+            <div class="flex flex-wrap items-center gap-3">
+              <button class="btn-primary !px-8 !py-4 text-lg" id="start">{m.recording_takes.length ? 'Resume recording' : 'Start recording'}</button>
+              <button class="btn-ghost !px-6 !py-4 text-lg" id="pause" hidden>Pause</button>
+              <button class="btn-ghost !px-6 !py-4 text-lg" id="finish" hidden={!m.recording_takes.length}>Finish the meeting</button>
+              {providers.length > 1 && (
+                <label class="ml-auto text-sm text-white/55">Live text by <select class="field !inline-block !w-auto !py-1.5" id="provider">{providers.map((p) => <option value={p}>{PROVIDERS[p].name}</option>)}</select></label>
+              )}
+            </div>
+            <p class="text-sm text-white/50" id="status">{m.recording_takes.length ? 'Paused. Resume when the meeting continues.' : 'Place the tablet in the middle of the table. The live text is a guide; the full transcript is prepared from the whole recording after the meeting.'}</p>
+            <p class="hidden rounded-xl border border-lk-red/40 bg-lk-red/10 px-4 py-3 text-sm text-white" id="problem"></p>
+          </section>
+
+          <section class="card flex-1 overflow-y-auto !p-5" id="live" hidden={!state.consented}>
+            <ol class="grid gap-3 text-lg leading-relaxed" id="lines"></ol>
+            <p class="mt-3 text-lg text-white/45" id="interim"></p>
+          </section>
+        </>
+      )}
+    </main>
+
+    <script>
+      type State = { id: string; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
+      const root = document.getElementById('observer')!;
+      const st: State = JSON.parse(root.dataset.state!);
+      const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
+      const base = `/admin/legal/meetings/${st.id}`;
+      const call = async (action: string, body: Record<string, unknown> = {}) => {
+        const r = await fetch(`${base}/observer`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action, ...body }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(j.error ?? 'Something went wrong.');
+        return j;
+      };
+      const problem = (msg: string) => { const p = $('problem'); if (!p) return; p.textContent = msg; p.classList.toggle('hidden', !msg); };
+      const status = (msg: string) => { const s = $('status'); if (s) s.textContent = msg; };
+
+      // Consent: every present person ticked, then the chair confirms.
+      const boxes = [...document.querySelectorAll<HTMLInputElement>('[data-agree]')];
+      const agreeBtn = $<HTMLButtonElement>('agree');
+      boxes.forEach((b) => b.addEventListener('change', () => { if (agreeBtn) agreeBtn.disabled = !boxes.every((x) => x.checked); }));
+      agreeBtn?.addEventListener('click', async () => {
+        agreeBtn.disabled = true;
+        try {
+          await call('consent', { chair: $<HTMLSelectElement>('chair')?.value ?? '', agreed: boxes.filter((b) => b.checked).map((b) => b.value) });
+          $('consent')!.hidden = true; $('controls')!.hidden = false; $('live')!.hidden = false;
+        } catch (e) { alert((e as Error).message); agreeBtn.disabled = false; }
+      });
+
+      // Recording.
+      let provider = '';
+      let take = 0, takeStart = 0, sessionStart = 0, seq = 0, chunkSeq = 0;
+      let stream: MediaStream | null = null, recorder: MediaRecorder | null = null, ctx: AudioContext | null = null, ws: WebSocket | null = null;
+      let recording = false, wakeLock: { release: () => Promise<void> } | null = null;
+      const pending: Record<string, unknown>[] = [];
+      const uploads: { seq: number; blob: Blob }[] = [];
+      const turnSeq = new Map<number, number>();
+      const lines = $('lines'), interim = $('interim');
+      const colours = ['text-lk-blue', 'text-lk-green', 'text-lk-orange', 'text-fuchsia-400', 'text-cyan-300', 'text-yellow-300', 'text-rose-300', 'text-emerald-300'];
+      const colourOf = (s: string) => colours[(Number(s.replace(/\D/g, '')) || s.charCodeAt(0) || 0) % colours.length];
+      const shown = new Map<number, HTMLLIElement>();
+      const show = (n: number, speaker: string, text: string) => {
+        let li = shown.get(n);
+        if (!li) { li = document.createElement('li'); shown.set(n, li); lines?.append(li); }
+        li.innerHTML = '';
+        const who = document.createElement('span'); who.className = `mr-2 text-sm font-semibold ${colourOf(speaker)}`; who.textContent = speaker || '…';
+        li.append(who, document.createTextNode(text));
+        $('live')?.scrollTo({ top: 1e9, behavior: 'smooth' });
+      };
+      const segment = (speaker: string, text: string, start: number, end: number, turn?: number) => {
+        const n = turn != null && turnSeq.has(turn) ? turnSeq.get(turn)! : seq++;
+        if (turn != null) turnSeq.set(turn, n);
+        const offset = sessionStart - takeStart;
+        pending.push({ seq: n, speaker, text, start_ms: start + offset, end_ms: end + offset });
+        show(n, speaker, text);
+      };
+
+      // Live text: Deepgram (Results with words and speaker numbers) or AssemblyAI (Turns with a speaker label).
+      const onMessage = (ev: MessageEvent) => {
+        const msg = JSON.parse(String(ev.data));
+        if (msg.type === 'Results') {
+          const alt = msg.channel?.alternatives?.[0];
+          if (!alt?.transcript) return;
+          if (!msg.is_final) { if (interim) interim.textContent = alt.transcript; return; }
+          if (interim) interim.textContent = '';
+          // One segment per run of words by the same speaker.
+          let cur: { speaker: string; words: string[]; start: number; end: number } | null = null;
+          for (const w of alt.words ?? []) {
+            const sp = w.speaker == null ? '' : `Speaker ${w.speaker + 1}`;
+            if (!cur || cur.speaker !== sp) { if (cur) segment(cur.speaker, cur.words.join(' '), cur.start, cur.end); cur = { speaker: sp, words: [], start: w.start * 1000, end: w.end * 1000 }; }
+            cur.words.push(w.punctuated_word ?? w.word); cur.end = w.end * 1000;
+          }
+          if (cur) segment(cur.speaker, cur.words.join(' '), cur.start, cur.end);
+        } else if (msg.type === 'Turn') {
+          if (!msg.end_of_turn || !msg.turn_is_formatted) { if (interim) interim.textContent = msg.transcript ?? ''; return; }
+          if (interim) interim.textContent = '';
+          const w = msg.words ?? [];
+          if (msg.transcript) segment(msg.speaker_label && msg.speaker_label !== 'UNKNOWN' ? `Speaker ${msg.speaker_label}` : '', msg.transcript, w[0]?.start ?? 0, w.at(-1)?.end ?? 0, msg.turn_order);
+        } else if (msg.type === 'SpeakerRevision') {
+          for (const r of msg.revisions ?? []) {
+            const n = turnSeq.get(r.turn_order);
+            const seg = n == null ? null : [...pending].reverse().find((p) => p.seq === n);
+            const li = n == null ? null : shown.get(n);
+            if (n != null && li) { const text = li.childNodes[1]?.textContent ?? ''; show(n, `Speaker ${r.speaker_label}`, text); pending.push({ ...(seg ?? {}), seq: n, speaker: `Speaker ${r.speaker_label}`, text }); }
+          }
+        }
+      };
+
+      const connect = async (live: { url: string; protocols: string[] }) => {
+        ws = live.protocols.length ? new WebSocket(live.url, live.protocols) : new WebSocket(live.url);
+        ws.binaryType = 'arraybuffer';
+        ws.onopen = () => { sessionStart = Date.now(); problem(''); };
+        ws.onmessage = onMessage;
+        ws.onclose = () => {
+          if (!recording) return;
+          // Dropped: the recording carries on; live text reconnects.
+          problem('Live text interrupted, reconnecting… (the recording continues)');
+          setTimeout(async () => { if (!recording) return; try { await connect((await call('token', { provider })).live); } catch (e) { problem(`Live text unavailable: ${(e as Error).message}. The recording continues.`); } }, 3000);
+        };
+      };
+
+      // Audio pieces go to the portal as they come; failed ones are tried again.
+      const flushUploads = async () => {
+        while (uploads.length) {
+          const u = uploads[0];
+          try {
+            const r = await fetch(`${base}/audio?take=${take}&seq=${u.seq}`, { method: 'POST', headers: { 'content-type': u.blob.type || 'audio/webm' }, body: u.blob });
+            if (!r.ok && r.status !== 409) throw new Error(String(r.status));
+            uploads.shift();
+          } catch { problem('The recording isn’t reaching the portal; it will catch up when the connection is back.'); return; }
+        }
+      };
+      setInterval(() => { void flushUploads(); }, 5000);
+      setInterval(async () => {
+        if (!pending.length || !take) return;
+        const batch = pending.splice(0, pending.length);
+        try { await call('segments', { take, provider, segments: batch }); } catch { pending.unshift(...batch); }
+      }, 4000);
+
+      const clock = $('clock');
+      setInterval(() => {
+        if (!recording || !clock) return;
+        const done = st.takes.filter((t) => t.ended_at).reduce((n, t) => n + (Date.parse(t.ended_at!) - Date.parse(t.started_at)), 0);
+        const s = Math.floor((done + Date.now() - takeStart) / 1000);
+        clock.textContent = [Math.floor(s / 3600), Math.floor((s % 3600) / 60), s % 60].map((x) => String(x).padStart(2, '0')).join(':');
+      }, 1000);
+
+      const mimeType = ['audio/webm;codecs=opus', 'audio/ogg;codecs=opus', 'audio/mp4'].find((t) => MediaRecorder.isTypeSupported(t)) ?? '';
+      $('start')?.addEventListener('click', async () => {
+        const btn = $<HTMLButtonElement>('start')!;
+        btn.disabled = true; problem('');
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
+          provider = $<HTMLSelectElement>('provider')?.value ?? '';
+          const r = await call('start', { provider, mime: mimeType.split(';')[0] || 'audio/webm' });
+          provider = r.provider; take = r.take; takeStart = Date.parse(r.started_at); turnSeq.clear();
+          // Numbered by time into the take, so a reload mid-take never overwrites earlier text.
+          seq = Math.max(0, Date.now() - takeStart);
+          if (!st.takes.some((t) => t.take === take)) st.takes.push({ take, started_at: r.started_at, ended_at: null });
+          // Continue numbering after any pieces already sent for this take.
+          chunkSeq = Math.floor((Date.now() - takeStart) / 10_000) + 1;
+          await connect(r.live);
+          ctx = new AudioContext();
+          await ctx.audioWorklet.addModule('/observer-worklet.js');
+          const node = new AudioWorkletNode(ctx, 'observer-downsample');
+          node.port.onmessage = (e) => { if (ws?.readyState === WebSocket.OPEN) ws.send(e.data); };
+          ctx.createMediaStreamSource(stream).connect(node);
+          recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 24_000 });
+          recorder.ondataavailable = (e) => { if (e.data.size) { uploads.push({ seq: chunkSeq++, blob: e.data }); void flushUploads(); } };
+          recorder.start(10_000);
+          recording = true;
+          wakeLock = await (navigator as Navigator & { wakeLock?: { request: (t: string) => Promise<{ release: () => Promise<void> }> } }).wakeLock?.request('screen').catch(() => null) ?? null;
+          $('indicator')?.classList.replace('hidden', 'flex');
+          $('pause')!.hidden = false; $('finish')!.hidden = false; btn.hidden = true;
+          status('Recording. Speak normally; the text appears as people talk.');
+        } catch (e) {
+          problem((e as Error).name === 'NotAllowedError' ? 'The tablet didn’t allow the microphone. Allow it for this site and try again.' : (e as Error).message);
+          btn.disabled = false;
+          stream?.getTracks().forEach((t) => t.stop());
+        }
+      });
+
+      const stop = async () => {
+        recording = false;
+        await new Promise<void>((res) => { if (!recorder || recorder.state === 'inactive') return res(); recorder.onstop = () => res(); recorder.stop(); });
+        try { ws?.send(JSON.stringify(provider === 'assemblyai' ? { type: 'Terminate' } : { type: 'CloseStream' })); } catch { /* closed already */ }
+        setTimeout(() => ws?.close(), 3000);
+        stream?.getTracks().forEach((t) => t.stop());
+        await ctx?.close().catch(() => undefined);
+        await wakeLock?.release().catch(() => undefined);
+        $('indicator')?.classList.replace('flex', 'hidden');
+        // Last pieces and text before telling the portal.
+        await flushUploads();
+        await new Promise((r) => setTimeout(r, 2500));
+        if (pending.length) { const batch = pending.splice(0, pending.length); await call('segments', { take, provider, segments: batch }).catch(() => undefined); }
+        const t = st.takes.find((x) => x.take === take); if (t) t.ended_at = new Date().toISOString();
+      };
+      $('pause')?.addEventListener('click', async () => {
+        $<HTMLButtonElement>('pause')!.disabled = true;
+        await stop();
+        await call('pause').catch((e) => problem((e as Error).message));
+        $('pause')!.hidden = true; $<HTMLButtonElement>('pause')!.disabled = false;
+        const s = $<HTMLButtonElement>('start')!; s.hidden = false; s.disabled = false; s.textContent = 'Resume recording';
+        status('Paused. Nothing is being recorded.');
+      });
+      $('finish')?.addEventListener('click', async () => {
+        if (!confirm('Finish the meeting? Recording stops and the full transcript is prepared.')) return;
+        $<HTMLButtonElement>('finish')!.disabled = true;
+        if (recording) await stop();
+        if (uploads.length) { problem('Some of the recording hasn’t reached the portal yet. Keep this page open until it does, then finish again.'); $<HTMLButtonElement>('finish')!.disabled = false; return; }
+        try {
+          await call('finish', { provider: provider || $<HTMLSelectElement>('provider')?.value });
+          location.href = base;
+        } catch (e) { problem((e as Error).message); $<HTMLButtonElement>('finish')!.disabled = false; }
+      });
+      window.addEventListener('beforeunload', (e) => { if (recording || uploads.length) { e.preventDefault(); } });
+    </script>
+  </body>
+</html>

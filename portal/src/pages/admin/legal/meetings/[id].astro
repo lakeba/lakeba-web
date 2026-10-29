@@ -6,6 +6,8 @@ import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { addDays, fromSydney, legalCompanies, toSydney } from '../../../../lib/legal';
 import { fileOf, storeLegalFile } from '../../../../lib/legal-actions';
+import { RECORDING_COLUMNS, SOURCE_LABEL, removeAudio, segmentsOf, speakersOf, transcribeMeeting, useTranscript, type RecordingMeeting } from '../../../../lib/observer';
+import { PROVIDERS, readyProviders, type Provider } from '../../../../lib/transcription';
 import { MEETING_COLUMNS, PAPER_COLUMNS, TRANSCRIPT_CHARS, draftMinutes, reference, transcriptText, type Attendee, type Meeting, type Paper } from '../../../../lib/legal-board';
 
 // Admin → Legal → a company → Board → a meeting: who was there, the agenda,
@@ -13,11 +15,11 @@ import { MEETING_COLUMNS, PAPER_COLUMNS, TRANSCRIPT_CHARS, draftMinutes, referen
 // minutes go to the chair to sign.
 const svc = serviceClient();
 const access = Astro.locals.access;
-const { data: row } = await svc.from('board_meetings').select(MEETING_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
+const { data: row } = await svc.from('board_meetings').select(`${MEETING_COLUMNS}, ${RECORDING_COLUMNS}`).eq('id', Astro.params.id ?? '').maybeSingle();
 const companies = await legalCompanies(svc, access);
 const company = row ? companies.find((c) => c.id === row.entity_id) : null;
 if (!row || !company) return Astro.redirect('/admin/legal/companies');
-let meeting = row as Meeting;
+let meeting = row as unknown as RecordingMeeting;
 const mayDo = access.can('legal.do', company.id);
 const back = `/admin/legal/companies/${company.code}?tab=board`;
 const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, meeting_id: meeting.id, ...detail } });
@@ -67,9 +69,29 @@ if (Astro.request.method === 'POST' && mayDo) {
         await log('admin_drafted_minutes', { paper_id: minutes.id, cost_usd: costUsd });
         return Astro.redirect(`/admin/legal/papers/${minutes.id}`);
       }
+    } else if (intent === 'use-transcript' || intent === 'name-speakers') {
+      const source = field(form, 'source');
+      if (!/^(live|batch):(deepgram|assemblyai)$/.test(source)) throw new Error('Choose a transcript.');
+      if (intent === 'name-speakers') {
+        const names: Record<string, string> = {};
+        for (const [k, v] of form.entries()) if (k.startsWith('speaker:') && String(v).trim()) names[k.slice(8)] = String(v).trim().slice(0, 200);
+        await svc.from('board_meetings').update({ speaker_names: { ...meeting.speaker_names, [source]: names } }).eq('id', meeting.id).throwOnError();
+      }
+      await useTranscript(svc, meeting.id, source);
+      await log(intent === 'use-transcript' ? 'admin_chose_meeting_transcript' : 'admin_named_meeting_speakers', { source });
+      return Astro.redirect(`/admin/legal/meetings/${meeting.id}#observer`);
+    } else if (intent === 'full-pass') {
+      const provider = field(form, 'provider') as Provider;
+      if (!readyProviders().includes(provider)) throw new Error('That transcription service isn’t set up.');
+      if (meeting.audio_deleted_at) throw new Error('The recording was deleted when the minutes were signed.');
+      await svc.from('board_meetings').update({ recording_status: 'processing', recording_error: null }).eq('id', meeting.id);
+      void transcribeMeeting(svc, meeting.id, provider).catch((e) => console.error('observer transcription', e));
+      await log('admin_transcribed_meeting_recording', { provider });
+      return Astro.redirect(`/admin/legal/meetings/${meeting.id}#observer`);
     } else if (intent === 'delete') {
       if (minutes && minutes.status === 'signed') throw new Error('Signed minutes stay in the minute book, with their meeting.');
       await svc.from('legal_obligations').delete().eq('source_key', `minutes:${meeting.id}`).eq('status', 'open');
+      await removeAudio(svc, meeting);
       await svc.from('board_meetings').delete().eq('id', meeting.id).throwOnError();
       await log('admin_deleted_board_meeting', { title: meeting.title });
       return Astro.redirect(back);
@@ -80,6 +102,16 @@ if (Astro.request.method === 'POST' && mayDo) {
   minutes = (await minutesQuery()).data as Paper | null;
 }
 const officersPresent = meeting.attendees.filter((a) => a.officer_id);
+// The Observer: recording, transcripts found, the speakers of the one in use.
+const { data: sourceRows } = await svc.from('board_meeting_segments').select('source').eq('meeting_id', meeting.id).limit(5000);
+const sources = [...new Set((sourceRows ?? []).map((r) => r.source as string))].sort((a, b) => (a.startsWith('batch') === b.startsWith('batch') ? a.localeCompare(b) : a.startsWith('batch') ? -1 : 1));
+const current = meeting.transcript_source && sources.includes(meeting.transcript_source) ? meeting.transcript_source : null;
+const speakers = current ? speakersOf(await segmentsOf(svc, meeting.id, current)) : [];
+const names = current ? meeting.speaker_names[current] ?? {} : {};
+const people = meeting.attendees.filter((a) => a.present).map((a) => a.name);
+const ready = readyProviders();
+const recordedMinutes = Math.round(meeting.recording_takes.reduce((n, t) => n + (t.ended_at ? Date.parse(t.ended_at) - Date.parse(t.started_at) : 0), 0) / 60000);
+const STATUS: Record<string, string> = { none: 'Not recorded', recording: 'Recording now', paused: 'Paused', processing: 'Preparing the full transcript…', done: 'Recorded and transcribed', failed: 'The transcription failed' };
 const guests = meeting.attendees.filter((a) => !a.officer_id).map((a) => a.name).join('\n');
 const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 'Guest' };
 ---
@@ -105,7 +137,7 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
         <div class="sm:col-span-2">
           <label class="label" for="transcript_file">Transcript (optional)</label>
           <input class="field !py-1.5 text-sm" type="file" id="transcript_file" name="transcript_file" accept=".txt,.vtt,.srt,.md,text/plain,text/vtt" />
-          <p class="mt-1 text-xs text-white/40">The transcript Teams, Zoom or Google Meet makes (.vtt or .txt). Recordings (audio or video) aren't read yet.</p>
+          <p class="mt-1 text-xs text-white/40">The transcript Teams, Zoom or Google Meet makes (.vtt or .txt). For a meeting in the room, record it with the Observer below.</p>
           {meeting.transcript && <details class="mt-2"><summary class="cursor-pointer text-xs text-white/55">Transcript on file ({Math.round(meeting.transcript.length / 1000)}k characters) · show or change</summary><textarea class="field mt-2 min-h-40 text-xs" name="transcript">{meeting.transcript}</textarea></details>}
           {!meeting.transcript && <input type="hidden" name="transcript" value="" />}
         </div>
@@ -130,6 +162,70 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
       </aside>
     </fieldset>
   </form>
+
+  <section class="card mt-6 grid gap-4" id="observer">
+    <div class="flex flex-wrap items-center justify-between gap-3">
+      <div>
+        <h2 class="font-display text-lg font-bold">Observer</h2>
+        <p class="text-sm text-white/55">{STATUS[meeting.recording_status] ?? meeting.recording_status}{recordedMinutes > 0 && ` · ${recordedMinutes} minutes recorded in ${meeting.recording_takes.length} ${meeting.recording_takes.length === 1 ? 'part' : 'parts'}`}{meeting.audio_deleted_at && ' · audio deleted when the minutes were signed'}</p>
+        {meeting.recording_error && <p class="mt-1 text-sm text-lk-orange">{meeting.recording_error}</p>}
+        {meeting.recording_consent && <p class="mt-1 text-xs text-white/45">Everyone present agreed ({meeting.recording_consent.agreed.join(', ')}), confirmed by {meeting.recording_consent.by_name || 'the secretary'}{meeting.recording_consent.chair && ` with ${meeting.recording_consent.chair} as chair`}, {new Date(meeting.recording_consent.at).toLocaleString('en-AU', { timeZone: 'Australia/Sydney', dateStyle: 'medium', timeStyle: 'short' })}.</p>}
+      </div>
+      {mayDo && !meeting.audio_deleted_at && meeting.recording_status !== 'processing' && meeting.recording_status !== 'done' && (
+        <a class="btn-primary" href={`/admin/legal/meetings/${meeting.id}/observe`}>{meeting.recording_takes.length ? 'Open the Observer' : 'Record this meeting'}</a>
+      )}
+    </div>
+    {!ready.length && <p class="text-sm text-white/55">Recording needs a transcription service: a Deepgram or AssemblyAI key on the server.</p>}
+    {meeting.recording_status === 'none' && ready.length > 0 && <p class="text-sm text-white/55">Open the Observer on the boardroom tablet (signed in as the company secretary). The chair confirms everyone agreed, the tablet records and shows the text live, and after the meeting the full transcript, with speakers, comes here for the minutes. The audio is deleted once the minutes are signed.</p>}
+
+    {meeting.recording_takes.some((t) => t.path) && !meeting.audio_deleted_at && (
+      <div class="grid gap-2">
+        {meeting.recording_takes.filter((t) => t.path).map((t) => (
+          <div class="flex flex-wrap items-center gap-3 text-sm"><span class="text-white/55">Part {t.take}</span><audio controls preload="none" src={`/admin/legal/file?path=${encodeURIComponent(t.path!)}`} class="h-9"></audio></div>
+        ))}
+      </div>
+    )}
+
+    {sources.length > 0 && (
+      <div class="grid gap-3 border-t border-white/5 pt-4">
+        <h3 class="text-sm font-semibold text-white">Transcripts</h3>
+        <ul class="grid gap-2 text-sm">
+          {sources.map((src) => (
+            <li class="flex flex-wrap items-center gap-3">
+              <span class:list={[src === current ? 'text-white' : 'text-white/60']}>{SOURCE_LABEL(src)}{src === current && ' · used for the minutes'}</span>
+              {mayDo && src !== current && <form method="post"><input type="hidden" name="source" value={src} /><button class="text-xs text-lk-blue hover:underline" name="intent" value="use-transcript">Use this one</button></form>}
+            </li>
+          ))}
+        </ul>
+        {mayDo && !meeting.audio_deleted_at && meeting.recording_takes.length > 0 && meeting.recording_status !== 'recording' && meeting.recording_status !== 'processing' && (
+          <form method="post" class="flex flex-wrap items-center gap-2 text-sm">
+            <span class="text-white/55">Full pass on the recording with</span>
+            {ready.map((p) => <button class="btn-ghost !py-1.5 text-xs" name="provider" value={p}>{PROVIDERS[p].name}{sources.includes(`batch:${p}`) && ' (again)'}</button>)}
+            <input type="hidden" name="intent" value="full-pass" />
+            <span class="text-xs text-white/40">To compare the two services on the same meeting.</span>
+          </form>
+        )}
+        {current && speakers.length > 0 && mayDo && (
+          <form method="post" class="grid gap-3 rounded-xl bg-white/[0.03] p-4">
+            <input type="hidden" name="source" value={current} />
+            <p class="text-sm text-white">Who is who</p>
+            <p class="text-xs text-white/45">Name each speaker so the transcript and minutes show names. This rebuilds the transcript above from {SOURCE_LABEL(current)}, replacing any changes typed into it.</p>
+            {speakers.map((sp) => (
+              <div class="grid gap-1 sm:grid-cols-[10rem_1fr] sm:items-center">
+                <label class="text-sm text-white/70" for={`sp-${sp.label}`}>{sp.label} <span class="text-xs text-white/40">({sp.words} words)</span></label>
+                <div>
+                  <input class="field !py-1.5 text-sm" id={`sp-${sp.label}`} name={`speaker:${sp.label}`} list="people" value={names[sp.label] ?? ''} placeholder="Name" />
+                  {sp.sample && <p class="mt-1 text-xs text-white/40">“{sp.sample}…”</p>}
+                </div>
+              </div>
+            ))}
+            <datalist id="people">{people.map((p) => <option value={p} />)}</datalist>
+            <div><button class="btn-primary !py-2" name="intent" value="name-speakers">Save the names</button></div>
+          </form>
+        )}
+      </div>
+    )}
+  </section>
 </Admin>
 
 <script>

@@ -36,7 +36,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (!isKnownHost(url.hostname) && !ownDomainVenture(url.hostname)) return new Response('Not found', { status: 404 });
   rememberOrigin(url.origin);
   const site = siteOf(url);
-  const done = (response: Response) => withSecurityHeaders(response);
+  // The Observer page (a meeting's recording on the boardroom tablet) is the only one that may use the microphone.
+  const done = (response: Response) => withSecurityHeaders(response, /^\/admin\/legal\/meetings\/[0-9a-f-]{36}\/observe$/.test(context.url.pathname));
   locals.supabase = createSupabase(context);
   locals.site = { kind: site.kind, venture: null, central: centralOrigin(url) };
   locals.user = null;
@@ -173,13 +174,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
   return done(await next());
 });
 
-function withSecurityHeaders(response: Response) {
+function withSecurityHeaders(response: Response, microphone = false) {
   const h = response.headers;
   // Never shown inside other sites' frames; a route may allow the portal's own (newsletter previews).
   if (h.get('X-Frame-Options') !== 'SAMEORIGIN') h.set('X-Frame-Options', 'DENY');
   h.set('X-Content-Type-Options', 'nosniff');
   h.set('Referrer-Policy', 'same-origin');
-  h.set('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+  h.set('Permissions-Policy', `camera=(), microphone=${microphone ? '(self)' : '()'}, geolocation=()`);
   // Portal pages carry personal data: never cache them. Routes may opt into
   // private (browser-only) caching, e.g. company logos.
   if (!h.get('Cache-Control')?.startsWith('private')) h.set('Cache-Control', 'no-store');

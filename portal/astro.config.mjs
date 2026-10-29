@@ -72,6 +72,12 @@ export default defineConfig({
       HUBSPOT_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.hubapi.com' }),
       XERO_CLIENT_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
       XERO_CLIENT_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // The Observer's transcription (board meetings): either or both; keys from deepgram.com and assemblyai.com.
+      DEEPGRAM_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      ASSEMBLYAI_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      DEEPGRAM_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.deepgram.com' }),
+      ASSEMBLYAI_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.assemblyai.com' }),
+      ASSEMBLYAI_STREAMING_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://streaming.assemblyai.com' }),
       XERO_AUTH_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://login.xero.com/identity/connect' }),
       XERO_TOKEN_URL: envField.string({ context: 'server', access: 'secret', default: 'https://identity.xero.com/connect/token' }),
       XERO_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.xero.com' }),
