@@ -1,6 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// The release key stays off the repository: ~/.lakeba/lex-signing.properties (storeFile, storePassword,
+// keyAlias, keyPassword). Without it the release build comes out unsigned.
+val signing = Properties().apply {
+    val f = File(System.getProperty("user.home"), ".lakeba/lex-signing.properties")
+    if (f.exists()) f.inputStream().use { load(it) }
 }
 
 android {
@@ -17,6 +26,15 @@ android {
         buildConfigField("String", "PORTAL", "\"https://investors.lakeba.com\"")
     }
 
+    signingConfigs {
+        if (signing.getProperty("storeFile") != null) create("release") {
+            storeFile = file(signing.getProperty("storeFile"))
+            storePassword = signing.getProperty("storePassword")
+            keyAlias = signing.getProperty("keyAlias")
+            keyPassword = signing.getProperty("keyPassword")
+        }
+    }
+
     buildTypes {
         debug {
             applicationIdSuffix = ".staging"
@@ -26,6 +44,7 @@ android {
         }
         release {
             isMinifyEnabled = false
+            signingConfigs.findByName("release")?.let { signingConfig = it }
             resValue("string", "app_name", "Lex")
         }
     }

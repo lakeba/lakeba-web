@@ -45,9 +45,11 @@ Tools on the Mac (installed 29 October 2026): Homebrew `openjdk@17`, `android-co
 in `~/Library/Android/sdk` (platform 35, build tools 35, emulator, `system-images;android-35;google_apis;arm64-v8a`).
 The project pins Gradle 8.10.2 (wrapper), Android Gradle Plugin 8.7.3 and Kotlin 2.0.21; no other libraries.
 
-**Release signing:** make a key once and keep it safe (Google Play and updates need the same key):
-`keytool -genkeypair -v -keystore ~/.lakeba/lex-release.jks -alias lex -keyalg RSA -keysize 4096 -validity 10000`,
-then add a `signingConfigs` block reading its passwords from `~/.gradle/gradle.properties`. Never commit the key.
+**Release signing:** Lakeba's key was made on 30 October 2026 (valid to 2054, certificate SHA-256
+`90:83:CE:14:…:5A:11:B2`) and lives outside the repository on the office Mac: `~/.lakeba/lex-release.jks`, with its
+password in `~/.lakeba/lex-signing.properties` (both readable only by that account). The release build signs with
+it when that file is there, and comes out unsigned otherwise. Every update must be signed with this same key, or
+tablets refuse it: keep a copy of both files and the password in the password manager. Never commit them.
 
 ## Installing on a tablet
 
