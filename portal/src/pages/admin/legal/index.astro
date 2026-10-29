@@ -41,6 +41,8 @@ const gaps = (id: string) => {
   return [!r.acn && 'ACN', !r.company_type && 'company type', !(r.review_date || r.incorporated_on) && 'review date', !directors(id) && 'directors'].filter(Boolean) as string[];
 };
 const incomplete = companies.filter((c) => gaps(c.id).length);
+const { data: requests } = await svc.from('legal_requests').select('assignee_id').in('entity_id', ids).not('status', 'in', '(done,cancelled)');
+const unassignedRequests = (requests ?? []).filter((r) => !r.assignee_id).length;
 ---
 
 <Admin title="Legal">
@@ -49,9 +51,10 @@ const incomplete = companies.filter((c) => gaps(c.id).length);
   {result?.error && <div class="mb-6"><Alert tone="error">{result.error}</Alert></div>}
   {result?.ok && <div class="mb-6"><Alert tone="success">{result.ok}</Alert></div>}
 
-  <div class="mb-6 grid gap-4 sm:grid-cols-3">
+  <div class="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
     <div class="card !p-5"><p class="text-sm text-white/55">Overdue</p><p class:list={['mt-1 font-display text-3xl font-bold tabular-nums', overdue.length ? 'text-lk-red' : 'text-white']}>{overdue.length}</p></div>
     <div class="card !p-5"><p class="text-sm text-white/55">Due in the next 30 days</p><p class="mt-1 font-display text-3xl font-bold tabular-nums text-white">{soon.length}</p></div>
+    <a href="/admin/legal/requests" class="card !p-5 transition hover:bg-white/[0.07]"><p class="text-sm text-white/55">Open requests</p><p class="mt-1 font-display text-3xl font-bold tabular-nums text-white">{requests?.length ?? 0}{unassignedRequests > 0 && <span class="text-base font-normal text-lk-orange"> · {unassignedRequests} not given to anyone</span>}</p></a>
     <div class="card !p-5"><p class="text-sm text-white/55">Records to complete</p><p class="mt-1 font-display text-3xl font-bold tabular-nums text-white">{incomplete.length}<span class="text-base font-normal text-white/45"> of {companies.length}</span></p></div>
   </div>
 

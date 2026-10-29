@@ -1,0 +1,80 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { dateTime, fileSize } from '../../../lib/format';
+import { REQUEST_COLUMNS, REQUEST_KINDS, REQUEST_STATES, requesterCompanies, storeRequestFiles, tellLegalTeam, type FileRef, type LegalRequest, type Message } from '../../../lib/legal-requests';
+
+// A legal request, as the venture sees it: the thread with Lakeba's Legal team
+// (never their internal notes or Lakeba AI's first view), replies with files,
+// and cancelling it.
+const svc = serviceClient();
+const companies = await requesterCompanies(svc, Astro.locals.access);
+const { data: row } = await svc.from('legal_requests').select(REQUEST_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
+let r = row as LegalRequest | null;
+if (!r || !companies.some((c) => c.id === r!.entity_id)) return Astro.redirect('/admin/legal-requests');
+const userId = Astro.locals.user!.id;
+let error = '', ok = Astro.url.searchParams.get('sent') ? 'Sent. Lakeba’s Legal team has been told; you’ll hear back here and by email.' : '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    if (['done', 'cancelled'].includes(r.status)) throw new Error('This request is closed; send a new one.');
+    if (field(form, 'intent') === 'cancel') {
+      await svc.from('legal_requests').update({ status: 'cancelled', closed_at: new Date().toISOString(), updated_at: new Date().toISOString() }).eq('id', r.id).throwOnError();
+      await tellLegalTeam(svc, r, Astro.url.origin, `Cancelled: ${r.title}`, `${Astro.locals.profile?.email ?? 'The requester'} cancelled the request “${r.title}”.`);
+      ok = 'Cancelled.';
+    } else {
+      const body = field(form, 'body');
+      const files = await storeRequestFiles(svc, r.entity_id, r.id, form.getAll('files').filter((f): f is File => f instanceof File && f.size > 0));
+      if (!body && !files.length) throw new Error('Write a reply or add a file.');
+      await svc.from('legal_request_messages').insert({ request_id: r.id, author_id: userId, body: body.slice(0, 20000), files }).throwOnError();
+      // An answer to the Legal team's question puts it back with them.
+      await svc.from('legal_requests').update({ status: r.status === 'waiting' ? 'in_progress' : r.status, updated_at: new Date().toISOString() }).eq('id', r.id);
+      await tellLegalTeam(svc, r, Astro.url.origin, `Reply on: ${r.title}`, `${Astro.locals.profile?.email ?? 'The requester'} replied on “${r.title}”.`);
+      ok = 'Sent.';
+    }
+    await Astro.locals.supabase.rpc('log_event', { event_action: field(form, 'intent') === 'cancel' ? 'cancelled_legal_request' : 'replied_legal_request', event_detail: { entity_id: r.entity_id, request_id: r.id } });
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  r = (await svc.from('legal_requests').select(REQUEST_COLUMNS).eq('id', r.id).single()).data as LegalRequest;
+}
+
+const { data: msgRows } = await svc.from('legal_request_messages').select('id, request_id, author_id, body, internal, files, created_at').eq('request_id', r.id).eq('internal', false).order('created_at');
+const messages = (msgRows ?? []) as Message[];
+const authorIds = [...new Set(messages.map((m) => m.author_id).filter(Boolean))] as string[];
+const { data: people } = authorIds.length ? await svc.from('profiles').select('id, first_name, last_name, email').in('id', authorIds) : { data: [] };
+const nameOf = (id: string | null) => { const p = (people ?? []).find((x) => x.id === id); return p ? [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email : 'Someone'; };
+const fileHref = (f: FileRef) => `/admin/legal-requests/file?path=${encodeURIComponent(f.path)}`;
+const closed = ['done', 'cancelled'].includes(r.status);
+---
+
+<Admin title={`Legal request · ${r.title}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/legal-requests" class="hover:text-white">Legal requests</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{r.title}</h1>
+    <p class="mt-1 text-sm text-white/55">{companies.find((c) => c.id === r!.entity_id)?.display_name} · {REQUEST_KINDS[r.kind]} · <span class:list={[r.status === 'waiting' && 'text-lk-orange']}>{REQUEST_STATES[r.status]}</span></p>
+  </div>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  <div class="grid max-w-3xl gap-4">
+    {messages.map((m) => (
+      <article class="card !p-5">
+        <p class="text-xs text-white/45">{nameOf(m.author_id)} · {dateTime.format(new Date(m.created_at))}</p>
+        {m.body && <p class="mt-2 whitespace-pre-line text-sm text-white/85">{m.body}</p>}
+        {m.files.length > 0 && <ul class="mt-3 grid gap-1 text-sm">{m.files.map((f) => <li><a class="text-lk-blue hover:underline" href={fileHref(f)}>{f.name}</a> <span class="text-white/40">{fileSize(f.size)}</span></li>)}</ul>}
+      </article>
+    ))}
+    {!closed && (
+      <form method="post" enctype="multipart/form-data" class="card grid gap-3">
+        <label class="label" for="body">Reply</label>
+        <textarea class="field min-h-28" id="body" name="body"></textarea>
+        <input class="field !py-1.5 text-sm" type="file" name="files" multiple aria-label="Files" />
+        <div class="flex flex-wrap gap-3"><button class="btn-primary" name="intent" value="reply">Send</button><button class="btn-ghost text-lk-red" name="intent" value="cancel" formnovalidate>Cancel the request</button></div>
+      </form>
+    )}
+  </div>
+</Admin>

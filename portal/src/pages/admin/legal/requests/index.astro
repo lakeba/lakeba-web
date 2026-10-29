@@ -1,0 +1,57 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Empty from '../../../../components/Empty.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { shortDate } from '../../../../lib/format';
+import { legalCompanies, legalTeam, todayIn } from '../../../../lib/legal';
+import { REQUEST_KINDS, TEAM_STATES, URGENCY, type LegalRequest } from '../../../../lib/legal-requests';
+
+// Admin → Legal → Requests: the Legal team's queue of the ventures' requests,
+// most urgent first.
+const svc = serviceClient();
+const companies = await legalCompanies(svc, Astro.locals.access);
+const q = Astro.url.searchParams;
+const show = ['open', 'mine', 'unassigned', 'closed'].includes(q.get('show') ?? '') ? q.get('show')! : 'open';
+const userId = Astro.locals.user!.id;
+let query = svc.from('legal_requests').select('id, entity_id, title, kind, urgency, status, needed_by, assignee_id, created_at, updated_at').in('entity_id', companies.map((c) => c.id)).order('updated_at', { ascending: false }).limit(300);
+query = show === 'closed' ? query.in('status', ['done', 'cancelled']) : query.not('status', 'in', '(done,cancelled)');
+if (show === 'mine') query = query.eq('assignee_id', userId);
+if (show === 'unassigned') query = query.is('assignee_id', null);
+const [{ data }, people] = await Promise.all([query, legalTeam(svc)]);
+const order = { urgent: 0, high: 1, normal: 2, low: 3 } as Record<string, number>;
+const rows = ((data ?? []) as Pick<LegalRequest, 'id' | 'entity_id' | 'title' | 'kind' | 'urgency' | 'status' | 'needed_by' | 'assignee_id' | 'created_at' | 'updated_at'>[])
+  .sort((a, b) => (show === 'closed' ? 0 : order[a.urgency] - order[b.urgency] || (a.needed_by ?? '9999').localeCompare(b.needed_by ?? '9999')));
+const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+const person = (id: string | null) => people.find((p) => p.id === id)?.name;
+const day = (iso: string) => shortDate.format(new Date(iso.length === 10 ? `${iso}T12:00:00+10:00` : iso));
+const today = todayIn();
+const tone = { urgent: 'text-lk-red', high: 'text-lk-orange', normal: 'text-white/55', low: 'text-white/40' } as Record<string, string>;
+---
+
+<Admin title="Legal · Requests">
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
+  <LegalNav />
+  <nav class="mb-4 flex flex-wrap gap-2 text-sm" aria-label="Which requests">
+    {[['open', 'Open'], ['mine', 'Mine'], ['unassigned', 'Not given to anyone'], ['closed', 'Closed']].map(([k, l]) => <a href={`?show=${k}`} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}
+  </nav>
+  {rows.length ? (
+    <section class="card overflow-x-auto p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Request</th><th class="px-5 py-3">Urgency</th><th class="px-5 py-3">Needed by</th><th class="px-5 py-3">With</th><th class="px-5 py-3">State</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {rows.map((r) => (
+            <tr>
+              <td class="px-5 py-3"><a href={`/admin/legal/requests/${r.id}`} class="font-medium text-white hover:text-lk-blue">{r.title}</a><span class="block text-xs text-white/45">{nameOf.get(r.entity_id)} · {REQUEST_KINDS[r.kind]} · sent {day(r.created_at)}</span></td>
+              <td class:list={['px-5 py-3', tone[r.urgency]]}>{URGENCY[r.urgency]}</td>
+              <td class:list={['px-5 py-3', r.needed_by && r.needed_by < today && !['done', 'cancelled'].includes(r.status) ? 'text-lk-red' : 'text-white/65']}>{r.needed_by ? day(r.needed_by) : '—'}</td>
+              <td class="px-5 py-3 text-white/65">{person(r.assignee_id) ?? <span class="text-white/35">Nobody yet</span>}</td>
+              <td class="px-5 py-3 text-white/65">{TEAM_STATES[r.status]}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  ) : <Empty title="No requests here">The ventures send requests from Admin → Legal requests.</Empty>}
+</Admin>

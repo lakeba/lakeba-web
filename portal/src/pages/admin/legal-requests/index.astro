@@ -1,0 +1,90 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import Empty from '../../../components/Empty.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { shortDate } from '../../../lib/format';
+import { REQUEST_KINDS, REQUEST_STATES, requesterCompanies, storeRequestFiles, tellLegalTeam, triageRequest, type LegalRequest, type RequestKind } from '../../../lib/legal-requests';
+
+// Admin → Legal requests: a venture's people ask Lakeba's Legal team for help
+// and follow their requests here (those of the companies they work for).
+const svc = serviceClient();
+const companies = await requesterCompanies(svc, Astro.locals.access);
+const userId = Astro.locals.user!.id;
+let error = '';
+let kept: Record<string, string> = {};
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  kept = { entity_id: field(form, 'entity_id'), title: field(form, 'title'), kind: field(form, 'kind'), body: field(form, 'body'), needed_by: field(form, 'needed_by') };
+  try {
+    const company = companies.find((c) => c.id === kept.entity_id);
+    if (!company) throw new Error('Choose the company it is for.');
+    if (kept.title.length < 3 || kept.body.length < 10) throw new Error('Give it a short title and say what you need.');
+    const { data: r } = await svc.from('legal_requests').insert({
+      entity_id: company.id, title: kept.title.slice(0, 200), kind: kept.kind in REQUEST_KINDS ? kept.kind : 'other',
+      needed_by: /^\d{4}-\d{2}-\d{2}$/.test(kept.needed_by) ? kept.needed_by : null, requested_by: userId,
+    }).select('id').single().throwOnError();
+    const files = await storeRequestFiles(svc, company.id, r!.id, form.getAll('files').filter((f): f is File => f instanceof File && f.size > 0));
+    await svc.from('legal_request_messages').insert({ request_id: r!.id, author_id: userId, body: kept.body.slice(0, 20000), files }).throwOnError();
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'sent_legal_request', event_detail: { entity_id: company.id, request_id: r!.id } });
+    // Lakeba AI's triage is for the Legal team; a failure there never stops the request.
+    await triageRequest(svc, r!.id).catch((e) => console.error('legal triage', (e as Error).message));
+    await tellLegalTeam(svc, { id: r!.id, assignee_id: null }, Astro.url.origin, `Legal request from ${company.display_name}: ${kept.title}`, `${Astro.locals.profile?.email ?? 'Someone'} asked: “${kept.title}”.`);
+    return Astro.redirect(`/admin/legal-requests/${r!.id}?sent=1`);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const ids = companies.map((c) => c.id);
+const { data } = ids.length ? await svc.from('legal_requests').select('id, entity_id, title, kind, status, needed_by, created_at, updated_at').in('entity_id', ids).order('updated_at', { ascending: false }).limit(200) : { data: [] };
+const rows = (data ?? []) as Pick<LegalRequest, 'id' | 'entity_id' | 'title' | 'kind' | 'status' | 'needed_by' | 'created_at' | 'updated_at'>[];
+const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+const day = (iso: string) => shortDate.format(new Date(iso.length === 10 ? `${iso}T12:00:00+10:00` : iso));
+const open = rows.filter((r) => !['done', 'cancelled'].includes(r.status));
+const closed = rows.filter((r) => ['done', 'cancelled'].includes(r.status));
+---
+
+<Admin title="Legal requests">
+  <PageHeader title="Legal requests" subtitle="Ask Lakeba's Legal team: a contract to review or draft, a question, anything legal. You'll be told when they reply." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+
+  {companies.length > 0 && (
+    <details class="card mb-6" open={Boolean(error) || rows.length === 0}>
+      <summary class="cursor-pointer font-display text-lg font-bold">New request</summary>
+      <form method="post" enctype="multipart/form-data" class="mt-5 grid gap-4 sm:grid-cols-2" data-busy>
+        <div><label class="label" for="entity_id">For</label><select class="field" id="entity_id" name="entity_id" required>{companies.length > 1 && <option value="">Choose…</option>}{companies.map((c) => <option value={c.id} selected={c.id === kept.entity_id}>{c.display_name}</option>)}</select></div>
+        <div><label class="label" for="kind">What you need</label><select class="field" id="kind" name="kind">{Object.entries(REQUEST_KINDS).map(([k, l]) => <option value={k} selected={k === (kept.kind || 'contract_review')}>{l}</option>)}</select></div>
+        <div class="sm:col-span-2"><label class="label" for="title">In a few words</label><input class="field" id="title" name="title" required value={kept.title ?? ''} placeholder="e.g. NDA from Acme before Thursday's meeting" /></div>
+        <div class="sm:col-span-2"><label class="label" for="body">Details</label><textarea class="field min-h-32" id="body" name="body" required placeholder="What it's about, who the other party is, what worries you, any deadline.">{kept.body ?? ''}</textarea></div>
+        <div><label class="label" for="needed_by">Needed by (optional)</label><input class="field" type="date" id="needed_by" name="needed_by" value={kept.needed_by ?? ''} /></div>
+        <div><label class="label" for="files">Files (optional)</label><input class="field !py-1.5 text-sm" type="file" id="files" name="files" multiple /></div>
+        <div class="sm:col-span-2"><button class="btn-primary" data-busy-label="Sending…">Send to Lakeba Legal</button></div>
+      </form>
+    </details>
+  )}
+
+  {open.length > 0 && (
+    <section class="card mb-6 p-0"><h2 class="px-5 pt-5 font-display text-lg font-bold">Open</h2>
+      <ul class="mt-2 divide-y divide-white/5">{open.map((r) => (
+        <li><a class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3 hover:bg-white/[0.04]" href={`/admin/legal-requests/${r.id}`}>
+          <span><span class="font-medium text-white">{r.title}</span><span class="block text-xs text-white/45">{companies.length > 1 && `${nameOf.get(r.entity_id)} · `}{REQUEST_KINDS[r.kind as RequestKind]} · sent {day(r.created_at)}{r.needed_by && ` · needed by ${day(r.needed_by)}`}</span></span>
+          <span class:list={['text-sm', r.status === 'waiting' ? 'text-lk-orange' : 'text-white/55']}>{REQUEST_STATES[r.status]}</span>
+        </a></li>
+      ))}</ul>
+    </section>
+  )}
+  {closed.length > 0 && (
+    <details class="card p-0"><summary class="cursor-pointer px-5 py-4 font-display text-lg font-bold">Closed ({closed.length})</summary>
+      <ul class="divide-y divide-white/5 border-t border-white/5">{closed.map((r) => <li><a class="flex justify-between gap-2 px-5 py-3 text-sm hover:bg-white/[0.04]" href={`/admin/legal-requests/${r.id}`}><span class="text-white">{r.title}</span><span class="text-white/45">{REQUEST_STATES[r.status]} · {day(r.updated_at)}</span></a></li>)}</ul>
+    </details>
+  )}
+  {!rows.length && !companies.length && <Empty title="No companies">You don't work for a company that can send legal requests.</Empty>}
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLFormElement>('form[data-busy]').forEach((f) => f.addEventListener('submit', (e) => { const b = (e as SubmitEvent).submitter as HTMLButtonElement | null; if (b?.dataset.busyLabel) { b.textContent = b.dataset.busyLabel; setTimeout(() => (b.disabled = true)); } }));
+</script>

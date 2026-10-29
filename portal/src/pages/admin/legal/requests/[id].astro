@@ -1,0 +1,141 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime, fileSize, shortDate } from '../../../../lib/format';
+import { legalCompanies, legalTeam } from '../../../../lib/legal';
+import { REQUEST_COLUMNS, REQUEST_KINDS, TEAM_STATES, URGENCY, storeRequestFiles, tellRequesters, triageRequest, type FileRef, type LegalRequest, type Message } from '../../../../lib/legal-requests';
+
+// Admin → Legal → a request: Lakeba AI's triage and first view (for the Legal
+// team only), the thread with the venture, internal notes, who has it and
+// where it stands.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await legalCompanies(svc, access);
+const { data: row } = await svc.from('legal_requests').select(REQUEST_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
+let r = row as LegalRequest | null;
+const company = r ? companies.find((c) => c.id === r!.entity_id) : null;
+if (!r || !company) return Astro.redirect('/admin/legal/requests');
+const mayDo = access.can('legal.do', company.id);
+const userId = Astro.locals.user!.id;
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, request_id: r!.id, ...detail } });
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (intent === 'reply' || intent === 'note') {
+      const body = field(form, 'body');
+      const files = await storeRequestFiles(svc, r.entity_id, r.id, form.getAll('files').filter((f): f is File => f instanceof File && f.size > 0));
+      if (!body && !files.length) throw new Error('Write something or add a file.');
+      await svc.from('legal_request_messages').insert({ request_id: r.id, author_id: userId, body: body.slice(0, 20000), files, internal: intent === 'note' }).throwOnError();
+      const next = intent === 'reply' ? (field(form, 'then') || (r.status === 'new' ? 'in_progress' : r.status)) : r.status;
+      await svc.from('legal_requests').update({
+        status: next, assignee_id: r.assignee_id ?? userId, updated_at: new Date().toISOString(),
+        closed_at: ['done', 'cancelled'].includes(next) ? new Date().toISOString() : null,
+      }).eq('id', r.id).throwOnError();
+      if (intent === 'reply') await tellRequesters(svc, r, Astro.url.origin, next === 'done' ? `Done: ${r.title}` : `Lakeba Legal replied: ${r.title}`, `${next === 'waiting' ? 'Lakeba’s Legal team needs something from you on' : 'Lakeba’s Legal team replied on'} “${r.title}”.`, userId);
+      await log(intent === 'reply' ? 'admin_replied_legal_request' : 'admin_noted_legal_request', { status: next });
+      ok = intent === 'reply' ? 'Sent to the venture.' : 'Note saved (the venture doesn’t see it).';
+    } else if (intent === 'details') {
+      const status = field(form, 'status') in TEAM_STATES ? field(form, 'status') : r.status;
+      await svc.from('legal_requests').update({
+        assignee_id: field(form, 'assignee_id') || null, status, urgency: field(form, 'urgency') in URGENCY ? field(form, 'urgency') : r.urgency,
+        kind: field(form, 'kind') in REQUEST_KINDS ? field(form, 'kind') : r.kind, updated_at: new Date().toISOString(),
+        closed_at: ['done', 'cancelled'].includes(status) ? (r.closed_at ?? new Date().toISOString()) : null,
+      }).eq('id', r.id).throwOnError();
+      if (status !== r.status && ['done', 'cancelled'].includes(status)) await tellRequesters(svc, r, Astro.url.origin, `${status === 'done' ? 'Done' : 'Closed'}: ${r.title}`, `Lakeba’s Legal team marked “${r.title}” as ${status === 'done' ? 'done' : 'closed'}.`, userId);
+      await log('admin_updated_legal_request', { status, assignee_id: field(form, 'assignee_id') || null });
+      ok = 'Saved.';
+    } else if (intent === 'triage') {
+      await triageRequest(svc, r.id);
+      await log('admin_retriaged_legal_request');
+      ok = 'Lakeba AI read it again.';
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  r = (await svc.from('legal_requests').select(REQUEST_COLUMNS).eq('id', r.id).single()).data as LegalRequest;
+}
+
+const [{ data: msgRows }, team] = await Promise.all([
+  svc.from('legal_request_messages').select('id, request_id, author_id, body, internal, files, created_at').eq('request_id', r.id).order('created_at'),
+  legalTeam(svc),
+]);
+const messages = (msgRows ?? []) as Message[];
+const ids = [...new Set([...messages.map((m) => m.author_id), r.requested_by].filter(Boolean))] as string[];
+const { data: people } = ids.length ? await svc.from('profiles').select('id, first_name, last_name, email').in('id', ids) : { data: [] };
+const nameOf = (id: string | null) => { const p = (people ?? []).find((x) => x.id === id); return p ? [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email : 'Someone'; };
+const teamIds = new Set(team.map((t) => t.id));
+const fileHref = (f: FileRef) => `/admin/legal/file?path=${encodeURIComponent(f.path)}`;
+const t = r.triage;
+---
+
+<Admin title={`Legal · ${r.title}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/legal/requests" class="hover:text-white">Legal · Requests</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{r.title}</h1>
+    <p class="mt-1 text-sm text-white/55">{company.display_name} · from {nameOf(r.requested_by)} · {dateTime.format(new Date(r.created_at))}{r.needed_by && ` · needed by ${shortDate.format(new Date(`${r.needed_by}T12:00:00+10:00`))}`}</p>
+  </div>
+  <LegalNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  <div class="grid gap-6 xl:grid-cols-[1fr_24rem]">
+    <div class="grid content-start gap-4">
+      {messages.map((m) => (
+        <article class:list={['card !p-5', m.internal && '!border-lk-orange/40 !bg-lk-orange/[0.06]']}>
+          <p class="text-xs text-white/45">{nameOf(m.author_id)}{m.author_id && teamIds.has(m.author_id) ? ' · Lakeba Legal' : ''} · {dateTime.format(new Date(m.created_at))}{m.internal && <span class="text-lk-orange"> · internal note</span>}</p>
+          {m.body && <p class="mt-2 whitespace-pre-line text-sm text-white/85">{m.body}</p>}
+          {m.files.length > 0 && <ul class="mt-3 grid gap-1 text-sm">{m.files.map((f) => <li><a class="text-lk-blue hover:underline" href={fileHref(f)}>{f.name}</a> <span class="text-white/40">{fileSize(f.size)}</span></li>)}</ul>}
+        </article>
+      ))}
+      {mayDo && (
+        <form method="post" enctype="multipart/form-data" class="card grid gap-3">
+          <label class="label" for="body">Write</label>
+          <textarea class="field min-h-32" id="body" name="body"></textarea>
+          <input class="field !py-1.5 text-sm" type="file" name="files" multiple aria-label="Files" />
+          <div class="flex flex-wrap items-end gap-3">
+            <div><label class="label" for="then">Then</label><select class="field !py-2" id="then" name="then"><option value="">Keep it {TEAM_STATES[r.status === 'new' ? 'in_progress' : r.status].toLowerCase()}</option><option value="waiting">Waiting for the venture</option><option value="done">Done</option></select></div>
+            <button class="btn-primary" name="intent" value="reply">Reply to the venture</button>
+            <button class="btn-ghost" name="intent" value="note">Save as internal note</button>
+          </div>
+        </form>
+      )}
+    </div>
+
+    <aside class="grid content-start gap-6">
+      <form method="post" class="card grid gap-3 text-sm">
+        <fieldset disabled={!mayDo} class="contents">
+          <div><label class="label" for="status">State</label><select class="field" id="status" name="status">{Object.entries(TEAM_STATES).map(([k, l]) => <option value={k} selected={k === r!.status}>{l}</option>)}</select></div>
+          <div><label class="label" for="assignee_id">With</label><select class="field" id="assignee_id" name="assignee_id"><option value="">Nobody yet</option>{team.map((p) => <option value={p.id} selected={p.id === r!.assignee_id}>{p.name}</option>)}</select></div>
+          <div class="grid grid-cols-2 gap-3">
+            <div><label class="label" for="urgency">Urgency</label><select class="field" id="urgency" name="urgency">{Object.entries(URGENCY).map(([k, l]) => <option value={k} selected={k === r!.urgency}>{l}</option>)}</select></div>
+            <div><label class="label" for="kind">Kind</label><select class="field" id="kind" name="kind">{Object.entries(REQUEST_KINDS).map(([k, l]) => <option value={k} selected={k === r!.kind}>{l}</option>)}</select></div>
+          </div>
+          {mayDo && <button class="btn-ghost" name="intent" value="details">Save</button>}
+        </fieldset>
+      </form>
+      <section class="card grid gap-3 text-sm">
+        <div class="flex items-baseline justify-between gap-2"><h2 class="font-display text-lg font-bold">Lakeba AI's triage</h2><span class="text-xs text-white/40">Legal team only</span></div>
+        {t.summary ? (
+          <>
+            <p class="text-white/75">{t.summary}</p>
+            {t.flags?.length ? <ul class="grid gap-1">{t.flags.map((f) => <li class="text-lk-orange">• {f}</li>)}</ul> : null}
+            {t.missing?.length ? <div><p class="font-medium text-white">Still needed</p><ul class="mt-1 grid gap-1 text-white/65">{t.missing.map((m) => <li>• {m}</li>)}</ul></div> : null}
+            {t.related_contracts?.length ? <div><p class="font-medium text-white">Related contracts</p><ul class="mt-1 grid gap-1">{t.related_contracts.map((c) => <li><a class="text-lk-blue hover:underline" href={`/admin/legal/contracts/${c.id}`}>{c.title}</a></li>)}</ul></div> : null}
+            {t.first_view && <details open><summary class="cursor-pointer font-medium text-white">First view</summary><p class="mt-2 whitespace-pre-line text-white/70">{t.first_view}</p><p class="mt-2 text-xs text-white/40">A starting point, not advice: check it before relying on it.</p></details>}
+          </>
+        ) : <p class="text-white/55">Not triaged yet.</p>}
+        {mayDo && <form method="post" data-busy><button class="btn-ghost w-full" name="intent" value="triage" data-busy-label="Reading…">Read it again</button></form>}
+      </section>
+    </aside>
+  </div>
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLFormElement>('form[data-busy]').forEach((f) => f.addEventListener('submit', (e) => { const b = (e as SubmitEvent).submitter as HTMLButtonElement | null; if (b?.dataset.busyLabel) { b.textContent = b.dataset.busyLabel; setTimeout(() => (b.disabled = true)); } }));
+</script>
