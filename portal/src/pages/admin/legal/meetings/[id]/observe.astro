@@ -40,7 +40,14 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
     <meta name="theme-color" content="#050b16" />
     <ThemeInit />
     <title>Observer · {m.title}</title>
-  </head>
+    <style is:global>
+    .stage-only { display: none; }
+    #stage[data-full] { position: fixed; inset: 0; z-index: 60; background: #000; }
+    #stage[data-full] .stage-only { display: block; }
+    #stage[data-full] #face { width: 100vw; height: 100vh; max-width: none; aspect-ratio: auto; border-radius: 0; object-fit: contain; }
+    #stage[data-full] #orb { width: min(60vw, 60vh); height: min(60vw, 60vh); }
+  </style>
+</head>
   <body class="min-h-dvh">
     <main class="mx-auto flex min-h-dvh max-w-5xl flex-col gap-5 px-5 py-6" id="observer" data-state={JSON.stringify(state)}>
       <header class="flex flex-wrap items-center justify-between gap-3">
@@ -97,9 +104,20 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
               <p class="mt-3 text-lg text-white/45" id="interim"></p>
             </section>
             <aside class="card grid content-start gap-4 !p-5" id="lex">
-              <canvas id="orb" width="400" height="400" class="mx-auto size-52" aria-hidden="true"></canvas>
-              <video id="face" class="mx-auto hidden aspect-square w-full max-w-80 rounded-2xl bg-black object-cover" playsinline autoplay></video>
+              <!-- Lex's stage: the orb or the face; full screen on the tablet with captions (tap to ask). -->
+              <div id="stage" class="force-dark grid place-items-center">
+                <canvas id="orb" width="400" height="400" class="mx-auto size-52" aria-hidden="true"></canvas>
+                <video id="face" class="mx-auto hidden aspect-square w-full max-w-80 rounded-2xl bg-black object-cover" playsinline autoplay></video>
+                <p class="stage-only absolute top-5 left-6 text-base text-white/70" id="stage-state"></p>
+                <button type="button" class="stage-only absolute top-4 right-5 rounded-full bg-white/10 px-4 py-2 text-sm text-white/80" id="stage-exit">Exit full screen</button>
+                <div class="stage-only absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 to-transparent px-8 pt-16 pb-10 text-center">
+                  <p class="text-lg text-white/55" id="stage-q"></p>
+                  <p class="mx-auto mt-2 max-w-4xl text-3xl leading-snug text-white" id="stage-said"></p>
+                  <p class="mt-4 text-sm text-white/35">Say “Lex, …” or tap the screen to ask</p>
+                </div>
+              </div>
               <audio id="face-audio" autoplay hidden></audio>
+              <button type="button" class="btn-ghost !py-1.5 text-xs" id="stage-open">Full screen</button>
               {faces.length > 0 && (
                 <label class="flex items-center justify-center gap-2 text-xs text-white/45">Lex’s face while recording
                   <select class="field !w-auto !py-1 text-xs" id="face-pick"><option value="">Orb</option>{faces.map((f) => <option value={f.id} selected={f.id === defaultFace}>{f.name}</option>)}</select>
@@ -345,7 +363,7 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
       let outCtx: AudioContext | null = null, outLevel: AnalyserNode | null = null;
       const WAKE = /\b(?:hey\s+|ok(?:ay)?\s+)?(?:lex|lexx|lecks|lexi)\b[\s,.:!?-]*/i;
       const lexLabel: Record<LexState, string> = { idle: 'Say “Lex, …” or tap Ask while recording.', listening: 'Listening…', following: 'Any follow-up? Just ask, or say “thank you”.', thinking: 'Looking it up…', speaking: 'Lex is answering' };
-      const setLex = (s: LexState) => { lexState = s; const l = $('lex-state'); if (l) l.textContent = lexLabel[s]; const b = $<HTMLButtonElement>('lex-ask'); if (b) b.disabled = s === 'thinking' || s === 'speaking'; };
+      const setLex = (s: LexState) => { lexState = s; const l = $('lex-state'); if (l) l.textContent = lexLabel[s]; $('stage-state')!.textContent = s === 'idle' ? '' : lexLabel[s]; const b = $<HTMLButtonElement>('lex-ask'); if (b) b.disabled = s === 'thinking' || s === 'speaking'; };
       const offsetNow = () => (st.takes.length ? Date.now() - Date.parse(st.takes[0].started_at) : null);
 
       // Words heard while Lex is listening (after its name, or after Ask) make up the question. It is
@@ -545,12 +563,18 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
       };
       // The chosen face shows while recording (so its minutes are used only then); the orb otherwise.
       let faceKind = '';
+      // The orb or the face, never both: set by class and style, as the face's own kit may set the video's style.
+      const showing = (which: 'orb' | 'face') => {
+        const video = $<HTMLVideoElement>('face')!, orb = $('orb')!;
+        video.classList.toggle('hidden', which !== 'face'); video.style.display = which === 'face' ? '' : 'none';
+        orb.classList.toggle('hidden', which !== 'orb'); orb.style.display = which === 'orb' ? '' : 'none';
+      };
       const showFace = async (kind: string) => {
         if (kind === faceKind && (face || !kind)) return;
         const old = face; face = null; faceKind = kind;
         // The orb comes back at once; the old face closes behind it.
         hush();
-        const video = $<HTMLVideoElement>('face')!; video.classList.add('hidden'); $('orb')!.classList.remove('hidden');
+        const video = $<HTMLVideoElement>('face')!; showing('orb');
         await old?.stop().catch(() => undefined);
         video.srcObject = null;
         if (!kind) return;
@@ -558,7 +582,7 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
           const opened = await openFace(kind);
           if (faceKind !== kind) { await opened.stop().catch(() => undefined); return; }
           face = opened;
-          $('orb')!.classList.add('hidden'); $('face')!.classList.remove('hidden');
+          showing('face');
         } catch (err) { faceKind = ''; problem(`Lex’s face: ${(err as Error).message}`); }
       };
       const chosenFace = () => $<HTMLSelectElement>('face-pick')?.value ?? '';
@@ -567,11 +591,11 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
       const askLex = async (question: string, how: 'voice' | 'tap' | 'typed', at: number | null) => {
         setLex('thinking'); problem('');
         $('lex-answer')!.hidden = false; $('lex-more')!.hidden = true;
-        $('lex-question')!.textContent = `“${question}”`; $('lex-spoken')!.textContent = ''; $('lex-steps')!.innerHTML = ''; $('lex-detail')!.innerHTML = ''; $('lex-sources')!.innerHTML = '';
+        $('lex-question')!.textContent = `“${question}”`; $('lex-spoken')!.textContent = ''; $('stage-q')!.textContent = `“${question}”`; $('stage-said')!.textContent = ''; $('lex-steps')!.innerHTML = ''; $('lex-detail')!.innerHTML = ''; $('lex-sources')!.innerHTML = '';
         // Each sentence is said as it arrives; the whole spoken answer shows when it is done.
         let speaking: Promise<void> | null = null;
         const sayNext = (text: string) => {
-          const el = $('lex-spoken')!; el.textContent = `${el.textContent} ${text}`.trim();
+          const el = $('lex-spoken')!; el.textContent = `${el.textContent} ${text}`.trim(); $('stage-said')!.textContent = el.textContent;
           setLex('speaking');
           speaking = say(text).catch((e) => problem((e as Error).message));
         };
@@ -590,7 +614,7 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
               if (ev.say) sayNext(ev.say);
               if (ev.error) throw new Error(ev.error);
               if (ev.done) {
-                if (!speaking) sayNext(ev.done.spoken); else $('lex-spoken')!.textContent = ev.done.spoken;
+                if (!speaking) sayNext(ev.done.spoken); else $('lex-spoken')!.textContent = $('stage-said')!.textContent = ev.done.spoken;
                 lastSpoken = ev.done.spoken;
                 $('lex-detail')!.innerHTML = ev.done.html;
                 for (const s of ev.done.sources ?? []) { const li = document.createElement('li'); li.className = 'rounded-full bg-white/10 px-2 py-0.5 text-white/65'; li.textContent = `${s.ref} ${s.title}`; $('lex-sources')!.append(li); }
@@ -691,6 +715,27 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
         if (m && run.playing) { pauseDeck('answering'); return false; }
         return false;
       };
+
+      // Full screen: Lex alone on the tablet, with what it is saying; tapping the screen asks, like the Ask button.
+      const stage = $('stage')!;
+      // The card's blur would keep the full-screen stage inside the card: off while full screen.
+      const lexCard = $('lex')!;
+      const setFull = (on: boolean) => {
+        if (on) stage.dataset.full = ''; else delete stage.dataset.full;
+        lexCard.style.backdropFilter = on ? 'none' : '';
+        lexCard.style.setProperty('-webkit-backdrop-filter', on ? 'none' : '');
+      };
+      const leaveFull = () => { setFull(false); if (document.fullscreenElement) void document.exitFullscreen().catch(() => undefined); };
+      $('stage-open')?.addEventListener('click', async () => {
+        ensureOut();
+        setFull(true);
+        await document.documentElement.requestFullscreen?.().catch(() => undefined);
+        void $<HTMLVideoElement>('face')?.play().catch(() => undefined);
+      });
+      $('stage-exit')?.addEventListener('click', (e) => { e.stopPropagation(); leaveFull(); });
+      document.addEventListener('fullscreenchange', () => { if (!document.fullscreenElement) setFull(false); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && 'full' in stage.dataset) leaveFull(); });
+      stage.addEventListener('click', () => { if ('full' in stage.dataset) $<HTMLButtonElement>('lex-ask')?.click(); });
 
       // The orb: breathes when idle, follows the room when listening, shimmers while thinking, moves with Lex's voice.
       const orb = $<HTMLCanvasElement>('orb');
