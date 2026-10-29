@@ -1,0 +1,142 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import BoardAskNav from '../../../components/BoardAskNav.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { shortDate } from '../../../lib/format';
+import { addLawSource, embedLaw, LAW_KINDS, lawPending, rereadLawSource, type LawKind } from '../../../lib/law-library';
+
+// Admin → Board Ask → Law library: the Acts, regulations, ASIC guides and
+// accounting standards Board Ask reads first, before the web. For people with
+// Board Ask "do".
+if (!Astro.locals.access.canAny('boardask.do')) return new Response('Forbidden', { status: 403 });
+const svc = serviceClient();
+let error = '';
+let ok = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (intent === 'add') {
+      const kind = field(form, 'kind') as LawKind;
+      if (!(kind in LAW_KINDS)) throw new Error('Choose what it is.');
+      const title = field(form, 'title');
+      if (title.length < 3) throw new Error('Give it a title.');
+      const url = field(form, 'url');
+      if (url && !/^https:\/\//.test(url)) throw new Error('The official address starts with https://.');
+      const r = await addLawSource(svc, form.get('file') as File, { title: title.slice(0, 300), citation: field(form, 'citation').slice(0, 300), kind, version_note: field(form, 'version_note').slice(0, 300), url: url.slice(0, 500) }, Astro.locals.user!.id);
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_added_law_source', event_detail: { title, chunks: r.chunks } });
+      ok = `Added “${title}”: ${r.chunks.toLocaleString('en-AU')} passages. Board Ask can find them by their words now and by meaning once they are indexed below.`;
+    } else if (intent === 'remove') {
+      const id = field(form, 'id');
+      const { data: s } = await svc.from('law_sources').select('title, file_path').eq('id', id).maybeSingle();
+      if (s) {
+        if (s.file_path) await svc.storage.from('legal').remove([s.file_path]);
+        await svc.from('law_sources').delete().eq('id', id).throwOnError();
+        await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_removed_law_source', event_detail: { title: s.title } });
+        ok = `Removed “${s.title}”.`;
+      }
+    } else if (intent === 'edit') {
+      const id = field(form, 'id');
+      const kind = field(form, 'kind') as LawKind;
+      const title = field(form, 'title');
+      const url = field(form, 'url');
+      if (title.length < 3 || !(kind in LAW_KINDS)) throw new Error('Give it a title and say what it is.');
+      if (url && !/^https:\/\//.test(url)) throw new Error('The official address starts with https://.');
+      await svc.from('law_sources').update({ title: title.slice(0, 300), kind, citation: field(form, 'citation').slice(0, 300), version_note: field(form, 'version_note').slice(0, 300), url: url.slice(0, 500) }).eq('id', id).throwOnError();
+      ok = 'Saved.';
+    } else if (intent === 'reread') {
+      const n = await rereadLawSource(svc, field(form, 'id'));
+      ok = `Read again: ${n.toLocaleString('en-AU')} passages.`;
+    } else if (intent === 'index') {
+      void embedLaw(svc).catch((e) => console.error('law library embedding', e));
+      ok = 'Indexing has started. It runs on this server and can take a few minutes for a whole Act.';
+    }
+  } catch (e) { error = (e as Error).message; }
+}
+
+const { data: sources } = await svc.from('law_sources').select('id, title, citation, kind, version_note, url, file_name, status, error, chunk_count, created_at').order('kind').order('title');
+const pending = await lawPending(svc);
+const editing = (sources ?? []).find((x) => x.id === Astro.url.searchParams.get('edit'));
+const suggestions = [
+  { title: 'Corporations Act 2001 (Cth)', kind: 'act', url: 'https://www.legislation.gov.au/C2004A00818/latest/text', note: 'Several volumes: upload each volume’s PDF or Word file.' },
+  { title: 'Corporations Regulations 2001', kind: 'regulation', url: 'https://www.legislation.gov.au/F2001B00209/latest/text', note: '' },
+  { title: 'ASIC regulatory guides (e.g. RG 217 duty to prevent insolvent trading)', kind: 'guide', url: 'https://asic.gov.au/regulatory-resources/find-a-document/regulatory-guides/', note: 'The guides boards ask about most.' },
+  { title: 'Australian Accounting Standards (AASB 10, 15, 16, 101, 1060 …)', kind: 'standard', url: 'https://www.aasb.gov.au/pronouncements/accounting-standards/', note: 'The compiled versions.' },
+];
+---
+
+<Admin title="Board Ask · Law library">
+  <PageHeader title="Board Ask" subtitle="The law Board Ask reads first: it cites the section, and only searches official websites when the library doesn’t have it." />
+  <BoardAskNav />
+  {error && <Alert tone="error">{error}</Alert>}
+  {ok && <Alert tone="success">{ok}</Alert>}
+  <div class="grid gap-6 lg:grid-cols-[1fr_22rem]">
+    <section class="card overflow-x-auto p-0">
+      <h2 class="px-5 pt-5 font-display text-lg font-bold">In the library</h2>
+      {pending > 0 && (
+        <form method="post" class="mx-5 mt-2 flex flex-wrap items-center gap-3 text-sm text-white/55">
+          <span>{pending.toLocaleString('en-AU')} passages still to index for searching by meaning.</span>
+          <button class="btn-ghost !py-1.5 text-xs" name="intent" value="index">Index now</button>
+        </form>
+      )}
+      {sources?.length ? (
+        <table class="mt-3 w-full text-sm">
+          <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-2 text-left">Title</th><th class="px-5 py-2 text-left">What</th><th class="px-5 py-2 text-right">Passages</th><th class="px-5 py-2 text-left">Added</th><th></th></tr></thead>
+          <tbody class="divide-y divide-white/5">
+            {sources.map((s) => (
+              <tr>
+                <td class="px-5 py-2.5"><a class="text-white hover:underline" href={`/admin/board-ask/law/${s.id}`}>{s.title}</a>{s.citation && <span class="block text-xs text-white/45">{s.citation}</span>}{s.version_note && <span class="block text-xs text-white/45">{s.version_note}</span>}{s.url && <a class="block text-xs text-lk-blue hover:underline" href={s.url} target="_blank" rel="noopener noreferrer">Official text</a>}{s.status === 'failed' && <span class="block text-xs text-lk-orange">{s.error}</span>}</td>
+                <td class="px-5 py-2.5 text-white/60">{LAW_KINDS[s.kind as LawKind]}</td>
+                <td class="px-5 py-2.5 text-right tabular-nums text-white/60">{s.status === 'ready' ? s.chunk_count.toLocaleString('en-AU') : s.status === 'reading' ? 'Reading…' : 'Failed'}</td>
+                <td class="px-5 py-2.5 text-white/50">{shortDate.format(new Date(s.created_at))}</td>
+                <td class="px-5 py-2.5 text-right">
+                  <a class="block text-xs text-white/45 hover:text-white" href={`/admin/board-ask/library?edit=${s.id}#edit`}>Change</a>
+                  <form method="post"><input type="hidden" name="id" value={s.id} /><button class="text-xs text-white/45 hover:text-white" name="intent" value="reread">Read again</button></form>
+                  <form method="post" onsubmit="return confirm('Remove this from the law library?')"><input type="hidden" name="id" value={s.id} /><button class="text-xs text-white/45 hover:text-lk-orange" name="intent" value="remove">Remove</button></form>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">Nothing yet. Until something is added, Board Ask answers law questions from the official websites only.</p>}
+      <div class="border-t border-white/5 px-5 py-4">
+        <h3 class="text-sm font-semibold text-white">Worth adding</h3>
+        <ul class="mt-2 grid gap-1.5 text-sm text-white/60">{suggestions.map((g) => <li><a class="text-lk-blue hover:underline" href={g.url} target="_blank" rel="noopener noreferrer">{g.title}</a>{g.note && ` — ${g.note}`}</li>)}</ul>
+        <p class="mt-2 text-xs text-white/40">Download the current compilation from the official site, then upload it here. When a new compilation comes out, add it and remove the old one.</p>
+      </div>
+    </section>
+
+    {editing ? (
+    <form method="post" class="card grid content-start gap-3" id="edit">
+      <h2 class="font-display text-lg font-bold">Change the details</h2>
+      <input type="hidden" name="id" value={editing.id} />
+      <div><label class="label" for="e-title">Title</label><input class="field" id="e-title" name="title" required maxlength="300" value={editing.title} /></div>
+      <div><label class="label" for="e-kind">What it is</label><select class="field" id="e-kind" name="kind">{Object.entries(LAW_KINDS).map(([k, l]) => <option value={k} selected={editing.kind === k}>{l}</option>)}</select></div>
+      <div><label class="label" for="e-citation">How it is cited</label><input class="field" id="e-citation" name="citation" maxlength="300" value={editing.citation} /></div>
+      <div><label class="label" for="e-version">Version</label><input class="field" id="e-version" name="version_note" maxlength="300" value={editing.version_note} placeholder="Compilation No. 128, in force 1 July 2026" /></div>
+      <div><label class="label" for="e-url">Official address</label><input class="field" id="e-url" name="url" type="url" maxlength="500" value={editing.url} /></div>
+      <div class="flex gap-3"><button class="btn-primary" name="intent" value="edit">Save</button><a class="btn-ghost" href="/admin/board-ask/library">Cancel</a></div>
+    </form>
+    ) : (
+    <form method="post" enctype="multipart/form-data" class="card grid content-start gap-3" data-busy>
+      <h2 class="font-display text-lg font-bold">Add</h2>
+      <div><label class="label" for="title">Title</label><input class="field" id="title" name="title" required maxlength="300" placeholder="Corporations Act 2001, Volume 1" /></div>
+      <div><label class="label" for="kind">What it is</label><select class="field" id="kind" name="kind">{Object.entries(LAW_KINDS).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
+      <div><label class="label" for="citation">How it is cited (optional)</label><input class="field" id="citation" name="citation" maxlength="300" placeholder="Corporations Act 2001 (Cth)" /></div>
+      <div><label class="label" for="version_note">Version (optional)</label><input class="field" id="version_note" name="version_note" maxlength="300" placeholder="Compilation No. 128, in force 1 July 2026" /></div>
+      <div><label class="label" for="url">Official address (optional)</label><input class="field" id="url" name="url" type="url" maxlength="500" placeholder="https://www.legislation.gov.au/…" /></div>
+      <div><label class="label" for="file">File</label><input class="field" id="file" name="file" type="file" required accept=".pdf,.docx,.txt,.md,.html,.htm" /><p class="mt-1 text-xs text-white/40">PDF, Word, text or HTML, up to 60 MB.</p></div>
+      <button class="btn-primary" name="intent" value="add" data-busy-label="Reading…">Add to the library</button>
+      <p class="text-xs text-white/40">Give the version (the compilation number and date on the first page), so Board Ask can tell when it may be out of date.</p>
+    </form>
+    )}
+  </div>
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLFormElement>('form[data-busy]').forEach((f) => f.addEventListener('submit', (e) => { const b = (e as SubmitEvent).submitter as HTMLButtonElement | null; if (b?.dataset.busyLabel) { b.textContent = b.dataset.busyLabel; setTimeout(() => (b.disabled = true)); } }));
+</script>

@@ -23,6 +23,9 @@ const LABELS: Record<string, string> = {
   admin_created_role: 'Created a role', admin_deleted_role: 'Deleted a role', admin_invited_user: 'Invited someone', admin_added_investor: 'Added an investor (not invited yet)', admin_deleted_user: 'Deleted an account', admin_deleted_meeting: 'Deleted a meeting',
   admin_reset_mfa: 'Reset someone’s two-step sign-in', admin_exported_investor_data: 'Downloaded the investor data workbook',
   admin_checked_import: 'Checked an import file', admin_applied_import: 'Applied an import',
+  admin_asked_board_ask: 'Asked Board Ask', admin_rated_board_ask: 'Rated a Board Ask answer', admin_deleted_board_ask_conversation: 'Deleted a Board Ask conversation',
+  admin_added_law_source: 'Added to the law library', admin_removed_law_source: 'Removed from the law library',
+  admin_saved_board_ask_test: 'Saved a Board Ask test', admin_deleted_board_ask_test: 'Deleted a Board Ask test', admin_ran_board_ask_tests: 'Ran the Board Ask tests',
 };
 const WORDS: Record<string, string> = { mfa: 'two-step sign-in', qa: 'Q&A', ai: 'AI', kb: 'Ask knowledge', agm: 'meeting', pdf: 'PDF', csv: 'CSV', nda: 'terms', ask: 'Ask', linkedin: 'LinkedIn' };
 

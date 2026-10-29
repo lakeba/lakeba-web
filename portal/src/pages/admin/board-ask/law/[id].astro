@@ -1,0 +1,36 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import BoardAskNav from '../../../../components/BoardAskNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { LAW_KINDS, type LawKind } from '../../../../lib/law-library';
+
+// A law library source as Board Ask read it, opened at the passage an answer cites (?part=).
+const svc = serviceClient();
+const { data: source } = await svc.from('law_sources').select('id, title, citation, kind, version_note, url, chunk_count').eq('id', Astro.params.id!).maybeSingle();
+if (!source) return new Response('Not found', { status: 404 });
+const at = Math.max(0, Math.min(source.chunk_count - 1, Number(Astro.url.searchParams.get('part') ?? 0) || 0));
+const from = Math.max(0, at - 2);
+const { data: chunks } = await svc.from('law_chunks').select('chunk_index, heading, page, content').eq('source_id', source.id).gte('chunk_index', from).lt('chunk_index', from + 16).order('chunk_index');
+const link = (n: number) => `/admin/board-ask/law/${source.id}?part=${Math.max(0, Math.min(source.chunk_count - 1, n))}#p-${Math.max(0, n)}`;
+---
+
+<Admin title={`Board Ask · ${source.title}`}>
+  <PageHeader title={source.title} subtitle={[LAW_KINDS[source.kind as LawKind], source.citation, source.version_note].filter(Boolean).join(' · ')} />
+  <BoardAskNav />
+  <div class="max-w-3xl">
+    <p class="mb-4 text-sm text-white/55">The text as Board Ask reads it, passage {at + 1} of {source.chunk_count.toLocaleString('en-AU')}.{source.url && <> Rely on the <a class="text-lk-blue hover:underline" href={source.url} target="_blank" rel="noopener noreferrer">official text</a>.</>}</p>
+    <div class="grid gap-3">
+      {(chunks ?? []).map((c) => (
+        <section id={`p-${c.chunk_index}`} class:list={['card !p-5', c.chunk_index === at && 'ring-1 ring-lk-blue/60']}>
+          <p class="text-xs text-white/45">{c.heading || 'No heading'}{c.page ? ` · page ${c.page}` : ''}</p>
+          <p class="mt-2 whitespace-pre-line text-sm leading-relaxed text-white/80">{c.content}</p>
+        </section>
+      ))}
+    </div>
+    <div class="mt-4 flex justify-between text-sm">
+      {from > 0 ? <a class="btn-ghost !py-2" href={link(from - 14)}>Earlier</a> : <span></span>}
+      {from + 16 < source.chunk_count && <a class="btn-ghost !py-2" href={link(from + 18)}>Later</a>}
+    </div>
+  </div>
+</Admin>

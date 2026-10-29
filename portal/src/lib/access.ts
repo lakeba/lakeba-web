@@ -80,6 +80,8 @@ export function adminMayRequest(a: Access, path: string, writing: boolean, actio
   // Integrations: the list for any company Admin (each company's page checks its own Admins).
   if (under(path, '/admin/integrations')) return !writing && a.roles.some((r) => r.role_key === 'admin');
   // Import data: the whole platform for group Admins; one company's workbook for whoever manages a company's register (lib/import-scope.ts).
+  // Board Ask: asking (and rating answers) needs only "see"; the law library, tests and review need "do".
+  if (under(path, '/admin/board-ask') && !['library', 'tests', 'review'].some((p) => under(path, `/admin/board-ask/${p}`))) return a.canAny('boardask.view');
   if (under(path, '/admin/import')) return a.canAny('investors.do');
   if (path.startsWith('/admin/investors/')) return !writing && a.can('investors.view', null);
   // Approvals: for anyone who prepares or approves something; each item checks its own area.

@@ -1,0 +1,16 @@
+---
+// Tabs across Admin → Board Ask. The law library and tests are for "do"; the review of everyone's questions for group Admins.
+const path = Astro.url.pathname;
+const a = Astro.locals.access;
+const tabs = [
+  { href: '/admin/board-ask', label: 'Ask', on: path === '/admin/board-ask' || path.startsWith('/admin/board-ask/law'), show: true },
+  { href: '/admin/board-ask/library', label: 'Law library', on: path.startsWith('/admin/board-ask/library'), show: a.canAny('boardask.do') },
+  { href: '/admin/board-ask/tests', label: 'Tests', on: path.startsWith('/admin/board-ask/tests'), show: a.canAny('boardask.do') },
+  { href: '/admin/board-ask/review', label: 'Questions asked', on: path.startsWith('/admin/board-ask/review'), show: a.groupAdmin },
+].filter((t) => t.show);
+---
+{tabs.length > 1 && (
+  <nav class="mb-6 flex flex-wrap gap-1 border-b border-white/10 text-sm" aria-label="Board Ask">
+    {tabs.map((t) => <a href={t.href} aria-current={t.on ? 'page' : undefined} class:list={['-mb-px border-b-2 px-3 py-2', t.on ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{t.label}</a>)}
+  </nav>
+)}

@@ -4,7 +4,8 @@ export type Chunk = { page: number; content: string };
 
 /** Splits a PDF's text into ~1,200-character passages, keeping page numbers for citations. */
 export async function pdfChunks(bytes: Uint8Array, size = 1200): Promise<Chunk[]> {
-  const pdf = await getDocumentProxy(bytes);
+  // A copy: pdf.js takes over the bytes it is given, and callers may still need them.
+  const pdf = await getDocumentProxy(bytes.slice());
   const { text } = await extractText(pdf, { mergePages: false });
   return pageChunks(text, size);
 }

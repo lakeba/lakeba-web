@@ -36,7 +36,7 @@ export async function loadRetrieval(svc: Svc): Promise<RetrievalSettings> {
 // --- Embeddings --------------------------------------------------------------
 const MODEL = 'Xenova/bge-small-en-v1.5';
 // bge models expect this prefix on queries (not on passages).
-const QUERY_PREFIX = 'Represent this sentence for searching relevant passages: ';
+export const QUERY_PREFIX = 'Represent this sentence for searching relevant passages: ';
 type Extractor = (texts: string[], opts: { pooling: 'cls'; normalize: boolean }) => Promise<{ tolist(): number[][] }>;
 let extractor: Promise<Extractor> | null = null;
 
@@ -56,7 +56,7 @@ export async function embed(texts: string[]): Promise<number[][]> {
   for (let i = 0; i < texts.length; i += 32) out.push(...(await model(texts.slice(i, i + 32), { pooling: 'cls', normalize: true })).tolist());
   return out;
 }
-const asVector = (v: number[]) => `[${v.map((x) => x.toFixed(6)).join(',')}]`;
+export const asVector = (v: number[]) => `[${v.map((x) => x.toFixed(6)).join(',')}]`;
 
 // --- Index ---------------------------------------------------------------------
 const NEWS_CHUNK = 1200;

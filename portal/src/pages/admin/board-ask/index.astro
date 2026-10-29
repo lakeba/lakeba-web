@@ -1,0 +1,191 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import BoardAskNav from '../../../components/BoardAskNav.astro';
+import { serviceClient } from '../../../lib/admin';
+import { askEnabled } from '../../../lib/ask';
+import { field } from '../../../lib/forms';
+import { dateTime } from '../../../lib/format';
+import { answerHtml, boardScope, type Source, type Step } from '../../../lib/board-ask';
+
+// Admin → Board Ask: directors ask about the companies, their figures and
+// records, and the law; Lakeba AI answers with a source for every fact. Each
+// person sees their own conversations.
+const svc = serviceClient();
+const userId = Astro.locals.user!.id;
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const id = field(form, 'id');
+  if (intent === 'rate' && /^[0-9a-f-]{36}$/.test(id)) {
+    const rating = field(form, 'rating');
+    await svc.from('board_ask_messages').update({ rating: ['good', 'wrong'].includes(rating) ? rating : null, feedback: field(form, 'feedback').slice(0, 2000) }).eq('id', id).eq('user_id', userId);
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_rated_board_ask', event_detail: { message_id: id, rating } });
+    const { data: m } = await svc.from('board_ask_messages').select('conversation_id').eq('id', id).eq('user_id', userId).maybeSingle();
+    return Astro.redirect(`/admin/board-ask?c=${m?.conversation_id ?? ''}#m-${id}`);
+  }
+  if (intent === 'delete' && /^[0-9a-f-]{36}$/.test(id)) {
+    await svc.from('board_ask_conversations').delete().eq('id', id).eq('user_id', userId);
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_deleted_board_ask_conversation', event_detail: { conversation_id: id } });
+    return Astro.redirect('/admin/board-ask');
+  }
+  error = 'Unknown request.';
+}
+
+const scope = await boardScope(svc, Astro.locals.access);
+const { data: conversations } = await svc.from('board_ask_conversations').select('id, title, updated_at').eq('user_id', userId).order('updated_at', { ascending: false }).limit(40);
+const asked = Astro.url.searchParams.get('c');
+const current = (conversations ?? []).find((c) => c.id === asked) ?? null;
+const { data: rows } = current ? await svc.from('board_ask_messages').select('id, question, answer, sources, steps, status, error, cost_usd, rating, feedback, created_at').eq('conversation_id', current.id).order('created_at') : { data: [] };
+const messages = (rows ?? []) as { id: string; question: string; answer: string; sources: Source[]; steps: Step[]; status: string; error: string | null; cost_usd: number; rating: string | null; feedback: string; created_at: string }[];
+const examples = [
+  'What do our directors need to watch for if a company may be trading while insolvent?',
+  scope.all ? 'How did the group do in the latest period, after what the companies charge each other?' : `How did ${scope.companies[0]?.display_name ?? 'the company'} do in the latest period?`,
+  'Which legal deadlines are due in the next 60 days?',
+  'Which contracts have a change-of-control clause, and what does each say?',
+];
+const sourceIcon: Record<string, string> = { law: '§', web: '↗', document: '▤', paper: '✎', meeting: '◷', contract: '⚖', pack: '$', group: '$', xero: '$', register: '#', records: '▣', deadlines: '◷', people: '◉', shareholders: '✉' };
+---
+
+<Admin title="Board Ask">
+  <PageHeader title="Board Ask" subtitle="Ask about the companies, their figures, records and contracts, and the law that applies. Every answer shows where it comes from." />
+  <BoardAskNav />
+  {!askEnabled && <Alert tone="info">Lakeba AI isn’t configured on this server (no Lakeba AI key), so Board Ask can’t answer yet.</Alert>}
+  {error && <Alert tone="error">{error}</Alert>}
+  <div class="grid gap-6 lg:grid-cols-[16rem_1fr]">
+    <aside class="order-2 lg:order-1">
+      <a class="btn-ghost mb-3 w-full justify-center !py-2 text-sm" href="/admin/board-ask">New conversation</a>
+      <ul class="grid gap-1 text-sm">
+        {(conversations ?? []).map((c) => (
+          <li><a href={`/admin/board-ask?c=${c.id}`} aria-current={c.id === current?.id ? 'page' : undefined} class:list={['block truncate rounded-lg px-3 py-2', c.id === current?.id ? 'bg-white/10 text-white' : 'text-white/60 hover:bg-white/5 hover:text-white']} title={c.title}>{c.title || 'Conversation'}<span class="block text-xs text-white/35">{dateTime.format(new Date(c.updated_at))}</span></a></li>
+        ))}
+      </ul>
+      <p class="mt-4 text-xs leading-relaxed text-white/40">Answers use {scope.all ? 'every company in the group' : scope.companies.map((c) => c.display_name).join(', ')}, the law library and official Australian websites. Lakeba AI explains what the records and the law say; it doesn’t give legal or financial advice. Your questions are kept so Lakeba’s admins can check the answers.</p>
+    </aside>
+
+    <section class="order-1 grid content-start gap-4 lg:order-2" id="thread">
+      {messages.map((m) => (
+        <article class="grid gap-3" id={`m-${m.id}`}>
+          <p class="ml-auto max-w-[85%] whitespace-pre-line rounded-2xl rounded-br-sm bg-lk-blue/20 px-4 py-2.5 text-sm text-white">{m.question}</p>
+          <div class="card !p-5">
+            {m.status === 'done' ? (
+              <div class="whitespace-pre-line text-sm leading-relaxed text-white/85" set:html={answerHtml(m.answer, m.sources)} />
+            ) : m.status === 'answering' ? <p class="text-sm text-white/50">Still answering, or the page was closed while it was. Ask again if nothing appears.</p>
+              : <p class="text-sm text-lk-orange">{m.error ?? 'No answer.'}</p>}
+            {m.sources.length > 0 && (
+              <ul class="mt-4 flex flex-wrap gap-2 text-xs">
+                {m.sources.map((s) => (
+                  <li>{s.href
+                    ? <a class="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-white/70 hover:text-white" href={s.href} target={s.kind === 'web' ? '_blank' : undefined} rel={s.kind === 'web' ? 'noopener noreferrer' : undefined}><span class="text-lk-blue">{s.ref}</span> {sourceIcon[s.kind] ?? ''} {s.title}{s.company && ` · ${s.company}`}</a>
+                    : <span class="inline-flex items-center gap-1 rounded-full bg-white/10 px-2.5 py-1 text-white/70"><span class="text-lk-blue">{s.ref}</span> {sourceIcon[s.kind] ?? ''} {s.title}{s.company && ` · ${s.company}`}</span>}</li>
+                ))}
+              </ul>
+            )}
+            <div class="mt-4 flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-white/5 pt-3 text-xs text-white/40">
+              <span>{dateTime.format(new Date(m.created_at))}</span>
+              {m.steps.length > 0 && (
+                <details>
+                  <summary class="cursor-pointer hover:text-white/70">What it looked at ({m.steps.length})</summary>
+                  <ol class="mt-2 list-decimal pl-5 text-white/50">{m.steps.map((s) => <li>{s.label}</li>)}</ol>
+                </details>
+              )}
+              {m.status === 'done' && (
+                <form method="post" class="ml-auto flex flex-wrap items-center gap-2">
+                  <input type="hidden" name="intent" value="rate" /><input type="hidden" name="id" value={m.id} />
+                  {m.rating === 'wrong' || m.feedback ? <input class="field !w-56 !py-1 text-xs" name="feedback" value={m.feedback} placeholder="What was wrong?" maxlength="2000" /> : null}
+                  <button class:list={['rounded-full px-2.5 py-1', m.rating === 'good' ? 'bg-lk-green/20 text-lk-green' : 'bg-white/5 hover:text-white']} name="rating" value={m.rating === 'good' ? '' : 'good'}>Helpful</button>
+                  <button class:list={['rounded-full px-2.5 py-1', m.rating === 'wrong' ? 'bg-lk-orange/20 text-lk-orange' : 'bg-white/5 hover:text-white']} name="rating" value="wrong">{m.rating === 'wrong' ? 'Save note' : 'Something’s wrong'}</button>
+                </form>
+              )}
+            </div>
+          </div>
+        </article>
+      ))}
+
+      {!messages.length && (
+        <div class="card !p-5">
+          <p class="text-sm text-white/60">For example:</p>
+          <ul class="mt-3 grid gap-2 sm:grid-cols-2">{examples.map((e) => <li><button type="button" data-example class="w-full rounded-xl bg-white/5 px-3 py-2.5 text-left text-sm text-white/75 hover:bg-white/10 hover:text-white">{e}</button></li>)}</ul>
+        </div>
+      )}
+
+      <form id="ask" class="card grid gap-3 !p-4" data-conversation={current?.id ?? ''}>
+        <label class="sr-only" for="question">{current ? 'Ask a follow-up' : 'Ask'}</label>
+        <textarea class="field min-h-20" id="question" name="question" required maxlength="4000" placeholder={current ? 'Ask a follow-up…' : 'Ask about the companies or the law…'} disabled={!askEnabled}></textarea>
+        <div class="flex flex-wrap items-center gap-3">
+          <button class="btn-primary" id="send" disabled={!askEnabled}>Ask</button>
+          <button type="button" class="btn-ghost hidden" id="stop">Stop</button>
+          <span class="text-xs text-white/40">Thorough answers take a minute or so. Enter sends; Shift+Enter for a new line.</span>
+        </div>
+      </form>
+    </section>
+  </div>
+</Admin>
+
+<script>
+  const form = document.getElementById('ask') as HTMLFormElement;
+  const box = document.getElementById('question') as HTMLTextAreaElement;
+  const send = document.getElementById('send') as HTMLButtonElement;
+  const stopBtn = document.getElementById('stop') as HTMLButtonElement;
+  const thread = document.getElementById('thread')!;
+  document.querySelectorAll<HTMLButtonElement>('[data-example]').forEach((b) => b.addEventListener('click', () => { box.value = b.textContent ?? ''; box.focus(); }));
+  box?.addEventListener('keydown', (e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); form.requestSubmit(); } });
+
+  const el = (tag: string, cls: string, text = '') => { const n = document.createElement(tag); n.className = cls; n.textContent = text; return n; };
+
+  form?.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const question = box.value.trim();
+    if (question.length < 3) return;
+    const article = el('article', 'grid gap-3');
+    article.append(el('p', 'ml-auto max-w-[85%] whitespace-pre-line rounded-2xl rounded-br-sm bg-lk-blue/20 px-4 py-2.5 text-sm text-white', question));
+    const card = el('div', 'card !p-5');
+    const steps = el('ol', 'grid gap-1 text-xs text-white/45');
+    const status = el('p', 'text-sm text-white/50', 'Reading the question…');
+    const answer = el('div', 'mt-3 whitespace-pre-line text-sm leading-relaxed text-white/85');
+    card.append(status, steps, answer);
+    article.append(card);
+    thread.insertBefore(article, form);
+    article.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    box.value = ''; send.disabled = true; stopBtn.classList.remove('hidden');
+
+    const ctl = new AbortController();
+    stopBtn.onclick = () => ctl.abort();
+    let conversation = form.dataset.conversation || '';
+    let message = '';
+    let finished = false;
+    try {
+      const res = await fetch('/admin/board-ask/ask', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, conversation }), signal: ctl.signal });
+      if (!res.ok || !res.body) { const j = await res.json().catch(() => ({})); throw new Error(j.error ?? 'Board Ask couldn’t answer.'); }
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        let i;
+        while ((i = buf.indexOf('\n\n')) >= 0) {
+          const line = buf.slice(0, i).replace(/^data: /, '');
+          buf = buf.slice(i + 2);
+          const ev = JSON.parse(line);
+          if (ev.conversation) { conversation = ev.conversation; message = ev.message; form.dataset.conversation = conversation; history.replaceState(null, '', `/admin/board-ask?c=${conversation}`); }
+          if (ev.step) { status.textContent = 'Looking things up…'; steps.append(el('li', '', `· ${ev.step}`)); }
+          if (ev.reset) answer.textContent = '';
+          if (ev.text) { status.textContent = 'Writing the answer…'; answer.textContent += ev.text; }
+          if (ev.error) { status.textContent = ev.error; status.className = 'text-sm text-lk-orange'; }
+          if (ev.done) { finished = true; answer.innerHTML = ev.done.html; status.remove(); }
+        }
+      }
+      if (finished) { history.replaceState(null, '', `/admin/board-ask?c=${conversation}#m-${message}`); location.reload(); }
+    } catch (err) {
+      status.textContent = (err as Error).name === 'AbortError' ? 'Stopped.' : (err as Error).message;
+      status.className = 'text-sm text-lk-orange';
+    } finally {
+      send.disabled = false; stopBtn.classList.add('hidden');
+    }
+  });
+</script>

@@ -27,7 +27,7 @@ const MAX_CHARS = 80_000;
 export async function readExtract(svc: Svc, company: LegalCompany, file: { name: string; bytes: Uint8Array; path: string }, userId: string) {
   if (!claude) throw new Error('Lakeba AI is not configured (no Lakeba AI key).');
   let text = '';
-  try { text = (await extractText(await getDocumentProxy(file.bytes), { mergePages: true })).text as string; } catch { /* not a readable PDF: sent as it is */ }
+  try { text = (await extractText(await getDocumentProxy(file.bytes.slice()), { mergePages: true })).text as string; } catch { /* not a readable PDF: sent as it is */ }
   const scanned = text.replace(/\s/g, '').length < 200;
   const content: unknown[] = [];
   if (scanned) content.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: Buffer.from(file.bytes).toString('base64') } });
