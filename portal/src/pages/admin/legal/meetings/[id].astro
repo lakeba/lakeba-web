@@ -364,7 +364,7 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
     {meeting.recording_takes.some((t) => t.path) && !meeting.audio_deleted_at && (
       <div class="grid gap-2">
         {meeting.recording_takes.filter((t) => t.path).map((t) => (
-          <div class="flex flex-wrap items-center gap-3 text-sm"><span class="text-white/55">Part {t.take}</span><audio controls preload="none" src={`/admin/legal/file?path=${encodeURIComponent(t.path!)}`} class="h-9"></audio></div>
+          <div class="flex flex-wrap items-center gap-3 text-sm"><span class="text-white/55">Part {t.take}</span><audio controls preload="none" data-recording src={`/admin/legal/file?path=${encodeURIComponent(t.path!)}`} class="h-9"></audio></div>
         ))}
       </div>
     )}
@@ -427,6 +427,17 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
   </section>
   </>}
   <script>
+    // A recording kept without its length (made before the portal added it): the player works it out by
+    // jumping to the end once, so it shows the time and can skip.
+    for (const a of document.querySelectorAll<HTMLAudioElement>('audio[data-recording]')) {
+      a.addEventListener('loadedmetadata', () => {
+        if (a.duration !== Infinity) return;
+        const playing = !a.paused;
+        const back = () => { a.removeEventListener('timeupdate', back); a.currentTime = 0; if (playing) void a.play(); };
+        a.addEventListener('timeupdate', back);
+        a.currentTime = 1e101;
+      });
+    }
     // While Lex is on its way to (or in) an online meeting, the page follows its status.
     if (document.getElementById('online')?.dataset.live) window.setInterval(() => { if (!document.activeElement?.matches('input, textarea, select')) location.reload(); }, 15_000);
   </script>

@@ -3,6 +3,7 @@ import type { serviceClient } from './admin';
 import { mayMeeting } from './boardroom';
 import type { Attendee, Meeting } from './legal-board';
 import { correct, correctionsOf, termOf } from './heard-as';
+import { playable } from './playable';
 import { PROVIDERS, transcribeRecording, type Provider, type Segment } from './transcription';
 
 // The Observer (Admin → Legal → a meeting → Record): a tablet at the board
@@ -68,8 +69,9 @@ async function assembleTake(svc: Svc, m: RecordingMeeting, t: Take): Promise<Tak
     const { data } = await svc.storage.from('legal').download(`${folder}/${n}`);
     if (data) parts.push(Buffer.from(await data.arrayBuffer()));
   }
-  const file = Buffer.concat(parts);
   const ext = t.mime.includes('mp4') ? 'm4a' : t.mime.includes('ogg') ? 'ogg' : 'webm';
+  // With its length and seek index, so the meeting page's player shows the time and can skip.
+  const file = await playable(Buffer.concat(parts), ext);
   const path = `${audioFolder(m)}/take-${t.take}.${ext}`;
   const { error } = await svc.storage.from('legal').upload(path, file, { contentType: t.mime || 'audio/webm', upsert: true });
   if (error) throw new Error(`The recording could not be stored (${error.message}).`);
