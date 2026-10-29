@@ -37,7 +37,7 @@ const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at
 ---
 
 <Auth title="Lakeba portal API" page>
-  <PageHeader eyebrow="Developers" title="Lakeba portal API" subtitle="For a company’s other tools: its register, investors, documents, news, meetings, Board Q&A, data rooms and newsletter." />
+  <PageHeader eyebrow="Developers" title="Lakeba portal API" subtitle="For a company’s other tools: its register, investors, documents, news, meetings, Board Q&A, data rooms, newsletter, legal records and deadlines, reporting packs, board meetings and HR." />
 
   <div class="grid gap-8 lg:grid-cols-[14rem_1fr]">
     {/* The sections, like the document categories; the one being read is highlighted. */}
@@ -75,7 +75,7 @@ const sample = JSON.stringify({ id: '3f1c…', type: 'proxy.lodged', occurred_at
         <li><strong class="text-white">Rate limit</strong>: 300 requests a minute per key (X-RateLimit-Remaining; 429 with Retry-After beyond).</li>
         <li><strong class="text-white">Retries</strong>: send <code>Idempotency-Key: &lt;your id&gt;</code> with writes; the same key gets the first answer again for a day.</li>
         <li><strong class="text-white">Your IDs</strong>: store your system’s ID on holders and investors (PUT …/external-ids/&lt;system&gt;); reads return them as <code>external_ids</code>.</li>
-        <li><strong class="text-white">What stays in the portal</strong>: changes to a company whose holdings come from its register of members go through a register import (an Admin confirms it); documents and news arrive as drafts; opening proxy voting, publishing and sending happen in the portal. Every write is in the audit log as made by the key.</li>
+        <li><strong class="text-white">What stays in the portal</strong>: changes to a company whose holdings come from its register of members go through a register import (an Admin confirms it); documents and news arrive as drafts; opening proxy voting, publishing and sending happen in the portal, and so do signing minutes, proof files for legal deadlines and private details of officers and employees, which the API never returns. Every write is in the audit log as made by the key.</li>
       </ul>
     </section>
 

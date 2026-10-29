@@ -21,7 +21,9 @@ const ID = {
   person: '51aa7c20-9d4e-4b8f-a1c3-6e2f0b8d4a77', doc: 'c3e81f4a-6b2d-4a9e-8f17-0d5c9b3a2e61', meeting: '9b2e4d6f-1a3c-4e5b-9d7f-8c0a2b4e6d18', resolution: '3d5f7b9e-2c4a-4f6e-8d0b-1a3c5e7f9b20',
   room: 'e4a7c9b1-3d5f-4a2e-8b6c-1f0d9e7a5c42', guest: 'f1c3e5a7-9b2d-4f6e-8a0c-3d5b7e9f1a24', query: '7d9f1b3e-5a7c-4e2f-9b1d-6c8e0a2f4b53', subscriber: '2c4e6a8b-0d1f-4a3c-9e5b-7f9d1c3e5a86',
   webhook: '6e8a0c2e-4f6b-4d8a-9c0e-2b4d6f8a0c97', post: 'a8c0e2f4-6b8d-4a0c-8e2f-4b6d8f0a2c19', import: 'b9d1f3a5-7c9e-4b1d-8f3a-5c7e9b1d3f28', event: 'd2f4a6c8-0e2a-4c4e-9a6c-8e0a2c4e6a35',
-  announcement: '8f0b2d4f-6a8c-4e0a-9c2e-4a6c8e0a2c51',
+  announcement: '8f0b2d4f-6a8c-4e0a-9c2e-4a6c8e0a2c51', officer: '1c3e5a7c-9e1a-4c3e-8a5c-7e9a1c3e5a62', deadline: '2e4a6c8e-0a2c-4e6a-8c0e-2a4c6e8a0c73',
+  contract: '3f5b7d9f-1b3d-4f7b-9d1f-3b5d7f9b1d84', pack: '4a6c8e0a-2c4e-4a8c-8e2a-4c6e8a0c2e95', board_meeting: '5b7d9f1b-3d5f-4b9d-9f3b-5d7f9b1d3fa6',
+  deck: '6c8e0a2c-4e6a-4cae-8a4c-6e8a0c2e4ab7', employee: '7d9f1b3d-5f7b-4dbf-9b5d-7f9b1d3f5bc8', grant: '8e0a2c4e-6a8c-4ec0-8c6e-8a0c2e4a6cd9', plan: '9f1b3d5f-7b9d-4fd1-9d7f-9b1d3f5b7de0',
 };
 const holding = { company: 'EXV', share_class: 'ORD', share_class_id: ID.ord, shares: 250000, as_at: '2026-10-31', ownership_pct: 2.5 };
 const holder = { id: ID.holder, name: 'Harbour Street Investments Pty Ltd <Harbour Street Fund A/C>', kind: 'company', registry_ref: 'H00042', is_group_stake: false, external_ids: { hubspot: '18205531', xero: '4d2b7c1e-90aa-4f3e-b1f2-6c0d8e2a7b55' }, holdings: [holding] };
@@ -29,6 +31,10 @@ const person = { id: ID.person, email: 'alex.morgan@example.com', first_name: 'A
 const doc = { company: 'EXV', id: ID.doc, title: 'Annual Report 2026', summary: 'Results for the year to 30 June 2026.', category: 'report', audience: 'all_investors', mime_type: 'application/pdf', size_bytes: 2483011, published_at: '2026-10-28T23:00:00Z', created_at: '2026-10-27T04:12:00Z' };
 const meeting = { company: 'EXV', id: ID.meeting, title: '2026 Annual General Meeting', kind: 'agm', starts_at: '2026-11-27T00:00:00Z', location: 'Level 5, 1 Example Street, Sydney NSW', livestream_url: 'https://example.com/live/agm-2026', proxy_deadline: '2026-11-25T00:00:00Z', status: 'open', notice_document_id: ID.doc, minutes_document_id: null, created_at: '2026-10-20T01:30:00Z' };
 const room = { id: ID.room, company: 'EXV', name: 'Series B due diligence', description: 'Financials and contracts for prospective investors.', closed_at: null, created_at: '2026-10-15T02:00:00Z' };
+const figures = {
+  pl: { revenue: { period: 412000, ytd: 1236000 }, other_income: { period: 0, ytd: 4000 }, cost_of_sales: { period: 151000, ytd: 448000 }, employee_costs: { period: 168000, ytd: 497000 }, other_expenses: { period: 61000, ytd: 180000 }, depreciation: { period: 6000, ytd: 18000 }, interest: { period: 2000, ytd: 6000 }, income_tax: { period: 0, ytd: 0 }, net_profit: { period: 24000, ytd: 91000 } },
+  bs: { cash: 2380000, receivables: 310000, other_current_assets: 45000, non_current_assets: 220000, payables: 140000, borrowings: 0, other_liabilities: 96000, equity: 2719000 },
+};
 const list = (item: unknown, total = 86) => ({ data: [item], total, next_cursor: total > 1 ? 'NTA' : null });
 
 export const OPS: Op[] = [
@@ -102,6 +108,33 @@ export const OPS: Op[] = [
   { tag: 'Newsletter', method: 'POST', path: '/newsletter/subscribers', scope: 'newsletters.do', status: 201, summary: 'Subscribe someone who asked for the newsletter (you’re responsible for their consent). 200 instead of 201 when they were already on the list.',
     body: [{ name: 'email', type: 'string', required: true, description: 'Their email.', example: 'jamie.chen@example.com' }, { name: 'name', type: 'string', description: 'Their name.', example: 'Jamie Chen' }], example: { data: { id: ID.subscriber, status: 'subscribed' } } },
   { tag: 'Newsletter', method: 'DELETE', path: '/newsletter/subscribers/{id}', scope: 'newsletters.do', summary: 'Unsubscribe.', example: { data: { id: ID.subscriber, status: 'unsubscribed' } } },
+  { tag: 'Legal', method: 'GET', path: '/legal/record', scope: 'legal.view', summary: 'The company’s legal record: ACN, ABN, type, registered office, principal place of business, year end, review date, auditor and ultimate holding company.',
+    example: { data: [{ company: 'EXV', legal_name: 'Example Ventures Pty Ltd', acn: '123 456 789', abn: '12 123 456 789', company_type: 'proprietary', incorporated_on: '2019-03-14', registered_in: 'NSW', registered_office: 'Level 5, 1 Example Street, Sydney NSW 2000', principal_place: 'Level 5, 1 Example Street, Sydney NSW 2000', year_end: '06-30', review_date: '03-14', auditor: null, ultimate_holding: 'Example Holdings Pty Ltd', extract_dated: '2026-10-28', updated_at: '2026-10-29T01:12:00Z' }] } },
+  { tag: 'Legal', method: 'GET', path: '/legal/officers', scope: 'legal.view', summary: 'The officers register: directors and secretaries with their dates. Names and emails need people.read; private details (address, date of birth) never leave the portal.', query: [...page, { name: 'current', type: 'boolean', description: 'Only those in office today.', example: true }],
+    example: list({ company: 'EXV', id: ID.officer, position: 'director', appointed_on: '2019-03-14', ceased_on: null, consent_on: '2019-03-10', updated_at: '2026-10-29T01:12:00Z', full_name: 'Jordan Lee', email: 'jordan.lee@example.com' }, 4) },
+  { tag: 'Legal', method: 'GET', path: '/legal/deadlines', scope: 'legal.view', summary: 'Legal deadlines (annual review, solvency resolution, financial report, AGM, notices to ASIC…), soonest first. added_by says whether the portal worked it out from the records or a person added it.', query: [...page, { name: 'status', type: 'string', description: 'open, done or not_needed.', example: 'open' }, { name: 'from', type: 'string', description: 'Due on or after (YYYY-MM-DD).' }, { name: 'to', type: 'string', description: 'Due on or before (YYYY-MM-DD).' }],
+    example: list({ company: 'EXV', id: ID.deadline, kind: 'annual_review', title: 'Annual review 2027: check the company statement and pay the ASIC fee', detail: 'ASIC sends the annual statement on the review date; the fee is due within two months.', due_on: '2027-05-14', status: 'open', done_on: null, done_note: null, created_at: '2026-10-29T01:12:00Z', added_by: 'portal' }, 6) },
+  { tag: 'Legal', method: 'PATCH', path: '/legal/deadlines/{id}', scope: 'legal.do', summary: 'Mark a deadline done, or not needed (with a note saying why), or open it again. Proof files are added in the portal.',
+    body: [{ name: 'status', type: 'string', required: true, description: 'done, not_needed or open.', example: 'done' }, { name: 'done_on', type: 'string', description: 'YYYY-MM-DD (default today).', example: '2026-11-04' }, { name: 'note', type: 'string', description: 'What was done; required for not_needed.', example: 'Annual statement reviewed and fee paid.' }],
+    example: { data: { id: ID.deadline, title: 'Annual review 2027: check the company statement and pay the ASIC fee', status: 'done', done_on: '2026-11-04' } } },
+  { tag: 'Legal', method: 'GET', path: '/legal/contracts', scope: 'legal.view', summary: 'Contracts read by Lakeba AI and checked by a person (checked): parties, dates, renewal and notice, value and the clauses that matter. Soonest ending first.', query: [...page, { name: 'status', type: 'string', description: 'draft, active or ended.', example: 'active' }, { name: 'ends_before', type: 'string', description: 'Ending on or before (YYYY-MM-DD).' }],
+    example: list({ company: 'EXV', id: ID.contract, title: 'Distribution agreement', counterparty: 'Example Retail Pty Ltd', contract_type: 'customer', status: 'active', signed_on: '2025-02-01', starts_on: '2025-02-01', ends_on: '2028-01-31', auto_renews: true, renewal_term: '12 months', notice_days: 90, value: 'About $1.2m a year', governing_law: 'New South Wales', change_of_control: 'Consent needed on a change of control', assignment: 'Not without consent', exclusivity: 'Exclusive in Australia and New Zealand', liability_cap: 'Fees paid in the previous 12 months', termination: 'Either party on 90 days’ notice after the first term', summary: 'Three-year distribution deal for Australia and New Zealand.', created_at: '2026-10-29T03:40:00Z', updated_at: '2026-10-29T03:52:00Z', checked: true }, 14) },
+  { tag: 'Reporting', method: 'GET', path: '/reporting/packs', scope: 'reporting.view', summary: 'The company’s reporting packs for Lakeba: profit and loss (period and year to date) and balance sheet per period, newest first, with their status.', query: [...page, { name: 'status', type: 'string', description: 'open (to send), submitted (with Lakeba), returned (a question from Lakeba) or accepted.', example: 'open' }],
+    example: list({ company: 'EXV', id: ID.pack, period_end: '2026-10-31', cadence: 'monthly', due_on: '2026-11-15', status: 'open', source: null, figures: {}, note: '', submitted_at: null, reviewed_at: null, updated_at: '2026-11-01T00:00:00Z' }, 9) },
+  { tag: 'Reporting', method: 'GET', path: '/reporting/packs/{id}', scope: 'reporting.view', summary: 'A pack, its figures and the messages about it between Lakeba and the company.',
+    example: { data: { company: 'EXV', id: ID.pack, period_end: '2026-09-30', cadence: 'monthly', due_on: '2026-10-15', status: 'returned', source: 'xero', figures, note: 'A strong month for distribution.', submitted_at: '2026-10-12T05:00:00Z', reviewed_at: '2026-10-14T02:30:00Z', updated_at: '2026-10-14T02:30:00Z', messages: [{ body: 'Employee costs are up 18% on August: is that the two new hires?', created_at: '2026-10-14T02:30:00Z' }] } } },
+  { tag: 'Reporting', method: 'PUT', path: '/reporting/packs/{id}', scope: 'reporting.do', summary: 'Fill a pack from your accounting system (only while it’s open, or returned with a question): the standard lines in the schedule’s currency, whole units. Send it to Lakeba with send: true; Lakeba’s finance team is told.',
+    description: 'P&L lines (each { period, ytd }): revenue, other_income, cost_of_sales, employee_costs, other_expenses, depreciation, interest, income_tax, net_profit. Balance sheet lines: cash, receivables, other_current_assets, non_current_assets, payables, borrowings, other_liabilities, equity. Lines left out are blank.',
+    body: [{ name: 'figures', type: 'object', required: true, description: '{ pl: { <line>: { period, ytd } }, bs: { <line>: amount } }, whole units; null for blank.', example: figures }, { name: 'note', type: 'string', description: 'Your commentary for the period.', example: 'A strong month for distribution.' }, { name: 'send', type: 'boolean', description: 'Send to Lakeba now (default false: saved, still with you).', example: false }],
+    example: { data: { company: 'EXV', id: ID.pack, period_end: '2026-10-31', cadence: 'monthly', due_on: '2026-11-15', status: 'open', source: 'api', figures, note: 'A strong month for distribution.', submitted_at: null, reviewed_at: null, updated_at: '2026-11-04T01:00:00Z' } } },
+  { tag: 'Boardroom', method: 'GET', path: '/board-meetings', scope: 'boardroom.view', summary: 'Directors’ meetings (shareholder meetings are under Meetings), newest first: attendance, recording and the minutes’ status. Names need people.read.', query: page,
+    example: list({ company: 'EXV', id: ID.board_meeting, title: 'Board meeting – November 2026', held_at: '2026-11-26T23:00:00Z', location: 'Level 5, 1 Example Street, Sydney', recording_status: 'done', created_at: '2026-11-10T04:00:00Z', updated_at: '2026-11-27T03:10:00Z', attendees: [{ role: 'director', present: true, name: 'Jordan Lee' }], has_transcript: true, minutes: { status: 'signed', signed_at: '2026-12-02T01:15:00Z', document_id: ID.doc } }, 7) },
+  { tag: 'Boardroom', method: 'GET', path: '/board-meetings/{id}', scope: 'boardroom.view', summary: 'A directors’ meeting: agenda, attendance, the minutes’ status, the decks Lex presented and how many questions it answered. ?include=transcript adds the transcript (it names the speakers, so it also needs people.read).', query: [{ name: 'include', type: 'string', description: 'transcript to add the transcript.', example: 'transcript' }],
+    example: { data: { company: 'EXV', id: ID.board_meeting, title: 'Board meeting – November 2026', held_at: '2026-11-26T23:00:00Z', location: 'Level 5, 1 Example Street, Sydney', agenda: '1. Minutes of the last meeting\n2. CFO report\n3. Risk report', recording_status: 'done', created_at: '2026-11-10T04:00:00Z', updated_at: '2026-11-27T03:10:00Z', attendees: [{ role: 'director', present: true, name: 'Jordan Lee' }], has_transcript: true, minutes: { status: 'signing', signed_at: null, document_id: null }, decks: [{ id: ID.deck, title: 'CFO report – October 2026', role: 'cfo', source: 'drafted', status: 'approved', presented_at: '2026-11-26T23:25:00Z' }], lex_answers: 3, transcript: 'Jordan Lee: Let’s start with the minutes of the last meeting…' } } },
+  { tag: 'HR', method: 'GET', path: '/hr/people', scope: 'hr.view', summary: 'The company’s people in HR: role, team, employment type, dates and status. Names and emails need people.read; private details stay in the portal.', query: [...page, { name: 'status', type: 'string', description: 'onboarding, active, offboarding or left.', example: 'active' }],
+    example: list({ company: 'EXV', id: ID.employee, job_title: 'Head of Product', team: 'Product', employment_type: 'full_time', manager_id: null, location: 'Sydney', start_date: '2025-07-01', end_date: null, status: 'active', created_at: '2025-06-20T02:00:00Z', updated_at: '2026-10-29T01:00:00Z', full_name: 'Riley Nguyen', email: 'riley.nguyen@example.com' }, 23) },
+  { tag: 'HR', method: 'GET', path: '/hr/equity-grants', scope: 'hr.view', summary: 'Option and share grants under the company’s equity plans, with vesting terms and status. The holder’s name needs people.read.', query: [...page, { name: 'status', type: 'string', description: 'draft, granted, cancelled or lapsed.', example: 'granted' }],
+    example: list({ company: 'EXV', plan: { id: ID.plan, name: 'Employee Share Option Plan', kind: 'options' }, id: ID.grant, person_id: ID.employee, number: 40000, exercise_price: 0.5, grant_date: '2025-07-01', vesting_start: '2025-07-01', vesting_months: 48, cliff_months: 12, frequency: 'monthly', expiry_date: '2032-07-01', status: 'granted', vesting_stopped_on: null, accepted_at: '2025-07-03T04:00:00Z', created_at: '2025-06-28T02:00:00Z', updated_at: '2025-07-03T04:00:00Z', holder_name: 'Riley Nguyen' }, 11) },
   { tag: 'Events and webhooks', method: 'GET', path: '/events', scope: 'any', summary: 'Events of the last 30 days, for tools that poll instead of receiving webhooks. Only the events your key’s scopes cover.', query: [{ name: 'after', type: 'integer', description: 'The last sequence you saw (0 to start).', example: 0 }, { name: 'type', type: 'string', description: 'One event type.', example: 'holdings.changed' }, { name: 'limit', type: 'integer', description: '1–200.', example: 100 }],
     example: { data: [{ sequence: 1042, id: ID.event, type: 'holdings.changed', description: EVENTS['holdings.changed'], occurred_at: '2026-11-03T02:14:09Z', company: { code: 'EXV', name: 'Example Ventures' }, data: { holder_id: ID.holder, share_class: 'ORD' } }], next_after: 1042 } },
   { tag: 'Events and webhooks', method: 'GET', path: '/webhooks', scope: 'any', summary: 'This key’s webhook subscriptions, and the events there are.',
@@ -125,7 +158,10 @@ const TITLES: Record<string, string> = {
   'GET /data-rooms': 'List data rooms', 'GET /data-rooms/{id}': 'Get a data room', 'POST /data-rooms/{id}/guests': 'Invite a guest',
   'DELETE /data-rooms/{id}/guests/{guestId}': 'Revoke a guest', 'GET /newsletter/subscribers': 'List subscribers', 'POST /newsletter/subscribers': 'Add a subscriber',
   'DELETE /newsletter/subscribers/{id}': 'Unsubscribe', 'GET /events': 'List events', 'GET /webhooks': 'List webhook subscriptions', 'POST /webhooks': 'Subscribe a webhook',
-  'DELETE /webhooks/{id}': 'Remove a webhook subscription',
+  'DELETE /webhooks/{id}': 'Remove a webhook subscription', 'GET /legal/record': 'Get the legal record', 'GET /legal/officers': 'List officers',
+  'GET /legal/deadlines': 'List legal deadlines', 'PATCH /legal/deadlines/{id}': 'Complete a deadline', 'GET /legal/contracts': 'List contracts',
+  'GET /reporting/packs': 'List reporting packs', 'GET /reporting/packs/{id}': 'Get a reporting pack', 'PUT /reporting/packs/{id}': 'Fill or send a reporting pack',
+  'GET /board-meetings': 'List board meetings', 'GET /board-meetings/{id}': 'Get a board meeting', 'GET /hr/people': 'List people', 'GET /hr/equity-grants': 'List equity grants',
 };
 
 // What the common fields mean, wherever they appear.
@@ -141,6 +177,10 @@ const FIELDS: Record<string, string> = {
   email: 'Personal data (people.read).', phone: 'Personal data (people.read).', first_name: 'Personal data (people.read).', last_name: 'Personal data (people.read).',
   sequence: 'Ever-increasing number, for ?after=.', occurred_at: 'When it happened.', proxy_votes: 'Proxy votes lodged so far, by choice.', seq: 'Order of the movement for that holder and class.',
   balance: 'Balance after the movement.', consideration: 'Amount paid.', paid_per_share: 'Amount paid per share.', unpaid_per_share: 'Amount unpaid per share.', party_holder_id: 'The other holder in a transfer.',
+  full_name: 'Personal data (people.read).', holder_name: 'Personal data (people.read).', position: 'director, alternate_director or secretary.', added_by: 'portal (worked out from the records) or person.',
+  period_end: 'Last day of the period.', cadence: 'monthly or quarterly.', due_on: 'When it is due.', source: 'Where the figures came from: upload, xero, typed or api.', figures: 'P&L lines (period and year to date) and balance sheet lines, whole units.',
+  minutes: 'The minutes: draft, signing or signed (null when there are none yet).', has_transcript: 'A transcript was made from the recording.', recording_status: 'none, recording, paused, processing, done or failed.',
+  lex_answers: 'Questions Lex answered in the meeting.', checked: 'A person checked what Lakeba AI read from the contract.', employment_type: 'full_time, part_time, casual, contractor or advisor.',
   download_url: 'Signed link to the file.', download_expires_in: 'Seconds the link works for.', secret: 'Signing secret for Lakeba-Signature: shown only now.', link: 'The guest’s personal link.',
 };
 
@@ -167,10 +207,14 @@ const TAGS: Record<string, string> = {
   'Board Q&A': 'Questions from investors to the board.',
   'Data rooms': 'Rooms for due diligence and their guests.',
   Newsletter: 'The company’s public newsletter list. Reading it needs **people.read**.',
+  Legal: 'The company’s legal record, officers register, deadlines calendar and contracts, as kept in Legal (Lakeba’s company secretary). Names need **people.read**.',
+  Reporting: 'Reporting packs the company sends Lakeba: fill them from your accounting system and send them.',
+  Boardroom: 'Directors’ meetings recorded with the Observer: attendance, minutes, decks and transcripts.',
+  HR: 'People and equity grants. Names and emails need **people.read**.',
   'Events and webhooks': 'Events to poll, and webhook subscriptions for tools like Zapier and Make.',
 };
 
-const GUIDE = (origin: string) => `For a company’s other tools: its register, investors, documents, news, meetings, Board Q&A, data rooms and newsletter.
+const GUIDE = (origin: string) => `For a company’s other tools: its register, investors, documents, news, meetings, Board Q&A, data rooms, newsletter, legal records and deadlines, reporting packs, board meetings and HR.
 The full guide (HubSpot, Xero, incoming webhooks, apps) is at [/developers](${origin}/developers).
 
 ## Keys
@@ -218,7 +262,10 @@ const EVENT_DATA: Record<string, Record<string, unknown>> = {
   document: { document_id: ID.doc, title: 'Annual Report 2026' }, news: { post_id: ID.post, title: 'Example Ventures signs distribution deal' },
   meeting: { meeting_id: ID.meeting, title: '2026 Annual General Meeting' }, proxy: { meeting_id: ID.meeting, user_id: ID.person },
   query: { query_id: ID.query, subject: 'Timing of the next capital raise' }, data_room: { room_id: ID.room, guest_id: ID.guest },
-  newsletter: { subscriber_id: ID.subscriber }, approval: { approval_id: '0a2c4e6a-8c0e-4a2c-8e4a-6c8e0a2c4e66', area: 'documents' },
+  newsletter: { subscriber_id: ID.subscriber }, company_record: { entity_id: ID.company }, officer: { officer_id: ID.officer, position: 'director' },
+  deadline: { obligation_id: ID.deadline, title: 'Annual review 2027: check the company statement and pay the ASIC fee' }, contract: { contract_id: ID.contract, title: 'Distribution agreement' },
+  reporting_pack: { pack_id: ID.pack, period_end: '2026-10-31' }, board_meeting: { meeting_id: ID.board_meeting, title: 'Board meeting – November 2026' },
+  board_paper: { paper_id: '0b2d4f6b-8d0f-4b2d-8f4b-6d8f0b2d4fe1' }, employee: { person_id: ID.employee }, equity: { grant_id: ID.grant, number: 40000 }, approval: { approval_id: '0a2c4e6a-8c0e-4a2c-8e4a-6c8e0a2c4e66', area: 'documents' },
   trade_interest: { interest_id: '4c6e8a0c-2e4a-4c6e-8a0c-2e4a6c8e0a77', side: 'sell', share_class: 'ORD' }, inbound: { message_id: '1b3d5f7a-9c1e-4b3d-8f5a-7c9e1b3d5f88', kind: 'newsletter.subscribe' },
 };
 
@@ -247,7 +294,7 @@ export function openApi(origin: string) {
     const ok = String(op.status ?? 200);
     (paths[op.path] ??= {})[op.method.toLowerCase()] = {
       tags: [op.tag], summary: TITLES[`${op.method} ${op.path}`] ?? op.summary,
-      description: `${op.summary}\n\n${op.scope === 'any' ? 'Any key.' : `Needs the \`${op.scope}\` scope.`}`, ...(op.scope !== 'any' ? { 'x-scope': op.scope } : {}),
+      description: `${op.summary}${op.description ? `\n\n${op.description}` : ''}\n\n${op.scope === 'any' ? 'Any key.' : `Needs the \`${op.scope}\` scope.`}`, ...(op.scope !== 'any' ? { 'x-scope': op.scope } : {}),
       operationId: `${op.method.toLowerCase()}${op.path.replace(/\{(\w+)\}/g, 'By-$1').split(/[/-]/).filter(Boolean).map((w) => w[0].toUpperCase() + w.slice(1)).join('')}`,
       ...(params.length ? { parameters: params } : {}), ...(body ? { requestBody: body } : {}),
       responses: {

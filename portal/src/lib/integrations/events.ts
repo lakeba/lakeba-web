@@ -46,6 +46,22 @@ export const EVENTS: Record<string, string> = {
   'approval.decided': 'An approval was given or changes were asked for',
   'trade_interest.registered': 'An investor registered a trading interest',
   'inbound.received': 'An incoming webhook was received',
+  'company_record.updated': 'The company’s legal record changed (by hand or from an ASIC extract)',
+  'officer.appointed': 'A director or secretary was added to the officers register',
+  'officer.updated': 'An officer’s details changed',
+  'officer.removed': 'An officer was removed from the register',
+  'deadline.done': 'A legal deadline was marked done',
+  'deadline.not_needed': 'A legal deadline was marked not needed',
+  'contract.added': 'A contract was added and read',
+  'reporting_pack.sent': 'A reporting pack was sent to Lakeba',
+  'reporting_pack.accepted': 'Lakeba accepted a reporting pack',
+  'reporting_pack.returned': 'Lakeba sent a reporting pack back with a question',
+  'board_meeting.created': 'A directors’ meeting was added',
+  'board_meeting.recorded': 'A directors’ meeting finished recording (the transcript follows)',
+  'board_paper.signed': 'A board paper (minutes or a resolution) was signed',
+  'employee.added': 'A person was added in HR',
+  'employee.left': 'A person was marked as having left',
+  'equity.granted': 'An equity grant was made',
 };
 
 /** The scope a key needs to see an event of this type (GET /api/v1/events, Zapier subscriptions). */
@@ -53,10 +69,12 @@ export function eventScope(type: string) {
   const area = type.split('.')[0];
   return ({ holder: 'investors.view', holdings: 'investors.view', register: 'investors.view', share_class: 'investors.view', person: 'investors.view', holder_access: 'investors.view',
     document: 'documents.view', data_room: 'documents.view', news: 'news.view', meeting: 'meetings.view', proxy: 'meetings.view', query: 'inbox.view',
-    newsletter: 'newsletters.view', trade_interest: 'capital.view', approval: 'investors.view', inbound: 'investors.view' } as Record<string, string>)[area] ?? 'investors.view';
+    newsletter: 'newsletters.view', trade_interest: 'capital.view', approval: 'investors.view', inbound: 'investors.view',
+    company_record: 'legal.view', officer: 'legal.view', deadline: 'legal.view', contract: 'legal.view', reporting_pack: 'reporting.view',
+    board_meeting: 'boardroom.view', board_paper: 'boardroom.view', employee: 'hr.view', equity: 'hr.view' } as Record<string, string>)[area] ?? 'investors.view';
 }
 
-const PERSONAL = /^(email|name|first_name|last_name|phone|address|guest_name|subscriber|to|from)$/i;
+const PERSONAL = /^(email|name|full_name|holder_name|first_name|last_name|phone|address|guest_name|subscriber|to|from|officer|person)$/i;
 /** Event data without personal details, unless the endpoint may have them. */
 export function eventData(data: Record<string, unknown>, personal: boolean) {
   const out: Record<string, unknown> = {};

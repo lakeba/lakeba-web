@@ -8,12 +8,12 @@ import { AREAS } from '../permissions';
 
 export type Scope = { key: string; label: string; area: string };
 
-const API_AREAS = ['investors', 'documents', 'news', 'newsletters', 'inbox', 'meetings', 'capital'];
+const API_AREAS = ['investors', 'documents', 'news', 'newsletters', 'inbox', 'meetings', 'legal', 'reporting', 'boardroom', 'hr', 'capital'];
 export const API_SCOPES: Scope[] = [
   ...AREAS.filter((a) => API_AREAS.includes(a.key)).flatMap((a) => a.levels.filter((l) => l !== 'approve').map((l) => ({
     key: `${a.key}.${l}`, area: a.label, label: l === 'view' ? `Read: ${a.label.toLowerCase()}` : `Change: ${a.label.toLowerCase()}`,
   }))),
-  { key: 'people.read', area: 'Personal data', label: 'Read personal data: names, emails, phones and addresses of investors, guests and subscribers' },
+  { key: 'people.read', area: 'Personal data', label: 'Read personal data: names, emails, phones and addresses of investors, guests, subscribers, officers and employees' },
 ];
 export const SCOPE_KEYS = API_SCOPES.map((s) => s.key);
 

@@ -101,6 +101,9 @@ export const since = (url: URL) => {
   return new Date(s).toISOString();
 };
 
+/** A real calendar date as YYYY-MM-DD (not 2026-13-01). */
+export const isDay = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v) && !Number.isNaN(Date.parse(`${v}T00:00:00Z`)) && new Date(`${v}T00:00:00Z`).toISOString().slice(0, 10) === v;
+
 export const isUuid = (v: unknown): v is string => typeof v === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
 
 type Options = { scope: string; write?: boolean };

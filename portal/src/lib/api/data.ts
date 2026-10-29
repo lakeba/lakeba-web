@@ -87,3 +87,15 @@ export async function peopleIn(svc: Svc, companyIds: string[], opts: { userIds?:
     };
   });
 }
+
+// ---------- Directors' meetings (the Boardroom) ----------
+
+export type Attendee = { name: string; role: string; present: boolean };
+/** Who was there: roles and attendance; names only with "people.read". */
+export const attendeesView = (a: Attendee[], personal: boolean) => (a ?? []).map((x) => ({ role: x.role, present: x.present, ...(personal ? { name: x.name } : {}) }));
+
+/** The minutes paper of each meeting: its status and when it was signed. */
+export async function minutesOf(svc: Svc, meetingIds: string[]) {
+  const { data } = meetingIds.length ? await svc.from('board_papers').select('meeting_id, status, signed_at, document_id').eq('kind', 'minutes').in('meeting_id', meetingIds).neq('status', 'withdrawn') : { data: [] };
+  return new Map((data ?? []).map((m) => [m.meeting_id as string, { status: m.status, signed_at: m.signed_at, document_id: m.document_id }]));
+}

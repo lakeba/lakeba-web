@@ -18,8 +18,10 @@ overridden in package.json to fixed versions (they come with Scalar).
   a key never gets more than the Admin who made it. Holdings of a company whose holdings come from its
   register can't be changed through the API: a register is sent and an Admin confirms it. Documents and
   news arrive as drafts. Opening proxy voting, publishing and sending stay in the portal.
-- **Personal data is its own scope.** `people.read` (names, emails, phones, addresses) is never implied;
-  without it the API and webhooks leave personal details out.
+- **Personal data is its own scope.** `people.read` (names, emails, phones, addresses, also of officers and
+  employees, and meeting transcripts, which name the speakers) is never implied; without it the API and
+  webhooks leave personal details out. Officers' and employees' private details (address, date of birth)
+  never leave the portal.
 - **Everything is recorded.** Writes are in the audit log as made by the key, app or webhook; reads are
   counted per key, endpoint and day (Integrations → Usage).
 - **A switch per company.** A group Admin can switch a company's integrations off: keys are refused,
@@ -32,8 +34,8 @@ overridden in package.json to fixed versions (they come with Scalar).
 | Piece | Where | What it does |
 |---|---|---|
 | API keys | Integrations → API keys | `lk_live_…`, hashed, scopes, optional expiry and IP list, rotate (old key works 7 more days), revoke |
-| Company API | `/api/v1/…` (`src/pages/api/v1`, `src/lib/api`) | 39 operations: register, people, documents, news, meetings, Board Q&A, data rooms, newsletter, events, webhook subscriptions. Cursor paging, problem+json errors, 300 requests a minute per key, `Idempotency-Key` |
-| Events | `integration_events` (trigger on `audit_log`) | 32 event types made from the audit log, for the company (or the companies of the holder or person) |
+| Company API | `/api/v1/…` (`src/pages/api/v1`, `src/lib/api`) | 51 operations: register, people, documents, news, meetings, Board Q&A, data rooms, newsletter, legal (record, officers, deadlines, contracts), reporting packs, board meetings, HR (people, equity grants), events, webhook subscriptions. Cursor paging, problem+json errors, 300 requests a minute per key, `Idempotency-Key` |
+| Events | `integration_events` (trigger on `audit_log`) | 48 event types made from the audit log (since 29 October also legal records, officers, deadlines, contracts, reporting packs, board meetings and papers, HR), for the company (or the companies of the holder or person) |
 | Outgoing webhooks | Integrations → Outgoing webhooks (`src/lib/integrations/events.ts`) | Signed POSTs (`Lakeba-Signature: t=,v1=` HMAC-SHA256), JSON, Slack or Teams, retried for ~3 days then switched off with a notice to Admins; delivery log with Resend |
 | Incoming webhooks | Integrations → Incoming webhooks, `/api/hooks/in/<token>` (`src/lib/integrations/inbound.ts`) | Newsletter sign-ups, contact details, new investors (reviewed), data room requests (reviewed), register PDFs (reviewed, then the register import), DocuSign signed documents (drafts). Five ways to verify the sender |
 | HubSpot | Integrations → HubSpot (`src/lib/integrations/hubspot.ts`) | Investors → contacts, holders → companies, "Lakeba portal" properties, activity notes; opt-in: name/phone back, "Invite to portal", deal stage → data room request |
@@ -51,6 +53,8 @@ every 15 seconds, and syncs HubSpot and Xero every 10 minutes (or at once after 
 - `20261201000000_integrations_connectors` — `connections`, `external_links`, `connection_issues`, `dividend_runs`.
 - `20261202000000_integrations_inbound` — `inbound_endpoints`, `inbound_messages`; newsletter sources `api`, `integration`.
 - `20261203000000_integrations_oauth` — `oauth_clients`, `oauth_codes`.
+- `20261220000000_api_legal_reporting_board_hr` — events for Legal, reporting packs, the Boardroom and HR; `api` as a
+  reporting pack's source.
 
 All are server-only (row level security on, nothing granted to signed-in users).
 
@@ -77,6 +81,7 @@ temporary accounts that are removed afterwards. Scripts are kept outside the rep
 | Phases 2–3: HubSpot and Xero | 38 |
 | Phases 4–5: write API, incoming webhooks, apps, subscriptions, documentation | 66 |
 | Earlier features (data rooms, investors, meetings) after the changes | 31 |
+| Legal, reporting packs, Boardroom, HR endpoints and events (29 October 2026) | 32 |
 
 Latest full run (27–28 October 2026): 176 of 176 passed; staging left clean (no test accounts, keys,
 webhooks, connections or events; the audit log back to its 17 register entries).
