@@ -63,6 +63,7 @@ const ids = [...new Set([...(msgRows ?? []).map((m) => m.author_id), p.submitted
 const { data: people } = ids.length ? await svc.from('profiles').select('id, first_name, last_name, email').in('id', ids) : { data: [] };
 const nameOf = (id: string | null) => { const x = (people ?? []).find((y) => y.id === id); return x ? [x.first_name, x.last_name].filter(Boolean).join(' ') || x.email : 'Someone'; };
 const flags = checks(p.figures, previous);
+const { data: groupRows } = await svc.from('entities').select('id, display_name').in('relationship', ['group', 'controlled']).neq('id', p.entity_id).order('sort');
 const states = { open: 'Waiting for the venture', submitted: 'Sent: to review', returned: 'Question sent to the venture', accepted: 'Accepted' };
 ---
 
@@ -80,7 +81,7 @@ const states = { open: 'Waiting for the venture', submitted: 'Sent: to review', 
     <div class="grid content-start gap-6">
       <section class="card grid gap-4">
         {flags.length > 0 && <ul class="grid gap-1 text-sm text-lk-orange">{flags.map((f) => <li>• {f}</li>)}</ul>}
-        <PackFigures figures={p.figures} editable={false} currency={sched?.currency ?? 'AUD'} previous={previous} />
+        <PackFigures figures={p.figures} editable={false} currency={sched?.currency ?? 'AUD'} previous={previous} others={(groupRows ?? []) as { id: string; display_name: string }[]} />
         <div><p class="label">The venture's note</p><p class="whitespace-pre-line text-sm text-white/75">{p.note || '—'}</p></div>
       </section>
       <section class="card grid gap-3">

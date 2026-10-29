@@ -41,7 +41,7 @@ if (Astro.request.method === 'POST' && mayDo) {
 }
 
 const [{ data: entities }, { data: rows }] = await Promise.all([
-  svc.from('entities').select('id, code, display_name, relationship').neq('relationship', 'group').order('sort'),
+  svc.from('entities').select('id, code, display_name, relationship').order('sort'),
   svc.from('reporting_schedules').select('entity_id, cadence, due_days, first_period, currency, year_end_month, active'),
 ]);
 const scheduleOf = new Map(((rows ?? []) as Schedule[]).map((s) => [s.entity_id, s]));

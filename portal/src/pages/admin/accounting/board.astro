@@ -1,0 +1,89 @@
+---
+import { randomUUID } from 'node:crypto';
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import Empty from '../../../components/Empty.astro';
+import AccountingNav from '../../../components/AccountingNav.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { monthEnd, periodLabel, todayIn } from '../../../lib/reporting';
+import { boardSummaryPdf, draftCommentary, groupItems } from '../../../lib/reporting-group';
+
+// Admin → Accounting → Board summary: one page with every venture's results
+// for a month and Lakeba's commentary (Lakeba AI can draft it), as a PDF or
+// filed in Documents for the board.
+const svc = serviceClient();
+const mayDo = Astro.locals.access.can('accounting.do', null);
+const { data: periodRows } = await svc.from('reporting_packs').select('period_end').in('status', ['submitted', 'accepted']).order('period_end', { ascending: false });
+const periods = [...new Set((periodRows ?? []).map((r) => r.period_end as string))];
+const asked = Astro.url.searchParams.get('period');
+const period = asked && periods.includes(asked) ? asked : periods[0] ?? monthEnd(todayIn(), -1);
+const { data: saved } = await svc.from('board_summaries').select('commentary, document_id, ai_cost_usd').eq('period_end', period).maybeSingle();
+let commentary = (saved?.commentary as string) ?? '';
+let documentId = (saved?.document_id as string | null) ?? null;
+let error = '', ok = '';
+const log = (action: string) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { period } });
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  commentary = String(form.get('commentary') ?? '').replace(/\r\n/g, '\n').trim().slice(0, 4000);
+  try {
+    let cost = Number(saved?.ai_cost_usd ?? 0);
+    if (intent === 'draft') { const d = await draftCommentary(svc, period, await groupItems(svc, period)); commentary = d.text; cost += d.costUsd; ok = 'Lakeba AI drafted the commentary: read it and change it as needed.'; }
+    if (intent === 'file') {
+      const pdf = await boardSummaryPdf(period, await groupItems(svc, period), commentary);
+      const { data: group } = await svc.from('entities').select('id').eq('relationship', 'group').single();
+      const path = `entity/${group!.id}/financials/${period.slice(0, 4)}/${randomUUID()}-board-summary-${period}.pdf`;
+      const { error: up } = await svc.storage.from('documents').upload(path, pdf, { contentType: 'application/pdf' });
+      if (up) throw new Error('The PDF could not be filed.');
+      const { data: d } = await svc.from('documents').insert({
+        entity_id: group!.id, title: `Lakeba Group – Ventures’ results ${periodLabel(period, 'monthly')}`, summary: 'Each venture’s results for the month, with Lakeba’s commentary.',
+        category: 'financials', file_path: path, mime_type: 'application/pdf', size_bytes: pdf.length, audience: 'board', in_knowledge_base: false, published_at: new Date().toISOString(), document_date: period,
+      }).select('id').single().throwOnError();
+      documentId = d!.id;
+      ok = 'Filed in Documents for the board.';
+    }
+    await svc.from('board_summaries').upsert({ period_end: period, commentary, ai_cost_usd: cost, document_id: documentId, updated_by: Astro.locals.user!.id, updated_at: new Date().toISOString() }, { onConflict: 'period_end' }).throwOnError();
+    if (intent === 'save') ok = 'Saved.';
+    await log(`admin_${intent}_board_summary`);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+---
+
+<Admin title="Accounting · Board summary">
+  <PageHeader title="Accounting" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
+  <AccountingNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  {periods.length ? (
+    <div class="grid max-w-3xl gap-6">
+      <form method="get" class="flex flex-wrap items-end gap-3 text-sm">
+        <div><label class="label" for="period">Period</label><select class="field !py-2" id="period" name="period">{periods.map((p) => <option value={p} selected={p === period}>{periodLabel(p, 'monthly')}</option>)}</select></div>
+        <button class="btn-ghost !py-2">Show</button>
+      </form>
+      <form method="post" class="card grid gap-3" data-busy>
+        <p class="text-sm text-white/55">One landscape page: every venture's revenue, net profit (month and year to date), cash and net assets for {periodLabel(period, 'monthly')}, the consolidated line, and the commentary below.</p>
+        <label class="label" for="commentary">Commentary</label>
+        <textarea class="field min-h-48" id="commentary" name="commentary" disabled={!mayDo}>{commentary}</textarea>
+        {mayDo && (
+          <div class="flex flex-wrap gap-3">
+            <button class="btn-ghost" name="intent" value="save">Save</button>
+            <button class="btn-ghost" name="intent" value="draft" data-busy-label="Drafting…">{commentary ? 'Draft again with Lakeba AI' : 'Draft with Lakeba AI'}</button>
+            <a class="btn-ghost" href={`/admin/accounting/board-pdf?period=${period}`} target="_blank">Preview the PDF</a>
+            <button class="btn-primary" name="intent" value="file" data-busy-label="Filing…">File in Documents for the board</button>
+          </div>
+        )}
+        {documentId && <p class="text-xs text-white/45">A copy is filed in Documents (board only). Filing again adds a new copy.</p>}
+        <p class="text-xs text-white/40">Drafting costs a cent or two; save your commentary before previewing.</p>
+      </form>
+    </div>
+  ) : <Empty title="No packs yet">The board summary appears once the ventures have sent reporting packs.</Empty>}
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLFormElement>('form[data-busy]').forEach((f) => f.addEventListener('submit', (e) => { const b = (e as SubmitEvent).submitter as HTMLButtonElement | null; if (b?.dataset.busyLabel) { b.textContent = b.dataset.busyLabel; setTimeout(() => (b.disabled = true)); } }));
+</script>

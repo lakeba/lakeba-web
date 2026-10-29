@@ -22,7 +22,10 @@ export const BS_LINES = {
 } as const;
 export type PlLine = keyof typeof PL_LINES;
 export type BsLine = keyof typeof BS_LINES;
-export type Figures = { pl?: Partial<Record<PlLine, { period: number | null; ytd: number | null }>>; bs?: Partial<Record<BsLine, number | null>> };
+/** Balances and charges with another group company (phase 3): owed to us, owed by us, charged to them and charged by them in the period. */
+export type Intercompany = { entity_id: string; receivable: number | null; payable: number | null; income: number | null; expense: number | null };
+export type Figures = { pl?: Partial<Record<PlLine, { period: number | null; ytd: number | null }>>; bs?: Partial<Record<BsLine, number | null>>; ic?: Intercompany[] };
+export const IC_FIELDS = { receivable: 'Owed to us', payable: 'Owed by us', income: 'Charged to them (period)', expense: 'Charged by them (period)' } as const;
 export type FileRef = { path: string; name: string; size: number };
 export type Schedule = { entity_id: string; cadence: 'monthly' | 'quarterly'; due_days: number; first_period: string; currency: string; year_end_month: number; active: boolean };
 export type Pack = {
@@ -223,6 +226,9 @@ export async function reportingReminders(svc: Svc, origin: string, now = new Dat
     if (stage === 'over:0') lateForTeam.push(`• ${name}: ${label} (due ${p.due_on})${to.length ? '' : ' – nobody at the venture has the Finance role'}`);
     await svc.from('reporting_packs').update({ reminded: [...p.reminded, stage] }).eq('id', p.id);
   }
+  // Year-end requests (audit-requests.ts) are reminded with them.
+  const { auditReminders } = await import('./audit-requests');
+  sent += await auditReminders(svc, origin).catch(() => 0);
   if (lateForTeam.length) sent += await notifyMembers({ kind: 'reporting', userIds: await financeTeam(svc), origin, link: '/admin/accounting/packs?show=late', title: `Reporting packs overdue: ${lateForTeam.length}`, body: `These became overdue:\n\n${lateForTeam.join('\n')}` }).catch(() => 0);
   return sent;
 }
@@ -236,9 +242,13 @@ export function figuresFrom(form: FormData): Figures {
     const v = Number(raw.replace(/[^\d.]/g, ''));
     return Number.isFinite(v) ? Math.round(neg ? -v : v) : null;
   };
+  const icIds = [...new Set([...form.keys()].filter((k) => k.startsWith('ic.')).map((k) => k.split('.')[1]))].filter((id) => /^[0-9a-f-]{36}$/.test(id));
+  const ic = icIds.map((id) => ({ entity_id: id, receivable: num(`ic.${id}.receivable`), payable: num(`ic.${id}.payable`), income: num(`ic.${id}.income`), expense: num(`ic.${id}.expense`) }))
+    .filter((r) => r.receivable != null || r.payable != null || r.income != null || r.expense != null);
   return {
     pl: Object.fromEntries(Object.keys(PL_LINES).map((k) => [k, { period: num(`pl.${k}.period`), ytd: num(`pl.${k}.ytd`) }])),
     bs: Object.fromEntries(Object.keys(BS_LINES).map((k) => [k, num(`bs.${k}`)])),
+    ic,
   };
 }
 
@@ -246,4 +256,34 @@ export function figuresFrom(form: FormData): Figures {
 export async function previousPack(svc: Svc, pack: Pick<Pack, 'entity_id' | 'period_end'>) {
   const { data } = await svc.from('reporting_packs').select('figures, period_end').eq('entity_id', pack.entity_id).lt('period_end', pack.period_end).in('status', ['submitted', 'accepted']).order('period_end', { ascending: false }).limit(1);
   return (data?.[0]?.figures as Figures | undefined) ?? null;
+}
+
+// ---------------------------------------------------------------------------
+// Xero (phase 2): a venture that connected Xero gets its figures pulled
+// ---------------------------------------------------------------------------
+/** The first day of the pack's period and of its financial year. */
+export function periodDates(pack: Pick<Pack, 'period_end' | 'cadence'>, yearEndMonth: number) {
+  const months = pack.cadence === 'quarterly' ? 3 : 1;
+  const first = addDays(monthEnd(pack.period_end, -months), 1);
+  const fyMonth = (yearEndMonth % 12) + 1;
+  let y = Number(pack.period_end.slice(0, 4));
+  if (fyMonth > Number(pack.period_end.slice(5, 7))) y -= 1;
+  return { start: first, end: pack.period_end, yearStart: `${y}-${String(fyMonth).padStart(2, '0')}-01` };
+}
+
+/** Whether the company's Xero is connected (and an organisation chosen). */
+export async function xeroConnected(svc: Svc, entityId: string) {
+  const { connectionOf } = await import('./integrations/connections');
+  const c = await connectionOf(svc, entityId, 'xero');
+  return c && c.status === 'connected' && (c.account_id || (c.settings as { tenant_id?: string }).tenant_id) ? c : null;
+}
+
+/** Puts the period's figures from Xero on the pack. */
+export async function fillFromXero(svc: Svc, pack: Pack, company: { id: string; code: string; display_name: string }, schedule: Schedule | null, central: string) {
+  const c = await xeroConnected(svc, company.id);
+  if (!c) throw new Error('Xero isn’t connected for this company.');
+  const { xeroPackFigures } = await import('./integrations/xero');
+  const figures = { ...(await xeroPackFigures(svc, c, company, central, periodDates(pack, schedule?.year_end_month ?? 6))), ic: pack.figures.ic ?? [] };
+  await svc.from('reporting_packs').update({ figures, source: 'xero', ai_notes: [], updated_at: new Date().toISOString() }).eq('id', pack.id).throwOnError();
+  return figures;
 }

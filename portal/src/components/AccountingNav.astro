@@ -3,7 +3,10 @@
 const path = Astro.url.pathname;
 const tabs = [
   { href: '/admin/accounting', label: 'Group view', on: path === '/admin/accounting' },
+  { href: '/admin/accounting/group', label: 'Consolidated', on: path.startsWith('/admin/accounting/group') },
+  { href: '/admin/accounting/board', label: 'Board summary', on: path.startsWith('/admin/accounting/board') },
   { href: '/admin/accounting/packs', label: 'Reporting packs', on: path.startsWith('/admin/accounting/packs') },
+  { href: '/admin/accounting/year-end', label: 'Year-end', on: path.startsWith('/admin/accounting/year-end') },
   { href: '/admin/accounting/schedules', label: 'Schedules', on: path.startsWith('/admin/accounting/schedules') },
 ];
 ---

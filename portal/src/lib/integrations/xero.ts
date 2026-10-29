@@ -4,6 +4,7 @@ import type { serviceClient } from '../admin';
 import { holdersIn } from '../api/data';
 import { outboundJson } from '../outbound';
 import { accessToken, raiseIssue, type Connection } from './connections';
+import { figuresFromXero, type XeroRow } from '../reporting-xero';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -154,3 +155,19 @@ export async function prepareDividend(svc: Svc, c: Connection, company: Ctx['com
 }
 
 export { ctxOf as xeroContext };
+
+/**
+ * A reporting pack's figures from Xero (Accounting, phase 2): the period's and
+ * the year to date's profit and loss and the balance sheet at period end.
+ */
+export async function xeroPackFigures(svc: Svc, c: Connection, company: Ctx['company'], central: string, p: { start: string; end: string; yearStart: string }) {
+  const x = await ctxOf(svc, c, company, central);
+  type Report = { Reports: { Rows: XeroRow[] }[] };
+  const [period, ytd, balance] = await Promise.all([
+    xr<Report>(x, 'GET', `/Reports/ProfitAndLoss?fromDate=${p.start}&toDate=${p.end}&standardLayout=true`),
+    p.yearStart === p.start ? Promise.resolve(null) : xr<Report>(x, 'GET', `/Reports/ProfitAndLoss?fromDate=${p.yearStart}&toDate=${p.end}&standardLayout=true`),
+    xr<Report>(x, 'GET', `/Reports/BalanceSheet?date=${p.end}&standardLayout=true`),
+  ]);
+  const periodRows = period.Reports?.[0]?.Rows ?? [];
+  return figuresFromXero(periodRows, ytd ? ytd.Reports?.[0]?.Rows ?? [] : periodRows, balance.Reports?.[0]?.Rows ?? []);
+}

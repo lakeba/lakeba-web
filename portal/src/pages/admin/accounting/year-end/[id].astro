@@ -1,0 +1,97 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import AccountingNav from '../../../../components/AccountingNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { fileSize, shortDate } from '../../../../lib/format';
+import { ITEM_COLUMNS, ITEM_STATES, REQUEST_COLUMNS, tellVenture, type AuditItem, type AuditRequest } from '../../../../lib/audit-requests';
+
+// Admin → Accounting → a year-end request: each item, what the venture
+// provided, accept it or ask again; add items; download everything for the
+// auditor; close the request.
+const svc = serviceClient();
+const { data: row } = await svc.from('audit_requests').select(`${REQUEST_COLUMNS}, entities(display_name)`).eq('id', Astro.params.id ?? '').maybeSingle();
+if (!row) return Astro.redirect('/admin/accounting/year-end');
+let r = row as unknown as AuditRequest & { entities: { display_name: string } | null };
+const mayDo = Astro.locals.access.can('accounting.do', null);
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const itemId = field(form, 'item_id');
+  try {
+    const now = new Date().toISOString();
+    if (intent === 'accept' || intent === 'again' || intent === 'na') {
+      const { data: it } = await svc.from('audit_items').select('id, title').eq('id', itemId).eq('request_id', r.id).single();
+      const note = field(form, 'review_note').slice(0, 2000);
+      if (intent === 'again' && !note) throw new Error('Say what is still needed.');
+      await svc.from('audit_items').update({ status: intent === 'accept' ? 'accepted' : intent === 'na' ? 'not_applicable' : 'requested', review_note: note, updated_by: Astro.locals.user!.id, updated_at: now }).eq('id', it!.id).throwOnError();
+      if (intent === 'again') await tellVenture(svc, r, Astro.url.origin, `${r.entities?.display_name}: more needed for “${it!.title}”`, `Lakeba needs more for the year-end item “${it!.title}”:\n\n${note}`);
+      ok = intent === 'again' ? 'Asked again.' : 'Saved.';
+    } else if (intent === 'add') {
+      const title = field(form, 'title');
+      if (title.length < 2) throw new Error('Name the item.');
+      const { count } = await svc.from('audit_items').select('id', { count: 'exact', head: true }).eq('request_id', r.id);
+      await svc.from('audit_items').insert({ request_id: r.id, sort: count ?? 0, title: title.slice(0, 300), detail: field(form, 'detail').slice(0, 1000) }).throwOnError();
+      await tellVenture(svc, r, Astro.url.origin, `${r.entities?.display_name}: one more year-end item`, `Lakeba added “${title}” to ${r.title}.`);
+      ok = 'Added and the venture told.';
+    } else if (intent === 'close' || intent === 'reopen') {
+      await svc.from('audit_requests').update({ status: intent === 'close' ? 'done' : 'open', updated_at: now }).eq('id', r.id).throwOnError();
+      ok = intent === 'close' ? 'Closed.' : 'Open again.';
+    }
+    await Astro.locals.supabase.rpc('log_event', { event_action: `admin_${intent}_audit_item`, event_detail: { entity_id: r.entity_id, request_id: r.id, item_id: itemId || null } });
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  r = { ...((await svc.from('audit_requests').select(REQUEST_COLUMNS).eq('id', r.id).single()).data as AuditRequest), entities: r.entities };
+}
+const { data: itemRows } = await svc.from('audit_items').select(ITEM_COLUMNS).eq('request_id', r.id).order('sort');
+const items = (itemRows ?? []) as AuditItem[];
+const done = items.filter((i) => i.status === 'accepted' || i.status === 'not_applicable').length;
+const tone = { requested: 'text-white/50', provided: 'text-lk-blue', accepted: 'text-lk-green', not_applicable: 'text-white/40' };
+---
+
+<Admin title={`Accounting · ${r.title}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/accounting/year-end" class="hover:text-white">Accounting · Year-end</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{r.title}</h1>
+    <p class="mt-1 text-sm text-white/55">Due {shortDate.format(new Date(`${r.due_on}T12:00:00+10:00`))}{r.auditor && ` · ${r.auditor}`} · {done} of {items.length} done{r.status === 'done' && ' · closed'}</p>
+  </div>
+  <AccountingNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  <div class="mb-4 flex flex-wrap gap-3">
+    <a class="btn-ghost !py-2" href={`/admin/accounting/year-end/${r.id}/zip`}>Download everything provided (zip)</a>
+    {mayDo && <form method="post"><button class="btn-ghost !py-2" name="intent" value={r.status === 'open' ? 'close' : 'reopen'}>{r.status === 'open' ? 'Close the request' : 'Open it again'}</button></form>}
+  </div>
+  <ul class="grid gap-3">
+    {items.map((it) => (
+      <li class="card !p-5">
+        <div class="flex flex-wrap items-baseline justify-between gap-2"><span class="font-medium text-white">{it.title}</span><span class:list={['text-sm', tone[it.status]]}>{ITEM_STATES[it.status]}</span></div>
+        {it.detail && <p class="mt-1 text-sm text-white/50">{it.detail}</p>}
+        {it.files.length > 0 && <ul class="mt-2 grid gap-1 text-sm">{it.files.map((f) => <li><a class="text-lk-blue hover:underline" href={`/admin/accounting/file?path=${encodeURIComponent(f.path)}`}>{f.name}</a> <span class="text-white/40">{fileSize(f.size)}</span></li>)}</ul>}
+        {it.note && <p class="mt-2 text-sm text-white/70">The venture: {it.note}</p>}
+        {it.review_note && <p class="mt-1 text-sm text-lk-orange">Lakeba: {it.review_note}</p>}
+        {mayDo && it.status !== 'accepted' && (
+          <form method="post" class="mt-3 flex flex-wrap items-end gap-2">
+            <input type="hidden" name="item_id" value={it.id} />
+            <input class="field !w-auto grow !py-1.5 text-sm" name="review_note" placeholder="What is still needed (to ask again)" aria-label="What is still needed" />
+            {it.status === 'provided' && <button class="btn-primary !py-1.5 text-sm" name="intent" value="accept">Accept</button>}
+            <button class="btn-ghost !py-1.5 text-sm" name="intent" value="again">Ask again</button>
+            {it.status !== 'not_applicable' && <button class="btn-ghost !py-1.5 text-sm" name="intent" value="na">Not applicable</button>}
+          </form>
+        )}
+      </li>
+    ))}
+  </ul>
+  {mayDo && (
+    <form method="post" class="card mt-6 grid gap-3 sm:grid-cols-2">
+      <h2 class="font-display text-lg font-bold sm:col-span-2">Add an item</h2>
+      <div><label class="label" for="title">Item</label><input class="field" id="title" name="title" required /></div>
+      <div><label class="label" for="detail">Detail</label><input class="field" id="detail" name="detail" /></div>
+      <div><button class="btn-ghost" name="intent" value="add">Add and tell the venture</button></div>
+    </form>
+  )}
+</Admin>

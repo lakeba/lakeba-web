@@ -1,0 +1,98 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Alert from '../../../../components/Alert.astro';
+import Empty from '../../../../components/Empty.astro';
+import AccountingNav from '../../../../components/AccountingNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { shortDate } from '../../../../lib/format';
+import { REQUEST_COLUMNS, STANDARD_ITEMS, tellVenture, type AuditRequest } from '../../../../lib/audit-requests';
+import { monthEnd, todayIn } from '../../../../lib/reporting';
+
+// Admin → Accounting → Year-end: what each venture's auditor needs for a
+// financial year, asked for and followed here.
+const svc = serviceClient();
+const mayDo = Astro.locals.access.can('accounting.do', null);
+let error = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  try {
+    const entityId = field(form, 'entity_id');
+    const yearEnd = field(form, 'year_end'), due = field(form, 'due_on');
+    if (!entityId || !/^\d{4}-\d{2}-\d{2}$/.test(yearEnd) || !/^\d{4}-\d{2}-\d{2}$/.test(due)) throw new Error('Choose the company, the year end and the due date.');
+    const { data: ent } = await svc.from('entities').select('id, display_name').eq('id', entityId).single();
+    const picked = STANDARD_ITEMS.filter((_, i) => form.get(`std-${i}`) === 'on');
+    const extra = String(form.get('extra') ?? '').split('\n').map((l) => l.trim()).filter(Boolean).map((t) => ({ title: t.slice(0, 300), detail: '' }));
+    const items = [...picked, ...extra];
+    if (!items.length) throw new Error('Choose at least one item.');
+    const yearWord = `FY${yearEnd.slice(0, 4)}`;
+    const { data: r, error: e } = await svc.from('audit_requests').insert({
+      entity_id: entityId, year_end: yearEnd, due_on: due, auditor: field(form, 'auditor').slice(0, 200), title: `${ent!.display_name} – ${yearWord} year-end and audit`, created_by: Astro.locals.user!.id,
+    }).select('id').single();
+    if (e?.code === '23505') throw new Error(`${ent!.display_name} already has a request for that year end.`);
+    if (e || !r) throw new Error('The request could not be made.');
+    await svc.from('audit_items').insert(items.map((it, i) => ({ request_id: r.id, sort: i, title: it.title, detail: it.detail }))).throwOnError();
+    await tellVenture(svc, { id: r.id, entity_id: entityId }, Astro.url.origin, `${ent!.display_name}: what the auditor needs for ${yearWord}`, `Lakeba has listed ${items.length} items the auditor needs for ${yearWord}, due ${due}. Upload each in the portal.`);
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_made_audit_request', event_detail: { entity_id: entityId, request_id: r.id } });
+    return Astro.redirect(`/admin/accounting/year-end/${r.id}`);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const [{ data: reqs }, { data: ents }, { data: items }] = await Promise.all([
+  svc.from('audit_requests').select(`${REQUEST_COLUMNS}, entities(display_name)`).order('year_end', { ascending: false }),
+  svc.from('entities').select('id, display_name').order('sort'),
+  svc.from('audit_items').select('request_id, status'),
+]);
+const rows = (reqs ?? []) as unknown as (AuditRequest & { entities: { display_name: string } | null })[];
+const progress = (id: string) => { const mine = (items ?? []).filter((i) => i.request_id === id); return { done: mine.filter((i) => i.status === 'accepted' || i.status === 'not_applicable').length, provided: mine.filter((i) => i.status === 'provided').length, all: mine.length }; };
+const today = todayIn();
+// Default: the last 30 June that has passed.
+const y = Number(today.slice(0, 4));
+const lastJune = `${today.slice(5) >= '06-30' ? y : y - 1}-06-30`;
+const day = (d: string) => shortDate.format(new Date(`${d}T12:00:00+10:00`));
+---
+
+<Admin title="Accounting · Year-end">
+  <PageHeader title="Accounting" subtitle="Each venture's profit and loss and balance sheet, from the reporting packs they send." />
+  <AccountingNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {rows.length ? (
+    <section class="card mb-6 overflow-x-auto p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Request</th><th class="px-5 py-3">Due</th><th class="px-5 py-3">Done</th><th class="px-5 py-3">To review</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {rows.map((r) => { const p = progress(r.id); return (
+            <tr>
+              <td class="px-5 py-3"><a class="font-medium text-white hover:text-lk-blue" href={`/admin/accounting/year-end/${r.id}`}>{r.title}</a><span class="block text-xs text-white/45">Year end {day(r.year_end)}{r.auditor && ` · ${r.auditor}`}{r.status === 'done' && ' · closed'}</span></td>
+              <td class:list={['px-5 py-3', r.status === 'open' && r.due_on < today ? 'text-lk-red' : 'text-white/60']}>{day(r.due_on)}</td>
+              <td class="px-5 py-3 tabular-nums text-white/70">{p.done} of {p.all}</td>
+              <td class:list={['px-5 py-3 tabular-nums', p.provided ? 'text-lk-blue' : 'text-white/40']}>{p.provided || '—'}</td>
+            </tr>
+          ); })}
+        </tbody>
+      </table>
+    </section>
+  ) : <div class="mb-6"><Empty title="No year-end requests yet">Ask a venture for what its auditor needs below.</Empty></div>}
+
+  {mayDo && (
+    <details class="card" open={Boolean(error) || !rows.length}>
+      <summary class="cursor-pointer font-display text-lg font-bold">New year-end request</summary>
+      <form method="post" class="mt-5 grid gap-4 sm:grid-cols-2">
+        <div><label class="label" for="entity_id">Company</label><select class="field" id="entity_id" name="entity_id" required><option value="">Choose…</option>{(ents ?? []).map((e) => <option value={e.id}>{e.display_name}</option>)}</select></div>
+        <div><label class="label" for="auditor">Auditor (optional)</label><input class="field" id="auditor" name="auditor" placeholder="Firm and partner" /></div>
+        <div><label class="label" for="year_end">Financial year ended</label><input class="field" type="date" id="year_end" name="year_end" value={lastJune} required /></div>
+        <div><label class="label" for="due_on">Due</label><input class="field" type="date" id="due_on" name="due_on" value={monthEnd(today, 1)} required /></div>
+        <fieldset class="grid gap-1.5 sm:col-span-2">
+          <legend class="label">What the auditor needs</legend>
+          {STANDARD_ITEMS.map((it, i) => <label class="flex items-start gap-2 text-sm"><input type="checkbox" name={`std-${i}`} checked class="mt-0.5 size-4 accent-lk-blue" /><span><span class="text-white">{it.title}</span><span class="block text-xs text-white/45">{it.detail}</span></span></label>)}
+        </fieldset>
+        <div class="sm:col-span-2"><label class="label" for="extra">Anything else (one per line)</label><textarea class="field min-h-20" id="extra" name="extra"></textarea></div>
+        <div><button class="btn-primary">Send to the venture</button></div>
+      </form>
+    </details>
+  )}
+</Admin>

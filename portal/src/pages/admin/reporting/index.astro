@@ -19,6 +19,8 @@ const todo = rows.filter((r) => r.status === 'open' || r.status === 'returned').
 const done = rows.filter((r) => !todo.includes(r));
 const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
 const today = todayIn();
+// Year-end requests: what the auditor needs from these companies.
+const { data: yearEnds } = ids.length ? await svc.from('audit_requests').select('id, entity_id, title, due_on, status, audit_items(status)').in('entity_id', ids).order('year_end', { ascending: false }) : { data: [] };
 const day = (d: string) => shortDate.format(new Date(`${d}T12:00:00+10:00`));
 ---
 
@@ -34,6 +36,16 @@ const day = (d: string) => shortDate.format(new Date(`${d}T12:00:00+10:00`));
       ))}</ul>
     </section>
   ) : <div class="mb-6"><Empty title="Nothing to send">{companies.length ? 'Packs appear here as each period ends.' : 'Lakeba hasn’t set a reporting schedule for your company yet.'}</Empty></div>}
+  {(yearEnds ?? []).length > 0 && (
+    <section class="card mb-6 p-0"><h2 class="px-5 pt-5 font-display text-lg font-bold">Year-end and audit</h2>
+      <ul class="mt-2 divide-y divide-white/5">{(yearEnds ?? []).map((y) => { const its = y.audit_items as { status: string }[]; const left = its.filter((i) => i.status === 'requested').length; return (
+        <li><a class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3 hover:bg-white/[0.04]" href={`/admin/reporting/year-end/${y.id}`}>
+          <span><span class="font-medium text-white">{y.title}</span><span class="block text-xs text-white/45">due {day(y.due_on)}</span></span>
+          <span class:list={['text-sm', left && y.due_on < today ? 'text-lk-red' : left ? 'text-lk-orange' : 'text-lk-green']}>{y.status === 'done' ? 'Closed' : left ? `${left} to provide` : 'All provided'}</span>
+        </a></li>
+      ); })}</ul>
+    </section>
+  )}
   {done.length > 0 && (
     <section class="card p-0"><h2 class="px-5 pt-5 font-display text-lg font-bold">Sent</h2>
       <ul class="mt-2 divide-y divide-white/5">{done.map((r) => (

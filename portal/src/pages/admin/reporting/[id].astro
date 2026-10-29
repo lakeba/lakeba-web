@@ -6,7 +6,7 @@ import PackFigures from '../../../components/PackFigures.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { dateTime, fileSize, shortDate } from '../../../lib/format';
-import { PACK_COLUMNS, PACK_STATES, checks, figuresFrom, financeTeam, periodLabel, previousPack, readPack, senderCompanies, type FileRef, type Pack, type Schedule } from '../../../lib/reporting';
+import { PACK_COLUMNS, PACK_STATES, checks, figuresFrom, fillFromXero, financeTeam, periodLabel, previousPack, readPack, senderCompanies, xeroConnected, type FileRef, type Pack, type Schedule } from '../../../lib/reporting';
 import { notifyMembers } from '../../../lib/notify';
 
 // A venture's reporting pack: upload the management accounts, check the
@@ -26,6 +26,14 @@ const label = periodLabel(p.period_end, p.cadence);
 const userId = Astro.locals.user!.id;
 const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, pack_id: p!.id, ...detail } });
 let error = '', ok = '';
+const xero = Boolean(await xeroConnected(svc, company.id));
+const central = Astro.locals.site?.central ?? Astro.url.origin;
+const empty = (f: Pack['figures']) => !Object.values(f.pl ?? {}).some((v) => v?.period != null) && !Object.values(f.bs ?? {}).some((v) => v != null);
+// With Xero connected, an empty pack gets its figures as soon as it is opened.
+if (Astro.request.method === 'GET' && xero && mayDo && (p.status === 'open' || p.status === 'returned') && empty(p.figures)) {
+  try { await fillFromXero(svc, p, company, schedule, central); ok = 'The figures came from Xero: check them, add a note and send.'; p = (await svc.from('reporting_packs').select(PACK_COLUMNS).eq('id', p.id).single()).data as Pack; }
+  catch (e) { error = `Xero: ${(e as Error).message}. Upload the accounts instead, or try again.`; }
+}
 
 if (Astro.request.method === 'POST' && mayDo) {
   const form = await Astro.request.formData();
@@ -40,7 +48,11 @@ if (Astro.request.method === 'POST' && mayDo) {
       ok = 'Sent to Lakeba.';
     } else {
       if (!editable) throw new Error('This pack is with Lakeba; send them a message instead.');
-      if (intent === 'upload') {
+      if (intent === 'xero') {
+        await fillFromXero(svc, p, company, schedule, central);
+        await log('fetched_reporting_pack_from_xero');
+        ok = 'The figures came from Xero again: check them, add a note and send.';
+      } else if (intent === 'upload') {
         const files = form.getAll('files').filter((f): f is File => f instanceof File && f.size > 0);
         if (!files.length) throw new Error('Choose the file(s): Excel, CSV or PDF.');
         const added: FileRef[] = [];
@@ -55,7 +67,7 @@ if (Astro.request.method === 'POST' && mayDo) {
         p = { ...p, files: [...p.files, ...added] };
         await svc.from('reporting_packs').update({ files: p.files, updated_at: new Date().toISOString() }).eq('id', p.id).throwOnError();
         const { figures, notes, costUsd } = await readPack(svc, p, company.display_name, schedule);
-        await svc.from('reporting_packs').update({ figures, ai_notes: notes, source: 'upload', ai_cost_usd: Number(p.ai_cost_usd) + costUsd, updated_at: new Date().toISOString() }).eq('id', p.id).throwOnError();
+        await svc.from('reporting_packs').update({ figures: { ...figures, ic: p.figures.ic ?? [] }, ai_notes: notes, source: 'upload', ai_cost_usd: Number(p.ai_cost_usd) + costUsd, updated_at: new Date().toISOString() }).eq('id', p.id).throwOnError();
         await log('uploaded_reporting_pack', { files: added.map((a) => a.name) });
         ok = 'Lakeba AI read the figures: check them below, then send.';
       } else if (intent === 'remove-file') {
@@ -93,6 +105,8 @@ const { data: people } = ids.length ? await svc.from('profiles').select('id, fir
 const nameOf = (id: string | null) => { const x = (people ?? []).find((y) => y.id === id); return x ? [x.first_name, x.last_name].filter(Boolean).join(' ') || x.email : 'Someone'; };
 const editable = mayDo && (p.status === 'open' || p.status === 'returned');
 const flags = checks(p.figures, previous);
+const { data: groupRows } = await svc.from('entities').select('id, display_name, relationship').in('relationship', ['group', 'controlled']).neq('id', company.id).order('sort');
+const others = (groupRows ?? []) as { id: string; display_name: string }[];
 const lastQuestion = p.status === 'returned' ? (msgRows ?? []).at(-1) : null;
 ---
 
@@ -108,7 +122,9 @@ const lastQuestion = p.status === 'returned' ? (msgRows ?? []).at(-1) : null;
 
   {editable && (
     <form method="post" enctype="multipart/form-data" class="card mb-6 grid gap-3" data-busy>
-      <h2 class="font-display text-lg font-bold">1. Upload the management accounts</h2>
+      <h2 class="font-display text-lg font-bold">1. {xero ? 'The figures from Xero' : 'Upload the management accounts'}</h2>
+      {xero && <div class="flex flex-wrap items-center gap-3 text-sm"><span class="text-white/55">Xero is connected: the figures are fetched for {label}.{p.source === 'xero' && ' Fetched.'}</span><button class="btn-ghost !py-1.5" name="intent" value="xero" formnovalidate data-busy-label="Fetching…">Fetch again from Xero</button></div>}
+      {xero && <p class="text-sm text-white/45">Or upload the accounts instead:</p>}
       <p class="text-sm text-white/55">The profit and loss and balance sheet for {label}, as Excel, CSV or PDF (from Xero, MYOB or your accountant). Lakeba AI reads them into the lines below.</p>
       <div class="flex flex-wrap items-center gap-3"><input class="field !w-auto !py-1.5 text-sm" type="file" name="files" multiple accept=".xlsx,.csv,.pdf" /><button class="btn-primary" name="intent" value="upload" data-busy-label="Reading…">Upload and read</button></div>
     </form>
@@ -124,7 +140,7 @@ const lastQuestion = p.status === 'returned' ? (msgRows ?? []).at(-1) : null;
     <h2 class="font-display text-lg font-bold">{editable ? '2. Check the figures' : 'Figures'}</h2>
     {p.ai_notes.length > 0 && editable && <Alert tone="info">To check: {p.ai_notes.join(' · ')}</Alert>}
     {flags.length > 0 && <ul class="grid gap-1 text-sm text-lk-orange">{flags.map((f) => <li>• {f}</li>)}</ul>}
-    <PackFigures figures={p.figures} editable={editable} currency={currency} previous={previous} />
+    <PackFigures figures={p.figures} editable={editable} currency={currency} previous={previous} others={others} />
     <div><label class="label" for="note">{editable ? '3. A short note on the period' : 'Note'}</label>
       {editable ? <textarea class="field min-h-24" id="note" name="note" placeholder="What happened this period: big wins, one-offs, anything Lakeba should know.">{p.note}</textarea> : <p class="whitespace-pre-line text-sm text-white/75">{p.note || '—'}</p>}</div>
     {editable && <div class="flex flex-wrap gap-3"><button class="btn-ghost" name="intent" value="save">Save</button><button class="btn-primary" name="intent" value="send">Send to Lakeba</button></div>}

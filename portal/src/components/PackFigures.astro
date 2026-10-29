@@ -1,10 +1,13 @@
 ---
-import { BS_LINES, PL_LINES, totals, type Figures } from '../lib/reporting';
+import { BS_LINES, IC_FIELDS, PL_LINES, totals, type Figures } from '../lib/reporting';
 // A reporting pack's figures: as inputs while it can be changed, as text
 // otherwise. Inputs are named pl.<line>.period, pl.<line>.ytd and bs.<line>
 // (read back with figuresFrom).
-interface Props { figures: Figures; editable: boolean; currency: string; previous?: Figures | null }
-const { figures, editable, currency, previous } = Astro.props;
+// With `others` (the other group companies): the balances and charges with each, removed when the group is consolidated.
+interface Props { figures: Figures; editable: boolean; currency: string; previous?: Figures | null; others?: { id: string; display_name: string }[] }
+const { figures, editable, currency, previous, others = [] } = Astro.props;
+const icOf = (id: string) => (figures.ic ?? []).find((r) => r.entity_id === id);
+const icRows = editable ? others : others.filter((o) => icOf(o.id));
 const money = (v: number | null | undefined) => (v == null ? '' : new Intl.NumberFormat('en-AU', { maximumFractionDigits: 0 }).format(v));
 const t = totals(figures);
 const cell = 'px-3 py-1.5 text-right tabular-nums';
@@ -47,3 +50,22 @@ const input = 'field !rounded-lg !px-2 !py-1 text-right tabular-nums';
     <p class="mt-2 px-3 text-xs text-white/40">Whole {currency}; expenses as positive numbers; a loss as a negative net profit, e.g. -12,500.</p>
   </div>
 </div>
+{icRows.length > 0 && (
+  <details class="mt-6" open={!editable || (figures.ic ?? []).length > 0}>
+    <summary class="cursor-pointer text-sm font-medium text-white">With other Lakeba group companies{!editable && ` (${icRows.length})`}</summary>
+    <p class="mt-1 text-xs text-white/40">What is owed between this company and the others in the group at period end, and management fees or recharges in the period. Lakeba removes these when it adds the group up. Leave blank where there is nothing.</p>
+    <div class="mt-3 overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-3 py-2 text-left">Company</th>{Object.values(IC_FIELDS).map((l) => <th class="px-3 py-2 text-right">{l}</th>)}</tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {icRows.map((o) => (
+            <tr>
+              <td class="px-3 py-1.5 text-white/75">{o.display_name}</td>
+              {(Object.keys(IC_FIELDS) as (keyof typeof IC_FIELDS)[]).map((f) => <td class={cell}>{editable ? <input class={input} name={`ic.${o.id}.${f}`} value={money(icOf(o.id)?.[f])} inputmode="decimal" aria-label={`${o.display_name}: ${IC_FIELDS[f]}`} /> : money(icOf(o.id)?.[f])}</td>)}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  </details>
+)}
