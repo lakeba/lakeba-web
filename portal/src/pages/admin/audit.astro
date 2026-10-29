@@ -1,4 +1,5 @@
 ---
+import SystemNav from '../../components/SystemNav.astro';
 import { actionLabel, detailSummary } from '../../lib/audit-labels';
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
@@ -54,6 +55,7 @@ const csvHref = `/admin/audit.csv?${new URLSearchParams(Object.entries(filters).
   <PageHeader title="Audit log" subtitle="Sign-ins, document opens and every admin change." >
     <a href={csvHref} class="btn-ghost">Export CSV</a>
   </PageHeader>
+  <SystemNav />
 
   {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}

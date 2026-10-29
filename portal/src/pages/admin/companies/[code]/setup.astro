@@ -1,4 +1,5 @@
 ---
+import CompanyTabs from '../../../../components/CompanyTabs.astro';
 import Admin from '../../../../layouts/Admin.astro';
 import Alert from '../../../../components/Alert.astro';
 import { serviceClient } from '../../../../lib/admin';
@@ -85,8 +86,9 @@ const doneCount = steps.filter((s) => s.done).length;
 ---
 
 <Admin title={`Set up ${c.display_name}`}>
-  <a href={`/admin/companies/${code}`} class="text-sm text-white/50 hover:text-white">← {c.display_name}</a>
-  <h1 class="mt-2 font-display text-3xl font-bold">Set up {c.display_name}</h1>
+  <a href="/admin/companies" class="text-sm text-white/50 hover:text-white">← Companies</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{c.display_name}</h1>
+  <div class="mt-4"><CompanyTabs company={c} /></div>
   <p class="mt-1 text-sm text-white/55">{doneCount} of {steps.length} done. Trading stays off for ventures until it is cleared.</p>
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}
     {inviteLink && <Alert tone="info">The invitation was emailed. If it doesn’t arrive, send them this link (it works once, for 24 hours): <span class="break-all font-mono text-xs">{inviteLink}</span></Alert>}</div>

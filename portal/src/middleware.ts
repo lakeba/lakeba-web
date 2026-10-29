@@ -12,6 +12,7 @@ import { centralOrigin, ownDomainVenture, refreshOwnDomains, siteOf } from './li
 import { isKnownHost } from './lib/known-hosts.mjs';
 import { NO_VIEW, VIEW_COOKIE, investorCompanyIds, wantsInvestorView } from './lib/investor-view';
 import { TABLET_COOKIE, TABLET_PATH, connected, tabletOf } from './lib/tablets';
+import { MOVED, toPage, toShown } from './lib/admin-paths';
 
 // Sends queued browser notifications and runs scheduled ones (reminders, daily summaries).
 startNotificationWorker();
@@ -31,14 +32,20 @@ const matches = (path: string, list: string[]) => list.some((p) => path === p ||
 
 export const onRequest = defineMiddleware(async (context, next) => {
   const { url, locals, redirect } = context;
-  const path = url.pathname;
+  // The admin's addresses follow its menu (lib/admin-paths.ts): the page behind the address shown, whose access rules apply.
+  const path = toPage(url.pathname);
+  const go = () => (path === url.pathname ? next() : next(path + url.search));
+  // A browser opening an old address goes to the new one (not the tablet's or the bot's Observer, nor files and requests from pages).
+  const navigating = context.request.method === 'GET' && (context.request.headers.get('sec-fetch-dest') === 'document' || /text\/html/.test(context.request.headers.get('accept') ?? ''));
+  const moved = MOVED[url.pathname] ?? (toShown(url.pathname) !== url.pathname && !url.pathname.endsWith('/observe') ? toShown(url.pathname) : null);
+  if (navigating && moved) return new Response(null, { status: 302, headers: { location: moved + url.search } });
   // Ventures' own domains are let through by Astro with any other HTTPS name: turn away all but those.
   await refreshOwnDomains();
   if (!isKnownHost(url.hostname) && !ownDomainVenture(url.hostname)) return new Response('Not found', { status: 404 });
   rememberOrigin(url.origin);
   const site = siteOf(url);
   // The Observer page (a meeting's recording on the boardroom tablet) is the only one that may use the microphone.
-  const done = (response: Response) => withSecurityHeaders(response, /^\/admin\/legal\/meetings\/[0-9a-f-]{36}\/observe$/.test(context.url.pathname));
+  const done = (response: Response) => withSecurityHeaders(response, /^\/admin\/legal\/meetings\/[0-9a-f-]{36}\/observe$/.test(path));
   locals.supabase = createSupabase(context);
   locals.site = { kind: site.kind, venture: null, central: centralOrigin(url) };
   locals.user = null;
@@ -114,13 +121,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
     locals.profile = person as App.Locals['profile'];
     locals.access = await loadAccess(svc, t.paired_by, true);
     if (Date.now() - Date.parse(t.last_seen_at ?? '1970-01-01') > 60_000) await svc.from('board_tablets').update({ last_seen_at: new Date().toISOString() }).eq('id', t.id);
-    return done(await next());
+    return done(await go());
   }
 
   if (!locals.user) {
     // A session's investor view ends with it.
     if (wantsInvestorView(context.cookies)) context.cookies.delete(VIEW_COOKIE, { path: '/' });
-    if (matches(path, PUBLIC_PATHS)) return done(await next());
+    if (matches(path, PUBLIC_PATHS)) return done(await go());
     if (site.kind === 'venture') return redirect(`${locals.site.central}/login?${new URLSearchParams({ ...(site.slug ? { venture: site.slug } : {}), next: url.href })}`, 302);
     return redirect(`/login?next=${encodeURIComponent(path + url.search)}`);
   }
@@ -193,7 +200,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   if (matches(path, ['/login', '/forgot-password'])) return redirect(safeNext(url.searchParams.get('next')));
 
-  return done(await next());
+  return done(await go());
 });
 
 function withSecurityHeaders(response: Response, microphone = false) {

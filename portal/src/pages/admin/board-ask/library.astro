@@ -3,6 +3,7 @@ import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
 import Alert from '../../../components/Alert.astro';
 import BoardAskNav from '../../../components/BoardAskNav.astro';
+import BoardNav from '../../../components/BoardNav.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { shortDate } from '../../../lib/format';
@@ -71,6 +72,7 @@ const suggestions = [
 
 <Admin title="Board Ask · Law library">
   <PageHeader title="Board Ask" subtitle="The law Board Ask reads first: it cites the section, and only searches official websites when the library doesn’t have it." />
+  <BoardNav />
   <BoardAskNav />
   {error && <Alert tone="error">{error}</Alert>}
   {ok && <Alert tone="success">{ok}</Alert>}

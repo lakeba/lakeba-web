@@ -1,4 +1,5 @@
 ---
+import SystemNav from '../../components/SystemNav.astro';
 import Admin from '../../layouts/Admin.astro';
 import { serviceClient } from '../../lib/admin';
 import { isCompanyAdmin } from '../../lib/integrations/admin';
@@ -26,6 +27,7 @@ const connected = (id: string) => (conns ?? []).filter((c) => c.entity_id === id
       <p class="mt-1 max-w-3xl text-sm text-white/55">API keys, webhooks, HubSpot, Xero and apps, per company. Open a company to manage them; the <a href="/developers" class="text-white hover:text-lk-blue">developers docs</a> explain how they work.</p></div>
     <a href="/developers/reference" class="btn-ghost text-sm">APIs reference</a>
   </div>
+  <div class="mt-6"><SystemNav /></div>
   {mine.length === 0 ? (
     <p class="card mt-6 text-sm text-white/55">Integrations are run by a company’s Admins. You aren’t an Admin of any company.</p>
   ) : (

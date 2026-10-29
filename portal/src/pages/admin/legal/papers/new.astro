@@ -1,7 +1,7 @@
 ---
 import Admin from '../../../../layouts/Admin.astro';
 import Alert from '../../../../components/Alert.astro';
-import LegalNav from '../../../../components/LegalNav.astro';
+import BoardNav from '../../../../components/BoardNav.astro';
 import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { legalCompanies, todayIn } from '../../../../lib/legal';
@@ -44,7 +44,7 @@ if (Astro.request.method === 'POST') {
     else {
       if (grantId) await svc.from('equity_grants').update({ board_paper_id: data.id }).eq('id', grantId).eq('entity_id', company.id);
       await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_drafted_resolution', event_detail: { entity_id: company.id, paper_id: data.id, template: template.key } });
-      return Astro.redirect(`/admin/legal/papers/${data.id}`);
+      return Astro.redirect(`/admin/board/papers/${data.id}`);
     }
   }
 }
@@ -56,7 +56,7 @@ if (Astro.request.method === 'POST') {
     <h1 class="mt-2 font-display text-3xl font-bold">{template.label}</h1>
     <p class="mt-1 text-sm text-white/55">{template.description}</p>
   </div>
-  <LegalNav />
+  <BoardNav />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {directors.length === 0 && <div class="mb-6"><Alert tone="info">No directors are recorded for {company.display_name}. Add them on the Officers tab before sending a resolution for signing.</Alert></div>}
   <form method="post" class="card grid max-w-3xl gap-4 sm:grid-cols-2">

@@ -1,4 +1,5 @@
 ---
+import CompanyTabs from '../../../../components/CompanyTabs.astro';
 import Admin from '../../../../layouts/Admin.astro';
 import Alert from '../../../../components/Alert.astro';
 import { serviceClient } from '../../../../lib/admin';
@@ -313,11 +314,12 @@ const deliveryClass = (s: string) => (s === 'delivered' ? 'bg-lk-green/15 text-l
 ---
 
 <Admin title={`${company.display_name} integrations`}>
-  <a href={`/admin/companies/${code}`} class="text-sm text-white/50 hover:text-white">← {company.display_name}</a>
+  <a href="/admin/companies" class="text-sm text-white/50 hover:text-white">← Companies</a>
   <div class="mt-2 flex flex-wrap items-center justify-between gap-3">
-    <h1 class="font-display text-3xl font-bold">Integrations</h1>
+    <h1 class="font-display text-3xl font-bold">{company.display_name}</h1>
     <a href="/developers" target="_blank" class="btn-ghost text-sm">API documentation ↗</a>
   </div>
+  <div class="mt-4"><CompanyTabs company={company} /></div>
   <p class="mt-1 max-w-3xl text-sm text-white/55">Connect {company.display_name}’s other tools to the portal: HubSpot and Xero, your own systems through the API, and webhooks that tell other tools when something happens. Everything here is for {company.display_name} only.</p>
   {!company.integrations_enabled && <div class="mt-4"><Alert tone="error">Integrations are switched off for {company.display_name}: keys are refused, webhooks wait and HubSpot and Xero are paused.{access.groupAdmin ? ' Switch them back on below.' : ' A Lakeba group Admin can switch them back on.'}</Alert></div>}
   {!LIVE && <div class="mt-4"><Alert>Staging: keys made here are test keys (lk_test_…) and only work on staging. Webhooks, HubSpot and Xero reach only the addresses this server allows (its test stand-ins, and any real service switched on for testing).</Alert></div>}

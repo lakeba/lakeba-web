@@ -1,0 +1,19 @@
+---
+import SectionTabs from './SectionTabs.astro';
+import { isCompanyAdmin } from '../lib/integrations/admin';
+
+// Tabs across one company in Admin → Companies: its details, legal record and officers, website news, domain
+// and mail, integrations and set-up, in one place. Each tab shows only where it applies and to whom it's open.
+interface Props { company: { id: string; code: string; relationship: string } }
+const { company } = Astro.props;
+const access = Astro.locals.access;
+const c = `/admin/companies/${company.code}`;
+---
+<SectionTabs label="Company" tabs={[
+  { href: c, label: 'Details', exact: true },
+  { href: `${c}/legal`, label: 'Legal record & officers', show: access.can('legal.view', company.id) },
+  { href: `${c}/website`, label: 'Website news', show: access.can('news.view', company.id) },
+  { href: `${c}/domain`, label: 'Domain & mail', show: company.relationship !== 'group' },
+  { href: `${c}/integrations`, label: 'Integrations', show: isCompanyAdmin(access, company.id) },
+  { href: `${c}/setup`, label: 'Set-up', show: access.can('investors.do', null) && access.can('users.do', null) && company.relationship !== 'group' },
+]} />

@@ -16,7 +16,7 @@ import { greeting } from '../../../../../lib/recall';
 // "Finish" ends the recording and the full transcript follows on the meeting page.
 const svc = serviceClient();
 const m = await observerMeeting(svc, Astro.locals.access, Astro.params.id ?? '');
-if (!m) return Astro.redirect(`/admin/legal/meetings/${Astro.params.id}`);
+if (!m) return Astro.redirect(`/admin/board/meetings/${Astro.params.id}`);
 const { data: company } = await svc.from('entities').select('display_name, legal_name').eq('id', m.entity_id).single();
 const companyName = company?.legal_name ?? company?.display_name ?? '';
 const present = m.attendees.filter((a) => a.present);
@@ -145,7 +145,7 @@ const state = { id: m.id, tablet: onTablet, bot: onBot, voiceDelay: onBot ? Math
                     <div class="flex gap-2"><button class="btn-ghost flex-1 !py-2 text-sm" id="deck-prev">Back</button><button class="btn-ghost flex-1 !py-2 text-sm" id="deck-pause">Pause</button><button class="btn-ghost flex-1 !py-2 text-sm" id="deck-next">Next</button><button class="btn-ghost !py-2 text-sm text-lk-red" id="deck-stop">Stop</button></div>
                     <p class="text-xs text-white/40">While Lex is speaking: “Lex, next slide”, “Lex, stop”, or “Lex, …” with a question. When paused: “next slide”, “go back”, “carry on”.</p>
                   </div>
-                  <a class="text-xs text-lk-blue hover:underline" href={`/admin/legal/meetings/${m.id}/screen`} target="_blank" rel="noopener">Open the room screen (for the TV or projector)</a>
+                  <a class="text-xs text-lk-blue hover:underline" href={`/admin/board/meetings/${m.id}/screen`} target="_blank" rel="noopener">Open the room screen (for the TV or projector)</a>
                 </div>
               )}
               <div class="grid gap-2 text-sm" id="lex-answer" hidden>

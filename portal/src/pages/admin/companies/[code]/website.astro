@@ -1,4 +1,5 @@
 ---
+import CompanyTabs from '../../../../components/CompanyTabs.astro';
 import Admin from '../../../../layouts/Admin.astro';
 import Alert from '../../../../components/Alert.astro';
 import { serviceClient } from '../../../../lib/admin';
@@ -61,8 +62,9 @@ const { count: posts } = await (company.relationship === 'group'
 ---
 
 <Admin title={`${company.display_name} website news`}>
-  <a href={`/admin/companies/${code}`} class="text-sm text-white/50 hover:text-white">← {company.display_name}</a>
-  <h1 class="mt-2 font-display text-3xl font-bold">Website news</h1>
+  <a href="/admin/companies" class="text-sm text-white/50 hover:text-white">← Companies</a>
+  <h1 class="mt-2 font-display text-3xl font-bold">{company.display_name}</h1>
+  <div class="mt-4"><CompanyTabs company={company} /></div>
   <p class="mt-1 max-w-3xl text-sm text-white/55">Public news written in the portal for {company.display_name} ({posts ?? 0} published, marked for its website) shows on its own website through the website component, the news API or RSS. Each website reads it with a key.</p>
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
 

@@ -1,15 +1,11 @@
 ---
-// Tabs across Admin → Legal.
-const path = Astro.url.pathname;
-const tabs = [
-  { href: '/admin/legal', label: 'Overview', on: path === '/admin/legal' },
-  { href: '/admin/legal/companies', label: 'Companies', on: path.startsWith('/admin/legal/companies') || path.startsWith('/admin/legal/extract') },
-  { href: '/admin/legal/contracts', label: 'Contracts', on: path.startsWith('/admin/legal/contracts') },
-  { href: '/admin/legal/requests', label: 'Requests', on: path.startsWith('/admin/legal/requests') },
-  { href: '/admin/legal/ask', label: 'Legal Ask', on: path.startsWith('/admin/legal/ask') },
-  { href: '/admin/legal/calendar', label: 'Calendar', on: path.startsWith('/admin/legal/calendar') },
-];
+import SectionTabs from './SectionTabs.astro';
+// Tabs across Admin → Legal. Companies' records are under Companies; board work under Board & governance.
+const access = Astro.locals.access;
 ---
-<nav class="mb-6 flex flex-wrap gap-1 border-b border-white/10 text-sm" aria-label="Legal">
-  {tabs.map((t) => <a href={t.href} aria-current={t.on ? 'page' : undefined} class:list={['-mb-px border-b-2 px-3 py-2', t.on ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{t.label}</a>)}
-</nav>
+<SectionTabs label="Legal" tabs={[
+  { href: '/admin/legal', label: 'Overview', exact: true, also: ['/admin/legal/extract'] },
+  { href: '/admin/legal/contracts', label: 'Contracts' },
+  { href: access.canAny('legal.view') ? '/admin/legal/requests' : '/admin/legal-requests', label: 'Requests', also: ['/admin/legal/requests', '/admin/legal-requests'] },
+  { href: '/admin/legal/ask', label: 'Legal Ask' },
+]} />

@@ -1,0 +1,41 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import BoardNav from '../../../../components/BoardNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { meetingCompanies } from '../../../../lib/boardroom';
+import { dateTime } from '../../../../lib/format';
+
+// Admin → Board & governance → Minute book: each company's signed minutes and resolutions, in date order,
+// as one PDF (the minute book Lakeba keeps for each company).
+const svc = serviceClient();
+const companies = await meetingCompanies(svc, Astro.locals.access);
+const { data: papers } = companies.length ? await svc.from('board_papers').select('entity_id, kind, signed_at').eq('status', 'signed').in('entity_id', companies.map((c) => c.id)) : { data: [] };
+const rows = companies.map((c) => {
+  const signed = (papers ?? []).filter((p) => p.entity_id === c.id);
+  const last = signed.map((p) => p.signed_at as string).sort().at(-1);
+  return { c, minutes: signed.filter((p) => p.kind === 'minutes').length, resolutions: signed.filter((p) => p.kind === 'resolution').length, last };
+});
+---
+
+<Admin title="Minute book">
+  <PageHeader title="Minute book" subtitle="Each company’s signed minutes and resolutions, in date order, as one PDF." />
+  <BoardNav />
+  <div class="card overflow-x-auto !p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Company</th><th class="px-5 py-3">Signed minutes</th><th class="px-5 py-3">Signed resolutions</th><th class="px-5 py-3">Last signed</th><th class="px-5 py-3"></th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {rows.map((r) => (
+          <tr>
+            <td class="px-5 py-3 text-white">{r.c.display_name}</td>
+            <td class="px-5 py-3">{r.minutes}</td>
+            <td class="px-5 py-3">{r.resolutions}</td>
+            <td class="px-5 py-3 text-white/55">{r.last ? dateTime.format(new Date(r.last)) : '—'}</td>
+            <td class="px-5 py-3 text-right">{r.minutes + r.resolutions > 0 ? <a class="text-lk-blue hover:underline" href={`/admin/legal/minute-book/${r.c.code}`}>Open the minute book (PDF)</a> : <span class="text-white/40">Nothing signed yet</span>}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+    {!rows.length && <p class="p-5 text-sm text-white/55">No companies yet.</p>}
+  </div>
+</Admin>

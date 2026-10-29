@@ -3,6 +3,7 @@ import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
 import Alert from '../../../components/Alert.astro';
 import BoardAskNav from '../../../components/BoardAskNav.astro';
+import BoardNav from '../../../components/BoardNav.astro';
 import { serviceClient } from '../../../lib/admin';
 import { askEnabled } from '../../../lib/ask';
 import { field } from '../../../lib/forms';
@@ -62,6 +63,7 @@ const tone: Record<string, string> = { pass: 'text-lk-green', partial: 'text-lk-
 
 <Admin title="Board Ask · Tests">
   <PageHeader title="Board Ask" subtitle="Questions with what a good answer must say. Run them before and after changing the law library or Board Ask, and compare." />
+  <BoardNav />
   <BoardAskNav />
   {error && <Alert tone="error">{error}</Alert>}
   {ok && <Alert tone="success">{ok}</Alert>}

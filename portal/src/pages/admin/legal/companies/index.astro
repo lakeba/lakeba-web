@@ -35,7 +35,7 @@ const types = { proprietary: 'Proprietary', public: 'Public' } as Record<string,
           const r = recOf.get(c.id); const n = nextOf(c.id);
           return (
             <tr>
-              <td class="px-5 py-3"><a href={`/admin/legal/companies/${c.code}`} class="font-medium text-white hover:text-lk-blue">{c.display_name}</a><span class="block text-xs text-white/40">{c.legal_name ?? c.code}</span></td>
+              <td class="px-5 py-3"><a href={`/admin/companies/${c.code}`} class="font-medium text-white hover:text-lk-blue">{c.display_name}</a><span class="block text-xs text-white/40">{c.legal_name ?? c.code}</span></td>
               <td class="px-5 py-3 text-white/65">{r?.company_type ? types[r.company_type] : <span class="text-white/35">—</span>}</td>
               <td class="px-5 py-3 tabular-nums text-white/65">{r?.acn ?? c.company_number ?? <span class="text-white/35">—</span>}</td>
               <td class="px-5 py-3 text-white/65">{mmdd(reviewDateOf(r ?? null))}</td>

@@ -1,15 +1,12 @@
 ---
-// Tabs across Admin → Accounting.
-const path = Astro.url.pathname;
-const tabs = [
-  { href: '/admin/accounting', label: 'Group view', on: path === '/admin/accounting' },
-  { href: '/admin/accounting/group', label: 'Consolidated', on: path.startsWith('/admin/accounting/group') },
-  { href: '/admin/accounting/board', label: 'Board summary', on: path.startsWith('/admin/accounting/board') },
-  { href: '/admin/accounting/packs', label: 'Reporting packs', on: path.startsWith('/admin/accounting/packs') },
-  { href: '/admin/accounting/year-end', label: 'Year-end', on: path.startsWith('/admin/accounting/year-end') },
-  { href: '/admin/accounting/schedules', label: 'Schedules', on: path.startsWith('/admin/accounting/schedules') },
-];
+import SectionTabs from './SectionTabs.astro';
+// Tabs across Admin → Finance (Lakeba's accounting).
 ---
-<nav class="mb-6 flex flex-wrap gap-1 border-b border-white/10 text-sm" aria-label="Accounting">
-  {tabs.map((t) => <a href={t.href} aria-current={t.on ? 'page' : undefined} class:list={['-mb-px border-b-2 px-3 py-2', t.on ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{t.label}</a>)}
-</nav>
+<SectionTabs label="Finance" tabs={[
+  { href: '/admin/accounting', label: 'Group view', exact: true },
+  { href: '/admin/accounting/group', label: 'Consolidated' },
+  { href: '/admin/accounting/board', label: 'Board summary' },
+  { href: '/admin/accounting/packs', label: 'Reporting packs' },
+  { href: '/admin/accounting/year-end', label: 'Year-end' },
+  { href: '/admin/accounting/schedules', label: 'Schedules' },
+]} />

@@ -35,7 +35,7 @@ const nav: { href: string; label: string; tag?: string }[] = [
   { href: '/agm', label: t('Meetings') },
   { href: '/news', label: t('News') },
   ...(company && features.ask ? [{ href: '/ask', label: company.ask_name?.trim() || t('Ask {brand}', { brand }), tag: 'AI' }] : []),
-  ...(features.boardQa ? [{ href: '/board', label: t('Board Q&A') }] : []),
+  ...(features.boardQa ? [{ href: '/board', label: t('Ask the board') }] : []),
   ...(features.trading ? [{ href: '/trading', label: t('Trading') }] : []),
   ...(employments ? [{ href: '/my-hr', label: t('My HR') }] : []),
   ...(toSign?.length ? [{ href: '/sign', label: t('To sign'), ...(waitingToSign ? { tag: String(waitingToSign) } : {}) }] : []),

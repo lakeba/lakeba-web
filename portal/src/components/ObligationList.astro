@@ -39,9 +39,9 @@ const when = (o: Obligation) => {
           </summary>
           <div class="mt-3 grid gap-4 text-sm">
             {o.detail && <p class="max-w-3xl whitespace-pre-line text-white/60">{o.detail}</p>}
-            {o.status === 'open' && may(o.entity_id) && o.kind === 'solvency' && <p><a class="btn-ghost !py-1.5 text-sm" href={`/admin/legal/papers/new?obligation=${o.id}`}>Prepare the solvency resolution</a></p>}
+            {o.status === 'open' && may(o.entity_id) && o.kind === 'solvency' && <p><a class="btn-ghost !py-1.5 text-sm" href={`/admin/board/papers/new?obligation=${o.id}`}>Prepare the solvency resolution</a></p>}
             {o.source_key?.startsWith('contract:') && <p><a class="btn-ghost !py-1.5 text-sm" href={`/admin/legal/contracts/${o.source_key.split(':')[1]}`}>Open the contract</a></p>}
-            {o.kind === 'minutes' && o.source_key?.startsWith('minutes:') && <p><a class="btn-ghost !py-1.5 text-sm" href={`/admin/legal/meetings/${o.source_key.split(':')[1]}`}>Open the meeting</a></p>}
+            {o.kind === 'minutes' && o.source_key?.startsWith('minutes:') && <p><a class="btn-ghost !py-1.5 text-sm" href={`/admin/board/meetings/${o.source_key.split(':')[1]}`}>Open the meeting</a></p>}
             {o.status !== 'open' && (o.done_note || o.proof_path) && (
               <p class="text-white/60">{o.done_note}{o.proof_path && <> {' '}<a class="text-lk-blue hover:underline" href={`/admin/legal/file?path=${encodeURIComponent(o.proof_path)}`}>Open the proof</a></>}</p>
             )}

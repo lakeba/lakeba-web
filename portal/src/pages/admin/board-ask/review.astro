@@ -2,6 +2,7 @@
 import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
 import BoardAskNav from '../../../components/BoardAskNav.astro';
+import BoardNav from '../../../components/BoardNav.astro';
 import { serviceClient } from '../../../lib/admin';
 import { dateTime } from '../../../lib/format';
 import { answerHtml, type Source } from '../../../lib/board-ask';
@@ -24,6 +25,7 @@ const spent = (month ?? []).reduce((n, m) => n + Number(m.cost_usd), 0);
 
 <Admin title="Board Ask · Questions asked">
   <PageHeader title="Board Ask" subtitle="Everyone’s questions and answers, to check how it is doing. Answers marked wrong come first to look at." />
+  <BoardNav />
   <BoardAskNav />
   <div class="mb-4 flex flex-wrap items-center gap-3 text-sm">
     <span class="text-white/55">This month: {(month ?? []).length} questions, ${spent.toFixed(2)}.</span>

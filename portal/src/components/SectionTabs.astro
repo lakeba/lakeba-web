@@ -1,0 +1,20 @@
+---
+import { mayOpenItem } from '../lib/access';
+import { toPage, toShown } from '../lib/admin-paths';
+
+// The tabs across an admin section (Board & governance, Legal, Finance, People, Settings, a company): the same
+// look everywhere; only the tabs this person may open. "exact": the section's first page, which doesn't own
+// everything under it; "also": other pages that belong to a tab.
+export type Tab = { href: string; label: string; exact?: boolean; also?: string[]; show?: boolean };
+interface Props { label: string; tabs: Tab[] }
+const { label, tabs } = Astro.props;
+const path = toShown(Astro.url.pathname);
+const under = (p: string) => path === p || path.startsWith(`${p}/`);
+const on = (t: Tab) => (t.exact ? path === t.href : under(t.href)) || Boolean(t.also?.some(under));
+const shown = tabs.filter((t) => t.show !== false && mayOpenItem(Astro.locals.access, toPage(t.href)));
+---
+{shown.length > 1 && (
+  <nav class="mb-6 flex gap-1 overflow-x-auto border-b border-white/10 text-sm [scrollbar-width:none]" aria-label={label}>
+    {shown.map((t) => <a href={t.href} aria-current={on(t) ? 'page' : undefined} class:list={['-mb-px shrink-0 border-b-2 px-3 py-2', on(t) ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{t.label}</a>)}
+  </nav>
+)}

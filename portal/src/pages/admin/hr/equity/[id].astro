@@ -136,7 +136,7 @@ const legalHref = `/admin/legal/papers/new?${new URLSearchParams({ company: comp
     <aside class="grid content-start gap-6">
       <section class="card grid gap-3 text-sm">
         {g.status === 'draft' && mayDo && <form method="post"><button class="btn-primary w-full" name="intent" value="grant" data-confirm="Grant it? The letter is made and the holder is asked to accept it.">Grant it</button></form>}
-        {access.can('legal.do', company.id) && (g.status === 'draft' || g.status === 'granted') && (g.board_paper_id ? <a class="btn-ghost" href={`/admin/legal/papers/${g.board_paper_id}`}>The board resolution</a> : <a class="btn-ghost" href={legalHref}>Prepare the board resolution</a>)}
+        {access.can('legal.do', company.id) && (g.status === 'draft' || g.status === 'granted') && (g.board_paper_id ? <a class="btn-ghost" href={`/admin/board/papers/${g.board_paper_id}`}>The board resolution</a> : <a class="btn-ghost" href={legalHref}>Prepare the board resolution</a>)}
         {g.letter_path && <a class="btn-ghost" href={`/admin/hr/file?path=${encodeURIComponent(g.letter_path)}`}>Open the grant letter</a>}
         {mayDo && g.status === 'granted' && !g.accepted_at && <form method="post"><button class="btn-ghost w-full" name="intent" value="accepted">Record their acceptance</button></form>}
         {mayDo && (g.status === 'draft' || g.status === 'granted') && <form method="post" class="grid gap-2"><input class="field" name="reason" placeholder="Why (for the record)" aria-label="Why" /><button class="btn-ghost text-lk-red" name="intent" value="cancel" data-confirm="Cancel this grant? It returns to the pool.">Cancel the grant</button></form>}

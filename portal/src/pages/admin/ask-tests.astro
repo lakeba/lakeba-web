@@ -1,4 +1,6 @@
 ---
+import SystemNav from '../../components/SystemNav.astro';
+import AskNav from '../../components/AskNav.astro';
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
@@ -114,6 +116,8 @@ const running = run?.status === 'running';
   {running && <meta http-equiv="refresh" content="5" />}
   <AdminCompanyFilter scope={scope} />
   <PageHeader title="Ask test set" subtitle="Re-run these questions after changing documents, house rules, approved answers, the prompt or the model, and see what got worse." />
+  <SystemNav />
+  <AskNav />
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 

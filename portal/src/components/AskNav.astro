@@ -1,0 +1,9 @@
+---
+import SectionTabs from './SectionTabs.astro';
+// Tabs across Settings → AI assistants: Ask's answers to review, the knowledge it uses and its tests.
+---
+<SectionTabs label="AI assistants" tabs={[
+  { href: '/admin/ask-review', label: 'Answers to review' },
+  { href: '/admin/ask-knowledge', label: 'Knowledge' },
+  { href: '/admin/ask-tests', label: 'Tests' },
+]} />

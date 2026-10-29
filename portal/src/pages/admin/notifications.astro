@@ -1,4 +1,5 @@
 ---
+import SystemNav from '../../components/SystemNav.astro';
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Alert from '../../components/Alert.astro';
@@ -51,6 +52,7 @@ const status = (r: { sent_at: string | null; failed_at: string | null }) => (r.s
 
 <Admin title="Notifications">
   <PageHeader title="Notifications" subtitle="Browser notifications sent by the portal. Each person chooses what they get in Profile → Notifications; Inbox entries and emails are sent as before." />
+  <SystemNav />
   {!pushEnabled() && <div class="mb-6"><Alert tone="error">Browser notifications are off: the push keys aren’t set on this server.</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 

@@ -1,6 +1,7 @@
 ---
 import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
+import BoardNav from '../../../components/BoardNav.astro';
 import Alert from '../../../components/Alert.astro';
 import Empty from '../../../components/Empty.astro';
 import { field } from '../../../lib/forms';
@@ -34,8 +35,9 @@ if (Astro.request.method === 'POST') {
 const { data: meetings } = await supabase.from('meetings').select('id, entity_id, title, kind, starts_at, status, resolutions(count)').in('entity_id', scope.ids).order('starts_at', { ascending: false });
 ---
 
-<Admin title="Meetings">
-  <PageHeader title="Meetings" subtitle="AGMs and EGMs: notices, resolutions, proxy votes and shareholder questions." />
+<Admin title="Shareholder meetings">
+  <PageHeader title="Shareholder meetings" subtitle="AGMs and EGMs: notices, resolutions, proxy votes and shareholder questions." />
+  <BoardNav />
   <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {Astro.url.searchParams.get('deleted') && <div class="mb-6"><Alert tone="success">Deleted the meeting “{Astro.url.searchParams.get('deleted')}”.</Alert></div>}

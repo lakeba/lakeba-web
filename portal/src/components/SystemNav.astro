@@ -1,13 +1,12 @@
 ---
-// Tabs across the Settings pages (users, roles, audit log).
-const path = Astro.url.pathname;
-const access = Astro.locals.access;
-const tabs = [
-  { href: '/admin/system/users', label: 'Users', show: access.can('users.view', null) },
-  { href: '/admin/system/roles', label: 'Roles', show: access.can('users.view', null) },
-  { href: '/admin/audit', label: 'Audit log', show: access.can('audit.view', null) },
-].filter((t) => t.show);
+import SectionTabs from './SectionTabs.astro';
+// Tabs across Admin → Settings.
 ---
-<nav class="mb-6 flex flex-wrap gap-1 border-b border-white/10 text-sm" aria-label="Settings">
-  {tabs.map((t) => <a href={t.href} aria-current={path.startsWith(t.href) ? 'page' : undefined} class:list={['-mb-px border-b-2 px-3 py-2', path.startsWith(t.href) ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{t.label}</a>)}
-</nav>
+<SectionTabs label="Settings" tabs={[
+  { href: '/admin/system/users', label: 'Users' },
+  { href: '/admin/system/roles', label: 'Roles' },
+  { href: '/admin/audit', label: 'Audit log' },
+  { href: '/admin/integrations', label: 'Integrations' },
+  { href: '/admin/notifications', label: 'Notifications' },
+  { href: '/admin/ask-review', label: 'AI assistants', also: ['/admin/ask-knowledge', '/admin/ask-tests'] },
+]} />

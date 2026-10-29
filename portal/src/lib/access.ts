@@ -81,7 +81,7 @@ export function adminMayRequest(a: Access, path: string, writing: boolean, actio
   if (under(path, '/admin/integrations')) return !writing && a.roles.some((r) => r.role_key === 'admin');
   // Import data: the whole platform for group Admins; one company's workbook for whoever manages a company's register (lib/import-scope.ts).
   // Boardroom (a venture's company secretary): its board meetings, the Observer and decks, the minutes papers and the meeting files; each page checks the company.
-  if (!a.canAny('legal.view') && a.canAny('boardroom.view') && [/^\/admin\/legal\/meetings\//, /^\/admin\/legal\/papers\/[0-9a-f-]{36}(\/pdf)?$/, /^\/admin\/legal\/file$/].some((re) => re.test(path))) return writing ? a.canAny('boardroom.do') : true;
+  if (!a.canAny('legal.view') && a.canAny('boardroom.view') && [/^\/admin\/legal\/meetings\//, /^\/admin\/legal\/papers\/[0-9a-f-]{36}(\/pdf)?$/, /^\/admin\/legal\/file$/, /^\/admin\/legal\/minute-book(\/[A-Za-z0-9-]+)?$/].some((re) => re.test(path))) return writing ? a.canAny('boardroom.do') : true;
   // Board Ask: asking (and rating answers) needs only "see"; the law library, tests and review need "do".
   if (under(path, '/admin/board-ask') && !['library', 'tests', 'review'].some((p) => under(path, `/admin/board-ask/${p}`))) return a.canAny('boardask.view');
   if (under(path, '/admin/import')) return a.canAny('investors.do');

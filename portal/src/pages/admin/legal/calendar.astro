@@ -3,7 +3,7 @@ import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
 import Alert from '../../../components/Alert.astro';
 import Empty from '../../../components/Empty.astro';
-import LegalNav from '../../../components/LegalNav.astro';
+import BoardNav from '../../../components/BoardNav.astro';
 import ObligationList from '../../../components/ObligationList.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
@@ -57,7 +57,7 @@ const groups = state === 'open'
 
 <Admin title="Legal · Calendar">
   <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
-  <LegalNav />
+  <BoardNav />
   {result?.error && <div class="mb-6"><Alert tone="error">{result.error}</Alert></div>}
   {result?.ok && <div class="mb-6"><Alert tone="success">{result.ok}</Alert></div>}
 

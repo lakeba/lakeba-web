@@ -3,6 +3,7 @@ import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
 import Alert from '../../../components/Alert.astro';
 import BoardAskNav from '../../../components/BoardAskNav.astro';
+import BoardNav from '../../../components/BoardNav.astro';
 import { serviceClient } from '../../../lib/admin';
 import { askEnabled } from '../../../lib/ask';
 import { field } from '../../../lib/forms';
@@ -52,6 +53,7 @@ const sourceIcon: Record<string, string> = { law: '§', web: '↗', document: '�
 
 <Admin title="Board Ask">
   <PageHeader title="Board Ask" subtitle="Ask about the companies, their figures, records and contracts, and the law that applies. Every answer shows where it comes from." />
+  <BoardNav />
   <BoardAskNav />
   {!askEnabled && <Alert tone="info">Lakeba AI isn’t configured on this server (no Lakeba AI key), so Board Ask can’t answer yet.</Alert>}
   {error && <Alert tone="error">{error}</Alert>}

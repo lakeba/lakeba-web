@@ -1,0 +1,11 @@
+---
+import SectionTabs from './SectionTabs.astro';
+// Tabs across Admin → Board & governance (addresses: lib/admin-paths.ts).
+---
+<SectionTabs label="Board & governance" tabs={[
+  { href: '/admin/board', label: 'Board meetings', exact: true, also: ['/admin/board/meetings', '/admin/board/papers'] },
+  { href: '/admin/board/shareholder-meetings', label: 'Shareholder meetings' },
+  { href: '/admin/board/ask', label: 'Board Ask' },
+  { href: '/admin/board/minute-book', label: 'Minute book' },
+  { href: '/admin/board/deadlines', label: 'Deadlines' },
+]} />

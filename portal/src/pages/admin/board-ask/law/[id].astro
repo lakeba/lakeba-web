@@ -2,6 +2,7 @@
 import Admin from '../../../../layouts/Admin.astro';
 import PageHeader from '../../../../components/PageHeader.astro';
 import BoardAskNav from '../../../../components/BoardAskNav.astro';
+import BoardNav from '../../../../components/BoardNav.astro';
 import { serviceClient } from '../../../../lib/admin';
 import { LAW_KINDS, type LawKind } from '../../../../lib/law-library';
 
@@ -17,6 +18,7 @@ const link = (n: number) => `/admin/board-ask/law/${source.id}?part=${Math.max(0
 
 <Admin title={`Board Ask · ${source.title}`}>
   <PageHeader title={source.title} subtitle={[LAW_KINDS[source.kind as LawKind], source.citation, source.version_note].filter(Boolean).join(' · ')} />
+  <BoardNav />
   <BoardAskNav />
   <div class="max-w-3xl">
     <p class="mb-4 text-sm text-white/55">The text as Board Ask reads it, passage {at + 1} of {source.chunk_count.toLocaleString('en-AU')}.{source.url && <> Rely on the <a class="text-lk-blue hover:underline" href={source.url} target="_blank" rel="noopener noreferrer">official text</a>.</>}</p>

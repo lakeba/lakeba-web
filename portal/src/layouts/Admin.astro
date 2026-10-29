@@ -1,70 +1,87 @@
 ---
 import Portal from './Portal.astro';
 import { mayOpenItem } from '../lib/access';
+import { toPage, toShown } from '../lib/admin-paths';
 import { serviceClient } from '../lib/admin';
 import { waitingFor } from '../lib/approvals';
 interface Props { title: string }
 const { title } = Astro.props;
-const path = Astro.url.pathname;
+// The address shown (a rewritten page's own path maps back to it).
+const path = toShown(Astro.url.pathname);
 const access = Astro.locals.access;
-const groups = [
-  { label: 'People', items: [
+// The admin by what people are doing (addresses: lib/admin-paths.ts). "also": other pages that belong to an
+// item; "exact": a section's first page, which doesn't own everything under it.
+type Item = { href: string; label: string; exact?: boolean; also?: string[] };
+const groups: { label: string; items: Item[] }[] = [
+  { label: 'Investors', items: [
     { href: '/admin/investors', label: 'Investors' },
-    { href: '/admin/holdings', label: 'Holders & holdings' },
+    { href: '/admin/holdings', label: 'Register', also: ['/admin/holders'] },
     { href: '/admin/engagement', label: 'Engagement' },
     { href: '/admin/import', label: 'Import data' },
   ] },
-  { label: 'Content', items: [
-    { href: '/admin/documents', label: 'Documents' },
+  { label: 'Communications', items: [
     { href: '/admin/news', label: 'News' },
-    { href: '/admin/press', label: 'Press releases' },
-    { href: '/admin/newsletters', label: 'Newsletters' },
     { href: '/admin/content', label: 'Announcements' },
+    { href: '/admin/newsletters', label: 'Newsletters' },
+    { href: '/admin/press', label: 'Press releases' },
     { href: '/admin/linkedin', label: 'LinkedIn campaign' },
+    { href: '/admin/emails', label: 'Shareholder emails' },
+    { href: '/admin/queries', label: 'Investor questions' },
+  ] },
+  { label: 'Documents', items: [
+    { href: '/admin/documents', label: 'Documents' },
     { href: '/admin/data-rooms', label: 'Data rooms' },
   ] },
-  { label: 'Shareholder contact', items: [
-    { href: '/admin/emails', label: 'Shareholder emails' },
-    { href: '/admin/queries', label: 'Board Q&A' },
-    { href: '/admin/notifications', label: 'Notifications' },
+  { label: 'Board & governance', items: [
+    { href: '/admin/board', label: 'Board meetings', exact: true, also: ['/admin/board/meetings', '/admin/board/papers'] },
+    { href: '/admin/board/shareholder-meetings', label: 'Shareholder meetings' },
+    { href: '/admin/board/ask', label: 'Board Ask' },
+    { href: '/admin/board/minute-book', label: 'Minute book' },
+    { href: '/admin/board/deadlines', label: 'Deadlines' },
   ] },
-  { label: 'Ask', items: [
-    { href: '/admin/ask-review', label: 'Ask review' },
-    { href: '/admin/ask-knowledge', label: 'Ask knowledge' },
-    { href: '/admin/ask-tests', label: 'Ask tests' },
+  { label: 'Legal', items: [
+    { href: '/admin/legal', label: 'Overview', exact: true, also: ['/admin/legal/extract'] },
+    { href: '/admin/legal/contracts', label: 'Contracts' },
+    // One place for requests: Lakeba's Legal team sees every company's, everyone else their own.
+    { href: access.canAny('legal.view') ? '/admin/legal/requests' : '/admin/legal-requests', label: 'Requests', also: ['/admin/legal/requests', '/admin/legal-requests'] },
+    { href: '/admin/legal/ask', label: 'Legal Ask' },
   ] },
-  { label: 'Company & capital', items: [
-    { href: '/admin/companies', label: 'Companies' },
-    { href: '/admin/agm', label: 'Meetings' },
-    { href: '/admin/board-ask', label: 'Board Ask' },
-    { href: '/admin/boardroom', label: 'Boardroom' },
-    { href: '/admin/legal', label: 'Legal' },
-    { href: '/admin/legal-requests', label: 'Legal requests' },
-    { href: '/admin/accounting', label: 'Accounting' },
-    { href: '/admin/reporting', label: 'Reporting packs' },
-    { href: '/admin/hr', label: 'HR' },
+  { label: 'Finance', items: [
+    { href: '/admin/accounting', label: 'Group view', exact: true, also: ['/admin/accounting/group', '/admin/accounting/schedules'] },
+    // One place for reporting packs: Lakeba's finance team reviews every company's, a company sends its own.
+    { href: access.can('accounting.view', null) ? '/admin/accounting/packs' : '/admin/reporting', label: 'Reporting packs', also: ['/admin/accounting/packs', '/admin/reporting'] },
+    { href: '/admin/accounting/board', label: 'Board summary' },
+    { href: '/admin/accounting/year-end', label: 'Year-end' },
     { href: '/admin/ventures', label: 'Ventures & prices' },
     { href: '/admin/trading', label: 'Secondary trading' },
+  ] },
+  { label: 'People', items: [
+    { href: '/admin/hr', label: 'People', exact: true, also: ['/admin/hr/people'] },
+    { href: '/admin/hr/equity', label: 'Equity plans' },
+    { href: '/admin/hr/policies', label: 'Policies' },
+  ] },
+  { label: 'Companies', items: [
+    { href: '/admin/companies', label: 'Companies' },
   ] },
   { label: 'Settings', items: [
     { href: '/admin/system/users', label: 'Users' },
     { href: '/admin/system/roles', label: 'Roles' },
     { href: '/admin/audit', label: 'Audit log' },
     { href: '/admin/integrations', label: 'Integrations' },
-    // The developers' pages are public, so everyone with the admin menu sees them.
-    { href: '/developers', label: 'Developers docs', open: true },
-    { href: '/developers/reference', label: 'APIs reference', open: true },
+    { href: '/admin/notifications', label: 'Notifications' },
+    { href: '/admin/ask-review', label: 'AI assistants', also: ['/admin/ask-knowledge', '/admin/ask-tests'] },
   ] },
 ];
 // Approvals: for anyone who prepares or approves; the count is what waits for them.
 const approvalsOpen = mayOpenItem(access, '/admin/approvals');
 const waitingCount = approvalsOpen ? (await waitingFor(serviceClient(), access, Astro.locals.user!.id)).length : 0;
-const active = (href: string) => (href === '/admin' ? path === '/admin' : path === href || path.startsWith(`${href}/`));
+const under = (p: string) => path === p || path.startsWith(`${p}/`);
+const active = (href: string, item?: Item) => (href === '/admin' ? path === '/admin' : (item?.exact ? path === href : under(href)) || Boolean(item?.also?.some(under)));
 // Only the sections this person's roles open; empty groups are left out.
 const visible = groups
-  .map((g) => ({ ...g, items: g.items.filter((i) => ('open' in i && i.open) || mayOpenItem(access, i.href)) }))
+  .map((g) => ({ ...g, items: g.items.filter((i) => mayOpenItem(access, toPage(i.href))) }))
   .filter((g) => g.items.length);
-const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.label ?? (path === '/admin' ? 'Overview' : active('/admin/approvals') ? 'Approvals' : title);
+const current = visible.flatMap((g) => g.items).find((i) => active(i.href, i))?.label ?? (path === '/admin' ? 'Overview' : active('/admin/approvals') ? 'Approvals' : title);
 ---
 
 <Portal title={`${title} · Admin`}>
@@ -85,7 +102,12 @@ const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.lab
         {approvalsOpen && <a href="/admin/approvals" aria-current={active('/admin/approvals') ? 'page' : undefined}
           class:list={['flex items-center justify-between rounded-lg px-3 py-2 transition', active('/admin/approvals') ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>Approvals{waitingCount > 0 && <span class="rounded-full bg-lk-orange/20 px-2 text-xs text-lk-orange" aria-label={`${waitingCount} waiting`}>{waitingCount}</span>}</a>}
         {visible.map((g) => {
-          const open = g.items.some((i) => active(i.href));
+          const open = g.items.some((i) => active(i.href, i));
+          // A section with one page is a plain link.
+          if (g.items.length === 1) return (
+            <a href={g.items[0].href} aria-current={open ? 'page' : undefined}
+              class:list={['mt-1 block rounded-lg px-3 py-2 transition', open ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{g.items[0].label}</a>
+          );
           return (
             <details class="group/sec mt-1" open={open} data-admin-group={g.label} data-current={open ? '' : undefined}>
               <summary class="flex cursor-pointer list-none items-center justify-between rounded-lg px-3 py-2 text-[11px] font-semibold uppercase tracking-widest text-white/40 hover:text-white/70">
@@ -94,8 +116,8 @@ const current = visible.flatMap((g) => g.items).find((i) => active(i.href))?.lab
               </summary>
               <div class="mb-1 ml-2 border-l border-white/10 pl-2">
                 {g.items.map((s) => (
-                  <a href={s.href} aria-current={active(s.href) ? 'page' : undefined}
-                    class:list={['block rounded-lg px-3 py-1.5 transition', active(s.href) ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{s.label}</a>
+                  <a href={s.href} aria-current={active(s.href, s) ? 'page' : undefined}
+                    class:list={['block rounded-lg px-3 py-1.5 transition', active(s.href, s) ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{s.label}</a>
                 ))}
               </div>
             </details>

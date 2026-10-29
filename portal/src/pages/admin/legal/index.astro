@@ -72,9 +72,9 @@ const unassignedRequests = (requests ?? []).filter((r) => !r.assignee_id).length
         <tbody class="divide-y divide-white/5">
           {incomplete.map((c) => (
             <tr>
-              <td class="px-5 py-3"><a href={`/admin/legal/companies/${c.code}`} class="font-medium text-white hover:text-lk-blue">{c.display_name}</a><span class="block text-xs text-white/40">{c.legal_name ?? c.code}</span></td>
+              <td class="px-5 py-3"><a href={`/admin/companies/${c.code}`} class="font-medium text-white hover:text-lk-blue">{c.display_name}</a><span class="block text-xs text-white/40">{c.legal_name ?? c.code}</span></td>
               <td class="px-5 py-3 text-white/60">Missing: {gaps(c.id).join(', ')}{recOf.get(c.id) && !secretary(c.id) && ' · no secretary (optional for a proprietary company)'}</td>
-              <td class="px-5 py-3 text-right"><a href={`/admin/legal/companies/${c.code}`} class="btn-ghost !px-3 !py-1.5 text-xs">{may(c.id) ? 'Complete' : 'View'}</a></td>
+              <td class="px-5 py-3 text-right"><a href={`/admin/companies/${c.code}`} class="btn-ghost !px-3 !py-1.5 text-xs">{may(c.id) ? 'Complete' : 'View'}</a></td>
             </tr>
           ))}
         </tbody>

@@ -1,8 +1,7 @@
 ---
-import { createMeeting } from '../../../../lib/boardroom';
 import Admin from '../../../../layouts/Admin.astro';
 import Alert from '../../../../components/Alert.astro';
-import LegalNav from '../../../../components/LegalNav.astro';
+import CompanyTabs from '../../../../components/CompanyTabs.astro';
 import ObligationList from '../../../../components/ObligationList.astro';
 import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
@@ -144,12 +143,6 @@ if (Astro.request.method === 'POST') {
       ok = `${o.full_name} can now sign in the portal. They get an email with a sign-in link whenever something is sent to them to sign.`;
     }
 
-    else if (intent === 'meeting-add') {
-      const id = await createMeeting(svc, company.id, { title: field(form, 'title'), heldAt: field(form, 'held_at'), location: field(form, 'location') }, userId);
-      await log('admin_added_board_meeting', { meeting_id: id });
-      return Astro.redirect(`/admin/legal/meetings/${id}`);
-    }
-
     else if (intent === 'officer-remove') {
       const id = field(form, 'officer_id');
       const { data: o } = await svc.from('company_officers').select('id, full_name').eq('id', id).eq('entity_id', company.id).maybeSingle();
@@ -205,19 +198,19 @@ const closed = obligations.filter((o) => o.status !== 'open').reverse();
 const review = reviewDateOf(rec);
 const ye = rec ? yearEndOf(rec) : null;
 const mdParts = (v: string | null) => (v ? { m: Number(v.slice(0, 2)), d: Number(v.slice(3)) } : { m: 0, d: 0 });
-const tabHref = (t: string) => `/admin/legal/companies/${company.code}${t === 'record' ? '' : `?tab=${t}`}`;
+const tabHref = (t: string) => `/admin/companies/${company.code}/legal${t === 'record' ? '' : `?tab=${t}`}`;
 const overdue = open.filter((o) => o.due_on < today).length;
 /** What was typed in "Add an officer", when it came back with a problem. */
 const kept = (name: string) => (error && posted && field(posted, 'intent') === 'officer-add' ? field(posted, name) : '');
 ---
 
-<Admin title={`Legal · ${company.display_name}`}>
+<Admin title={`${company.display_name} · Legal record`}>
   <div class="mb-6">
-    <p class="text-sm text-white/45"><a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a></p>
-    <h1 class="mt-2 font-display text-3xl font-bold sm:text-4xl">{company.display_name}</h1>
+    <p class="text-sm text-white/45"><a href="/admin/companies" class="hover:text-white">Companies</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{company.display_name}</h1>
     <p class="mt-1 text-sm text-white/55">{company.legal_name ?? 'Legal name not recorded'}{rec?.acn && ` · ACN ${rec.acn}`}{rec?.company_type && ` · ${rec.company_type === 'public' ? 'Public' : 'Proprietary'} company`}</p>
+    <div class="mt-4"><CompanyTabs company={company} /></div>
   </div>
-  <LegalNav />
   <nav class="mb-6 flex flex-wrap gap-2 text-sm" aria-label="Company">
     {[['record', 'Record'], ['officers', `Officers (${current.length})`], ['board', `Board${papers.some((p) => p.status === 'signing') ? ` (${papers.filter((p) => p.status === 'signing').length} to sign)` : ''}`], ['calendar', `Calendar (${open.length}${overdue ? `, ${overdue} overdue` : ''})`]].map(([t, l]) => (
       <a href={tabHref(t)} aria-current={tab === t ? 'page' : undefined} class:list={['rounded-full px-3 py-1', tab === t ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white', t === 'calendar' && overdue && tab !== t && 'text-lk-red']}>{l}</a>
@@ -388,7 +381,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
           <ul class="mt-2 divide-y divide-white/5">
             {papers.map((p) => (
               <li class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3">
-                <span><a href={`/admin/legal/papers/${p.id}`} class="font-medium text-white hover:text-lk-blue">{p.title}</a><span class="block text-xs text-white/45">{p.kind === 'minutes' ? 'Minutes' : 'Resolution'} · {reference(p)} · created {day(p.created_at.slice(0, 10))}</span></span>
+                <span><a href={`/admin/board/papers/${p.id}`} class="font-medium text-white hover:text-lk-blue">{p.title}</a><span class="block text-xs text-white/45">{p.kind === 'minutes' ? 'Minutes' : 'Resolution'} · {reference(p)} · created {day(p.created_at.slice(0, 10))}</span></span>
                 <span class:list={['text-sm', p.status === 'signed' ? 'text-lk-green' : p.status === 'signing' ? 'text-lk-orange' : 'text-white/50']}>{paperStatus(p)}</span>
               </li>
             ))}
@@ -405,7 +398,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
               <div>
                 <p class="text-xs uppercase tracking-wider text-white/40">{g}</p>
                 <ul class="mt-2 grid gap-1.5">
-                  {TEMPLATES.filter((t) => t.group === g).map((t) => <li><a class="text-white hover:text-lk-blue" href={`/admin/legal/papers/new?company=${company.code}&template=${t.key}`}>{t.label}</a><span class="block text-xs text-white/45">{t.description}</span></li>)}
+                  {TEMPLATES.filter((t) => t.group === g).map((t) => <li><a class="text-white hover:text-lk-blue" href={`/admin/board/papers/new?company=${company.code}&template=${t.key}`}>{t.label}</a><span class="block text-xs text-white/45">{t.description}</span></li>)}
                 </ul>
               </div>
             ))}
@@ -419,24 +412,14 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
           <ul class="mt-2 divide-y divide-white/5">
             {meetings.map((m) => { const mp = minutesOf(m.id); return (
               <li class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3">
-                <a href={`/admin/legal/meetings/${m.id}`} class="font-medium text-white hover:text-lk-blue">{m.title}<span class="block text-xs font-normal text-white/45">{new Intl.DateTimeFormat('en-AU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Australia/Sydney' }).format(new Date(m.held_at))}</span></a>
+                <a href={`/admin/board/meetings/${m.id}`} class="font-medium text-white hover:text-lk-blue">{m.title}<span class="block text-xs font-normal text-white/45">{new Intl.DateTimeFormat('en-AU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Australia/Sydney' }).format(new Date(m.held_at))}</span></a>
                 <span class="text-sm text-white/50">{mp ? `Minutes: ${paperStatus(mp as never).toLowerCase()}` : 'No minutes yet'}</span>
               </li>
             ); })}
           </ul>
         ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">None recorded.</p>}
-        {mayDo && (
-          <details class="border-t border-white/5 px-5 py-4">
-            <summary class="cursor-pointer text-sm font-medium text-white">Record a meeting</summary>
-            <form method="post" class="mt-4 grid gap-3 sm:grid-cols-3">
-              <div class="sm:col-span-3"><label class="label" for="m-title">Title</label><input class="field" id="m-title" name="title" required placeholder="e.g. Board meeting – November 2026" /></div>
-              <div><label class="label" for="m-held">Held (Sydney time)</label><input class="field" type="datetime-local" id="m-held" name="held_at" required /></div>
-              <div class="sm:col-span-2"><label class="label" for="m-where">Where</label><input class="field" id="m-where" name="location" placeholder="e.g. Sydney office and by video" /></div>
-              <div><button class="btn-primary" name="intent" value="meeting-add">Continue</button></div>
-            </form>
-            <p class="mt-2 text-xs text-white/40">Adds “minutes signed by the chair” to the calendar, due within a month.</p>
-          </details>
-        )}
+        {/* Board meetings are created in one place: Board & governance → Board meetings. */}
+        <p class="border-t border-white/5 px-5 py-4 text-sm"><a class="text-lk-blue hover:underline" href={`/admin/board#company-${company.code}`}>New board meeting →</a> <span class="text-white/45">in Board & governance, with the Observer, Lex and the minutes.</span></p>
       </section>
     </div>
   )}

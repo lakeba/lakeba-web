@@ -2,7 +2,7 @@
 import { assistantOn, mayMeeting, meetingCompanies } from '../../../../lib/boardroom';
 import Admin from '../../../../layouts/Admin.astro';
 import Alert from '../../../../components/Alert.astro';
-import LegalNav from '../../../../components/LegalNav.astro';
+import BoardNav from '../../../../components/BoardNav.astro';
 import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { addDays, fromSydney, legalCompanies, toSydney } from '../../../../lib/legal';
@@ -28,7 +28,7 @@ if (!row || !company) return Astro.redirect('/admin/legal/companies');
 let meeting = row as unknown as RecordingMeeting;
 const mayDo = mayMeeting(access, company.id, 'do');
 const legalView = access.can('legal.view', company.id);
-const back = legalView ? `/admin/legal/companies/${company.code}?tab=board` : '/admin/boardroom';
+const back = legalView ? `/admin/legal/companies/${company.code}?tab=board` : '/admin/board';
 const assistant = await assistantOn(svc, company.id);
 const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, meeting_id: meeting.id, ...detail } });
 const minutesQuery = () => svc.from('board_papers').select(PAPER_COLUMNS).eq('meeting_id', meeting.id).neq('status', 'withdrawn').maybeSingle();
@@ -81,7 +81,7 @@ if (Astro.request.method === 'POST' && mayDo) {
           minutes = { id: data!.id } as Paper;
         }
         await log('admin_drafted_minutes', { paper_id: minutes.id, cost_usd: costUsd });
-        return Astro.redirect(`/admin/legal/papers/${minutes.id}`);
+        return Astro.redirect(`/admin/board/papers/${minutes.id}`);
       }
     } else if (intent === 'use-transcript' || intent === 'name-speakers') {
       const source = field(form, 'source');
@@ -93,7 +93,7 @@ if (Astro.request.method === 'POST' && mayDo) {
       }
       await useTranscript(svc, meeting.id, source);
       await log(intent === 'use-transcript' ? 'admin_chose_meeting_transcript' : 'admin_named_meeting_speakers', { source });
-      return Astro.redirect(`/admin/legal/meetings/${meeting.id}#observer`);
+      return Astro.redirect(`/admin/board/meetings/${meeting.id}#observer`);
     } else if (intent === 'draft-deck' || intent === 'upload-deck') {
       const role = field(form, 'role') as Role;
       if (!(role in ROLES)) throw new Error('Choose whose deck it is.');
@@ -115,7 +115,7 @@ if (Astro.request.method === 'POST' && mayDo) {
         void readUploadedDeck(svc, d!.id).catch((e) => console.error('deck upload', e));
         await log('admin_uploaded_board_deck', { deck_id: d!.id, role });
       }
-      return Astro.redirect(`/admin/legal/meetings/${meeting.id}#decks`);
+      return Astro.redirect(`/admin/board/meetings/${meeting.id}#decks`);
     } else if (intent === 'tablet-connect') {
       // The boardroom tablet shows a code (/tablet); entering it here connects the tablet to this meeting.
       if (!assistant) throw new Error('The board assistant isn’t switched on for this company.');
@@ -160,7 +160,7 @@ if (Astro.request.method === 'POST' && mayDo) {
       await svc.from('board_meetings').update({ recording_status: 'processing', recording_error: null }).eq('id', meeting.id);
       void transcribeMeeting(svc, meeting.id, provider).catch((e) => console.error('observer transcription', e));
       await log('admin_transcribed_meeting_recording', { provider });
-      return Astro.redirect(`/admin/legal/meetings/${meeting.id}#observer`);
+      return Astro.redirect(`/admin/board/meetings/${meeting.id}#observer`);
     } else if (intent === 'delete') {
       if (minutes && minutes.status === 'signed') throw new Error('Signed minutes stay in the minute book, with their meeting.');
       await svc.from('legal_obligations').delete().eq('source_key', `minutes:${meeting.id}`).eq('status', 'open');
@@ -206,11 +206,11 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
 
 <Admin title={`Legal · ${meeting.title}`}>
   <div class="mb-6">
-    <p class="text-sm text-white/45">{legalView ? <a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> : <a href="/admin/boardroom" class="hover:text-white">Boardroom</a>} · <a href={back} class="hover:text-white">{company.display_name}</a></p>
+    <p class="text-sm text-white/45">{legalView ? <a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> : <a href="/admin/board" class="hover:text-white">Boardroom</a>} · <a href={back} class="hover:text-white">{company.display_name}</a></p>
     <h1 class="mt-2 font-display text-3xl font-bold">{meeting.title}</h1>
-    <p class="mt-1 text-sm text-white/55">Directors’ meeting · {minutes ? <a class="text-lk-blue hover:underline" href={`/admin/legal/papers/${minutes.id}`}>minutes {reference(minutes)}: {minutes.status === 'draft' ? 'draft' : minutes.status === 'signing' ? 'waiting for the chair' : 'signed'}</a> : 'no minutes yet'}</p>
+    <p class="mt-1 text-sm text-white/55">Directors’ meeting · {minutes ? <a class="text-lk-blue hover:underline" href={`/admin/board/papers/${minutes.id}`}>minutes {reference(minutes)}: {minutes.status === 'draft' ? 'draft' : minutes.status === 'signing' ? 'waiting for the chair' : 'signed'}</a> : 'no minutes yet'}</p>
   </div>
-  {legalView && <LegalNav />}
+  {legalView && <BoardNav />}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
 
@@ -265,10 +265,10 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
         {decks.map((d) => (
           <li class="flex flex-wrap items-center justify-between gap-3 rounded-xl bg-white/[0.03] px-4 py-3">
             <span>
-              <a class="text-white hover:underline" href={`/admin/legal/meetings/${meeting.id}/decks/${d.id}`}>{d.title}</a>
+              <a class="text-white hover:underline" href={`/admin/board/meetings/${meeting.id}/decks/${d.id}`}>{d.title}</a>
               <span class="block text-xs text-white/45">{ROLES[d.role].name} · {d.source === 'drafted' ? 'drafted by Lex' : 'uploaded'} · {d.status === 'preparing' ? (d.source === 'drafted' ? 'Lex is drafting it…' : 'Lex is reading it…') : d.status === 'failed' ? `failed: ${d.error}` : `${d.slides.length} slides · ${d.status === 'approved' ? 'approved' : 'draft, to check and approve'}`}{d.presented_at && ' · presented'}</span>
             </span>
-            {d.status === 'preparing' && <a class="text-xs text-lk-blue hover:underline" href={`/admin/legal/meetings/${meeting.id}#decks`}>Refresh</a>}
+            {d.status === 'preparing' && <a class="text-xs text-lk-blue hover:underline" href={`/admin/board/meetings/${meeting.id}#decks`}>Refresh</a>}
           </li>
         ))}
       </ul>
@@ -304,7 +304,7 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
         {meeting.recording_consent && <p class="mt-1 text-xs text-white/45">Everyone present agreed ({meeting.recording_consent.agreed.join(', ')}), confirmed by {meeting.recording_consent.by_name || 'the secretary'}{meeting.recording_consent.chair && ` with ${meeting.recording_consent.chair} as chair`}, {new Date(meeting.recording_consent.at).toLocaleString('en-AU', { timeZone: 'Australia/Sydney', dateStyle: 'medium', timeStyle: 'short' })}.</p>}
       </div>
       {mayDo && !meeting.audio_deleted_at && meeting.recording_status !== 'processing' && meeting.recording_status !== 'done' && (
-        <a class="btn-primary" href={`/admin/legal/meetings/${meeting.id}/observe`}>{meeting.recording_takes.length ? 'Open the Observer' : 'Record this meeting'}</a>
+        <a class="btn-primary" href={`/admin/board/meetings/${meeting.id}/observe`}>{meeting.recording_takes.length ? 'Open the Observer' : 'Record this meeting'}</a>
       )}
     </div>
     {!ready.length && <p class="text-sm text-white/55">Recording needs a transcription service: a Deepgram or AssemblyAI key on the server.</p>}
