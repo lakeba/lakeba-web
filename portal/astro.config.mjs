@@ -101,6 +101,9 @@ export default defineConfig({
       RECALL_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       RECALL_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://ap-northeast-1.recall.ai' }),
       // Signs Recall's status webhooks (whsec_…, from Recall's dashboard → Webhooks).
+      // Online meetings: how long Lex's voice waits (ms) so it reaches the call with its face's lips (the bot's
+      // camera picture is captured and encoded, so it arrives later than the sound). 0 = no wait.
+      BOT_VOICE_DELAY_MS: envField.number({ context: 'server', access: 'secret', default: 300 }),
       RECALL_WEBHOOK_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
       XERO_AUTH_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://login.xero.com/identity/connect' }),
       XERO_TOKEN_URL: envField.string({ context: 'server', access: 'secret', default: 'https://identity.xero.com/connect/token' }),

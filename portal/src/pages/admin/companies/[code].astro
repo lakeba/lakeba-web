@@ -1,4 +1,5 @@
 ---
+import { termOf } from '../../../lib/heard-as';
 import Admin from '../../../layouts/Admin.astro';
 import Alert from '../../../components/Alert.astro';
 import ReviewChange from '../../../components/ReviewChange.astro';
@@ -64,7 +65,9 @@ if (Astro.request.method === 'POST') {
       // The board assistant is rolled out board by board, by Lakeba.
       if (!mayGroup) return 'Only Lakeba switches the board assistant on or off.';
       const want = form.get('board_assistant') === 'on';
-      const terms = [...new Map(field(form, 'speech_terms').split(/[\n,]/).map((t) => t.replace(/\s+/g, ' ').trim().slice(0, 50)).filter((t) => t.length >= 2).map((t) => [t.toLowerCase(), t])).values()].slice(0, 50);
+      // One per line (or separated by commas); a line "Lakeba = Kiwa, La Kiva" also says how a name is misheard (lib/heard-as.ts).
+      const entries = field(form, 'speech_terms').split('\n').flatMap((l) => (l.includes('=') ? [l] : l.split(',')));
+      const terms = [...new Map(entries.map((t) => t.replace(/\s+/g, ' ').replace(/\s*=\s*/, ' = ').trim().slice(0, t.includes('=') ? 300 : 50)).filter((t) => termOf(t).length >= 2).map((t) => [termOf(t).toLowerCase(), t])).values()].slice(0, 50);
       const had: string[] = c.speech_terms ?? [];
       const termsChanged = terms.join('\n') !== had.join('\n');
       if (want === Boolean(c.board_assistant) && !termsChanged) return 'Nothing changed.';
@@ -408,8 +411,8 @@ const sel = 'field !py-1.5 text-sm';
           <label class="flex items-start gap-3 text-sm"><input type="checkbox" name="board_assistant" checked={c.board_assistant} class="mt-0.5 size-4 accent-lk-blue" /><span>On for {c.display_name}’s board<span class="block text-xs text-white/40">The Observer, Lex and the decks it presents, in Admin → Boardroom. Switched on by Lakeba, board by board; its company secretary needs the Company secretary role for {c.display_name}.</span></span></label>
           <div>
             <label class="label" for="speech_terms">Words to listen for</label>
-            <textarea class="field min-h-20" id="speech_terms" name="speech_terms" maxlength="2500" placeholder="One per line: product names, people's names, jargon">{(c.speech_terms ?? []).join('\n')}</textarea>
-            <p class="mt-1 text-xs text-white/40">The Observer's speech to text listens for these at {c.display_name}'s meetings, so they're written correctly. The group's company names, Lex and the people at the meeting are always included.</p>
+            <textarea class="field min-h-20" id="speech_terms" name="speech_terms" maxlength="2500" placeholder="One per line: product names, people's names, jargon. To fix a name that’s misheard: Lakeba = Kiwa, La Kiva">{(c.speech_terms ?? []).join('\n')}</textarea>
+            <p class="mt-1 text-xs text-white/40">The Observer's speech to text listens for these at {c.display_name}'s meetings, so they're written correctly. The group's company names, Lex and the people at the meeting are always included. If a name is still misheard, add how it comes out after “=”, e.g. <span class="font-mono">Lakeba = Kiwa, La Kiva</span>: the live text, Lex and the transcript then say Lakeba.</p>
           </div>
           <button name="intent" value="review" class="btn-ghost w-full">Check and save</button>
         </form>

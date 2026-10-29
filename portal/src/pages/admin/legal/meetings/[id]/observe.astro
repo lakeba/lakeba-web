@@ -2,9 +2,10 @@
 import '../../../../../styles/portal.css';
 import ThemeInit from '../../../../../../../src/components/ThemeInit.astro';
 import { serviceClient } from '../../../../../lib/admin';
-import { consentWording, observerMeeting } from '../../../../../lib/observer';
+import { consentWording, meetingCorrections, observerMeeting } from '../../../../../lib/observer';
 import { PROVIDERS, readyProviders } from '../../../../../lib/transcription';
 import { voiceReady } from '../../../../../lib/lex';
+import { BOT_VOICE_DELAY_MS } from 'astro:env/server';
 import { FACES, readyFaces } from '../../../../../lib/face';
 import { ROLES, type Slide } from '../../../../../lib/decks';
 import { greeting } from '../../../../../lib/recall';
@@ -33,7 +34,8 @@ const defaultFace = faces.some((f) => f.id === 'simli') ? 'simli' : faces[0]?.id
 const onTablet = Boolean(Astro.locals.tablet);
 // Lex in an online meeting (lib/recall.ts): this page is the meeting bot's camera and hears the call.
 const onBot = Astro.locals.tablet?.kind === 'bot';
-const state = { id: m.id, tablet: onTablet, bot: onBot, greeting: onBot ? greeting(companyName) : '', decks, faces, voice: voiceReady(), consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
+const corrections = await meetingCorrections(svc, m.entity_id);
+const state = { id: m.id, tablet: onTablet, bot: onBot, voiceDelay: onBot ? Math.min(2000, Math.max(0, BOT_VOICE_DELAY_MS)) : 0, corrections, greeting: onBot ? greeting(companyName) : '', decks, faces, voice: voiceReady(), consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
 ---
 
 <!doctype html>
@@ -159,8 +161,9 @@ const state = { id: m.id, tablet: onTablet, bot: onBot, greeting: onBot ? greeti
     </main>
 
     <script>
+      import { correct, type Correction } from '../../../../../lib/heard-as';
       type DeckLite = { id: string; title: string; role: string; slides: { title: string; points: string[]; notes: string }[] };
-      type State = { id: string; tablet: boolean; bot: boolean; greeting: string; decks: DeckLite[]; faces: { id: string; name: string }[]; voice: boolean; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
+      type State = { id: string; tablet: boolean; bot: boolean; voiceDelay: number; corrections: Correction[]; greeting: string; decks: DeckLite[]; faces: { id: string; name: string }[]; voice: boolean; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
       const root = document.getElementById('observer')!;
       const st: State = JSON.parse(root.dataset.state!);
       const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
@@ -208,7 +211,9 @@ const state = { id: m.id, tablet: onTablet, bot: onBot, greeting: onBot ? greeti
         $('live')?.scrollTo({ top: 1e9, behavior: 'smooth' });
       };
       // ended: the service says the speaker has finished (Deepgram speech_final, AssemblyAI end of turn).
-      const segment = (speaker: string, text: string, start: number, end: number, turn?: number, ended = false) => {
+      const segment = (speaker: string, heardText: string, start: number, end: number, turn?: number, ended = false) => {
+        // Names as meant, not as misheard (the company's “Words to listen for”).
+        const text = correct(heardText, st.corrections);
         const n = turn != null && turnSeq.has(turn) ? turnSeq.get(turn)! : seq++;
         if (turn != null) turnSeq.set(turn, n);
         const offset = sessionStart - takeStart;
@@ -223,7 +228,7 @@ const state = { id: m.id, tablet: onTablet, bot: onBot, greeting: onBot ? greeti
         if (msg.type === 'Results') {
           const alt = msg.channel?.alternatives?.[0];
           if (!alt?.transcript) return;
-          if (!msg.is_final) { if (interim) interim.textContent = alt.transcript; hearing(); return; }
+          if (!msg.is_final) { if (interim) interim.textContent = correct(alt.transcript, st.corrections); hearing(); return; }
           if (interim) interim.textContent = '';
           // One segment per run of words by the same speaker.
           let cur: { speaker: string; words: string[]; start: number; end: number } | null = null;
@@ -234,7 +239,7 @@ const state = { id: m.id, tablet: onTablet, bot: onBot, greeting: onBot ? greeti
           }
           if (cur) segment(cur.speaker, cur.words.join(' '), cur.start, cur.end, undefined, Boolean(msg.speech_final));
         } else if (msg.type === 'Turn') {
-          if (!msg.end_of_turn || !msg.turn_is_formatted) { if (interim) interim.textContent = msg.transcript ?? ''; if (msg.transcript) hearing(); return; }
+          if (!msg.end_of_turn || !msg.turn_is_formatted) { if (interim) interim.textContent = correct(msg.transcript ?? '', st.corrections); if (msg.transcript) hearing(); return; }
           if (interim) interim.textContent = '';
           const w = msg.words ?? [];
           if (msg.transcript) segment(msg.speaker_label && msg.speaker_label !== 'UNKNOWN' ? `Speaker ${msg.speaker_label}` : '', msg.transcript, w[0]?.start ?? 0, w.at(-1)?.end ?? 0, msg.turn_order, true);
@@ -549,6 +554,22 @@ const state = { id: m.id, tablet: onTablet, bot: onBot, greeting: onBot ? greeti
       const endWait = () => { if (speaking) { clearTimeout(speaking.timer); const d = speaking.done; speaking = null; d(); } };
       // How long until the face has finished saying what it was sent: its length, less what has played while it arrived.
       const left = (bytes: number, since: number) => Math.max(0, (bytes / 32000) * 1000 + 600 - (performance.now() - since));
+      // Online, the bot's camera picture reaches the call later than its sound: the face's voice waits
+      // (voiceDelay ms) so it matches the lips. The face's own element is muted and its sound goes through a delay.
+      const delayVoice = (el: HTMLMediaElement) => {
+        if (!st.voiceDelay) return;
+        const started = Date.now();
+        const tryNow = () => {
+          const stream = el.srcObject instanceof MediaStream ? el.srcObject : null;
+          if (!stream?.getAudioTracks().length) { if (Date.now() - started < 15000) window.setTimeout(tryNow, 250); return; }
+          const ctx = new AudioContext();
+          const wait = ctx.createDelay(2); wait.delayTime.value = st.voiceDelay / 1000;
+          ctx.createMediaStreamSource(stream).connect(wait).connect(ctx.destination);
+          el.muted = true;
+          void ctx.resume();
+        };
+        tryNow();
+      };
       const openFace = async (kind: string) => {
         const r = await fetch(`${base}/face`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider: kind }) });
         const j = await r.json();
@@ -558,6 +579,7 @@ const state = { id: m.id, tablet: onTablet, bot: onBot, greeting: onBot ? greeti
           const { createClient } = await import('@anam-ai/js-sdk');
           const client = createClient(j.token, { disableInputAudio: true });
           await client.streamToVideoElement('face');
+          delayVoice(video);
           const input = client.createAgentAudioInputStream({ encoding: 'pcm_s16le', sampleRate: 16000, channels: 1 });
           return {
             speak: async (pcm) => {
@@ -572,6 +594,7 @@ const state = { id: m.id, tablet: onTablet, bot: onBot, greeting: onBot ? greeti
         const { SimliClient, LogLevel } = await import('simli-client');
         const client = new SimliClient(j.token, video, $<HTMLAudioElement>('face-audio')!, null, LogLevel.ERROR);
         await client.start();
+        delayVoice($<HTMLAudioElement>('face-audio')!);
         return {
           speak: async (pcm) => {
             let bytes = 0, since = 0;

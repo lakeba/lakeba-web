@@ -2,6 +2,7 @@ import type { Access } from './access';
 import type { serviceClient } from './admin';
 import { mayMeeting } from './boardroom';
 import type { Attendee, Meeting } from './legal-board';
+import { correct, correctionsOf, termOf } from './heard-as';
 import { PROVIDERS, transcribeRecording, type Provider, type Segment } from './transcription';
 
 // The Observer (Admin → Legal → a meeting → Record): a tablet at the board
@@ -32,13 +33,19 @@ const pad = (n: number) => String(n).padStart(6, '0');
  * ("DoxAI", not "Doc AI"): Lex, the group's companies, the people at the meeting and the
  * company's own words (Admin → Companies → Board assistant).
  */
+/** How names in this company's words tend to be misheard ("Lakeba = Kiwa, La Kiva"), to correct the text. */
+export async function meetingCorrections(svc: Svc, entityId: string) {
+  const { data } = await svc.from('entities').select('speech_terms').eq('id', entityId).maybeSingle();
+  return correctionsOf((data?.speech_terms ?? []) as string[]);
+}
+
 export async function meetingTerms(svc: Svc, entityId: string, attendees: Attendee[]) {
   const { data } = await svc.from('entities').select('id, display_name, speech_terms').order('sort');
   const companies = data ?? [];
   const own = companies.find((c) => c.id === entityId);
   // "Lakeba Group" also as "Lakeba": the first word of a company's name is often said on its own.
   const names = companies.flatMap((c) => [c.display_name, ...(c.display_name.includes(' ') && c.display_name.split(' ')[0].length > 3 ? [c.display_name.split(' ')[0]] : [])]);
-  return ['Lex', 'ASIC', 'ASX', 'ATO', 'AGM', 'Xero', ...(own?.speech_terms ?? []), ...attendees.map((a) => a.name), ...names];
+  return ['Lex', 'ASIC', 'ASX', 'ATO', 'AGM', 'Xero', ...(own?.speech_terms ?? []).map(termOf), ...attendees.map((a) => a.name), ...names];
 }
 
 /** Keeps a piece of audio as it arrives from the tablet. */
@@ -94,13 +101,14 @@ export async function transcribeMeeting(svc: Svc, meetingId: string, provider: P
     const speakers = m.attendees.filter((a) => a.present).length;
     const source = `batch:${provider}`;
     const terms = await meetingTerms(svc, m.entity_id, m.attendees);
+    const fixes = await meetingCorrections(svc, m.entity_id);
     await svc.from('board_meeting_segments').delete().eq('meeting_id', m.id).eq('source', source);
     for (const t of takes.filter((x) => x.path && x.bytes)) {
       const { data: blob } = await svc.storage.from('legal').download(t.path!);
       if (!blob) throw new Error(`Take ${t.take}'s recording is missing.`);
       const segments = await transcribeRecording(provider, Buffer.from(await blob.arrayBuffer()), t.mime, speakers, terms);
       const offset = offsetOf(takes, t);
-      await saveSegments(svc, m.id, source, t.take, segments.map((s, i) => ({ ...s, start_ms: s.start_ms + offset, end_ms: s.end_ms + offset, seq: i })));
+      await saveSegments(svc, m.id, source, t.take, segments.map((s, i) => ({ ...s, text: correct(s.text, fixes), start_ms: s.start_ms + offset, end_ms: s.end_ms + offset, seq: i })));
     }
     // The first full pass becomes the transcript; another provider's pass is kept for comparing.
     const use = !m.transcript_source || m.transcript_source.startsWith('live') ? source : m.transcript_source;
