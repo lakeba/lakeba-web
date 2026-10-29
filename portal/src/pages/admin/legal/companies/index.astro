@@ -1,0 +1,50 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { legalCompanies, reviewDateOf, todayIn, type CompanyRecord } from '../../../../lib/legal';
+import { shortDate } from '../../../../lib/format';
+
+// Admin → Legal → Companies: every company with its record at a glance.
+const svc = serviceClient();
+const companies = await legalCompanies(svc, Astro.locals.access);
+const ids = companies.map((c) => c.id);
+const [{ data: recs }, { data: officers }, { data: next }] = await Promise.all([
+  svc.from('company_records').select('entity_id, acn, company_type, review_date, incorporated_on').in('entity_id', ids),
+  svc.from('company_officers').select('entity_id, position').in('entity_id', ids).is('ceased_on', null),
+  svc.from('legal_obligations').select('entity_id, title, due_on').in('entity_id', ids).eq('status', 'open').order('due_on'),
+]);
+const recOf = new Map(((recs ?? []) as CompanyRecord[]).map((r) => [r.entity_id, r]));
+const count = (id: string, p: string) => (officers ?? []).filter((o) => o.entity_id === id && o.position === p).length;
+const nextOf = (id: string) => (next ?? []).find((n) => n.entity_id === id);
+const today = todayIn();
+const day = (d: string) => shortDate.format(new Date(`${d}T12:00:00+10:00`));
+const mmdd = (v: string | null) => (v ? new Date(Date.UTC(2000, Number(v.slice(0, 2)) - 1, Number(v.slice(3)))).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'UTC' }) : '—');
+const types = { proprietary: 'Proprietary', public: 'Public' } as Record<string, string>;
+---
+
+<Admin title="Legal · Companies">
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
+  <LegalNav />
+  <section class="card overflow-x-auto p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Company</th><th class="px-5 py-3">Type</th><th class="px-5 py-3">ACN</th><th class="px-5 py-3">Review date</th><th class="px-5 py-3 text-right">Directors</th><th class="px-5 py-3">Next due</th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {companies.map((c) => {
+          const r = recOf.get(c.id); const n = nextOf(c.id);
+          return (
+            <tr>
+              <td class="px-5 py-3"><a href={`/admin/legal/companies/${c.code}`} class="font-medium text-white hover:text-lk-blue">{c.display_name}</a><span class="block text-xs text-white/40">{c.legal_name ?? c.code}</span></td>
+              <td class="px-5 py-3 text-white/65">{r?.company_type ? types[r.company_type] : <span class="text-white/35">—</span>}</td>
+              <td class="px-5 py-3 tabular-nums text-white/65">{r?.acn ?? c.company_number ?? <span class="text-white/35">—</span>}</td>
+              <td class="px-5 py-3 text-white/65">{mmdd(reviewDateOf(r ?? null))}</td>
+              <td class="px-5 py-3 text-right tabular-nums">{count(c.id, 'director')}{count(c.id, 'secretary') > 0 && <span class="text-white/40"> + sec.</span>}</td>
+              <td class="px-5 py-3">{n ? <span class:list={[n.due_on < today ? 'text-lk-red' : 'text-white/70']}>{day(n.due_on)} · {n.title}</span> : <span class="text-white/35">{r ? 'Nothing open' : 'No record yet'}</span>}</td>
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  </section>
+</Admin>

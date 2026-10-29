@@ -1,0 +1,153 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { BRAND_COLUMNS, brandOf } from '../../../../lib/brand';
+import { legalCompanies } from '../../../../lib/legal';
+import { PAPER_COLUMNS, POSITION_WORD, SIGNATURE_COLUMNS, askToSign, currentOfficers, reference, sendForSigning, type Paper, type Signature } from '../../../../lib/legal-board';
+
+// Admin → Legal → a resolution or minutes: the draft's text, who signs, and
+// once sent, each signature; reminders, withdrawing, the signed copy.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const { data: row } = await svc.from('board_papers').select(PAPER_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
+const companies = await legalCompanies(svc, access);
+const company = row ? companies.find((c) => c.id === row.entity_id) : null;
+if (!row || !company) return Astro.redirect('/admin/legal/companies');
+let paper = row as Paper;
+const mayDo = access.can('legal.do', company.id);
+const back = `/admin/legal/companies/${company.code}?tab=board`;
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, paper_id: paper.id, ...detail } });
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (intent === 'save' || intent === 'send') {
+      if (paper.status !== 'draft') throw new Error('Only a draft can be changed.');
+      const title = field(form, 'title'), body = String(form.get('body') ?? '').replace(/\r\n/g, '\n').trim();
+      if (title.length < 3 || body.length < 10) throw new Error('The title and the text can’t be empty.');
+      await svc.from('board_papers').update({ title: title.slice(0, 300), body, updated_at: new Date().toISOString() }).eq('id', paper.id).throwOnError();
+      paper = { ...paper, title, body };
+      if (intent === 'save') { await log('admin_saved_board_paper'); ok = 'Saved the draft.'; }
+      else {
+        const n = await sendForSigning(svc, paper, form.getAll('signer').map(String), Astro.url.origin);
+        await log('admin_sent_board_paper_for_signing', { signers: n });
+        ok = `Sent to ${n} signer${n === 1 ? '' : 's'}. Each gets an email with a link to read and sign it.`;
+      }
+    } else if (intent === 'remind') {
+      if (paper.status !== 'signing') throw new Error('It isn’t waiting for signatures.');
+      const { data: pending } = await svc.from('board_signatures').select('user_id').eq('paper_id', paper.id).eq('status', 'pending');
+      const { data: ent } = await svc.from('entities').select(BRAND_COLUMNS).eq('id', company.id).single();
+      await askToSign(svc, paper, (pending ?? []).map((p) => p.user_id).filter(Boolean) as string[], Astro.url.origin, brandOf(ent as never), company.legal_name ?? company.display_name, true);
+      await log('admin_reminded_board_signers', { signers: pending?.length ?? 0 });
+      ok = `Reminded ${pending?.length ?? 0} signer${pending?.length === 1 ? '' : 's'}.`;
+    } else if (intent === 'redraft') {
+      // Back to a draft to change it: signatures given so far no longer count.
+      if (paper.status !== 'signing') throw new Error('It isn’t waiting for signatures.');
+      await svc.from('board_signatures').delete().eq('paper_id', paper.id);
+      await svc.from('board_papers').update({ status: 'draft', pdf_path: null, sha256: null, sent_at: null, updated_at: new Date().toISOString() }).eq('id', paper.id).throwOnError();
+      await log('admin_redrafted_board_paper');
+      return Astro.redirect(`/admin/legal/papers/${paper.id}`);
+    } else if (intent === 'withdraw') {
+      if (paper.status === 'signed') throw new Error('A signed paper stays in the minute book.');
+      await svc.from('board_papers').update({ status: 'withdrawn', updated_at: new Date().toISOString() }).eq('id', paper.id).throwOnError();
+      await log('admin_withdrew_board_paper');
+      return Astro.redirect(back);
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  const { data: again } = await svc.from('board_papers').select(PAPER_COLUMNS).eq('id', paper.id).single();
+  paper = again as Paper;
+}
+
+const [{ data: sigRows }, officers, { data: meeting }] = await Promise.all([
+  svc.from('board_signatures').select(SIGNATURE_COLUMNS).eq('paper_id', paper.id).order('name'),
+  currentOfficers(svc, company.id),
+  paper.meeting_id ? svc.from('board_meetings').select('id, title, chair_officer_id').eq('id', paper.meeting_id).maybeSingle() : Promise.resolve({ data: null }),
+]);
+const signatures = (sigRows ?? []) as Signature[];
+const candidates = officers.filter((o) => o.position === 'director' || (paper.kind === 'minutes' && o.id === meeting?.chair_officer_id));
+const preselected = (id: string) => paper.kind === 'minutes' ? id === meeting?.chair_officer_id : officers.find((o) => o.id === id)?.position === 'director';
+const when = (iso: string | null) => (iso ? new Intl.DateTimeFormat('en-AU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Australia/Sydney' }).format(new Date(iso)) : '');
+const fileHref = (p: string) => `/admin/legal/file?path=${encodeURIComponent(p)}`;
+const states = { draft: 'Draft', signing: 'Waiting for signatures', signed: 'Signed', withdrawn: 'Withdrawn' };
+---
+
+<Admin title={`Legal · ${paper.title}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> · <a href={back} class="hover:text-white">{company.display_name}</a>{meeting && <> · <a href={`/admin/legal/meetings/${meeting.id}`} class="hover:text-white">{meeting.title}</a></>}</p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{paper.title}</h1>
+    <p class="mt-1 text-sm text-white/55">{paper.kind === 'minutes' ? 'Minutes' : 'Directors’ resolution'} · {reference(paper)} · {states[paper.status]}</p>
+  </div>
+  <LegalNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  {paper.status === 'draft' ? (
+    <form method="post" class="grid gap-6 xl:grid-cols-[1fr_20rem]">
+      <div class="card grid content-start gap-4">
+        <fieldset disabled={!mayDo} class="contents">
+          <div><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={paper.title} required /></div>
+          <div><label class="label" for="body">Text</label><textarea class="field min-h-[28rem] font-mono text-sm leading-relaxed" id="body" name="body">{paper.body}</textarea>
+            <p class="mt-1 text-xs text-white/40">“## ” starts a heading, “1. ” a numbered resolution, a blank line a new paragraph. The company's name, ACN and the signature lines are added to the PDF.</p></div>
+          {mayDo && <div class="flex flex-wrap gap-3"><button class="btn-ghost" name="intent" value="save">Save the draft</button><a class="btn-ghost" href={`/admin/legal/papers/${paper.id}/pdf`} target="_blank">Preview the PDF</a></div>}
+        </fieldset>
+      </div>
+      <aside class="card grid content-start gap-3">
+        <h2 class="font-display text-lg font-bold">Who signs</h2>
+        {candidates.length ? candidates.map((o) => (
+          <label class="flex items-start gap-3 text-sm">
+            <input type="checkbox" name="signer" value={o.id} checked={preselected(o.id)} disabled={!mayDo || (paper.kind === 'resolution' && o.position === 'director')} class="mt-0.5 size-4 accent-lk-blue" />
+            {paper.kind === 'resolution' && o.position === 'director' && <input type="hidden" name="signer" value={o.id} />}
+            <span><span class="text-white">{o.full_name}</span><span class="block text-xs text-white/45">{POSITION_WORD[o.position]}{o.id === meeting?.chair_officer_id && ' · chair'} · {o.user_id ? 'signs in the portal' : <span class="text-amber-300">not invited yet</span>}</span></span>
+          </label>
+        )) : <p class="text-sm text-white/55">No directors are recorded. Add them on the company's Officers tab.</p>}
+        <p class="text-xs text-white/40">{paper.kind === 'resolution' ? 'A circular resolution is signed by every director in office.' : 'Minutes are signed by the chair of the meeting (set on the meeting page).'}</p>
+        {mayDo && <button class="btn-primary" name="intent" value="send" data-confirm="Send it for signing? The text can't change once someone signs, without sending it again.">Send for signing</button>}
+        {mayDo && <button class="btn-ghost text-lk-red" name="intent" value="withdraw" formnovalidate data-confirm="Withdraw this draft?">Withdraw</button>}
+      </aside>
+    </form>
+  ) : (
+    <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
+      <section class="card">
+        <h2 class="font-display text-lg font-bold">Signatures</h2>
+        <ul class="mt-3 divide-y divide-white/5 text-sm">
+          {signatures.map((s) => (
+            <li class="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
+              <span><span class="text-white">{s.name}</span><span class="block text-xs text-white/45">{s.position}</span></span>
+              <span class:list={[s.status === 'signed' ? 'text-lk-green' : s.status === 'declined' ? 'text-lk-red' : 'text-amber-300']}>
+                {s.status === 'signed' ? `Signed ${when(s.signed_at)}` : s.status === 'declined' ? `Declined${s.decline_note ? `: ${s.decline_note}` : ''}` : `Waiting${s.reminded_at ? ` · reminded ${when(s.reminded_at)}` : ''}`}
+              </span>
+            </li>
+          ))}
+        </ul>
+        <p class="mt-4 text-xs text-white/40">Sent {when(paper.sent_at)} · SHA-256 {paper.sha256?.slice(0, 16)}…</p>
+      </section>
+      <aside class="card grid content-start gap-3 text-sm">
+        {paper.signed_pdf_path && <a class="btn-primary" href={fileHref(paper.signed_pdf_path)}>Open the signed PDF</a>}
+        {paper.pdf_path && <a class="btn-ghost" href={fileHref(paper.pdf_path)}>Open the PDF as sent</a>}
+        {paper.status === 'signed' && paper.document_id && <p class="text-white/55">Also filed in Documents (board only).</p>}
+        {mayDo && paper.status === 'signing' && (
+          <form method="post" class="grid gap-2">
+            <button class="btn-ghost" name="intent" value="remind">Remind who hasn't signed</button>
+            <button class="btn-ghost" name="intent" value="redraft" data-confirm="Take it back to change it? Signatures given so far won't count; it must be sent again.">Change it (back to draft)</button>
+            <button class="btn-ghost text-lk-red" name="intent" value="withdraw" data-confirm="Withdraw it? Nobody can sign it any more.">Withdraw</button>
+          </form>
+        )}
+      </aside>
+      <section class="card xl:col-span-2">
+        <h2 class="font-display text-lg font-bold">Text</h2>
+        <div class="mt-3 whitespace-pre-line text-sm leading-relaxed text-white/75">{paper.body}</div>
+      </section>
+    </div>
+  )}
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+</script>

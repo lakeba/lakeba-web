@@ -1,0 +1,72 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { legalCompanies, todayIn } from '../../../../lib/legal';
+import { currentOfficers } from '../../../../lib/legal-board';
+import { templateOf } from '../../../../lib/legal-templates';
+
+// Admin → Legal → a company → Board → New resolution: a template's few
+// questions; the draft's text can be changed on the next page.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const q = Astro.url.searchParams;
+const companies = await legalCompanies(svc, access, 'do');
+// From a calendar item ("Prepare the solvency resolution"): its company, template and date.
+const { data: ob } = q.get('obligation') ? await svc.from('legal_obligations').select('id, entity_id, kind, source_key').eq('id', q.get('obligation')!).maybeSingle() : { data: null };
+const company = companies.find((c) => (ob ? c.id === ob.entity_id : c.code === q.get('company')?.toUpperCase()));
+const template = templateOf(ob?.kind === 'solvency' ? 'solvency' : q.get('template'));
+if (!company || !template) return Astro.redirect('/admin/legal/companies');
+const back = `/admin/legal/companies/${company.code}?tab=board`;
+const officers = await currentOfficers(svc, company.id);
+const directors = officers.filter((o) => o.position === 'director');
+const defaults: Record<string, string> = ob?.kind === 'solvency' ? { review: ob.source_key?.split(':').at(-1) ?? '' } : {};
+let error = '';
+let values: Record<string, string> = { ...defaults };
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  values = Object.fromEntries(template.fields.map((f) => [f.name, field(form, f.name)]));
+  const missing = template.fields.filter((f) => !f.optional && !values[f.name]);
+  if (missing.length) error = `Fill in: ${missing.map((m) => m.label.toLowerCase()).join(', ')}.`;
+  else {
+    const { title, body } = template.build({ company: company.legal_name ?? company.display_name, acn: company.company_number, values, today: todayIn() });
+    const { data, error: e } = await svc.from('board_papers').insert({
+      entity_id: company.id, kind: 'resolution', template_key: template.key, title: title.slice(0, 300), body,
+      obligation_id: ob && template.settles === ob.kind ? ob.id : null, created_by: Astro.locals.user!.id,
+    }).select('id').single();
+    if (e || !data) error = 'The draft could not be saved.';
+    else {
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_drafted_resolution', event_detail: { entity_id: company.id, paper_id: data.id, template: template.key } });
+      return Astro.redirect(`/admin/legal/papers/${data.id}`);
+    }
+  }
+}
+---
+
+<Admin title={`Legal · ${company.display_name} · ${template.label}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> · <a href={back} class="hover:text-white">{company.display_name}</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{template.label}</h1>
+    <p class="mt-1 text-sm text-white/55">{template.description}</p>
+  </div>
+  <LegalNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {directors.length === 0 && <div class="mb-6"><Alert tone="info">No directors are recorded for {company.display_name}. Add them on the Officers tab before sending a resolution for signing.</Alert></div>}
+  <form method="post" class="card grid max-w-3xl gap-4 sm:grid-cols-2">
+    {template.fields.map((f) => (
+      <div class:list={[(f.type === 'textarea' || f.type === 'text') && 'sm:col-span-2']}>
+        <label class="label" for={f.name}>{f.label}</label>
+        {f.type === 'textarea' ? <textarea class="field min-h-24" id={f.name} name={f.name} placeholder={f.placeholder} required={!f.optional}>{values[f.name] ?? ''}</textarea>
+          : f.type === 'select' ? <select class="field" id={f.name} name={f.name}>{f.options!.map((o) => <option selected={values[f.name] === o}>{o}</option>)}</select>
+          : f.type === 'director' ? <select class="field" id={f.name} name={f.name} required><option value="">Choose…</option>{directors.map((d) => <option selected={values[f.name] === d.full_name}>{d.full_name}</option>)}</select>
+          : <input class="field" id={f.name} name={f.name} type={f.type === 'number' ? 'number' : f.type === 'date' ? 'date' : 'text'} step={f.type === 'number' ? 'any' : undefined} value={values[f.name] ?? ''} placeholder={f.placeholder} required={!f.optional} />}
+        {f.hint && <p class="mt-1 text-xs text-white/40">{f.hint}</p>}
+      </div>
+    ))}
+    <div class="flex flex-wrap gap-3 sm:col-span-2"><button class="btn-primary">Write the draft</button><a class="btn-ghost" href={back}>Cancel</a></div>
+    <p class="text-xs text-white/40 sm:col-span-2">The wording follows the Corporations Act and its replaceable rules; check it against the company's constitution. Nothing is sent until you choose to.</p>
+  </form>
+</Admin>

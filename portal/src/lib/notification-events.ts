@@ -21,6 +21,7 @@ export const CATEGORIES: Category[] = [
   { key: 'replies', audience: 'investor', label: 'Answers to your questions', description: 'The board answered your question, or your AGM question was answered.', email: true, push: true, kinds: ['query_reply', 'agm_answer'] },
   { key: 'holdings', audience: 'investor', label: 'Your holdings', description: 'A new holding statement is ready, or a note was added to one of your holdings.', email: true, push: true, kinds: ['holding_note', 'statement_ready'] },
   { key: 'trading', audience: 'investor', label: 'Secondary trading', description: 'Your interest to buy or sell shares was matched, completed or cancelled.', email: true, push: true, kinds: ['trade'] },
+  { key: 'signing', audience: 'investor', label: 'Documents to sign', description: 'A directors’ resolution or minutes are waiting for your signature (the email always comes).', email: false, push: true, kinds: ['board_sign'] },
   { key: 'newsletter', audience: 'investor', label: 'Quarterly newsletter', description: 'The company’s quarterly newsletter for shareholders, by email.', email: true, push: false, emailOnly: true, kinds: ['newsletter'] },
   { key: 'digest', audience: 'investor', label: 'Weekly digest', description: 'One email each Monday with the week’s new documents, news and holding updates, instead of a separate email for each.', email: false, push: false, emailOnly: true, kinds: ['digest'] },
   { key: 'security', audience: 'investor', label: 'Account security', description: 'A passkey was added or removed, your password changed, or two-step verification changed.', email: true, push: true, locked: true, kinds: ['security'] },
@@ -33,6 +34,7 @@ export const CATEGORIES: Category[] = [
   { key: 'admin_emails', audience: 'admin', label: 'Shareholder emails', description: 'An email to a shareholder mailbox has a reply ready or needs a person.', email: false, push: true, kinds: ['admin_email'] },
   { key: 'admin_trading', audience: 'admin', label: 'Secondary trading', description: 'A shareholder registered or withdrew an interest to buy or sell.', email: false, push: true, kinds: ['admin_trade'] },
   { key: 'admin_ask', audience: 'admin', label: 'Ask Lakeba', description: 'An answer was rated 👎, or a cost or usage limit was reached.', email: true, push: true, kinds: ['ask_alert', 'admin_ask_feedback'] },
+  { key: 'admin_legal', audience: 'admin', label: 'Legal deadlines', description: 'Each morning, what is overdue or due soon (in 30, 7 and 1 days) for the companies you look after as Legal.', email: true, push: true, kinds: ['admin_legal'] },
   { key: 'admin_setup', audience: 'admin', label: 'Venture set-up', description: 'A venture’s own address or email finished a set-up step, or a venture asked Lakeba for help with it.', email: true, push: true, kinds: ['admin_setup'] },
   { key: 'admin_integrations', audience: 'admin', label: 'Integrations', description: 'An integration needs a look: a webhook was switched off, something received waits for review, or a HubSpot or Xero connection has a problem.', email: true, push: true, kinds: ['admin_integrations'] },
   { key: 'admin_security', audience: 'admin', label: 'Admin security', description: 'An admin account signed in from a new device, or someone’s two-step was reset.', email: true, push: true, locked: true, kinds: ['admin_security'] },
@@ -69,6 +71,8 @@ export function pushText(kind: string, brand: string, detail?: string): { title:
     case 'admin_first_signin': return { title: 'An investor signed in for the first time', body: open };
     case 'admin_email': return { title: 'New shareholder email', body: open };
     case 'ask_alert': case 'admin_ask_feedback': return { title: 'Ask Lakeba needs a look', body: open };
+    case 'board_sign': return { title: 'A document is waiting for your signature', body: open };
+    case 'admin_legal': return { title: 'Legal: deadlines to look at', body: open };
     case 'admin_setup': return { title: 'Venture set-up: an update', body: open };
     case 'admin_integrations': return { title: 'Integrations: something needs a look', body: open };
     case 'admin_security': return { title: 'Admin security alert', body: detail ?? open };

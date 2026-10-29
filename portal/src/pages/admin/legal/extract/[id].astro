@@ -1,0 +1,181 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { shortDate } from '../../../../lib/format';
+import { OFFICER_COLUMNS, POSITIONS, RECORD_COLUMNS, legalCompanies, openPrivate, sealPrivate, syncObligations, type CompanyRecord, type Officer } from '../../../../lib/legal';
+import { nameKey, type ExtractReading } from '../../../../lib/legal-extract';
+import { openJson } from '../../../../lib/secret-box';
+
+// Admin → Legal → a company → "Read an ASIC extract": what Lakeba AI read,
+// beside what the record says. Ticked lines are saved; nothing else changes.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const { data: read } = await svc.from('legal_extract_reads').select('id, entity_id, file_path, file_name, suggested, status, cost_usd, created_at').eq('id', Astro.params.id ?? '').maybeSingle();
+const companies = await legalCompanies(svc, access, 'do');
+const company = read ? companies.find((c) => c.id === read.entity_id) : null;
+if (!read || !company) return Astro.redirect('/admin/legal/companies');
+const back = `/admin/legal/companies/${company.code}`;
+const reading = openJson<ExtractReading>((read.suggested as { sealed: string }).sealed);
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, read_id: read.id, ...detail } });
+
+const [{ data: recRow }, { data: officerRows }] = await Promise.all([
+  svc.from('company_records').select(RECORD_COLUMNS).eq('entity_id', company.id).maybeSingle(),
+  svc.from('company_officers').select(OFFICER_COLUMNS).eq('entity_id', company.id),
+]);
+const rec = recRow as CompanyRecord | null;
+const officers = (officerRows ?? []) as Officer[];
+const c = reading.company;
+const isDate = (v: string) => /^\d{4}-\d{2}-\d{2}$/.test(v);
+const isMmdd = (v: string) => /^\d{2}-\d{2}$/.test(v);
+
+// The company's lines: [key, label, now, from the extract].
+const lines = ([
+  ['legal_name', 'Legal name', company.legal_name, c.legal_name],
+  ['acn', 'ACN', rec?.acn ?? company.company_number, c.acn],
+  ['abn', 'ABN', rec?.abn, c.abn],
+  ['company_type', 'Type', rec?.company_type, c.company_type],
+  ['registered_in', 'Registered in', rec?.registered_in, c.registered_in],
+  ['incorporated_on', 'Registered on', rec?.incorporated_on, isDate(c.incorporated_on) ? c.incorporated_on : ''],
+  ['review_date', 'Annual review date', rec?.review_date, isMmdd(c.review_date) ? c.review_date : ''],
+  ['registered_office', 'Registered office', rec?.registered_office, c.registered_office],
+  ['principal_place', 'Principal place of business', rec?.principal_place, c.principal_place],
+  ['ultimate_holding', 'Ultimate holding company', rec?.ultimate_holding, c.ultimate_holding],
+] as [string, string, string | null | undefined, string][]).filter(([, , , v]) => v);
+// Each officer on the extract, matched to the register by name and position.
+const matched = reading.officers.map((o, i) => ({ i, o, existing: officers.find((x) => x.position === o.position && nameKey(x.full_name) === nameKey(o.full_name)) ?? null }));
+const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+/** A line's value as people read it. */
+const shownValue = (k: string, v: string | null | undefined) => {
+  if (!v) return '—';
+  if (k === 'company_type') return v === 'public' ? 'Public' : 'Proprietary';
+  if (k === 'incorporated_on') return day(v);
+  if (k === 'review_date') return `${Number(v.slice(3))} ${MONTHS[Number(v.slice(0, 2)) - 1]}`;
+  return v;
+};
+const day = (d: string | null | undefined) => (d && isDate(d) ? shortDate.format(new Date(`${d}T12:00:00+10:00`)) : '—');
+
+let error = '';
+if (Astro.request.method === 'POST' && read.status === 'open') {
+  const form = await Astro.request.formData();
+  if (field(form, 'intent') === 'discard') {
+    await svc.from('legal_extract_reads').update({ status: 'discarded' }).eq('id', read.id);
+    await log('admin_discarded_asic_extract');
+    return Astro.redirect(back);
+  }
+  try {
+    const pick = new Set(form.getAll('line').map(String));
+    const patch: Record<string, unknown> = { entity_id: company.id, extract_path: read.file_path, extract_dated: isDate(c.extract_date) ? c.extract_date : null, updated_by: Astro.locals.user!.id, updated_at: new Date().toISOString() };
+    for (const [k, , , v] of lines) if (pick.has(k) && k !== 'legal_name') patch[k] = v;
+    await svc.from('company_records').upsert(patch).throwOnError();
+    const ent: Record<string, unknown> = {};
+    if (pick.has('legal_name')) ent.legal_name = c.legal_name;
+    if (pick.has('acn')) ent.company_number = c.acn;
+    if (Object.keys(ent).length) await svc.from('entities').update(ent).eq('id', company.id).throwOnError();
+
+    let added = 0, updated = 0;
+    const touched: string[] = [];
+    for (const m of matched) {
+      if (!pick.has(`officer-${m.i}`)) continue;
+      const o = m.o;
+      const priv = { date_of_birth: isDate(o.date_of_birth) ? o.date_of_birth : '', place_of_birth: o.place_of_birth, residential_address: o.residential_address };
+      if (m.existing) {
+        // Keeps what the register has that the extract doesn't show (the director ID, a consent).
+        const mergedPriv = { ...openPrivate(m.existing.private_sealed), ...Object.fromEntries(Object.entries(priv).filter(([, v]) => v)) };
+        await svc.from('company_officers').update({
+          appointed_on: isDate(o.appointed_on) ? o.appointed_on : m.existing.appointed_on, ceased_on: isDate(o.ceased_on) ? o.ceased_on : m.existing.ceased_on,
+          private_sealed: sealPrivate(mergedPriv), updated_at: new Date().toISOString(),
+        }).eq('id', m.existing.id).throwOnError();
+        touched.push(m.existing.id); updated++;
+      } else {
+        const { data } = await svc.from('company_officers').insert({
+          entity_id: company.id, full_name: o.full_name.slice(0, 200), position: o.position, appointed_on: isDate(o.appointed_on) ? o.appointed_on : null,
+          ceased_on: isDate(o.ceased_on) ? o.ceased_on : null, private_sealed: sealPrivate(priv), notes: `From the ASIC extract${isDate(c.extract_date) ? ` dated ${c.extract_date}` : ''}.`, created_by: Astro.locals.user!.id,
+        }).select('id').single().throwOnError();
+        touched.push(data!.id); added++;
+      }
+    }
+    await syncObligations(svc, [company.id]);
+    // ASIC already knows what is on its own extract: no "Tell ASIC" for these officers' dates.
+    if (touched.length) await svc.from('legal_obligations').update({ status: 'not_needed', done_on: new Date().toISOString().slice(0, 10), done_note: 'Already on ASIC’s records (shown on the extract).' })
+      .eq('status', 'open').in('source_key', touched.flatMap((id) => [`officer:${id}:appointed`, `officer:${id}:ceased`]));
+    await svc.from('legal_extract_reads').update({ status: 'applied' }).eq('id', read.id);
+    await log('admin_applied_asic_extract', { lines: [...pick].filter((p) => !p.startsWith('officer-')), officers_added: added, officers_updated: updated });
+    return Astro.redirect(`${back}?tab=${added + updated ? 'officers' : 'record'}`);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+---
+
+<Admin title={`Legal · ${company.display_name} · ASIC extract`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> · <a href={back} class="hover:text-white">{company.display_name}</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">ASIC extract</h1>
+    <p class="mt-1 text-sm text-white/55">{read.file_name}{isDate(c.extract_date) && ` · dated ${day(c.extract_date)}`} · read by Lakeba AI · <a class="text-lk-blue hover:underline" href={`/admin/legal/file?path=${encodeURIComponent(read.file_path)}`}>open the PDF</a></p>
+  </div>
+  <LegalNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {read.status !== 'open' && <div class="mb-6"><Alert tone="info">This reading was {read.status}. <a class="underline" href={back}>Back to {company.display_name}</a>.</Alert></div>}
+  {!reading.is_asic_extract && <div class="mb-6"><Alert tone="error">This doesn't look like an ASIC company extract. Check the file before saving anything.</Alert></div>}
+  {reading.notes.length > 0 && <div class="mb-6"><Alert tone="info">To check: {reading.notes.join(' · ')}</Alert></div>}
+
+  <form method="post" class="grid gap-6">
+    <fieldset disabled={read.status !== 'open'} class="contents">
+      <section class="card overflow-x-auto p-0">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">The company</h2>
+        <p class="px-5 pt-1 text-sm text-white/55">Ticked lines replace what the record says. Lines that already match aren't ticked.</p>
+        <table class="mt-3 w-full text-left text-sm">
+          <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="w-10 px-5 py-3"></th><th class="px-5 py-3"></th><th class="px-5 py-3">Now</th><th class="px-5 py-3">On the extract</th></tr></thead>
+          <tbody class="divide-y divide-white/5">
+            {lines.map(([k, label, now, v]) => (
+              <tr>
+                <td class="px-5 py-3"><input type="checkbox" name="line" value={k} id={`l-${k}`} checked={(now ?? '') !== v} class="size-4 accent-lk-blue" /></td>
+                <td class="px-5 py-3 text-white/60"><label for={`l-${k}`}>{label}</label></td>
+                <td class="px-5 py-3 text-white/50">{shownValue(k, now)}</td>
+                <td class:list={['px-5 py-3', (now ?? '') !== v ? 'text-white' : 'text-white/50']}>{shownValue(k, v)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </section>
+
+      <section class="card overflow-x-auto p-0">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Officers</h2>
+        <p class="px-5 pt-1 text-sm text-white/55">Ticked officers are added to the register, or have their dates and private details brought up to date. Private details are stored encrypted; they aren't shown here.</p>
+        {matched.length ? (
+          <table class="mt-3 w-full text-left text-sm">
+            <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="w-10 px-5 py-3"></th><th class="px-5 py-3">Name</th><th class="px-5 py-3">Position</th><th class="px-5 py-3">Appointed</th><th class="px-5 py-3">Stopped</th><th class="px-5 py-3">Register</th></tr></thead>
+            <tbody class="divide-y divide-white/5">
+              {matched.map((m) => {
+                const same = m.existing && (m.existing.appointed_on ?? '') === (isDate(m.o.appointed_on) ? m.o.appointed_on : (m.existing.appointed_on ?? '')) && (m.existing.ceased_on ?? '') === (isDate(m.o.ceased_on) ? m.o.ceased_on : (m.existing.ceased_on ?? '')) && Boolean(m.existing.private_sealed);
+                return (
+                  <tr>
+                    <td class="px-5 py-3"><input type="checkbox" name="line" value={`officer-${m.i}`} id={`o-${m.i}`} checked={!same} class="size-4 accent-lk-blue" /></td>
+                    <td class="px-5 py-3 text-white"><label for={`o-${m.i}`}>{m.o.full_name}</label></td>
+                    <td class="px-5 py-3 text-white/60">{POSITIONS[m.o.position]}</td>
+                    <td class="px-5 py-3 text-white/60">{day(m.o.appointed_on)}</td>
+                    <td class="px-5 py-3 text-white/60">{day(m.o.ceased_on)}</td>
+                    <td class="px-5 py-3 text-white/50">{m.existing ? (same ? 'Matches' : 'Update') : 'New'}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">No officers were read from the extract.</p>}
+        {officers.filter((x) => !x.ceased_on && !matched.some((m) => m.existing?.id === x.id)).length > 0 && (
+          <p class="px-5 pb-5 pt-3 text-sm text-amber-300">On the register but not on the extract: {officers.filter((x) => !x.ceased_on && !matched.some((m) => m.existing?.id === x.id)).map((x) => `${x.full_name} (${POSITIONS[x.position].toLowerCase()})`).join(', ')}. Check whether ASIC has been told.</p>
+        )}
+      </section>
+
+      {read.status === 'open' && (
+        <div class="flex flex-wrap gap-3">
+          <button class="btn-primary" name="intent" value="apply">Save the ticked lines</button>
+          <button class="btn-ghost" name="intent" value="discard" formnovalidate>Discard this reading</button>
+        </div>
+      )}
+    </fieldset>
+  </form>
+</Admin>

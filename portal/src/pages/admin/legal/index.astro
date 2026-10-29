@@ -1,0 +1,81 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import Empty from '../../../components/Empty.astro';
+import LegalNav from '../../../components/LegalNav.astro';
+import ObligationList from '../../../components/ObligationList.astro';
+import { serviceClient } from '../../../lib/admin';
+import { OBLIGATION_COLUMNS, addDays, legalCompanies, legalTeam, syncObligations, todayIn, type Obligation } from '../../../lib/legal';
+import { obligationAction } from '../../../lib/legal-actions';
+
+// Admin → Legal: what is overdue and due in the next 30 days across every
+// company this person looks after, and which records still need filling in.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await legalCompanies(svc, access);
+const may = (id: string) => access.can('legal.do', id);
+let result: { ok?: string; error?: string } | null = null;
+if (Astro.request.method === 'POST') result = await obligationAction(svc, Astro.locals.supabase, await Astro.request.formData(), companies, may, Astro.locals.user!.id);
+
+const ids = companies.map((c) => c.id);
+const { data: recs } = await svc.from('company_records').select('entity_id, acn, company_type, review_date, incorporated_on').in('entity_id', ids);
+await syncObligations(svc, (recs ?? []).map((r) => r.entity_id));
+const today = todayIn();
+const [{ data: rows }, { data: officers }, people] = await Promise.all([
+  svc.from('legal_obligations').select(OBLIGATION_COLUMNS).in('entity_id', ids).eq('status', 'open').lte('due_on', addDays(today, 30)).order('due_on'),
+  svc.from('company_officers').select('entity_id, position').in('entity_id', ids).is('ceased_on', null),
+  legalTeam(svc),
+]);
+const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+const items = ((rows ?? []) as Obligation[]).map((o) => ({ ...o, company: nameOf.get(o.entity_id) ?? '' }));
+const overdue = items.filter((o) => o.due_on < today);
+const soon = items.filter((o) => o.due_on >= today);
+const unowned = items.filter((o) => !o.owner_id).length;
+const recOf = new Map((recs ?? []).map((r) => [r.entity_id, r]));
+const directors = (id: string) => (officers ?? []).filter((o) => o.entity_id === id && o.position === 'director').length;
+const secretary = (id: string) => (officers ?? []).some((o) => o.entity_id === id && o.position === 'secretary');
+const gaps = (id: string) => {
+  const r = recOf.get(id);
+  if (!r) return ['No record yet'];
+  return [!r.acn && 'ACN', !r.company_type && 'company type', !(r.review_date || r.incorporated_on) && 'review date', !directors(id) && 'directors'].filter(Boolean) as string[];
+};
+const incomplete = companies.filter((c) => gaps(c.id).length);
+---
+
+<Admin title="Legal">
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group. The portal reminds and keeps the proof; lodging with ASIC stays with you." />
+  <LegalNav />
+  {result?.error && <div class="mb-6"><Alert tone="error">{result.error}</Alert></div>}
+  {result?.ok && <div class="mb-6"><Alert tone="success">{result.ok}</Alert></div>}
+
+  <div class="mb-6 grid gap-4 sm:grid-cols-3">
+    <div class="card !p-5"><p class="text-sm text-white/55">Overdue</p><p class:list={['mt-1 font-display text-3xl font-bold tabular-nums', overdue.length ? 'text-lk-red' : 'text-white']}>{overdue.length}</p></div>
+    <div class="card !p-5"><p class="text-sm text-white/55">Due in the next 30 days</p><p class="mt-1 font-display text-3xl font-bold tabular-nums text-white">{soon.length}</p></div>
+    <div class="card !p-5"><p class="text-sm text-white/55">Records to complete</p><p class="mt-1 font-display text-3xl font-bold tabular-nums text-white">{incomplete.length}<span class="text-base font-normal text-white/45"> of {companies.length}</span></p></div>
+  </div>
+
+  <section class="card mb-6 p-0">
+    <div class="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5"><h2 class="font-display text-lg font-bold">Overdue and due in 30 days</h2>{unowned > 0 && <span class="text-xs text-white/45">{unowned} not given to anyone: everyone with Legal is reminded</span>}</div>
+    {items.length ? <div class="mt-2"><ObligationList items={[...overdue, ...soon]} people={people} may={may} showCompany /></div>
+      : <p class="px-5 pb-5 pt-2 text-sm text-white/55">Nothing due in the next 30 days. <a href="/admin/legal/calendar" class="text-lk-blue hover:underline">See the whole calendar</a>.</p>}
+  </section>
+
+  {incomplete.length > 0 ? (
+    <section class="card overflow-x-auto p-0">
+      <h2 class="px-5 pt-5 font-display text-lg font-bold">Records to complete</h2>
+      <p class="px-5 pt-1 text-sm text-white/55">The calendar can only work out deadlines from what the record says. Reading a current ASIC extract fills most of it.</p>
+      <table class="mt-3 w-full text-left text-sm">
+        <tbody class="divide-y divide-white/5">
+          {incomplete.map((c) => (
+            <tr>
+              <td class="px-5 py-3"><a href={`/admin/legal/companies/${c.code}`} class="font-medium text-white hover:text-lk-blue">{c.display_name}</a><span class="block text-xs text-white/40">{c.legal_name ?? c.code}</span></td>
+              <td class="px-5 py-3 text-white/60">Missing: {gaps(c.id).join(', ')}{recOf.get(c.id) && !secretary(c.id) && ' · no secretary (optional for a proprietary company)'}</td>
+              <td class="px-5 py-3 text-right"><a href={`/admin/legal/companies/${c.code}`} class="btn-ghost !px-3 !py-1.5 text-xs">{may(c.id) ? 'Complete' : 'View'}</a></td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  ) : companies.length === 0 ? <Empty title="No companies">You don't look after any company's legal records.</Empty> : null}
+</Admin>

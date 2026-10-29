@@ -1,0 +1,139 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { addDays, fromSydney, legalCompanies, toSydney } from '../../../../lib/legal';
+import { fileOf, storeLegalFile } from '../../../../lib/legal-actions';
+import { MEETING_COLUMNS, PAPER_COLUMNS, TRANSCRIPT_CHARS, draftMinutes, reference, transcriptText, type Attendee, type Meeting, type Paper } from '../../../../lib/legal-board';
+
+// Admin → Legal → a company → Board → a meeting: who was there, the agenda,
+// notes and transcript; Lakeba AI drafts the minutes from them, and the
+// minutes go to the chair to sign.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const { data: row } = await svc.from('board_meetings').select(MEETING_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
+const companies = await legalCompanies(svc, access);
+const company = row ? companies.find((c) => c.id === row.entity_id) : null;
+if (!row || !company) return Astro.redirect('/admin/legal/companies');
+let meeting = row as Meeting;
+const mayDo = access.can('legal.do', company.id);
+const back = `/admin/legal/companies/${company.code}?tab=board`;
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, meeting_id: meeting.id, ...detail } });
+const minutesQuery = () => svc.from('board_papers').select(PAPER_COLUMNS).eq('meeting_id', meeting.id).neq('status', 'withdrawn').maybeSingle();
+let minutes = (await minutesQuery()).data as Paper | null;
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (intent === 'save' || intent === 'draft') {
+      const held = fromSydney(field(form, 'held_at'));
+      if (!held || field(form, 'title').length < 3) throw new Error('Give the meeting a title and when it was held.');
+      const attendees: Attendee[] = meeting.attendees.filter((a) => a.officer_id).map((a) => ({ ...a, present: form.get(`present-${a.officer_id}`) === 'on' }));
+      for (const g of String(form.get('guests') ?? '').split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 30)) attendees.push({ name: g.slice(0, 200), role: 'guest', present: true });
+      let transcript = String(form.get('transcript') ?? '').slice(0, TRANSCRIPT_CHARS);
+      let transcriptPath = meeting.transcript_path;
+      const file = fileOf(form, 'transcript_file');
+      if (file) {
+        if (!/\.(txt|vtt|srt|md)$/i.test(file.name)) throw new Error('The transcript must be a text file (.txt, .vtt or .srt). From Word, save it as plain text first.');
+        transcript = transcriptText(file.name, await file.text()).slice(0, TRANSCRIPT_CHARS);
+        transcriptPath = await storeLegalFile(svc, company.id, `meetings/${meeting.id}`, file);
+      }
+      const patch = {
+        title: field(form, 'title').slice(0, 200), held_at: held.toISOString(), location: field(form, 'location').slice(0, 200), attendees,
+        chair_officer_id: field(form, 'chair') || null, agenda: field(form, 'agenda').slice(0, 20000), notes: field(form, 'notes').slice(0, 50000),
+        transcript, transcript_path: transcriptPath, updated_at: new Date().toISOString(),
+      };
+      await svc.from('board_meetings').update(patch).eq('id', meeting.id).throwOnError();
+      meeting = { ...meeting, ...patch };
+      // The minutes reminder follows the meeting's date.
+      await svc.from('legal_obligations').update({ due_on: addDays(toSydney(patch.held_at).slice(0, 10), 30), title: `Minutes of “${patch.title}” signed by the chair` }).eq('source_key', `minutes:${meeting.id}`).eq('status', 'open').eq('date_kept', false);
+      await log('admin_saved_board_meeting');
+      ok = 'Saved the meeting.';
+      if (intent === 'draft') {
+        if (minutes && minutes.status !== 'draft') throw new Error('The minutes were already sent for signing; take them back to a draft first.');
+        if (!meeting.agenda && !meeting.notes && !meeting.transcript) throw new Error('Add the agenda, notes or a transcript for Lakeba AI to draft from.');
+        const { body, costUsd } = await draftMinutes(meeting, company.legal_name ?? company.display_name);
+        const title = `Minutes – ${meeting.title}`.slice(0, 300);
+        if (minutes) await svc.from('board_papers').update({ body, title, ai_cost_usd: costUsd, updated_at: new Date().toISOString() }).eq('id', minutes.id).throwOnError();
+        else {
+          const { data: ob } = await svc.from('legal_obligations').select('id').eq('source_key', `minutes:${meeting.id}`).maybeSingle();
+          const { data } = await svc.from('board_papers').insert({ entity_id: company.id, kind: 'minutes', meeting_id: meeting.id, title, body, obligation_id: ob?.id ?? null, ai_cost_usd: costUsd, created_by: Astro.locals.user!.id }).select('id').single().throwOnError();
+          minutes = { id: data!.id } as Paper;
+        }
+        await log('admin_drafted_minutes', { paper_id: minutes.id, cost_usd: costUsd });
+        return Astro.redirect(`/admin/legal/papers/${minutes.id}`);
+      }
+    } else if (intent === 'delete') {
+      if (minutes && minutes.status === 'signed') throw new Error('Signed minutes stay in the minute book, with their meeting.');
+      await svc.from('legal_obligations').delete().eq('source_key', `minutes:${meeting.id}`).eq('status', 'open');
+      await svc.from('board_meetings').delete().eq('id', meeting.id).throwOnError();
+      await log('admin_deleted_board_meeting', { title: meeting.title });
+      return Astro.redirect(back);
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  minutes = (await minutesQuery()).data as Paper | null;
+}
+const officersPresent = meeting.attendees.filter((a) => a.officer_id);
+const guests = meeting.attendees.filter((a) => !a.officer_id).map((a) => a.name).join('\n');
+const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 'Guest' };
+---
+
+<Admin title={`Legal · ${meeting.title}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a> · <a href={back} class="hover:text-white">{company.display_name}</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{meeting.title}</h1>
+    <p class="mt-1 text-sm text-white/55">Directors’ meeting · {minutes ? <a class="text-lk-blue hover:underline" href={`/admin/legal/papers/${minutes.id}`}>minutes {reference(minutes)}: {minutes.status === 'draft' ? 'draft' : minutes.status === 'signing' ? 'waiting for the chair' : 'signed'}</a> : 'no minutes yet'}</p>
+  </div>
+  <LegalNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  <form method="post" enctype="multipart/form-data" class="grid gap-6 xl:grid-cols-[1fr_22rem]" data-busy>
+    <fieldset disabled={!mayDo} class="contents">
+      <div class="card grid content-start gap-4 sm:grid-cols-2">
+        <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={meeting.title} required /></div>
+        <div><label class="label" for="held_at">Held (Sydney time)</label><input class="field" type="datetime-local" id="held_at" name="held_at" value={toSydney(meeting.held_at)} required /></div>
+        <div><label class="label" for="location">Where</label><input class="field" id="location" name="location" value={meeting.location} /></div>
+        <div class="sm:col-span-2"><label class="label" for="agenda">Agenda</label><textarea class="field min-h-28" id="agenda" name="agenda" placeholder="1. Apologies and declarations of interest&#10;2. Minutes of the last meeting&#10;3. CEO report&#10;…">{meeting.agenda}</textarea></div>
+        <div class="sm:col-span-2"><label class="label" for="notes">Notes</label><textarea class="field min-h-48" id="notes" name="notes" placeholder="What was discussed and decided, in any form: Lakeba AI turns it into minutes.">{meeting.notes}</textarea></div>
+        <div class="sm:col-span-2">
+          <label class="label" for="transcript_file">Transcript (optional)</label>
+          <input class="field !py-1.5 text-sm" type="file" id="transcript_file" name="transcript_file" accept=".txt,.vtt,.srt,.md,text/plain,text/vtt" />
+          <p class="mt-1 text-xs text-white/40">The transcript Teams, Zoom or Google Meet makes (.vtt or .txt). Recordings (audio or video) aren't read yet.</p>
+          {meeting.transcript && <details class="mt-2"><summary class="cursor-pointer text-xs text-white/55">Transcript on file ({Math.round(meeting.transcript.length / 1000)}k characters) · show or change</summary><textarea class="field mt-2 min-h-40 text-xs" name="transcript">{meeting.transcript}</textarea></details>}
+          {!meeting.transcript && <input type="hidden" name="transcript" value="" />}
+        </div>
+      </div>
+      <aside class="grid content-start gap-6">
+        <div class="card grid gap-3 text-sm">
+          <h2 class="font-display text-lg font-bold">Who was there</h2>
+          {officersPresent.length ? officersPresent.map((a) => (
+            <label class="flex items-start gap-3"><input type="checkbox" name={`present-${a.officer_id}`} checked={a.present} class="mt-0.5 size-4 accent-lk-blue" /><span><span class="text-white">{a.name}</span><span class="block text-xs text-white/45">{roleWord[a.role]} · unticked = apology</span></span></label>
+          )) : <p class="text-white/55">No officers were in office on the day.</p>}
+          <div><label class="label" for="chair">Chair</label><select class="field" id="chair" name="chair"><option value="">Choose…</option>{officersPresent.filter((a) => a.role === 'director').map((a) => <option value={a.officer_id} selected={a.officer_id === meeting.chair_officer_id}>{a.name}</option>)}</select></div>
+          <div><label class="label" for="guests">Also attending</label><textarea class="field min-h-20" id="guests" name="guests" placeholder="One per line, e.g. Jane Smith (CFO)">{guests}</textarea></div>
+        </div>
+        {mayDo && (
+          <div class="card grid gap-3">
+            <button class="btn-ghost" name="intent" value="save">Save</button>
+            <button class="btn-primary" name="intent" value="draft" data-busy-label="Drafting…">{minutes ? 'Draft the minutes again' : 'Draft the minutes'}</button>
+            <p class="text-xs text-white/45">Lakeba AI writes the minutes from the agenda, notes and transcript (a few cents); you check and change them before they go to the chair.{minutes?.status === 'draft' && ' Drafting again replaces the current draft.'}</p>
+            {!(minutes && minutes.status === 'signed') && <button class="btn-ghost text-lk-red" name="intent" value="delete" formnovalidate data-confirm="Delete this meeting and any draft minutes?">Delete the meeting</button>}
+          </div>
+        )}
+      </aside>
+    </fieldset>
+  </form>
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+  // "Draft the minutes" takes a little while: say so.
+  document.querySelectorAll<HTMLFormElement>('form[data-busy]').forEach((f) => f.addEventListener('submit', (e) => { const b = (e as SubmitEvent).submitter as HTMLButtonElement | null; if (b?.dataset.busyLabel) { b.textContent = b.dataset.busyLabel; setTimeout(() => (b.disabled = true)); } }));
+</script>

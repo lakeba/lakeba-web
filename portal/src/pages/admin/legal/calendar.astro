@@ -1,0 +1,108 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import Empty from '../../../components/Empty.astro';
+import LegalNav from '../../../components/LegalNav.astro';
+import ObligationList from '../../../components/ObligationList.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { KINDS, OBLIGATION_COLUMNS, legalCompanies, legalTeam, newFeedToken, syncObligations, todayIn, type Obligation } from '../../../lib/legal';
+import { obligationAction } from '../../../lib/legal-actions';
+
+// Admin → Legal → Calendar: every item for the companies this person looks
+// after, filtered by company, kind, owner and state; items added by hand; and
+// a private feed for Outlook or Google Calendar.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const userId = Astro.locals.user!.id;
+const companies = await legalCompanies(svc, access);
+const may = (id: string) => access.can('legal.do', id);
+let result: { ok?: string; error?: string } | null = null;
+let feedUrl = '';
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  if (field(form, 'intent') === 'feed') {
+    feedUrl = `${Astro.url.origin}/api/public/legal-calendar/${await newFeedToken(svc, userId)}.ics`;
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_made_legal_calendar_feed', event_detail: {} });
+  } else if (field(form, 'intent') === 'feed-stop') {
+    await svc.from('legal_calendar_feeds').delete().eq('user_id', userId);
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_stopped_legal_calendar_feed', event_detail: {} });
+    result = { ok: 'The calendar address no longer works.' };
+  } else result = await obligationAction(svc, Astro.locals.supabase, form, companies, may, userId);
+}
+
+const q = Astro.url.searchParams;
+const pickCompany = companies.find((c) => c.code === q.get('company')?.toUpperCase()) ?? null;
+const kind = q.get('kind') && q.get('kind')! in KINDS ? q.get('kind')! : '';
+const state = ['open', 'done', 'all'].includes(q.get('state') ?? '') ? q.get('state')! : 'open';
+const owner = q.get('owner') ?? '';
+const ids = pickCompany ? [pickCompany.id] : companies.map((c) => c.id);
+const { data: recs } = await svc.from('company_records').select('entity_id').in('entity_id', ids);
+await syncObligations(svc, (recs ?? []).map((r) => r.entity_id));
+let query = svc.from('legal_obligations').select(OBLIGATION_COLUMNS).in('entity_id', ids).order('due_on', { ascending: state === 'open' }).limit(500);
+if (kind) query = query.eq('kind', kind);
+if (state === 'open') query = query.eq('status', 'open');
+if (state === 'done') query = query.neq('status', 'open');
+if (owner === 'none') query = query.is('owner_id', null);
+else if (owner) query = query.eq('owner_id', owner);
+const [{ data: rows }, people, { data: feed }] = await Promise.all([query, legalTeam(svc), svc.from('legal_calendar_feeds').select('created_at').eq('user_id', userId).maybeSingle()]);
+const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+const items = ((rows ?? []) as Obligation[]).map((o) => ({ ...o, company: nameOf.get(o.entity_id) ?? '' }));
+const today = todayIn();
+const month = today.slice(0, 7);
+const groups = state === 'open'
+  ? [['Overdue', items.filter((o) => o.due_on < today)], ['This month', items.filter((o) => o.due_on >= today && o.due_on.slice(0, 7) === month)], ['Later', items.filter((o) => o.due_on.slice(0, 7) > month)]] as const
+  : [[state === 'done' ? 'Done and not needed' : 'Everything', items]] as const;
+---
+
+<Admin title="Legal · Calendar">
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
+  <LegalNav />
+  {result?.error && <div class="mb-6"><Alert tone="error">{result.error}</Alert></div>}
+  {result?.ok && <div class="mb-6"><Alert tone="success">{result.ok}</Alert></div>}
+
+  <form method="get" class="mb-6 flex flex-wrap items-end gap-3 text-sm">
+    <div><label class="label" for="f-company">Company</label><select class="field !py-2" id="f-company" name="company"><option value="">All</option>{companies.map((c) => <option value={c.code} selected={c.id === pickCompany?.id}>{c.display_name}</option>)}</select></div>
+    <div><label class="label" for="f-kind">Kind</label><select class="field !py-2" id="f-kind" name="kind"><option value="">All</option>{Object.entries(KINDS).map(([k, l]) => <option value={k} selected={k === kind}>{l}</option>)}</select></div>
+    <div><label class="label" for="f-owner">Looked after by</label><select class="field !py-2" id="f-owner" name="owner"><option value="">Anyone</option><option value="none" selected={owner === 'none'}>Nobody yet</option>{people.map((p) => <option value={p.id} selected={p.id === owner}>{p.name}</option>)}</select></div>
+    <div><label class="label" for="f-state">Showing</label><select class="field !py-2" id="f-state" name="state"><option value="open">Open</option><option value="done" selected={state === 'done'}>Done</option><option value="all" selected={state === 'all'}>All</option></select></div>
+    <button class="btn-ghost !py-2">Show</button>
+  </form>
+
+  {items.length ? groups.filter(([, list]) => list.length).map(([label, list]) => (
+    <section class="card mb-6 p-0">
+      <h2 class:list={['px-5 pt-5 font-display text-lg font-bold', label === 'Overdue' && 'text-lk-red']}>{label} <span class="text-sm font-normal text-white/45">{list.length}</span></h2>
+      <div class="mt-2"><ObligationList items={list} people={people} may={may} showCompany={!pickCompany} /></div>
+    </section>
+  )) : <div class="mb-6"><Empty title="Nothing here">No items match. Deadlines appear once a company's record is filled in.</Empty></div>}
+
+  <div class="grid items-start gap-6 lg:grid-cols-2">
+    {companies.some((c) => may(c.id)) && (
+      <details class="card">
+        <summary class="cursor-pointer font-display text-lg font-bold">Add an item</summary>
+        <form method="post" class="mt-5 grid gap-3 sm:grid-cols-2">
+          <div class="sm:col-span-2"><label class="label" for="ob-company">Company</label><select class="field" id="ob-company" name="entity_id" required>{companies.filter((c) => may(c.id)).map((c) => <option value={c.id} selected={c.id === pickCompany?.id}>{c.display_name}</option>)}</select></div>
+          <div class="sm:col-span-2"><label class="label" for="ob-title">What is due</label><input class="field" id="ob-title" name="title" required placeholder="e.g. Renew the business name registration" /></div>
+          <div><label class="label" for="ob-due">Due</label><input class="field" type="date" id="ob-due" name="due_on" required /></div>
+          <div><label class="label" for="ob-kind">Kind</label><select class="field" id="ob-kind" name="kind">{Object.entries(KINDS).map(([k, l]) => <option value={k} selected={k === 'other'}>{l}</option>)}</select></div>
+          <div class="sm:col-span-2"><label class="label" for="ob-owner">Looked after by</label><select class="field" id="ob-owner" name="owner_id"><option value="">Everyone with Legal</option>{people.map((p) => <option value={p.id}>{p.name}</option>)}</select></div>
+          <div class="sm:col-span-2"><label class="label" for="ob-detail">Details</label><textarea class="field min-h-20" id="ob-detail" name="detail"></textarea></div>
+          <div><button class="btn-primary" name="intent" value="ob-add">Add</button></div>
+        </form>
+      </details>
+    )}
+    <section class="card grid content-start gap-3 text-sm">
+      <h2 class="font-display text-lg font-bold">In your own calendar</h2>
+      <p class="text-white/55">A private address that Outlook or Google Calendar can subscribe to, with the open deadlines of the companies you look after. It shows titles and dates only; anyone with the address can see them, so keep it to yourself.</p>
+      {feedUrl ? (
+        <div class="grid gap-2"><Alert tone="success">Copy this address now: it isn't shown again.</Alert><input class="field font-mono text-xs" readonly value={feedUrl} /></div>
+      ) : (
+        <form method="post" class="flex flex-wrap gap-2">
+          <button class="btn-ghost !py-2" name="intent" value="feed">{feed ? 'Make a new address (the old one stops)' : 'Make my calendar address'}</button>
+          {feed && <button class="btn-ghost !py-2 text-lk-red" name="intent" value="feed-stop">Stop it</button>}
+        </form>
+      )}
+    </section>
+  </div>
+</Admin>

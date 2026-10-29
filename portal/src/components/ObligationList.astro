@@ -1,0 +1,82 @@
+---
+import { KINDS, daysBetween, todayIn, type Obligation } from '../lib/legal';
+import { shortDate } from '../lib/format';
+// The calendar's items as a list, each opening its actions (done with the
+// proof, not needed, owner, date). The forms post back to the page, which
+// hands them to obligationAction (lib/legal-actions.ts).
+interface Props {
+  items: (Obligation & { company?: string })[];
+  people: { id: string; name: string }[];
+  /** May change this company's items. */
+  may: (entityId: string) => boolean;
+  showCompany?: boolean;
+}
+const { items, people, may, showCompany = false } = Astro.props;
+const today = todayIn();
+const day = (d: string) => shortDate.format(new Date(`${d}T12:00:00+10:00`));
+const nameOf = (id: string | null) => people.find((p) => p.id === id)?.name ?? null;
+const when = (o: Obligation) => {
+  if (o.status === 'done') return { text: `Done ${o.done_on ? day(o.done_on) : ''}`, tone: 'text-lk-green' };
+  if (o.status === 'not_needed') return { text: 'Not needed', tone: 'text-white/45' };
+  const left = daysBetween(today, o.due_on);
+  if (left < 0) return { text: `${-left} day${left === -1 ? '' : 's'} overdue`, tone: 'text-lk-red' };
+  if (left === 0) return { text: 'Due today', tone: 'text-lk-red' };
+  return { text: left <= 30 ? `In ${left} day${left === 1 ? '' : 's'}` : day(o.due_on), tone: left <= 7 ? 'text-amber-300' : 'text-white/60' };
+};
+---
+<ul class="divide-y divide-white/5">
+  {items.map((o) => {
+    const w = when(o);
+    return (
+      <li>
+        <details class="group px-5 py-3">
+          <summary class="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-x-4 gap-y-1">
+            <span class="min-w-0">
+              <span class="font-medium text-white">{o.title}</span>
+              <span class="block text-xs text-white/45">{showCompany && o.company && `${o.company} · `}{KINDS[o.kind]} · due {day(o.due_on)}{nameOf(o.owner_id) && ` · ${nameOf(o.owner_id)}`}{o.proof_path && ' · proof filed'}</span>
+            </span>
+            <span class:list={['shrink-0 text-sm tabular-nums', w.tone]}>{w.text}</span>
+          </summary>
+          <div class="mt-3 grid gap-4 text-sm">
+            {o.detail && <p class="max-w-3xl whitespace-pre-line text-white/60">{o.detail}</p>}
+            {o.status === 'open' && may(o.entity_id) && o.kind === 'solvency' && <p><a class="btn-ghost !py-1.5 text-sm" href={`/admin/legal/papers/new?obligation=${o.id}`}>Prepare the solvency resolution</a></p>}
+            {o.kind === 'minutes' && o.source_key?.startsWith('minutes:') && <p><a class="btn-ghost !py-1.5 text-sm" href={`/admin/legal/meetings/${o.source_key.split(':')[1]}`}>Open the meeting</a></p>}
+            {o.status !== 'open' && (o.done_note || o.proof_path) && (
+              <p class="text-white/60">{o.done_note}{o.proof_path && <> {' '}<a class="text-lk-blue hover:underline" href={`/admin/legal/file?path=${encodeURIComponent(o.proof_path)}`}>Open the proof</a></>}</p>
+            )}
+            {may(o.entity_id) && (o.status === 'open' ? (
+              <div class="grid gap-3 lg:grid-cols-2">
+                <form method="post" enctype="multipart/form-data" class="grid gap-2 rounded-2xl border border-white/10 p-4">
+                  <input type="hidden" name="obligation_id" value={o.id} />
+                  <p class="font-medium text-white">Done</p>
+                  <div class="grid gap-2 sm:grid-cols-2">
+                    <div><label class="label" for={`done-${o.id}`}>On</label><input class="field" type="date" id={`done-${o.id}`} name="done_on" value={today} /></div>
+                    <div><label class="label" for={`proof-${o.id}`}>Proof (ASIC receipt, signed resolution)</label><input class="field !py-1.5 text-xs" type="file" id={`proof-${o.id}`} name="proof" /></div>
+                  </div>
+                  <div><label class="label" for={`note-${o.id}`}>Note</label><input class="field" id={`note-${o.id}`} name="done_note" placeholder="Optional; required for “Not needed”" /></div>
+                  <div class="flex flex-wrap gap-2"><button class="btn-primary !py-1.5 text-sm" name="intent" value="ob-done">Mark done</button><button class="btn-ghost !py-1.5 text-sm" name="intent" value="ob-not-needed">Not needed</button></div>
+                </form>
+                <div class="grid content-start gap-3">
+                  <form method="post" class="flex flex-wrap items-end gap-2">
+                    <input type="hidden" name="obligation_id" value={o.id} />
+                    <div class="grow"><label class="label" for={`owner-${o.id}`}>Looked after by</label>
+                      <select class="field" id={`owner-${o.id}`} name="owner_id"><option value="">Everyone with Legal</option>{people.map((p) => <option value={p.id} selected={p.id === o.owner_id}>{p.name}</option>)}</select></div>
+                    <button class="btn-ghost !py-2 text-sm" name="intent" value="ob-owner">Save</button>
+                  </form>
+                  <form method="post" class="flex flex-wrap items-end gap-2">
+                    <input type="hidden" name="obligation_id" value={o.id} />
+                    <div class="grow"><label class="label" for={`due-${o.id}`}>Due</label><input class="field" type="date" id={`due-${o.id}`} name="due_on" value={o.due_on} required /></div>
+                    <button class="btn-ghost !py-2 text-sm" name="intent" value="ob-date">Move</button>
+                    {!o.source_key && <button class="btn-ghost !py-2 text-sm text-lk-red" name="intent" value="ob-delete" formnovalidate>Delete</button>}
+                  </form>
+                </div>
+              </div>
+            ) : (
+              <form method="post"><input type="hidden" name="obligation_id" value={o.id} /><button class="btn-ghost !py-1.5 text-sm" name="intent" value="ob-reopen">Open again</button></form>
+            ))}
+          </div>
+        </details>
+      </li>
+    );
+  })}
+</ul>

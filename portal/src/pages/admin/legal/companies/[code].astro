@@ -1,0 +1,486 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import ObligationList from '../../../../components/ObligationList.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { shortDate } from '../../../../lib/format';
+import {
+  KINDS, OBLIGATION_COLUMNS, fromSydney, OFFICER_COLUMNS, POSITIONS, RECORD_COLUMNS, STATES, addDays, directorIdProblem, dropOfficerItems, legalCompanies, legalTeam,
+  openPrivate, privateReady, reviewDateOf, sealPrivate, syncObligations, todayIn, yearEndOf,
+  type CompanyRecord, type Obligation, type Officer, type OfficerPrivate, type Position,
+} from '../../../../lib/legal';
+import { fileOf, obligationAction, storeLegalFile } from '../../../../lib/legal-actions';
+import { readExtract } from '../../../../lib/legal-extract';
+import { PAPER_COLUMNS, inviteOfficer, reference, type Paper } from '../../../../lib/legal-board';
+import { TEMPLATES } from '../../../../lib/legal-templates';
+
+// Admin → Legal → a company: its record (ASIC details), its officers register
+// (private details sealed, shown on request and logged) and its calendar.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const supabase = Astro.locals.supabase;
+const companies = await legalCompanies(svc, access);
+const company = companies.find((c) => c.code === Astro.params.code?.toUpperCase());
+if (!company) return Astro.redirect('/admin/legal/companies');
+const mayDo = access.can('legal.do', company.id);
+const userId = Astro.locals.user!.id;
+const tab = (['record', 'officers', 'board', 'calendar'] as const).find((t) => t === Astro.url.searchParams.get('tab')) ?? 'record';
+const log = (action: string, detail: Record<string, unknown> = {}) => supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, ...detail } });
+const today = todayIn();
+
+const MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+const mmdd = (form: FormData, name: string) => {
+  const m = Number(field(form, `${name}_month`)), d = Number(field(form, `${name}_day`));
+  if (!m && !d) return null;
+  if (!(m >= 1 && m <= 12 && d >= 1 && d <= new Date(Date.UTC(2024, m, 0)).getUTCDate())) throw new Error(`Check the ${name === 'year_end' ? 'financial year end' : 'review date'}.`);
+  return `${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+};
+const date = (form: FormData, name: string) => { const v = field(form, name); return /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null; };
+const digits = (v: string) => v.replace(/\D/g, '');
+const spaced = (v: string, groups: number[]) => { let i = 0; return groups.map((g) => v.slice(i, (i += g))).join(' '); };
+const day = (d: string | null) => (d ? shortDate.format(new Date(`${d}T12:00:00+10:00`)) : '—');
+
+let error = '', ok = '';
+/** Officer whose private details are shown (after "Show"), with them opened. */
+let revealed: { id: string; data: OfficerPrivate } | null = null;
+let posted: FormData | null = null;
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  posted = form;
+  const intent = field(form, 'intent');
+  try {
+    if (!mayDo) throw new Error('You can see this company’s legal records but not change them.');
+    const ob = await obligationAction(svc, supabase, form, [company], () => mayDo, userId);
+    if (ob) { error = ob.error ?? ''; ok = ob.ok ?? ''; }
+
+    else if (intent === 'record-save') {
+      const acn = digits(field(form, 'acn')), abn = digits(field(form, 'abn'));
+      if (acn && acn.length !== 9) throw new Error('An ACN has 9 digits.');
+      if (abn && abn.length !== 11) throw new Error('An ABN has 11 digits.');
+      const { data: before } = await svc.from('company_records').select(RECORD_COLUMNS).eq('entity_id', company.id).maybeSingle();
+      const rec = {
+        entity_id: company.id, acn: acn ? spaced(acn, [3, 3, 3]) : null, abn: abn ? spaced(abn, [2, 3, 3, 3]) : null,
+        company_type: (['proprietary', 'public'].includes(field(form, 'company_type')) ? field(form, 'company_type') : null),
+        incorporated_on: date(form, 'incorporated_on'), registered_in: STATES.includes(field(form, 'registered_in')) ? field(form, 'registered_in') : null,
+        registered_office: field(form, 'registered_office').slice(0, 300) || null, principal_place: field(form, 'principal_place').slice(0, 300) || null,
+        year_end: mmdd(form, 'year_end'), review_date: mmdd(form, 'review_date'),
+        auditor: field(form, 'auditor').slice(0, 200) || null, ultimate_holding: field(form, 'ultimate_holding').slice(0, 200) || null,
+        constitution_document_id: field(form, 'constitution_document_id') || null, notes: field(form, 'notes').slice(0, 4000),
+        updated_by: userId, updated_at: new Date().toISOString(),
+      };
+      await svc.from('company_records').upsert(rec).throwOnError();
+      // The legal name and ACN are also the company's everywhere else in the portal.
+      const legalName = field(form, 'legal_name').slice(0, 200);
+      await svc.from('entities').update({ legal_name: legalName || null, company_number: rec.acn }).eq('id', company.id).throwOnError();
+      company.legal_name = legalName || null; company.company_number = rec.acn;
+      // A new address (not a tidy-up of the same one) is a change ASIC must be told about.
+      const prev = before as CompanyRecord | null;
+      for (const [k, label] of [['registered_office', 'registered office'], ['principal_place', 'principal place of business']] as const) {
+        if (form.get(`${k}_moved`) === 'on' && prev?.[k] && rec[k] && prev[k] !== rec[k]) {
+          await svc.from('legal_obligations').upsert({ entity_id: company.id, kind: 'address_change', source_key: `address:${company.id}:${k}:${today}`, due_on: addDays(today, 28), created_by: userId,
+            title: `Tell ASIC: new ${label}`, detail: `Changed in the portal on ${today} from “${prev[k]}” to “${rec[k]}”. ASIC must be told within 28 days of the change (Form 484); if the change happened earlier, move the date.` }, { onConflict: 'source_key' });
+        }
+      }
+      await syncObligations(svc, [company.id]);
+      await log('admin_saved_company_record', {});
+      ok = 'Saved the company record.';
+    }
+
+    else if (intent === 'extract-read') {
+      const file = fileOf(form, 'extract');
+      if (!file) throw new Error('Choose the ASIC extract (a PDF).');
+      if (!/pdf$/i.test(file.type) && !/\.pdf$/i.test(file.name)) throw new Error('The extract must be a PDF.');
+      const path = await storeLegalFile(svc, company.id, 'asic-extracts', file);
+      const id = await readExtract(svc, company, { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()), path }, userId);
+      await log('admin_read_asic_extract', { read_id: id, file: file.name });
+      return Astro.redirect(`/admin/legal/extract/${id}`);
+    }
+
+    else if (intent === 'officer-add' || intent === 'officer-save') {
+      const position = field(form, 'position') as Position;
+      if (!(position in POSITIONS)) throw new Error('Choose the position.');
+      const fullName = field(form, 'full_name');
+      if (fullName.length < 2) throw new Error('Give the officer’s full name.');
+      const email = field(form, 'email').toLowerCase() || null;
+      const { data: person } = email ? await svc.from('profiles').select('id').ilike('email', email).maybeSingle() : { data: null };
+      const consent = fileOf(form, 'consent');
+      const row: Record<string, unknown> = {
+        entity_id: company.id, full_name: fullName.slice(0, 200), email, user_id: person?.id ?? null, position,
+        appointed_on: date(form, 'appointed_on'), ceased_on: date(form, 'ceased_on'), consent_on: date(form, 'consent_on'), notes: field(form, 'notes').slice(0, 2000), updated_at: new Date().toISOString(),
+      };
+      if (row.ceased_on && row.appointed_on && String(row.ceased_on) < String(row.appointed_on)) throw new Error('The officer can’t stop before being appointed.');
+      if (consent) row.consent_path = await storeLegalFile(svc, company.id, 'consents', consent);
+      if (intent === 'officer-add') {
+        const priv = { date_of_birth: field(form, 'date_of_birth'), place_of_birth: field(form, 'place_of_birth'), residential_address: field(form, 'residential_address'), director_id: field(form, 'director_id').replace(/\s/g, '') };
+        const problem = directorIdProblem(priv.director_id);
+        if (problem) throw new Error(problem);
+        if (Object.values(priv).some(Boolean)) {
+          if (!privateReady()) throw new Error('Private details can’t be stored on this server yet (its key is missing). Leave them empty for now.');
+          row.private_sealed = sealPrivate(priv);
+        }
+        const { data } = await svc.from('company_officers').insert({ ...row, created_by: userId }).select('id').single().throwOnError();
+        await log('admin_added_officer', { officer_id: data!.id, name: fullName, position });
+        ok = `Added ${fullName} as ${POSITIONS[position].toLowerCase()}.`;
+      } else {
+        const id = field(form, 'officer_id');
+        const { data: had } = await svc.from('company_officers').select('id').eq('id', id).eq('entity_id', company.id).maybeSingle();
+        if (!had) throw new Error('That officer isn’t on this company’s register.');
+        await svc.from('company_officers').update(row).eq('id', id).throwOnError();
+        await log('admin_updated_officer', { officer_id: id, name: fullName, position, ceased_on: row.ceased_on });
+        ok = `Saved ${fullName}.`;
+      }
+      await syncObligations(svc, [company.id]);
+    }
+
+    else if (intent === 'officer-invite') {
+      const { data: o } = await svc.from('company_officers').select(OFFICER_COLUMNS).eq('id', field(form, 'officer_id')).eq('entity_id', company.id).maybeSingle();
+      if (!o) throw new Error('That officer isn’t on this company’s register.');
+      await inviteOfficer(svc, o as Officer);
+      await log('admin_invited_officer_to_sign', { officer_id: o.id, name: o.full_name });
+      ok = `${o.full_name} can now sign in the portal. They get an email with a sign-in link whenever something is sent to them to sign.`;
+    }
+
+    else if (intent === 'meeting-add') {
+      const heldAt = field(form, 'held_at');
+      if (!heldAt || field(form, 'title').length < 3) throw new Error('Give the meeting a title and when it was held.');
+      const held = fromSydney(heldAt);
+      if (!held) throw new Error('Check when the meeting was held.');
+      const officers = (await svc.from('company_officers').select('id, full_name, position, appointed_on, ceased_on').eq('entity_id', company.id)).data ?? [];
+      const day = heldAt.slice(0, 10);
+      const attendees = officers.filter((o) => o.position !== 'alternate_director' && (!o.appointed_on || o.appointed_on <= day) && (!o.ceased_on || o.ceased_on > day))
+        .map((o) => ({ officer_id: o.id, name: o.full_name, role: o.position === 'secretary' ? 'secretary' : 'director', present: true }));
+      const { data: m } = await svc.from('board_meetings').insert({ entity_id: company.id, title: field(form, 'title').slice(0, 200), held_at: held.toISOString(), location: field(form, 'location').slice(0, 200), attendees, created_by: userId }).select('id').single().throwOnError();
+      await svc.from('legal_obligations').insert({ entity_id: company.id, kind: 'minutes', source_key: `minutes:${m!.id}`, due_on: addDays(day, 30), created_by: userId,
+        title: `Minutes of “${field(form, 'title').slice(0, 200)}” signed by the chair`, detail: 'Minutes of directors’ meetings are recorded in the minute book within one month and signed by the chair.' });
+      await log('admin_added_board_meeting', { meeting_id: m!.id });
+      return Astro.redirect(`/admin/legal/meetings/${m!.id}`);
+    }
+
+    else if (intent === 'officer-remove') {
+      const id = field(form, 'officer_id');
+      const { data: o } = await svc.from('company_officers').select('id, full_name').eq('id', id).eq('entity_id', company.id).maybeSingle();
+      if (!o) throw new Error('That officer isn’t on this company’s register.');
+      await dropOfficerItems(svc, id);
+      await svc.from('company_officers').delete().eq('id', id).throwOnError();
+      await log('admin_removed_officer', { officer_id: id, name: o.full_name });
+      ok = `Removed ${o.full_name} from the register. (To record a resignation, set the date they stopped instead.)`;
+    }
+
+    else if (intent === 'officer-reveal' || intent === 'officer-private') {
+      const id = field(form, 'officer_id');
+      const { data: o } = await svc.from('company_officers').select('id, full_name, private_sealed').eq('id', id).eq('entity_id', company.id).maybeSingle();
+      if (!o) throw new Error('That officer isn’t on this company’s register.');
+      if (!privateReady()) throw new Error('Private details can’t be read on this server (its key is missing).');
+      if (intent === 'officer-private') {
+        const priv = { date_of_birth: field(form, 'date_of_birth'), place_of_birth: field(form, 'place_of_birth'), residential_address: field(form, 'residential_address'), director_id: field(form, 'director_id').replace(/\s/g, '') };
+        const problem = directorIdProblem(priv.director_id);
+        if (problem) { revealed = { id, data: priv }; throw new Error(problem); }
+        await svc.from('company_officers').update({ private_sealed: sealPrivate(priv), updated_at: new Date().toISOString() }).eq('id', id).throwOnError();
+        await log('admin_updated_officer_private', { officer_id: id, name: o.full_name });
+        ok = `Saved ${o.full_name}’s private details.`;
+      } else {
+        revealed = { id, data: openPrivate(o.private_sealed) };
+        await log('admin_viewed_officer_private', { officer_id: id, name: o.full_name });
+      }
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const [{ data: recRow }, { data: officerRows }, { data: obRows }, { data: docs }, people, { data: paperRows }, { data: meetingRows }] = await Promise.all([
+  svc.from('company_records').select(RECORD_COLUMNS).eq('entity_id', company.id).maybeSingle(),
+  svc.from('company_officers').select(OFFICER_COLUMNS).eq('entity_id', company.id).order('position').order('appointed_on'),
+  svc.from('legal_obligations').select(OBLIGATION_COLUMNS).eq('entity_id', company.id).order('due_on'),
+  svc.from('documents').select('id, title').eq('entity_id', company.id).eq('category', 'governance').order('title'),
+  legalTeam(svc),
+  svc.from('board_papers').select(`${PAPER_COLUMNS}, board_signatures(status)`).eq('entity_id', company.id).neq('status', 'withdrawn').order('created_at', { ascending: false }),
+  svc.from('board_meetings').select('id, title, held_at').eq('entity_id', company.id).order('held_at', { ascending: false }),
+]);
+const rec = recRow as CompanyRecord | null;
+const papers = (paperRows ?? []) as unknown as (Paper & { board_signatures: { status: string }[] })[];
+const meetings = meetingRows ?? [];
+const paperStatus = (p: (typeof papers)[number]) => p.status === 'signing' ? `${p.board_signatures.filter((x) => x.status === 'signed').length} of ${p.board_signatures.length} signed` : p.status === 'signed' ? `Signed ${day(p.signed_at?.slice(0, 10) ?? null)}` : 'Draft';
+const minutesOf = (meetingId: string) => papers.find((p) => p.meeting_id === meetingId);
+const officers = (officerRows ?? []) as Officer[];
+const current = officers.filter((o) => !o.ceased_on || o.ceased_on > today);
+const former = officers.filter((o) => o.ceased_on && o.ceased_on <= today);
+const obligations = (obRows ?? []) as Obligation[];
+const open = obligations.filter((o) => o.status === 'open');
+const closed = obligations.filter((o) => o.status !== 'open').reverse();
+const review = reviewDateOf(rec);
+const ye = rec ? yearEndOf(rec) : null;
+const mdParts = (v: string | null) => (v ? { m: Number(v.slice(0, 2)), d: Number(v.slice(3)) } : { m: 0, d: 0 });
+const tabHref = (t: string) => `/admin/legal/companies/${company.code}${t === 'record' ? '' : `?tab=${t}`}`;
+const overdue = open.filter((o) => o.due_on < today).length;
+/** What was typed in "Add an officer", when it came back with a problem. */
+const kept = (name: string) => (error && posted && field(posted, 'intent') === 'officer-add' ? field(posted, name) : '');
+---
+
+<Admin title={`Legal · ${company.display_name}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/legal/companies" class="hover:text-white">Legal · Companies</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold sm:text-4xl">{company.display_name}</h1>
+    <p class="mt-1 text-sm text-white/55">{company.legal_name ?? 'Legal name not recorded'}{rec?.acn && ` · ACN ${rec.acn}`}{rec?.company_type && ` · ${rec.company_type === 'public' ? 'Public' : 'Proprietary'} company`}</p>
+  </div>
+  <LegalNav />
+  <nav class="mb-6 flex flex-wrap gap-2 text-sm" aria-label="Company">
+    {[['record', 'Record'], ['officers', `Officers (${current.length})`], ['board', `Board${papers.some((p) => p.status === 'signing') ? ` (${papers.filter((p) => p.status === 'signing').length} to sign)` : ''}`], ['calendar', `Calendar (${open.length}${overdue ? `, ${overdue} overdue` : ''})`]].map(([t, l]) => (
+      <a href={tabHref(t)} aria-current={tab === t ? 'page' : undefined} class:list={['rounded-full px-3 py-1', tab === t ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white', t === 'calendar' && overdue && tab !== t && 'text-lk-red']}>{l}</a>
+    ))}
+  </nav>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  {tab === 'record' && (
+    <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
+      <form method="post" class="card">
+        <fieldset disabled={!mayDo} class="grid gap-4 sm:grid-cols-2">
+          <h2 class="font-display text-lg font-bold sm:col-span-2">Company record</h2>
+          <div class="sm:col-span-2"><label class="label" for="legal_name">Legal name</label><input class="field" id="legal_name" name="legal_name" value={company.legal_name ?? ''} placeholder="e.g. Ezifin Pty Ltd" /></div>
+          <div><label class="label" for="acn">ACN</label><input class="field tabular-nums" id="acn" name="acn" value={rec?.acn ?? company.company_number ?? ''} inputmode="numeric" placeholder="123 456 789" /></div>
+          <div><label class="label" for="abn">ABN</label><input class="field tabular-nums" id="abn" name="abn" value={rec?.abn ?? ''} inputmode="numeric" placeholder="12 345 678 901" /></div>
+          <div><label class="label" for="company_type">Type</label>
+            <select class="field" id="company_type" name="company_type"><option value="">Not recorded</option><option value="proprietary" selected={rec?.company_type === 'proprietary'}>Proprietary (Pty Ltd)</option><option value="public" selected={rec?.company_type === 'public'}>Public (Ltd)</option></select></div>
+          <div><label class="label" for="registered_in">Registered in</label>
+            <select class="field" id="registered_in" name="registered_in"><option value="">Not recorded</option>{STATES.map((s) => <option selected={rec?.registered_in === s}>{s}</option>)}</select></div>
+          <div><label class="label" for="incorporated_on">Registered on</label><input class="field" type="date" id="incorporated_on" name="incorporated_on" value={rec?.incorporated_on ?? ''} /></div>
+          <div><label class="label" for="review_date_month">Annual review date</label>
+            <div class="flex gap-2"><select class="field" id="review_date_month" name="review_date_month" aria-label="Review date month"><option value="">{rec?.incorporated_on && !rec.review_date ? 'Registration day' : '—'}</option>{MONTHS.map((m, i) => <option value={i + 1} selected={mdParts(rec?.review_date ?? null).m === i + 1}>{m}</option>)}</select>
+              <input class="field w-20" type="number" min="1" max="31" name="review_date_day" aria-label="Review date day" value={mdParts(rec?.review_date ?? null).d || ''} /></div>
+            <p class="mt-1 text-xs text-white/40">Leave empty to use the registration day{review && ` (now ${MONTHS[Number(review.slice(0, 2)) - 1]} ${Number(review.slice(3))})`}.</p></div>
+          <div class="sm:col-span-2"><label class="label" for="registered_office">Registered office</label><input class="field" id="registered_office" name="registered_office" value={rec?.registered_office ?? ''} />
+            <label class="mt-1.5 flex items-center gap-2 text-xs text-white/55"><input type="checkbox" name="registered_office_moved" class="size-3.5 accent-lk-blue" /> The company moved: add “Tell ASIC” (due in 28 days)</label></div>
+          <div class="sm:col-span-2"><label class="label" for="principal_place">Principal place of business</label><input class="field" id="principal_place" name="principal_place" value={rec?.principal_place ?? ''} />
+            <label class="mt-1.5 flex items-center gap-2 text-xs text-white/55"><input type="checkbox" name="principal_place_moved" class="size-3.5 accent-lk-blue" /> The company moved: add “Tell ASIC” (due in 28 days)</label>
+            <p class="mt-1 text-xs text-white/40">Leave these unticked when only tidying how an address is written; the record should match ASIC's (including any “care of” name).</p></div>
+          <div><label class="label" for="year_end_month">Financial year end</label>
+            <div class="flex gap-2"><select class="field" id="year_end_month" name="year_end_month" aria-label="Year end month"><option value="">30 June</option>{MONTHS.map((m, i) => <option value={i + 1} selected={Boolean(rec?.year_end) && mdParts(rec!.year_end).m === i + 1}>{m}</option>)}</select>
+              <input class="field w-20" type="number" min="1" max="31" name="year_end_day" aria-label="Year end day" value={rec?.year_end ? mdParts(rec.year_end).d : ''} /></div></div>
+          <div><label class="label" for="auditor">Auditor</label><input class="field" id="auditor" name="auditor" value={rec?.auditor ?? ''} placeholder="None" /></div>
+          <div class="sm:col-span-2"><label class="label" for="ultimate_holding">Ultimate holding company</label><input class="field" id="ultimate_holding" name="ultimate_holding" value={rec?.ultimate_holding ?? ''} placeholder="e.g. Lakeba Group Limited (ACN …)" /></div>
+          <div class="sm:col-span-2"><label class="label" for="constitution_document_id">Constitution</label>
+            <select class="field" id="constitution_document_id" name="constitution_document_id"><option value="">Not linked</option>{(docs ?? []).map((d) => <option value={d.id} selected={d.id === rec?.constitution_document_id}>{d.title}</option>)}</select>
+            <p class="mt-1 text-xs text-white/40">From the company's governance documents (Admin → Documents).</p></div>
+          <div class="sm:col-span-2"><label class="label" for="notes">Notes</label><textarea class="field min-h-20" id="notes" name="notes">{rec?.notes ?? ''}</textarea></div>
+          {mayDo && <div class="sm:col-span-2"><button class="btn-primary" name="intent" value="record-save">Save the record</button></div>}
+        </fieldset>
+      </form>
+      <aside class="grid content-start gap-6">
+        {mayDo && (
+          <form method="post" enctype="multipart/form-data" class="card grid gap-3" data-busy>
+            <h2 class="font-display text-lg font-bold">Read an ASIC extract</h2>
+            <p class="text-sm text-white/55">Upload a current company extract (PDF). Lakeba AI reads the details and officers; you check them before anything is saved. About 1 cent.</p>
+            <input class="field !py-1.5 text-sm" type="file" name="extract" accept="application/pdf,.pdf" required />
+            <button class="btn-primary" name="intent" value="extract-read">Read it</button>
+            {rec?.extract_dated && <p class="text-xs text-white/40">Last extract read: dated {day(rec.extract_dated)}{rec.extract_path && <> · <a class="text-lk-blue hover:underline" href={`/admin/legal/file?path=${encodeURIComponent(rec.extract_path)}`}>open</a></>}</p>}
+          </form>
+        )}
+        <div class="card text-sm">
+          <h2 class="font-display text-lg font-bold">What the calendar works out</h2>
+          <ul class="mt-3 grid gap-2 text-white/60">
+            <li>Annual review {review ? `each ${MONTHS[Number(review.slice(0, 2)) - 1]} ${Number(review.slice(3))}` : '(needs the review or registration date)'}: the ASIC fee{rec?.company_type !== 'public' && ' and the solvency resolution'}, within two months.</li>
+            {rec?.company_type === 'public' && <li>Year end {ye && `${Number(ye.slice(3))} ${MONTHS[Number(ye.slice(0, 2)) - 1]}`}: financial report in four months, AGM in five.</li>}
+            <li>ASIC notices within 28 days of officer changes, share issues on the register, and moves of address you mark here.</li>
+          </ul>
+        </div>
+      </aside>
+    </div>
+  )}
+
+  {tab === 'officers' && (
+    <div class="grid gap-6">
+      {!privateReady() && <Alert tone="info">Private details (birth details, home address, director ID) can't be stored on this server until its key is set.</Alert>}
+      <section class="card p-0">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Current officers</h2>
+        {current.length ? (
+          <ul class="mt-2 divide-y divide-white/5">
+            {current.map((o) => (
+              <li>
+                <details class="px-5 py-3" open={revealed?.id === o.id}>
+                  <summary class="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-2">
+                    <span><span class="font-medium text-white">{o.full_name}</span><span class="block text-xs text-white/45">{POSITIONS[o.position]} · appointed {day(o.appointed_on)}{o.ceased_on && ` · stops ${day(o.ceased_on)}`}{o.user_id ? ' · signs in the portal' : o.email ? ' · not invited to sign yet' : ' · no email yet'}</span></span>
+                    <span class="text-xs text-white/45">{o.consent_on || o.consent_path ? 'Consent filed' : o.position !== 'secretary' ? 'No consent filed' : ''}{o.private_sealed ? ' · private details held' : ''}</span>
+                  </summary>
+                  <div class="mt-3 grid gap-4 lg:grid-cols-2">
+                    <form method="post" enctype="multipart/form-data">
+                      <fieldset disabled={!mayDo} class="grid gap-3 sm:grid-cols-2">
+                        <input type="hidden" name="officer_id" value={o.id} />
+                        <div class="sm:col-span-2"><label class="label" for={`n-${o.id}`}>Full name</label><input class="field" id={`n-${o.id}`} name="full_name" value={o.full_name} required /></div>
+                        <div><label class="label" for={`p-${o.id}`}>Position</label><select class="field" id={`p-${o.id}`} name="position">{Object.entries(POSITIONS).map(([k, l]) => <option value={k} selected={k === o.position}>{l}</option>)}</select></div>
+                        <div><label class="label" for={`e-${o.id}`}>Email</label><input class="field" type="email" id={`e-${o.id}`} name="email" value={o.email ?? ''} /></div>
+                        <div><label class="label" for={`a-${o.id}`}>Appointed</label><input class="field" type="date" id={`a-${o.id}`} name="appointed_on" value={o.appointed_on ?? ''} /></div>
+                        <div><label class="label" for={`c-${o.id}`}>Stopped (resigned, removed)</label><input class="field" type="date" id={`c-${o.id}`} name="ceased_on" value={o.ceased_on ?? ''} /></div>
+                        <div><label class="label" for={`cs-${o.id}`}>Consent to act signed</label><input class="field" type="date" id={`cs-${o.id}`} name="consent_on" value={o.consent_on ?? ''} /></div>
+                        <div><label class="label" for={`cf-${o.id}`}>Consent document</label><input class="field !py-1.5 text-xs" type="file" id={`cf-${o.id}`} name="consent" />
+                          {o.consent_path && <a class="mt-1 block text-xs text-lk-blue hover:underline" href={`/admin/legal/file?path=${encodeURIComponent(o.consent_path)}`}>Open the filed consent</a>}</div>
+                        <div class="sm:col-span-2"><label class="label" for={`no-${o.id}`}>Notes</label><input class="field" id={`no-${o.id}`} name="notes" value={o.notes} /></div>
+                        {mayDo && <div class="flex flex-wrap gap-2 sm:col-span-2"><button class="btn-primary !py-2" name="intent" value="officer-save">Save</button>{!o.user_id && o.email && <button class="btn-ghost !py-2" name="intent" value="officer-invite" formnovalidate>Invite to sign in the portal</button>}<button class="btn-ghost !py-2 text-lk-red" name="intent" value="officer-remove" formnovalidate data-confirm={`Remove ${o.full_name} from the register altogether? Only for a mistake: for a resignation, set the date they stopped.`}>Remove (a mistake)</button></div>}
+                      </fieldset>
+                    </form>
+                    <div class="rounded-2xl border border-white/10 p-4">
+                      <p class="font-medium text-white">Private details</p>
+                      <p class="mt-1 text-xs text-white/45">What ASIC asks for: date and place of birth, residential address, director ID. Stored encrypted; each look is recorded in the audit log.</p>
+                      {revealed?.id === o.id ? (
+                        <form method="post" class="mt-3 grid gap-3 sm:grid-cols-2">
+                          <fieldset disabled={!mayDo} class="contents">
+                            <input type="hidden" name="officer_id" value={o.id} />
+                            <div><label class="label" for={`dob-${o.id}`}>Date of birth</label><input class="field" type="date" id={`dob-${o.id}`} name="date_of_birth" value={revealed.data.date_of_birth ?? ''} autocomplete="off" /></div>
+                            <div><label class="label" for={`pob-${o.id}`}>Place of birth</label><input class="field" id={`pob-${o.id}`} name="place_of_birth" value={revealed.data.place_of_birth ?? ''} autocomplete="off" /></div>
+                            <div class="sm:col-span-2"><label class="label" for={`ra-${o.id}`}>Residential address</label><input class="field" id={`ra-${o.id}`} name="residential_address" value={revealed.data.residential_address ?? ''} autocomplete="off" /></div>
+                            <div class="sm:col-span-2"><label class="label" for={`did-${o.id}`}>Director ID</label><input class="field tabular-nums" id={`did-${o.id}`} name="director_id" value={revealed.data.director_id ?? ''} inputmode="numeric" placeholder="036…" autocomplete="off" /></div>
+                            {mayDo && <div class="sm:col-span-2"><button class="btn-primary !py-2" name="intent" value="officer-private">Save private details</button></div>}
+                          </fieldset>
+                        </form>
+                      ) : mayDo ? (
+                        <form method="post" class="mt-3"><input type="hidden" name="officer_id" value={o.id} /><button class="btn-ghost !py-2 text-sm" name="intent" value="officer-reveal">{o.private_sealed ? 'Show and edit' : 'Add them'}</button></form>
+                      ) : <p class="mt-3 text-sm text-white/45">Only people who can change legal records see them.</p>}
+                    </div>
+                  </div>
+                </details>
+              </li>
+            ))}
+          </ul>
+        ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">No officers recorded. Add them below, or read an ASIC extract on the Record tab.</p>}
+      </section>
+
+      {former.length > 0 && (
+        <details class="card p-0">
+          <summary class="cursor-pointer px-5 py-4 font-display text-lg font-bold">Former officers ({former.length})</summary>
+          <ul class="divide-y divide-white/5 border-t border-white/5">
+            {former.map((o) => <li class="px-5 py-3 text-sm"><span class="text-white">{o.full_name}</span><span class="text-white/45"> · {POSITIONS[o.position]} · {day(o.appointed_on)} to {day(o.ceased_on)}</span></li>)}
+          </ul>
+        </details>
+      )}
+
+      {mayDo && (
+        <details class="card" open={Boolean(kept('intent'))}>
+          <summary class="cursor-pointer font-display text-lg font-bold">Add an officer</summary>
+          <form method="post" enctype="multipart/form-data" class="mt-5 grid gap-3 sm:grid-cols-2">
+            <div class="sm:col-span-2"><label class="label" for="full_name">Full name</label><input class="field" id="full_name" name="full_name" value={kept('full_name')} required /></div>
+            <div><label class="label" for="position">Position</label><select class="field" id="position" name="position">{Object.entries(POSITIONS).map(([k, l]) => <option value={k} selected={kept('position') === k}>{l}</option>)}</select></div>
+            <div><label class="label" for="email">Email</label><input class="field" type="email" id="email" name="email" value={kept('email')} placeholder="To sign in the portal later" /></div>
+            <div><label class="label" for="appointed_on">Appointed</label><input class="field" type="date" id="appointed_on" name="appointed_on" value={kept('appointed_on')} /></div>
+            <div><label class="label" for="consent_on">Consent to act signed</label><input class="field" type="date" id="consent_on" name="consent_on" value={kept('consent_on')} /></div>
+            <div class="sm:col-span-2"><label class="label" for="consent">Consent document</label><input class="field !py-1.5 text-sm" type="file" id="consent" name="consent" /></div>
+            <div class="sm:col-span-2"><label class="label" for="notes-new">Notes</label><input class="field" id="notes-new" name="notes" value={kept('notes')} /></div>
+            {privateReady() && (
+              <fieldset class="grid gap-3 rounded-2xl border border-white/10 p-4 sm:col-span-2 sm:grid-cols-2">
+                <legend class="px-1 text-sm text-white/60">Private details (encrypted, optional)</legend>
+                <div><label class="label" for="date_of_birth">Date of birth</label><input class="field" type="date" id="date_of_birth" name="date_of_birth" value={kept('date_of_birth')} autocomplete="off" /></div>
+                <div><label class="label" for="place_of_birth">Place of birth</label><input class="field" id="place_of_birth" name="place_of_birth" value={kept('place_of_birth')} autocomplete="off" /></div>
+                <div class="sm:col-span-2"><label class="label" for="residential_address">Residential address</label><input class="field" id="residential_address" name="residential_address" value={kept('residential_address')} autocomplete="off" /></div>
+                <div class="sm:col-span-2"><label class="label" for="director_id">Director ID</label><input class="field tabular-nums" id="director_id" name="director_id" value={kept('director_id')} inputmode="numeric" placeholder="036…" autocomplete="off" />
+                  <p class="mt-1 text-xs text-white/40">A new director needs a director ID before being appointed.</p></div>
+              </fieldset>
+            )}
+            <p class="text-xs text-white/45 sm:col-span-2">An appointment in the last 60 days adds “Tell ASIC” to the calendar, due 28 days after it.</p>
+            <div class="sm:col-span-2"><button class="btn-primary" name="intent" value="officer-add">Add the officer</button></div>
+          </form>
+        </details>
+      )}
+    </div>
+  )}
+
+  {tab === 'board' && (
+    <div class="grid gap-6">
+      <section class="card p-0">
+        <div class="flex flex-wrap items-baseline justify-between gap-2 px-5 pt-5">
+          <h2 class="font-display text-lg font-bold">Resolutions and minutes</h2>
+          {papers.some((p) => p.status === 'signed') && <a class="text-sm text-lk-blue hover:underline" href={`/admin/legal/minute-book/${company.code}`}>Minute book (PDF)</a>}
+        </div>
+        {papers.length ? (
+          <ul class="mt-2 divide-y divide-white/5">
+            {papers.map((p) => (
+              <li class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3">
+                <span><a href={`/admin/legal/papers/${p.id}`} class="font-medium text-white hover:text-lk-blue">{p.title}</a><span class="block text-xs text-white/45">{p.kind === 'minutes' ? 'Minutes' : 'Resolution'} · {reference(p)} · created {day(p.created_at.slice(0, 10))}</span></span>
+                <span class:list={['text-sm', p.status === 'signed' ? 'text-lk-green' : p.status === 'signing' ? 'text-amber-300' : 'text-white/50']}>{paperStatus(p)}</span>
+              </li>
+            ))}
+          </ul>
+        ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">None yet.</p>}
+      </section>
+
+      {mayDo && (
+        <section class="card">
+          <h2 class="font-display text-lg font-bold">New resolution</h2>
+          <p class="mt-1 text-sm text-white/55">A circular resolution signed by every director in the portal (or by the sole director). Pick a template; you can change the text before sending it.</p>
+          <div class="mt-4 grid gap-5 md:grid-cols-2">
+            {(['Officers', 'Shares', 'Annual', 'Banking and contracts'] as const).map((g) => (
+              <div>
+                <p class="text-xs uppercase tracking-wider text-white/40">{g}</p>
+                <ul class="mt-2 grid gap-1.5">
+                  {TEMPLATES.filter((t) => t.group === g).map((t) => <li><a class="text-white hover:text-lk-blue" href={`/admin/legal/papers/new?company=${company.code}&template=${t.key}`}>{t.label}</a><span class="block text-xs text-white/45">{t.description}</span></li>)}
+                </ul>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
+
+      <section class="card p-0">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Board meetings</h2>
+        {meetings.length ? (
+          <ul class="mt-2 divide-y divide-white/5">
+            {meetings.map((m) => { const mp = minutesOf(m.id); return (
+              <li class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3">
+                <a href={`/admin/legal/meetings/${m.id}`} class="font-medium text-white hover:text-lk-blue">{m.title}<span class="block text-xs font-normal text-white/45">{new Intl.DateTimeFormat('en-AU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Australia/Sydney' }).format(new Date(m.held_at))}</span></a>
+                <span class="text-sm text-white/50">{mp ? `Minutes: ${paperStatus(mp as never).toLowerCase()}` : 'No minutes yet'}</span>
+              </li>
+            ); })}
+          </ul>
+        ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">None recorded.</p>}
+        {mayDo && (
+          <details class="border-t border-white/5 px-5 py-4">
+            <summary class="cursor-pointer text-sm font-medium text-white">Record a meeting</summary>
+            <form method="post" class="mt-4 grid gap-3 sm:grid-cols-3">
+              <div class="sm:col-span-3"><label class="label" for="m-title">Title</label><input class="field" id="m-title" name="title" required placeholder="e.g. Board meeting – November 2026" /></div>
+              <div><label class="label" for="m-held">Held (Sydney time)</label><input class="field" type="datetime-local" id="m-held" name="held_at" required /></div>
+              <div class="sm:col-span-2"><label class="label" for="m-where">Where</label><input class="field" id="m-where" name="location" placeholder="e.g. Sydney office and by video" /></div>
+              <div><button class="btn-primary" name="intent" value="meeting-add">Continue</button></div>
+            </form>
+            <p class="mt-2 text-xs text-white/40">Adds “minutes signed by the chair” to the calendar, due within a month.</p>
+          </details>
+        )}
+      </section>
+    </div>
+  )}
+
+  {tab === 'calendar' && (
+    <div class="grid gap-6">
+      <section class="card p-0">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Open</h2>
+        {open.length ? <div class="mt-2"><ObligationList items={open} people={people} may={() => mayDo} /></div> : <p class="px-5 pb-5 pt-2 text-sm text-white/55">Nothing open.{!rec && ' Fill in the record so the calendar can work out the deadlines.'}</p>}
+      </section>
+      {mayDo && (
+        <details class="card">
+          <summary class="cursor-pointer font-display text-lg font-bold">Add an item</summary>
+          <form method="post" class="mt-5 grid gap-3 sm:grid-cols-2">
+            <input type="hidden" name="entity_id" value={company.id} />
+            <div class="sm:col-span-2"><label class="label" for="ob-title">What is due</label><input class="field" id="ob-title" name="title" required placeholder="e.g. Renew the business name registration" /></div>
+            <div><label class="label" for="ob-due">Due</label><input class="field" type="date" id="ob-due" name="due_on" required /></div>
+            <div><label class="label" for="ob-kind">Kind</label><select class="field" id="ob-kind" name="kind">{Object.entries(KINDS).map(([k, l]) => <option value={k} selected={k === 'other'}>{l}</option>)}</select></div>
+            <div class="sm:col-span-2"><label class="label" for="ob-owner">Looked after by</label><select class="field" id="ob-owner" name="owner_id"><option value="">Everyone with Legal</option>{people.map((p) => <option value={p.id}>{p.name}</option>)}</select></div>
+            <div class="sm:col-span-2"><label class="label" for="ob-detail">Details</label><textarea class="field min-h-20" id="ob-detail" name="detail"></textarea></div>
+            <div><button class="btn-primary" name="intent" value="ob-add">Add</button></div>
+          </form>
+        </details>
+      )}
+      {closed.length > 0 && (
+        <details class="card p-0">
+          <summary class="cursor-pointer px-5 py-4 font-display text-lg font-bold">Done and not needed ({closed.length})</summary>
+          <div class="border-t border-white/5"><ObligationList items={closed} people={people} may={() => mayDo} /></div>
+        </details>
+      )}
+    </div>
+  )}
+</Admin>
+
+<script>
+  // "Remove (a mistake)" asks first; "Read it" shows that it's working.
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+  document.querySelectorAll<HTMLFormElement>('form[data-busy]').forEach((f) => f.addEventListener('submit', () => { const b = f.querySelector('button'); if (b) { b.textContent = 'Reading…'; b.setAttribute('aria-busy', 'true'); setTimeout(() => (b.disabled = true)); } }));
+</script>

@@ -1,0 +1,12 @@
+---
+// Tabs across Admin → Legal.
+const path = Astro.url.pathname;
+const tabs = [
+  { href: '/admin/legal', label: 'Overview', on: path === '/admin/legal' },
+  { href: '/admin/legal/companies', label: 'Companies', on: path.startsWith('/admin/legal/companies') || path.startsWith('/admin/legal/extract') },
+  { href: '/admin/legal/calendar', label: 'Calendar', on: path.startsWith('/admin/legal/calendar') },
+];
+---
+<nav class="mb-6 flex flex-wrap gap-1 border-b border-white/10 text-sm" aria-label="Legal">
+  {tabs.map((t) => <a href={t.href} aria-current={t.on ? 'page' : undefined} class:list={['-mb-px border-b-2 px-3 py-2', t.on ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{t.label}</a>)}
+</nav>

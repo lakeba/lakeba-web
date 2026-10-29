@@ -1,0 +1,33 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Empty from '../../components/Empty.astro';
+import { serviceClient } from '../../lib/admin';
+
+// To sign: the directors' resolutions and minutes sent to this person, waiting
+// first, then what they signed.
+const svc = serviceClient();
+const { data } = await svc.from('board_signatures').select('status, signed_at, board_papers!inner(id, title, kind, status, sent_at, entities(display_name))').eq('user_id', Astro.locals.user!.id).in('board_papers.status', ['signing', 'signed']);
+type Row = { status: string; signed_at: string | null; board_papers: { id: string; title: string; kind: string; status: string; sent_at: string; entities: { display_name: string } | null } };
+const rows = ((data ?? []) as unknown as Row[]).sort((a, b) => b.board_papers.sent_at.localeCompare(a.board_papers.sent_at));
+const waiting = rows.filter((r) => r.status === 'pending' && r.board_papers.status === 'signing');
+const done = rows.filter((r) => !waiting.includes(r));
+const when = (iso: string | null) => (iso ? new Intl.DateTimeFormat('en-AU', { dateStyle: 'medium', timeZone: 'Australia/Sydney' }).format(new Date(iso)) : '');
+---
+
+<Portal title="To sign">
+  <PageHeader title="To sign" subtitle="Directors’ resolutions and minutes sent to you to sign." />
+  {waiting.length ? (
+    <section class="card mb-6 p-0"><ul class="divide-y divide-white/5">
+      {waiting.map((r) => <li><a class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-4 hover:bg-white/[0.04]" href={`/sign/${r.board_papers.id}`}><span><span class="font-medium text-white">{r.board_papers.title}</span><span class="block text-xs text-white/45">{r.board_papers.entities?.display_name} · {r.board_papers.kind === 'minutes' ? 'Minutes' : 'Resolution'} · sent {when(r.board_papers.sent_at)}</span></span><span class="text-sm text-amber-300">Waiting for you</span></a></li>)}
+    </ul></section>
+  ) : <div class="mb-6"><Empty title="Nothing to sign">When a resolution or minutes are sent to you, they appear here and you get an email.</Empty></div>}
+  {done.length > 0 && (
+    <section class="card p-0">
+      <h2 class="px-5 pt-5 font-display text-lg font-bold">Earlier</h2>
+      <ul class="mt-2 divide-y divide-white/5">
+        {done.map((r) => <li><a class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3 hover:bg-white/[0.04]" href={`/sign/${r.board_papers.id}`}><span><span class="text-white">{r.board_papers.title}</span><span class="block text-xs text-white/45">{r.board_papers.entities?.display_name}</span></span><span class="text-sm text-white/50">{r.status === 'signed' ? `You signed ${when(r.signed_at)}` : r.status === 'declined' ? 'You declined' : 'Withdrawn'}{r.board_papers.status === 'signed' && ' · complete'}</span></a></li>)}
+      </ul>
+    </section>
+  )}
+</Portal>

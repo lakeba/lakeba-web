@@ -1,0 +1,116 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import Alert from '../../components/Alert.astro';
+import { serviceClient } from '../../lib/admin';
+import { field } from '../../lib/forms';
+import { legalTeam } from '../../lib/legal';
+import { nameKey } from '../../lib/legal-extract';
+import { notifyMembers } from '../../lib/notify';
+import { PAPER_COLUMNS, SIGNATURE_COLUMNS, reference, sign, type Paper, type Signature } from '../../lib/legal-board';
+
+// A director's resolution or minutes to read and sign (from the email's link,
+// or "To sign"). Signing needs two-step verification in this session and the
+// signer's name typed; what is signed is the PDF as sent (its fingerprint is
+// kept with the signature).
+const svc = serviceClient();
+const user = Astro.locals.user!;
+const { data: sigRow } = await svc.from('board_signatures').select(SIGNATURE_COLUMNS).eq('paper_id', Astro.params.id ?? '').eq('user_id', user.id).maybeSingle();
+const { data: paperRow } = sigRow ? await svc.from('board_papers').select(PAPER_COLUMNS).eq('id', sigRow.paper_id).maybeSingle() : { data: null };
+if (!sigRow || !paperRow || paperRow.status === 'draft') return Astro.redirect('/sign');
+let signature = sigRow as Signature;
+let paper = paperRow as Paper;
+const { data: ent } = await svc.from('entities').select('display_name, legal_name').eq('id', paper.entity_id).single();
+const company = (ent?.legal_name as string | null) ?? (ent?.display_name as string);
+const strong = user.aal === 'aal2';
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (paper.status !== 'signing' || signature.status !== 'pending') throw new Error('This is no longer waiting for your signature.');
+    if (!strong) throw new Error('Confirm it’s you with two-step verification first.');
+    if (intent === 'sign') {
+      const typed = field(form, 'typed_name');
+      if (form.get('agree') !== 'on') throw new Error('Tick the box to confirm you have read it and sign electronically.');
+      if (nameKey(typed) !== nameKey(signature.name)) throw new Error(`Type your name as it appears on the document: ${signature.name}.`);
+      const ip = (Astro.request.headers.get('x-forwarded-for') ?? Astro.clientAddress ?? '').split(',')[0].trim();
+      const ua = (Astro.request.headers.get('user-agent') ?? '').slice(0, 160);
+      const how = `Signed in to the portal as ${user.email}, two-step verified (${user.strongBy === 'code' ? 'authenticator code' : user.strongBy === 'passkey' ? 'passkey' : 'verified session'}); from ${ip || 'unknown address'}; ${ua}`;
+      await sign(svc, paper, signature, typed, how, Astro.url.origin);
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'board_paper_signed', event_detail: { entity_id: paper.entity_id, paper_id: paper.id, sha256: paper.sha256 } });
+      ok = 'Signed. Thank you.';
+    } else if (intent === 'decline') {
+      const note = field(form, 'note').slice(0, 1000);
+      if (!note) throw new Error('Say why, so the company secretary can follow up.');
+      await svc.from('board_signatures').update({ status: 'declined', decline_note: note }).eq('id', signature.id).throwOnError();
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'board_paper_declined', event_detail: { entity_id: paper.entity_id, paper_id: paper.id, note } });
+      await notifyMembers({ kind: 'admin_legal', userIds: (await legalTeam(svc)).map((p) => p.id), origin: Astro.url.origin, link: `/admin/legal/papers/${paper.id}`,
+        title: `${signature.name} won’t sign: ${paper.title}`, body: `${signature.name} declined to sign “${paper.title}” (${company}): ${note}` }).catch(() => 0);
+      ok = 'Noted: the company secretary has been told why.';
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  signature = (await svc.from('board_signatures').select(SIGNATURE_COLUMNS).eq('id', signature.id).single()).data as Signature;
+  paper = (await svc.from('board_papers').select(PAPER_COLUMNS).eq('id', paper.id).single()).data as Paper;
+}
+const { data: others } = await svc.from('board_signatures').select('name, status, signed_at').eq('paper_id', paper.id).order('name');
+const when = (iso: string | null) => (iso ? new Intl.DateTimeFormat('en-AU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Australia/Sydney' }).format(new Date(iso)) : '');
+const next = encodeURIComponent(`/sign/${paper.id}`);
+---
+
+<Portal title={paper.title}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/sign" class="hover:text-white">To sign</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{paper.title}</h1>
+    <p class="mt-1 text-sm text-white/55">{company} · {paper.kind === 'minutes' ? 'Minutes' : 'Directors’ resolution'} · {reference(paper)}</p>
+  </div>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  <div class="grid gap-6 lg:grid-cols-[1fr_22rem]">
+    <div class="card overflow-hidden p-0">
+      <p class="flex justify-end px-4 py-2 text-sm"><a class="text-lk-blue hover:underline" href={`/sign/${paper.id}/pdf`} target="_blank">Open the document in a new tab</a></p>
+      <iframe title="The document" src={`/sign/${paper.id}/pdf`} class="h-[75vh] w-full bg-white"></iframe>
+    </div>
+    <aside class="grid content-start gap-6">
+      {signature.status === 'signed' ? (
+        <div class="card text-sm"><p class="font-display text-lg font-bold text-lk-green">You signed</p><p class="mt-1 text-white/60">{when(signature.signed_at)}, as “{signature.typed_name}”.</p></div>
+      ) : signature.status === 'declined' ? (
+        <div class="card text-sm"><p class="font-display text-lg font-bold">You declined</p><p class="mt-1 text-white/60">{signature.decline_note}</p></div>
+      ) : paper.status !== 'signing' ? (
+        <div class="card text-sm text-white/60">This was withdrawn and can't be signed.</div>
+      ) : !strong ? (
+        <div class="card grid gap-3 text-sm">
+          <p class="font-display text-lg font-bold">Confirm it's you</p>
+          <p class="text-white/60">Signing needs two-step verification: an authenticator app or a passkey on this device. It takes a minute to set up the first time.</p>
+          <a class="btn-primary" href={Astro.locals.mfaEnrolled ? `/mfa/verify?next=${next}` : `/mfa/setup?next=${next}`}>{Astro.locals.mfaEnrolled ? 'Verify' : 'Set up two-step verification'}</a>
+        </div>
+      ) : (
+        <>
+          <form method="post" class="card grid gap-3 text-sm">
+            <p class="font-display text-lg font-bold">Sign</p>
+            <p class="text-white/60">You sign as <strong class="text-white">{signature.name}, {signature.position}</strong>.</p>
+            <div><label class="label" for="typed_name">Type your full name</label><input class="field" id="typed_name" name="typed_name" autocomplete="name" required /></div>
+            <label class="flex items-start gap-3 text-white/70"><input type="checkbox" name="agree" class="mt-0.5 size-4 accent-lk-blue" required /> I have read the document and sign it electronically. I agree this signature has the same effect as my handwritten one.</label>
+            <button class="btn-primary" name="intent" value="sign">Sign</button>
+          </form>
+          <details class="card text-sm">
+            <summary class="cursor-pointer font-medium text-white">I can't sign this</summary>
+            <form method="post" class="mt-3 grid gap-2">
+              <label class="label" for="note">Why (the company secretary sees this)</label>
+              <textarea class="field min-h-20" id="note" name="note" required></textarea>
+              <button class="btn-ghost" name="intent" value="decline" formnovalidate>Decline to sign</button>
+            </form>
+          </details>
+        </>
+      )}
+      <div class="card text-sm">
+        <p class="font-medium text-white">Signatures</p>
+        <ul class="mt-2 grid gap-1.5">{(others ?? []).map((o) => <li class="flex justify-between gap-3"><span class="text-white/75">{o.name}</span><span class:list={[o.status === 'signed' ? 'text-lk-green' : o.status === 'declined' ? 'text-lk-red' : 'text-white/45']}>{o.status === 'signed' ? 'signed' : o.status === 'declined' ? 'declined' : 'waiting'}</span></li>)}</ul>
+        {paper.status === 'signed' && <a class="mt-3 inline-block text-lk-blue hover:underline" href={`/sign/${paper.id}/pdf`} target="_blank">Open the signed copy</a>}
+      </div>
+    </aside>
+  </div>
+</Portal>
