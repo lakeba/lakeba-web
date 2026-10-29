@@ -78,6 +78,11 @@ export default defineConfig({
       DEEPGRAM_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.deepgram.com' }),
       ASSEMBLYAI_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.assemblyai.com' }),
       ASSEMBLYAI_STREAMING_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://streaming.assemblyai.com' }),
+      // Lex's voice (the board assistant on the Observer tablet): an ElevenLabs key; the voice and model can be changed here.
+      ELEVENLABS_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      ELEVENLABS_VOICE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      ELEVENLABS_MODEL: envField.string({ context: 'server', access: 'secret', default: 'eleven_flash_v2_5' }),
+      ELEVENLABS_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.elevenlabs.io' }),
       XERO_AUTH_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://login.xero.com/identity/connect' }),
       XERO_TOKEN_URL: envField.string({ context: 'server', access: 'secret', default: 'https://identity.xero.com/connect/token' }),
       XERO_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.xero.com' }),

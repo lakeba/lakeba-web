@@ -444,9 +444,20 @@ const costOf = (u: Anthropic.Beta.BetaUsage) => (u.input_tokens * PRICE.in + (u.
  * Answers one question (with the conversation so far) and reports progress
  * through `events`. Returns the answer with its sources and what it cost.
  */
-export async function askBoard(svc: Svc, access: Access, central: string, question: string, history: Turn[], events: Events = {}, signal?: AbortSignal) {
+/** Lex in a meeting: only these companies, and a spoken answer first. */
+export type AskOptions = { only?: string[]; voice?: { meeting: string; company: string } };
+/** What Lex says aloud comes first, then this line, then the detail with references. */
+export const SPOKEN_BREAK = '---';
+const VOICE_RULES = (o: NonNullable<AskOptions['voice']>) => [
+  `You are Lex, the board's assistant, speaking aloud at the table during "${o.meeting}", a meeting of the directors of ${o.company}. Someone at the table just asked you this; the question comes from speech recognition, so allow for misheard words.`,
+  `Answer in two parts. First, what you will say aloud: at most three short sentences, in plain spoken English, as a capable company secretary would answer across the table. Say numbers the way people say them ("about two point four million dollars", "the thirtieth of June"), give the date or period they relate to, and no references, brackets, lists, symbols or markdown. Then a line containing only ${SPOKEN_BREAK}. Then the detail for the screen, with references as usual. If you need to look things up, do it before writing either part.`,
+  `If the question is unclear, say briefly what you understood and answer that. Never offer an opinion on how the board should vote or decide.`,
+].join('\n\n');
+
+export async function askBoard(svc: Svc, access: Access, central: string, question: string, history: Turn[], events: Events = {}, signal?: AbortSignal, opts: AskOptions = {}) {
   if (!claude) throw new Error('Lakeba AI is not configured (no Lakeba AI key).');
-  const scope = await boardScope(svc, access);
+  const full = await boardScope(svc, access);
+  const scope: Scope = opts.only ? { companies: full.companies.filter((c) => opts.only!.includes(c.id)), all: false } : full;
   if (!scope.companies.length) throw new Error('Board Ask doesn’t cover any company for you.');
   const s = new Session(svc, access, scope, central);
   const messages: Anthropic.Beta.BetaMessageParam[] = [
@@ -462,10 +473,10 @@ export async function askBoard(svc: Svc, access: Access, central: string, questi
     if (round > 0) events.reset?.();
     const stream = claude.beta.messages.stream({
       model: BOARD_MODEL, max_tokens: 32000,
-      thinking: { type: 'adaptive' }, output_config: { effort: 'high' },
+      thinking: { type: 'adaptive' }, output_config: { effort: opts.voice ? 'medium' : 'high' },
       betas: ['server-side-fallback-2026-07-01'], fallbacks: 'default',
       cache_control: { type: 'ephemeral' },
-      system: SYSTEM(scope, todayIn()), tools, messages,
+      system: opts.voice ? `${SYSTEM(scope, todayIn())}\n\n${VOICE_RULES(opts.voice)}` : SYSTEM(scope, todayIn()), tools, messages,
     }, { signal });
     stream.on('text', (d) => events.text?.(d));
     let msg: Anthropic.Beta.BetaMessage;

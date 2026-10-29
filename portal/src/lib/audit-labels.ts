@@ -25,6 +25,7 @@ const LABELS: Record<string, string> = {
   admin_checked_import: 'Checked an import file', admin_applied_import: 'Applied an import',
   admin_asked_board_ask: 'Asked Board Ask', admin_rated_board_ask: 'Rated a Board Ask answer', admin_deleted_board_ask_conversation: 'Deleted a Board Ask conversation',
   admin_added_law_source: 'Added to the law library', admin_removed_law_source: 'Removed from the law library',
+  admin_asked_lex: 'Asked Lex, the board assistant, during a meeting',
   admin_recorded_meeting_consent: 'Recorded everyone’s agreement to record a meeting', admin_started_meeting_recording: 'Started recording a meeting', admin_finished_meeting_recording: 'Finished recording a meeting',
   admin_transcribed_meeting_recording: 'Transcribed a meeting’s recording again', admin_chose_meeting_transcript: 'Chose the transcript for a meeting', admin_named_meeting_speakers: 'Named the speakers in a meeting’s transcript',
   admin_saved_board_ask_test: 'Saved a Board Ask test', admin_deleted_board_ask_test: 'Deleted a Board Ask test', admin_ran_board_ask_tests: 'Ran the Board Ask tests',

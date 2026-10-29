@@ -9,7 +9,7 @@ import { publicAddress, safeLookup } from './newsletter-import';
 // can never be pointed at the server itself or a private network. Where
 // OUTBOUND_ALLOWLIST is set (staging), nothing outside it is called at all.
 
-export type OutResponse = { status: number; headers: Record<string, string>; text: string };
+export type OutResponse = { status: number; headers: Record<string, string>; text: string; bytes: Buffer };
 
 const prefixes = (v: string | undefined) => (v ?? '').split(',').map((p) => p.trim()).filter(Boolean);
 const testStandIn = (url: string) => prefixes(FETCH_TEST_PREFIXES).some((p) => url.startsWith(p));
@@ -42,7 +42,7 @@ export function outbound(method: string, url: string, opts: { headers?: Record<s
     }, (res) => {
       const chunks: Buffer[] = []; let size = 0;
       res.on('data', (c: Buffer) => { size += c.length; if (size <= max) chunks.push(c); });
-      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: Object.fromEntries(Object.entries(res.headers).map(([k, v]) => [k, String(v)])), text: Buffer.concat(chunks).toString('utf8') }));
+      res.on('end', () => { const bytes = Buffer.concat(chunks); resolve({ status: res.statusCode ?? 0, headers: Object.fromEntries(Object.entries(res.headers).map(([k, v]) => [k, String(v)])), text: bytes.toString('utf8'), bytes }); });
       res.on('error', reject);
     });
     req.on('timeout', () => req.destroy(new Error('No answer within 15 seconds.')));

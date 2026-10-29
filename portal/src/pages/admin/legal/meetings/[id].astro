@@ -8,6 +8,7 @@ import { addDays, fromSydney, legalCompanies, toSydney } from '../../../../lib/l
 import { fileOf, storeLegalFile } from '../../../../lib/legal-actions';
 import { RECORDING_COLUMNS, SOURCE_LABEL, removeAudio, segmentsOf, speakersOf, transcribeMeeting, useTranscript, type RecordingMeeting } from '../../../../lib/observer';
 import { PROVIDERS, readyProviders, type Provider } from '../../../../lib/transcription';
+import { answerHtml, type Source as BoardSource } from '../../../../lib/board-ask';
 import { MEETING_COLUMNS, PAPER_COLUMNS, TRANSCRIPT_CHARS, draftMinutes, reference, transcriptText, type Attendee, type Meeting, type Paper } from '../../../../lib/legal-board';
 
 // Admin → Legal → a company → Board → a meeting: who was there, the agenda,
@@ -57,8 +58,9 @@ if (Astro.request.method === 'POST' && mayDo) {
       ok = 'Saved the meeting.';
       if (intent === 'draft') {
         if (minutes && minutes.status !== 'draft') throw new Error('The minutes were already sent for signing; take them back to a draft first.');
-        if (!meeting.agenda && !meeting.notes && !meeting.transcript) throw new Error('Add the agenda, notes or a transcript for Lakeba AI to draft from.');
-        const { body, costUsd } = await draftMinutes(meeting, company.legal_name ?? company.display_name);
+        const { data: lex } = await svc.from('board_meeting_assistant').select('question, spoken, answer').eq('meeting_id', meeting.id).eq('status', 'done').order('created_at');
+        if (!meeting.agenda && !meeting.notes && !meeting.transcript && !lex?.length) throw new Error('Add the agenda, notes or a transcript for Lakeba AI to draft from.');
+        const { body, costUsd } = await draftMinutes(meeting, company.legal_name ?? company.display_name, lex ?? []);
         const title = `Minutes – ${meeting.title}`.slice(0, 300);
         if (minutes) await svc.from('board_papers').update({ body, title, ai_cost_usd: costUsd, updated_at: new Date().toISOString() }).eq('id', minutes.id).throwOnError();
         else {
@@ -110,6 +112,8 @@ const speakers = current ? speakersOf(await segmentsOf(svc, meeting.id, current)
 const names = current ? meeting.speaker_names[current] ?? {} : {};
 const people = meeting.attendees.filter((a) => a.present).map((a) => a.name);
 const ready = readyProviders();
+const { data: lexRows } = await svc.from('board_meeting_assistant').select('id, how, offset_ms, question, spoken, answer, sources, status, error, created_at').eq('meeting_id', meeting.id).order('created_at');
+const lexAnswers = (lexRows ?? []) as { id: string; how: string; offset_ms: number | null; question: string; spoken: string; answer: string; sources: BoardSource[]; status: string; error: string | null; created_at: string }[];
 const recordedMinutes = Math.round(meeting.recording_takes.reduce((n, t) => n + (t.ended_at ? Date.parse(t.ended_at) - Date.parse(t.started_at) : 0), 0) / 60000);
 const STATUS: Record<string, string> = { none: 'Not recorded', recording: 'Recording now', paused: 'Paused', processing: 'Preparing the full transcript…', done: 'Recorded and transcribed', failed: 'The transcription failed' };
 const guests = meeting.attendees.filter((a) => !a.officer_id).map((a) => a.name).join('\n');
@@ -182,6 +186,22 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
       <div class="grid gap-2">
         {meeting.recording_takes.filter((t) => t.path).map((t) => (
           <div class="flex flex-wrap items-center gap-3 text-sm"><span class="text-white/55">Part {t.take}</span><audio controls preload="none" src={`/admin/legal/file?path=${encodeURIComponent(t.path!)}`} class="h-9"></audio></div>
+        ))}
+      </div>
+    )}
+
+    {lexAnswers.length > 0 && (
+      <div class="grid gap-3 border-t border-white/5 pt-4">
+        <h3 class="text-sm font-semibold text-white">Asked of Lex during the meeting</h3>
+        <p class="text-xs text-white/45">The board assistant's answers go to the minutes labelled as the assistant's.</p>
+        {lexAnswers.map((a) => (
+          <details class="rounded-xl bg-white/[0.03] px-4 py-3 text-sm">
+            <summary class="cursor-pointer"><span class="text-white">“{a.question}”</span><span class="ml-2 text-xs text-white/40">{a.how === 'voice' ? 'asked aloud' : a.how === 'tap' ? 'asked after tapping Ask' : 'typed'}{a.offset_ms != null && ` · ${new Date(a.offset_ms).toISOString().slice(11, 19)} into the recording`}</span></summary>
+            {a.status === 'done' ? (<>
+              <p class="mt-2 text-white/85">{a.spoken}</p>
+              <div class="mt-2 whitespace-pre-line text-white/65" set:html={answerHtml(a.answer, a.sources)} />
+            </>) : <p class="mt-2 text-lk-orange">{a.error ?? a.status}</p>}
+          </details>
         ))}
       </div>
     )}

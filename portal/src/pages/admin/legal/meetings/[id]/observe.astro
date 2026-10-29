@@ -4,6 +4,7 @@ import ThemeInit from '../../../../../../../src/components/ThemeInit.astro';
 import { serviceClient } from '../../../../../lib/admin';
 import { consentWording, observerMeeting } from '../../../../../lib/observer';
 import { PROVIDERS, readyProviders } from '../../../../../lib/transcription';
+import { voiceReady } from '../../../../../lib/lex';
 
 // The Observer on the boardroom tablet (full screen): the chair confirms
 // everyone present agreed to the recording, then the tablet records the
@@ -20,7 +21,7 @@ const chairName = present.find((a) => a.officer_id === m.chair_officer_id)?.name
 const providers = readyProviders();
 const back = `/admin/legal/meetings/${m.id}`;
 const closed = Boolean(m.audio_deleted_at) || m.recording_status === 'processing' || m.recording_status === 'done';
-const state = { id: m.id, consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
+const state = { id: m.id, voice: voiceReady(), consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
 ---
 
 <!doctype html>
@@ -83,16 +84,31 @@ const state = { id: m.id, consented: Boolean(m.recording_consent), status: m.rec
             <p class="hidden rounded-xl border border-lk-red/40 bg-lk-red/10 px-4 py-3 text-sm text-white" id="problem"></p>
           </section>
 
-          <section class="card flex-1 overflow-y-auto !p-5" id="live" hidden={!state.consented}>
-            <ol class="grid gap-3 text-lg leading-relaxed" id="lines"></ol>
-            <p class="mt-3 text-lg text-white/45" id="interim"></p>
-          </section>
+          <div class="grid flex-1 items-start gap-5 lg:grid-cols-[1fr_24rem]" id="room" hidden={!state.consented}>
+            <section class="card max-h-[70dvh] overflow-y-auto !p-5" id="live">
+              <ol class="grid gap-3 text-lg leading-relaxed" id="lines"></ol>
+              <p class="mt-3 text-lg text-white/45" id="interim"></p>
+            </section>
+            <aside class="card grid content-start gap-4 !p-5" id="lex">
+              <canvas id="orb" width="400" height="400" class="mx-auto size-52" aria-hidden="true"></canvas>
+              <p id="lex-state" class="text-center text-sm text-white/55">Say “Lex, …” or tap Ask while recording.</p>
+              <button class="btn-primary !py-3 text-base" id="lex-ask">Ask Lex</button>
+              <form class="flex gap-2" id="lex-type"><input class="field !py-2 text-sm" id="lex-q" maxlength="2000" placeholder="Or type a question" autocomplete="off" /><button class="btn-ghost !py-2 text-sm">Ask</button></form>
+              {!state.voice && <p class="text-xs text-white/40">Lex answers on screen only: its voice needs an ElevenLabs key on the server.</p>}
+              <div class="grid gap-2 text-sm" id="lex-answer" hidden>
+                <p class="text-xs text-white/45" id="lex-question"></p>
+                <p class="text-base leading-relaxed text-white" id="lex-spoken"></p>
+                <ol class="grid gap-0.5 text-xs text-white/40" id="lex-steps"></ol>
+                <details id="lex-more" hidden><summary class="cursor-pointer text-xs text-lk-blue">Detail and sources</summary><div class="mt-2 whitespace-pre-line leading-relaxed text-white/75" id="lex-detail"></div><ul class="mt-2 flex flex-wrap gap-1.5 text-xs" id="lex-sources"></ul></details>
+              </div>
+            </aside>
+          </div>
         </>
       )}
     </main>
 
     <script>
-      type State = { id: string; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
+      type State = { id: string; voice: boolean; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
       const root = document.getElementById('observer')!;
       const st: State = JSON.parse(root.dataset.state!);
       const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
@@ -114,7 +130,7 @@ const state = { id: m.id, consented: Boolean(m.recording_consent), status: m.rec
         agreeBtn.disabled = true;
         try {
           await call('consent', { chair: $<HTMLSelectElement>('chair')?.value ?? '', agreed: boxes.filter((b) => b.checked).map((b) => b.value) });
-          $('consent')!.hidden = true; $('controls')!.hidden = false; $('live')!.hidden = false;
+          $('consent')!.hidden = true; $('controls')!.hidden = false; $('room')!.hidden = false;
         } catch (e) { alert((e as Error).message); agreeBtn.disabled = false; }
       });
 
@@ -122,6 +138,7 @@ const state = { id: m.id, consented: Boolean(m.recording_consent), status: m.rec
       let provider = '';
       let take = 0, takeStart = 0, sessionStart = 0, seq = 0, chunkSeq = 0;
       let stream: MediaStream | null = null, recorder: MediaRecorder | null = null, ctx: AudioContext | null = null, ws: WebSocket | null = null;
+      let micLevel: AnalyserNode | null = null;
       let recording = false, wakeLock: { release: () => Promise<void> } | null = null;
       const pending: Record<string, unknown>[] = [];
       const uploads: { seq: number; blob: Blob }[] = [];
@@ -144,6 +161,7 @@ const state = { id: m.id, consented: Boolean(m.recording_consent), status: m.rec
         const offset = sessionStart - takeStart;
         pending.push({ seq: n, speaker, text, start_ms: start + offset, end_ms: end + offset });
         show(n, speaker, text);
+        heard(text);
       };
 
       // Live text: Deepgram (Results with words and speaker numbers) or AssemblyAI (Turns with a speaker label).
@@ -221,6 +239,7 @@ const state = { id: m.id, consented: Boolean(m.recording_consent), status: m.rec
         const btn = $<HTMLButtonElement>('start')!;
         btn.disabled = true; problem('');
         try {
+          ensureOut(); // Lex's voice may play later without a tap: its audio is unlocked by this one.
           stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 } });
           provider = $<HTMLSelectElement>('provider')?.value ?? '';
           const r = await call('start', { provider, mime: mimeType.split(';')[0] || 'audio/webm' });
@@ -235,7 +254,9 @@ const state = { id: m.id, consented: Boolean(m.recording_consent), status: m.rec
           await ctx.audioWorklet.addModule('/observer-worklet.js');
           const node = new AudioWorkletNode(ctx, 'observer-downsample');
           node.port.onmessage = (e) => { if (ws?.readyState === WebSocket.OPEN) ws.send(e.data); };
-          ctx.createMediaStreamSource(stream).connect(node);
+          const micSource = ctx.createMediaStreamSource(stream);
+          micSource.connect(node);
+          micLevel = ctx.createAnalyser(); micLevel.fftSize = 512; micSource.connect(micLevel);
           recorder = new MediaRecorder(stream, { ...(mimeType ? { mimeType } : {}), audioBitsPerSecond: 24_000 });
           recorder.ondataavailable = (e) => { if (e.data.size) { uploads.push({ seq: chunkSeq++, blob: e.data }); void flushUploads(); } };
           recorder.start(10_000);
@@ -285,6 +306,125 @@ const state = { id: m.id, consented: Boolean(m.recording_consent), status: m.rec
         } catch (e) { problem((e as Error).message); $<HTMLButtonElement>('finish')!.disabled = false; }
       });
       window.addEventListener('beforeunload', (e) => { if (recording || uploads.length) { e.preventDefault(); } });
+
+      // Lex: called by name in the live text ("Lex, what's our cash runway?") or with Ask; answers aloud and on screen.
+      type LexState = 'idle' | 'listening' | 'thinking' | 'speaking';
+      let lexState: LexState = 'idle';
+      let collect: { text: string; at: number; how: 'voice' | 'tap'; timer: number | null; giveUp: number | null } | null = null;
+      let outCtx: AudioContext | null = null, outLevel: AnalyserNode | null = null;
+      const WAKE = /\b(?:hey\s+|ok(?:ay)?\s+)?(?:lex|lexx|lecks|lexi)\b[\s,.:!?-]*/i;
+      const lexLabel: Record<LexState, string> = { idle: 'Say “Lex, …” or tap Ask while recording.', listening: 'Listening…', thinking: 'Looking it up…', speaking: 'Lex is answering' };
+      const setLex = (s: LexState) => { lexState = s; const l = $('lex-state'); if (l) l.textContent = lexLabel[s]; const b = $<HTMLButtonElement>('lex-ask'); if (b) b.disabled = s === 'thinking' || s === 'speaking'; };
+      const offsetNow = () => (st.takes.length ? Date.now() - Date.parse(st.takes[0].started_at) : null);
+
+      // Words heard while Lex is listening (after its name, or after Ask) make up the question; a pause ends it.
+      const finishQuestion = () => {
+        if (!collect) return;
+        const c = collect; collect = null;
+        if (c.giveUp) clearTimeout(c.giveUp);
+        const q = c.text.trim();
+        if (q.split(/\s+/).length >= 2) void askLex(q, c.how, c.at); else setLex('idle');
+      };
+      const heard = (text: string) => {
+        if (lexState === 'thinking' || lexState === 'speaking') return;
+        if (collect) {
+          collect.text += ` ${text}`;
+          if (collect.timer) clearTimeout(collect.timer);
+          collect.timer = window.setTimeout(finishQuestion, 1800);
+          return;
+        }
+        const m = WAKE.exec(text);
+        if (!m) return;
+        collect = { text: text.slice(m.index + m[0].length), at: offsetNow() ?? 0, how: 'voice', timer: null, giveUp: window.setTimeout(() => { collect = null; setLex('idle'); }, 10000) };
+        setLex('listening');
+        collect.timer = window.setTimeout(finishQuestion, collect.text.trim().split(/\s+/).length >= 4 ? 1800 : 4000);
+      };
+      $('lex-ask')?.addEventListener('click', () => {
+        ensureOut();
+        if (!recording) { problem('Start recording first: Lex listens through the meeting’s microphone. Or type the question.'); return; }
+        collect = { text: '', at: offsetNow() ?? 0, how: 'tap', timer: null, giveUp: window.setTimeout(() => { collect = null; setLex('idle'); }, 12000) };
+        setLex('listening');
+      });
+      $('lex-type')?.addEventListener('submit', (e) => {
+        e.preventDefault(); ensureOut();
+        const q = $<HTMLInputElement>('lex-q')!; const text = q.value.trim();
+        if (text.length >= 3 && lexState !== 'thinking' && lexState !== 'speaking') { q.value = ''; void askLex(text, 'typed', offsetNow()); }
+      });
+
+      // Lex's voice: played through its own audio context, so the orb moves with it.
+      const ensureOut = () => {
+        if (outCtx) return;
+        outCtx = new AudioContext();
+        outLevel = outCtx.createAnalyser(); outLevel.fftSize = 512; outLevel.connect(outCtx.destination);
+      };
+      const say = async (text: string) => {
+        if (!st.voice || !text.trim()) return;
+        ensureOut();
+        const r = await fetch(`${base}/lex-voice`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'Lex’s voice is unavailable.');
+        const buf = await outCtx!.decodeAudioData(await r.arrayBuffer());
+        await new Promise<void>((done) => { const src = outCtx!.createBufferSource(); src.buffer = buf; src.connect(outLevel!); src.onended = () => done(); src.start(); });
+      };
+
+      const askLex = async (question: string, how: 'voice' | 'tap' | 'typed', at: number | null) => {
+        setLex('thinking'); problem('');
+        $('lex-answer')!.hidden = false; $('lex-more')!.hidden = true;
+        $('lex-question')!.textContent = `“${question}”`; $('lex-spoken')!.textContent = ''; $('lex-steps')!.innerHTML = ''; $('lex-detail')!.innerHTML = ''; $('lex-sources')!.innerHTML = '';
+        let speaking: Promise<void> | null = null;
+        const speakOnce = (text: string) => { if (speaking) return; $('lex-spoken')!.textContent = text; setLex('speaking'); speaking = say(text).catch((e) => problem((e as Error).message)); };
+        const holding = window.setTimeout(() => { if (!speaking && lexState === 'thinking') void say('One moment.').catch(() => undefined); }, 1200);
+        try {
+          const res = await fetch(`${base}/lex`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, how, offset_ms: at }) });
+          if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error ?? 'Lex couldn’t answer.');
+          const reader = res.body.getReader(); const dec = new TextDecoder(); let buf = '';
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            let i;
+            while ((i = buf.indexOf('\n\n')) >= 0) {
+              const ev = JSON.parse(buf.slice(0, i).replace(/^data: /, '')); buf = buf.slice(i + 2);
+              if (ev.step) { const li = document.createElement('li'); li.textContent = `· ${ev.step}`; $('lex-steps')!.append(li); }
+              if (ev.spoken) speakOnce(ev.spoken);
+              if (ev.error) throw new Error(ev.error);
+              if (ev.done) {
+                speakOnce(ev.done.spoken);
+                $('lex-detail')!.innerHTML = ev.done.html;
+                for (const s of ev.done.sources ?? []) { const li = document.createElement('li'); li.className = 'rounded-full bg-white/10 px-2 py-0.5 text-white/65'; li.textContent = `${s.ref} ${s.title}`; $('lex-sources')!.append(li); }
+                $('lex-more')!.hidden = !ev.done.html;
+              }
+            }
+          }
+          await speaking;
+        } catch (e) { problem((e as Error).message); }
+        finally { clearTimeout(holding); setLex('idle'); }
+      };
+
+      // The orb: breathes when idle, follows the room when listening, shimmers while thinking, moves with Lex's voice.
+      const orb = $<HTMLCanvasElement>('orb');
+      const g = orb?.getContext('2d');
+      const levelOf = (a: AnalyserNode | null) => { if (!a) return 0; const d = new Uint8Array(a.fftSize); a.getByteTimeDomainData(d); let sum = 0; for (const v of d) sum += ((v - 128) / 128) ** 2; return Math.min(1, Math.sqrt(sum / d.length) * 4); };
+      let smooth = 0;
+      const draw = (t: number) => {
+        if (g && orb) {
+          const W = orb.width, c = W / 2;
+          const live = lexState === 'speaking' ? levelOf(outLevel) : lexState === 'listening' ? levelOf(micLevel) : 0;
+          smooth += (live - smooth) * 0.25;
+          const breathe = Math.sin(t / 900) * 0.03;
+          const r = W * (0.27 + breathe + smooth * 0.12);
+          g.clearRect(0, 0, W, W);
+          const hue = lexState === 'listening' ? 150 : lexState === 'thinking' ? 265 : 212;
+          const glow = g.createRadialGradient(c, c, r * 0.2, c, c, r * 1.6);
+          glow.addColorStop(0, `hsla(${hue}, 90%, 65%, 0.35)`); glow.addColorStop(1, `hsla(${hue}, 90%, 55%, 0)`);
+          g.fillStyle = glow; g.beginPath(); g.arc(c, c, r * 1.6, 0, Math.PI * 2); g.fill();
+          const spin = lexState === 'thinking' ? t / 400 : t / 3000;
+          const body = g.createRadialGradient(c + Math.cos(spin) * r * 0.35, c + Math.sin(spin) * r * 0.35, r * 0.1, c, c, r);
+          body.addColorStop(0, `hsla(${hue + 30}, 95%, 80%, 1)`); body.addColorStop(0.6, `hsla(${hue}, 85%, 55%, 1)`); body.addColorStop(1, `hsla(${hue - 20}, 80%, 35%, 1)`);
+          g.fillStyle = body; g.beginPath(); g.arc(c, c, r, 0, Math.PI * 2); g.fill();
+        }
+        requestAnimationFrame(draw);
+      };
+      requestAnimationFrame(draw);
     </script>
   </body>
 </html>
