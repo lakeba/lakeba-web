@@ -24,6 +24,8 @@ const onVenture = Astro.locals.site?.kind === 'venture';
 const accent = accentOf(company);
 // Directors' resolutions and minutes sent to this person to sign (pages/sign).
 const { data: toSign } = user ? await serviceClient().from('board_signatures').select('status, board_papers!inner(status)').eq('user_id', user.id).in('board_papers.status', ['signing', 'signed']) : { data: null };
+// An employee of a group company (HR): their own space, My HR.
+const { count: employments } = user ? await serviceClient().from('people').select('id', { count: 'exact', head: true }).eq('user_id', user.id).neq('status', 'left') : { count: 0 };
 const waitingToSign = (toSign ?? []).filter((s) => s.status === 'pending' && (s.board_papers as unknown as { status: string }).status === 'signing').length;
 
 const nav: { href: string; label: string; tag?: string }[] = [
@@ -35,6 +37,7 @@ const nav: { href: string; label: string; tag?: string }[] = [
   ...(company && features.ask ? [{ href: '/ask', label: company.ask_name?.trim() || t('Ask {brand}', { brand }), tag: 'AI' }] : []),
   ...(features.boardQa ? [{ href: '/board', label: t('Board Q&A') }] : []),
   ...(features.trading ? [{ href: '/trading', label: t('Trading') }] : []),
+  ...(employments ? [{ href: '/my-hr', label: t('My HR') }] : []),
   ...(toSign?.length ? [{ href: '/sign', label: t('To sign'), ...(waitingToSign ? { tag: String(waitingToSign) } : {}) }] : []),
   ...(canAdmin ? [{ href: '/admin', label: t('Admin') }] : []),
 ];

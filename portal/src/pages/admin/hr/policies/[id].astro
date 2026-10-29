@@ -1,0 +1,111 @@
+---
+import { randomUUID } from 'node:crypto';
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import HrNav from '../../../../components/HrNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { shortDate } from '../../../../lib/format';
+import { notifyMembers } from '../../../../lib/notify';
+import { hrCompanies } from '../../../../lib/hr';
+
+// Admin → HR → a policy: its text (and an optional file), publishing it (a
+// change after publishing makes a new version everyone accepts again), and
+// who has accepted the current version.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await hrCompanies(svc, access);
+const { data: row } = await svc.from('policies').select('id, entity_id, title, body, file_path, version, status, requires_ack, published_at, ack_due_days').eq('id', Astro.params.id ?? '').maybeSingle();
+let pol = row;
+if (!pol || (pol.entity_id ? !companies.some((c) => c.id === pol!.entity_id) : !access.can('hr.view', null))) return Astro.redirect('/admin/hr/policies');
+const mayDo = pol.entity_id ? access.can('hr.do', pol.entity_id) : access.can('hr.do', null);
+const fileEntity = pol.entity_id ?? (await svc.from('entities').select('id').eq('relationship', 'group').single()).data!.id;
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    const now = new Date().toISOString();
+    if (intent === 'save' || intent === 'publish') {
+      const title = field(form, 'title').slice(0, 200), body = String(form.get('body') ?? '').replace(/\r\n/g, '\n').trim().slice(0, 100_000);
+      let filePath = pol.file_path;
+      const f = form.get('file');
+      if (f instanceof File && f.size) {
+        if (f.size > 25 * 1024 * 1024) throw new Error('The file is larger than 25 MB.');
+        filePath = `${fileEntity}/hr/policies/${pol.id}/${randomUUID()}-${f.name.replace(/[^\p{L}\p{N} ._()-]/gu, '').slice(-120)}`;
+        await svc.storage.from('legal').upload(filePath, new Uint8Array(await f.arrayBuffer()), { contentType: f.type || 'application/octet-stream' });
+      }
+      if (!body && !filePath) throw new Error('Write the policy, or attach it as a file.');
+      const changed = title !== pol.title || body !== pol.body || filePath !== pol.file_path;
+      // A published policy that changes becomes a new version: everyone accepts it again.
+      const version = pol.status === 'published' && changed ? pol.version + 1 : pol.version;
+      const publishing = intent === 'publish' || (pol.status === 'published' && changed);
+      await svc.from('policies').update({
+        title, body, file_path: filePath, version, requires_ack: form.get('requires_ack') === 'on', ack_due_days: Math.max(1, Math.min(90, Number(field(form, 'ack_due_days')) || 14)),
+        ...(publishing ? { status: 'published', published_at: now } : {}), updated_at: now,
+      }).eq('id', pol.id).throwOnError();
+      if (publishing && form.get('requires_ack') === 'on') {
+        let q = svc.from('people').select('user_id, entity_id').not('user_id', 'is', null).neq('status', 'left');
+        if (pol.entity_id) q = q.eq('entity_id', pol.entity_id);
+        const { data: staff } = await q;
+        const users = [...new Set((staff ?? []).map((s) => s.user_id as string))];
+        if (users.length) await notifyMembers({ kind: 'my_hr', userIds: users, origin: Astro.url.origin, link: `/my-hr/policies/${pol.id}`, title: `${version > 1 ? 'Updated policy' : 'New policy'} to read and accept: ${title}`, body: `Please read “${title}” and accept it in My HR.` }).catch(() => 0);
+        ok = `Published${version > pol.version ? ` as version ${version}` : ''}; ${users.length} ${users.length === 1 ? 'person was' : 'people were'} asked to accept it.`;
+      } else ok = publishing ? 'Published.' : 'Saved.';
+      await Astro.locals.supabase.rpc('log_event', { event_action: publishing ? 'admin_published_policy' : 'admin_saved_policy', event_detail: { ...(pol.entity_id ? { entity_id: pol.entity_id } : {}), policy_id: pol.id, version } });
+    } else if (intent === 'archive') {
+      await svc.from('policies').update({ status: 'archived', updated_at: now }).eq('id', pol.id).throwOnError();
+      ok = 'Archived: staff no longer see it.';
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  pol = (await svc.from('policies').select('id, entity_id, title, body, file_path, version, status, requires_ack, published_at, ack_due_days').eq('id', pol.id).single()).data!;
+}
+
+// Who should accept it, and who has (current version).
+let pq = svc.from('people').select('id, full_name, entity_id, user_id').neq('status', 'left').order('full_name');
+if (pol.entity_id) pq = pq.eq('entity_id', pol.entity_id); else pq = pq.in('entity_id', companies.map((c) => c.id));
+const [{ data: staff }, { data: acks }] = await Promise.all([pq, svc.from('policy_acks').select('person_id, acked_at').eq('policy_id', pol.id).eq('version', pol.version)]);
+const ackOf = new Map((acks ?? []).map((a) => [a.person_id, a.acked_at]));
+const accepted = (staff ?? []).filter((s) => ackOf.has(s.id)).length;
+const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+---
+
+<Admin title={`HR · ${pol.title}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/hr/policies" class="hover:text-white">HR · Policies</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{pol.title}</h1>
+    <p class="mt-1 text-sm text-white/55">{pol.entity_id ? nameOf.get(pol.entity_id) : 'The whole group'} · version {pol.version} · {pol.status}{pol.published_at && pol.status === 'published' && ` ${shortDate.format(new Date(pol.published_at))}`}</p>
+  </div>
+  <HrNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
+    <form method="post" enctype="multipart/form-data" class="card grid content-start gap-4">
+      <fieldset disabled={!mayDo} class="contents">
+        <div><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={pol.title} required /></div>
+        <div><label class="label" for="body">Text</label><textarea class="field min-h-[24rem] text-sm leading-relaxed" id="body" name="body">{pol.body}</textarea><p class="mt-1 text-xs text-white/40">Plain text; HR Ask answers staff questions from it. A blank line starts a new paragraph.</p></div>
+        <div><label class="label" for="file">Or as a file (PDF)</label><input class="field !py-1.5 text-sm" type="file" id="file" name="file" accept="application/pdf,.pdf,.docx" />{pol.file_path && <a class="mt-1 block text-xs text-lk-blue hover:underline" href={`/admin/hr/file?path=${encodeURIComponent(pol.file_path)}`}>Open the attached file</a>}</div>
+        <div class="flex flex-wrap items-center gap-4 text-sm"><label class="flex items-center gap-2 text-white/70"><input type="checkbox" name="requires_ack" checked={pol.requires_ack} class="size-4 accent-lk-blue" /> Staff must read and accept it</label><label class="flex items-center gap-2 text-white/70">within <input class="field !w-16 !py-1" name="ack_due_days" value={pol.ack_due_days} inputmode="numeric" aria-label="Days to accept" /> days</label></div>
+        {mayDo && (
+          <div class="flex flex-wrap gap-3">
+            {pol.status === 'draft' && <button class="btn-ghost" name="intent" value="save">Save the draft</button>}
+            <button class="btn-primary" name="intent" value="publish" data-confirm={pol.status === 'published' ? 'Publish the changes as a new version? Everyone accepts it again.' : 'Publish it? Staff are asked to accept it.'}>{pol.status === 'published' ? 'Publish the changes' : 'Publish'}</button>
+            {pol.status === 'published' && <button class="btn-ghost" name="intent" value="archive" formnovalidate>Archive</button>}
+          </div>
+        )}
+      </fieldset>
+    </form>
+    <aside class="card grid content-start gap-2 text-sm">
+      <h2 class="font-display text-lg font-bold">Accepted</h2>
+      <p class="text-white/55">{pol.status === 'published' ? `${accepted} of ${(staff ?? []).length} for version ${pol.version}.` : 'Once it is published.'}</p>
+      {pol.status === 'published' && (staff ?? []).map((s) => <p class="flex justify-between gap-3"><span class="text-white/80">{s.full_name}{!pol!.entity_id && <span class="text-white/40"> · {nameOf.get(s.entity_id)}</span>}</span><span class:list={[ackOf.has(s.id) ? 'text-lk-green' : s.user_id ? 'text-white/45' : 'text-white/30']}>{ackOf.has(s.id) ? shortDate.format(new Date(ackOf.get(s.id)!)) : s.user_id ? 'not yet' : 'not in the portal'}</span></p>)}
+    </aside>
+  </div>
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+</script>

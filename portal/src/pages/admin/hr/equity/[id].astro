@@ -1,0 +1,150 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import HrNav from '../../../../components/HrNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime, shortDate } from '../../../../lib/format';
+import { addDays } from '../../../../lib/legal';
+import { notifyMembers } from '../../../../lib/notify';
+import { EXERCISE_COLUMNS, FREQUENCY, GRANT_COLUMNS, GRANT_STATES, PLAN_COLUMNS, hrCompanies, issueLetter, position, schedule, todayIn, type Exercise, type Grant, type Plan } from '../../../../lib/hr';
+
+// Admin → HR → a grant: its terms and vesting schedule, granting it (with the
+// letter the holder accepts in My HR), the board resolution in Legal,
+// exercises (approved ones put the share issue on the Legal calendar), and
+// cancelling a draft.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await hrCompanies(svc, access);
+const { data: row } = await svc.from('equity_grants').select(GRANT_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
+let g = row as Grant | null;
+const company = g ? companies.find((c) => c.id === g!.entity_id) : null;
+if (!g || !company) return Astro.redirect('/admin/hr/equity');
+const { data: planRow } = await svc.from('equity_plans').select(PLAN_COLUMNS).eq('id', g.plan_id).single();
+const plan = planRow as Plan;
+const mayDo = access.can('hr.do', company.id);
+const userId = Astro.locals.user!.id;
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, grant_id: g!.id, ...detail } });
+const holderUser = async () => (g!.person_id ? ((await svc.from('people').select('user_id').eq('id', g!.person_id).single()).data?.user_id as string | null) : null);
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    const now = new Date().toISOString();
+    if (intent === 'grant') {
+      if (g.status !== 'draft') throw new Error('Only a draft can be granted.');
+      await svc.from('equity_grants').update({ status: 'granted', updated_at: now }).eq('id', g.id).throwOnError();
+      g = { ...g, status: 'granted' };
+      await issueLetter(svc, g, plan, company.legal_name ?? company.display_name, userId);
+      const u = await holderUser();
+      if (u) await notifyMembers({ kind: 'my_hr', userIds: [u], origin: Astro.url.origin, link: `/my-hr/grants/${g.id}`, entityId: company.id, title: `You’ve been granted ${plan.kind}`, body: `${company.display_name} granted you ${new Intl.NumberFormat('en-AU').format(g.number)} ${plan.kind} under the ${plan.name}. Read the letter and accept the grant in My HR.` }).catch(() => 0);
+      await log('admin_granted_equity'); ok = u ? 'Granted. The letter is in their documents and they were asked to accept it.' : 'Granted. The letter is filed; they have no portal account, so record their acceptance yourself.';
+    } else if (intent === 'accepted') {
+      await svc.from('equity_grants').update({ accepted_at: now, updated_at: now }).eq('id', g.id).throwOnError();
+      await log('admin_recorded_grant_acceptance'); ok = 'Recorded as accepted.';
+    } else if (intent === 'cancel') {
+      if (g.status !== 'draft' && g.status !== 'granted') throw new Error('It is already closed.');
+      if (g.status === 'granted' && position(g, ((await svc.from('equity_exercises').select('number, status').eq('grant_id', g.id)).data ?? []) as Exercise[]).exercised > 0) throw new Error('Some were exercised: it can’t be cancelled.');
+      await svc.from('equity_grants').update({ status: 'cancelled', notes: [g.notes, field(form, 'reason')].filter(Boolean).join('\n'), updated_at: now }).eq('id', g.id).throwOnError();
+      await log('admin_cancelled_equity_grant'); ok = 'Cancelled: they return to the pool.';
+    } else if (intent === 'exercise') {
+      const number = Math.round(Number(field(form, 'number').replace(/\D/g, '')));
+      const { data: ex } = await svc.from('equity_exercises').select('number, status').eq('grant_id', g.id);
+      if (!(number > 0) || number > position(g, (ex ?? []) as Exercise[]).exercisable) throw new Error('More than can be exercised now.');
+      await svc.from('equity_exercises').insert({ grant_id: g.id, number, amount_payable: Math.round(number * Number(g.exercise_price) * 100) / 100, requested_by: userId, note: field(form, 'note').slice(0, 1000) }).throwOnError();
+      await log('admin_recorded_exercise', { number }); ok = 'Recorded the request: approve it below once paid.';
+    } else if (intent === 'approve' || intent === 'reject' || intent === 'issued') {
+      const { data: exRow } = await svc.from('equity_exercises').select(EXERCISE_COLUMNS).eq('id', field(form, 'exercise_id')).eq('grant_id', g.id).single();
+      const ex = exRow as Exercise;
+      if (intent === 'approve') {
+        await svc.from('equity_exercises').update({ status: 'approved', decided_by: userId, decided_at: now }).eq('id', ex.id).throwOnError();
+        // Issuing the shares and telling ASIC are company secretary work: on the Legal calendar.
+        await svc.from('legal_obligations').insert({ entity_id: company.id, kind: 'share_issue', due_on: addDays(todayIn(), 28), created_by: userId,
+          title: `Issue ${new Intl.NumberFormat('en-AU').format(ex.number)} shares to ${g.holder_name} (option exercise) and tell ASIC`,
+          detail: `${g.holder_name} exercised ${ex.number} ${plan.kind} under the ${plan.name} (A$${ex.amount_payable} payable). Issue the shares, update the register and lodge Form 484 within 28 days of issue.` });
+      } else if (intent === 'reject') {
+        await svc.from('equity_exercises').update({ status: 'rejected', decided_by: userId, decided_at: now, note: [ex.note, field(form, 'reason')].filter(Boolean).join('\n') }).eq('id', ex.id).throwOnError();
+      } else await svc.from('equity_exercises').update({ status: 'issued', issued_on: todayIn() }).eq('id', ex.id).throwOnError();
+      const u = await holderUser();
+      if (u && intent !== 'issued') await notifyMembers({ kind: 'my_hr', userIds: [u], origin: Astro.url.origin, link: `/my-hr/grants/${g.id}`, entityId: company.id, title: intent === 'approve' ? 'Your exercise was approved' : 'Your exercise request', body: intent === 'approve' ? `${company.display_name} approved exercising ${ex.number} ${plan.kind}; the shares will be issued to you.` : `${company.display_name} couldn’t go ahead with exercising ${ex.number} ${plan.kind}: ${field(form, 'reason') || 'HR will be in touch.'}` }).catch(() => 0);
+      await log(`admin_${intent}_exercise`, { exercise_id: ex.id }); ok = intent === 'approve' ? 'Approved: "issue the shares and tell ASIC" is on the Legal calendar.' : intent === 'issued' ? 'Marked as issued.' : 'Rejected.';
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  g = (await svc.from('equity_grants').select(GRANT_COLUMNS).eq('id', g.id).single()).data as Grant;
+}
+
+const { data: exRows } = await svc.from('equity_exercises').select(EXERCISE_COLUMNS).eq('grant_id', g.id).order('requested_at');
+const exercises = (exRows ?? []) as Exercise[];
+const pos = position(g, exercises);
+const steps = schedule(g);
+const n = (v: number) => new Intl.NumberFormat('en-AU').format(v);
+const day = (s: string | null) => (s ? shortDate.format(new Date(`${s.slice(0, 10)}T12:00:00+10:00`)) : '—');
+const today = todayIn();
+// The resolution in Legal, its fields filled from the grant.
+const legalHref = `/admin/legal/papers/new?${new URLSearchParams({ company: company.code, template: 'issue_options', grant: g.id, holder: g.holder_name, number: String(g.number), exercise: String(g.exercise_price), expiry: g.expiry_date, plan: plan.name, vesting: `${g.vesting_months} months from ${g.vesting_start}${g.cliff_months ? ` with a ${g.cliff_months}-month cliff` : ''}, ${FREQUENCY[g.frequency].toLowerCase()}` })}`;
+---
+
+<Admin title={`HR · ${g.holder_name} · ${plan.name}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/hr/equity" class="hover:text-white">HR · Equity plans</a>{g.person_id && <> · <a href={`/admin/hr/people/${g.person_id}`} class="hover:text-white">{g.holder_name}</a></>}</p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{n(g.number)} {plan.kind} · {g.holder_name}</h1>
+    <p class="mt-1 text-sm text-white/55">{plan.name} · {company.display_name} · {GRANT_STATES[g.status]}{g.accepted_at ? ` · accepted ${day(g.accepted_at)}` : g.status === 'granted' ? ' · not accepted yet' : ''}</p>
+  </div>
+  <HrNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  {g.vesting_stopped_on && <div class="mb-6"><Alert tone="info">Left on {day(g.vesting_stopped_on)}: vesting stopped, {n(pos.forfeited)} lapsed; vested ones may be exercised until {day(g.exercise_by)}.</Alert></div>}
+
+  <div class="mb-6 grid gap-4 sm:grid-cols-4">
+    {[['Vested', pos.vested], ['Not vested yet', pos.unvested], ['Exercised', pos.exercised], ['Can exercise now', pos.exercisable]].map(([l, v]) => <div class="card !p-5"><p class="text-sm text-white/55">{l}</p><p class="mt-1 font-display text-2xl font-bold tabular-nums text-white">{n(v as number)}</p></div>)}
+  </div>
+
+  <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
+    <div class="grid content-start gap-6">
+      <section class="card overflow-x-auto p-0">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Vesting</h2>
+        <p class="px-5 pt-1 text-sm text-white/55">From {day(g.vesting_start)} over {g.vesting_months} months, {FREQUENCY[g.frequency].toLowerCase()}{g.cliff_months ? `, after a ${g.cliff_months}-month cliff` : ''}; exercise price A${Number(g.exercise_price)}; expires {day(g.expiry_date)}.</p>
+        <table class="mt-3 w-full text-sm">
+          <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-2 text-left">On</th><th class="px-5 py-2 text-right">Vested by then</th></tr></thead>
+          <tbody class="divide-y divide-white/5">{steps.map((s) => <tr class:list={[s.on <= today ? 'text-white' : 'text-white/45']}><td class="px-5 py-1.5">{day(s.on)}</td><td class="px-5 py-1.5 text-right tabular-nums">{n(s.total)}</td></tr>)}</tbody>
+        </table>
+      </section>
+      <section class="card grid gap-3">
+        <h2 class="font-display text-lg font-bold">Exercises</h2>
+        {exercises.length ? exercises.map((e) => (
+          <div class="rounded-2xl bg-white/[0.04] p-4 text-sm">
+            <p class="text-white">{n(e.number)} for A${e.amount_payable} · <span class="text-white/60">{e.status}</span></p>
+            <p class="text-xs text-white/45">Asked {dateTime.format(new Date(e.requested_at))}{e.decided_at && ` · decided ${day(e.decided_at)}`}{e.issued_on && ` · issued ${day(e.issued_on)}`}</p>
+            {e.note && <p class="mt-1 whitespace-pre-line text-white/60">{e.note}</p>}
+            {mayDo && e.status === 'requested' && <form method="post" class="mt-2 flex flex-wrap gap-2"><input type="hidden" name="exercise_id" value={e.id} /><input class="field !w-auto grow !py-1.5 text-sm" name="reason" placeholder="Reason (to reject)" aria-label="Reason" /><button class="btn-primary !py-1.5 text-sm" name="intent" value="approve">Approve (paid)</button><button class="btn-ghost !py-1.5 text-sm" name="intent" value="reject">Reject</button></form>}
+            {mayDo && e.status === 'approved' && <form method="post" class="mt-2"><input type="hidden" name="exercise_id" value={e.id} /><button class="btn-ghost !py-1.5 text-sm" name="intent" value="issued">The shares are issued</button></form>}
+          </div>
+        )) : <p class="text-sm text-white/55">None yet.</p>}
+        {mayDo && pos.exercisable > 0 && (
+          <form method="post" class="flex flex-wrap items-end gap-2 text-sm">
+            <div><label class="label" for="ex-n">Record a request to exercise</label><input class="field" id="ex-n" name="number" inputmode="numeric" placeholder={`up to ${n(pos.exercisable)}`} /></div>
+            <input class="field !w-auto grow" name="note" placeholder="Note" aria-label="Note" />
+            <button class="btn-ghost" name="intent" value="exercise">Record</button>
+          </form>
+        )}
+      </section>
+    </div>
+    <aside class="grid content-start gap-6">
+      <section class="card grid gap-3 text-sm">
+        {g.status === 'draft' && mayDo && <form method="post"><button class="btn-primary w-full" name="intent" value="grant" data-confirm="Grant it? The letter is made and the holder is asked to accept it.">Grant it</button></form>}
+        {access.can('legal.do', company.id) && (g.status === 'draft' || g.status === 'granted') && (g.board_paper_id ? <a class="btn-ghost" href={`/admin/legal/papers/${g.board_paper_id}`}>The board resolution</a> : <a class="btn-ghost" href={legalHref}>Prepare the board resolution</a>)}
+        {g.letter_path && <a class="btn-ghost" href={`/admin/hr/file?path=${encodeURIComponent(g.letter_path)}`}>Open the grant letter</a>}
+        {mayDo && g.status === 'granted' && !g.accepted_at && <form method="post"><button class="btn-ghost w-full" name="intent" value="accepted">Record their acceptance</button></form>}
+        {mayDo && (g.status === 'draft' || g.status === 'granted') && <form method="post" class="grid gap-2"><input class="field" name="reason" placeholder="Why (for the record)" aria-label="Why" /><button class="btn-ghost text-lk-red" name="intent" value="cancel" data-confirm="Cancel this grant? It returns to the pool.">Cancel the grant</button></form>}
+      </section>
+    </aside>
+  </div>
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+</script>

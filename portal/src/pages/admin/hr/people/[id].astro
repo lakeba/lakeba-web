@@ -1,0 +1,209 @@
+---
+import { randomUUID } from 'node:crypto';
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import HrNav from '../../../../components/HrNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { fileSize, shortDate } from '../../../../lib/format';
+import { privateReady } from '../../../../lib/legal';
+import {
+  DOC_KINDS, EMPLOYMENT, GRANT_COLUMNS, PERSON_COLUMNS, PERSON_STATES, WHO, addChecklist, hrCompanies, invitePerson, markLeft, openPerson, policiesFor, position, sealPerson, todayIn,
+  type Grant, type Person, type PersonPrivate,
+} from '../../../../lib/hr';
+
+// Admin → HR → a person: their details (private ones sealed, shown on request
+// and logged), the onboarding or leaving checklist, documents, option grants,
+// policies accepted, and portal access.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await hrCompanies(svc, access);
+const { data: row } = await svc.from('people').select(PERSON_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
+let p = row as Person | null;
+const company = p ? companies.find((c) => c.id === p!.entity_id) : null;
+if (!p || !company) return Astro.redirect('/admin/hr');
+const mayDo = access.can('hr.do', company.id);
+const userId = Astro.locals.user!.id;
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, person_id: p!.id, ...detail } });
+let error = '', ok = '';
+let revealed: PersonPrivate | null = null;
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const d = (n: string) => (/^\d{4}-\d{2}-\d{2}$/.test(field(form, n)) ? field(form, n) : null);
+  try {
+    const now = new Date().toISOString();
+    if (intent === 'save') {
+      await svc.from('people').update({
+        full_name: field(form, 'full_name').slice(0, 200) || p.full_name, email: field(form, 'email').toLowerCase() || null, job_title: field(form, 'job_title').slice(0, 200), team: field(form, 'team').slice(0, 100),
+        employment_type: field(form, 'employment_type') in EMPLOYMENT ? field(form, 'employment_type') : p.employment_type, manager_id: field(form, 'manager_id') || null,
+        location: field(form, 'location').slice(0, 200), start_date: d('start_date'), notes: field(form, 'notes').slice(0, 4000), updated_at: now,
+      }).eq('id', p.id).throwOnError();
+      await log('admin_saved_person'); ok = 'Saved.';
+    } else if (intent === 'started') {
+      await svc.from('people').update({ status: 'active', updated_at: now }).eq('id', p.id).throwOnError(); ok = 'Marked as started.';
+    } else if (intent === 'leaving') {
+      const end = d('end_date');
+      if (!end) throw new Error('Choose their last day.');
+      await svc.from('people').update({ status: 'offboarding', end_date: end, updated_at: now }).eq('id', p.id).throwOnError();
+      await addChecklist(svc, { ...p, end_date: end }, 'offboarding');
+      await log('admin_started_offboarding', { end_date: end }); ok = 'Leaving: the checklist is below.';
+    } else if (intent === 'left') {
+      const r = await markLeft(svc, p, userId);
+      await log('admin_marked_person_left'); ok = `Marked as left. Vesting stopped${r.accessRemoved ? ' and portal access removed' : '; they keep portal access for their other roles or holdings'}.`;
+    } else if (intent === 'invite') {
+      await invitePerson(svc, p, Astro.url.origin, userId);
+      await log('admin_invited_person'); ok = 'Invited: they have My HR in the portal and got an email.';
+    } else if (intent === 'task') {
+      const done = form.get('done') === '1';
+      await svc.from('person_tasks').update({ done_at: done ? now : null, done_by: done ? userId : null }).eq('id', field(form, 'task_id')).eq('person_id', p.id).throwOnError();
+    } else if (intent === 'doc-add') {
+      const f = form.get('file');
+      if (!(f instanceof File) || !f.size) throw new Error('Choose the file.');
+      if (f.size > 25 * 1024 * 1024) throw new Error('The file is larger than 25 MB.');
+      const path = `${company.id}/hr/people/${p.id}/${randomUUID()}-${f.name.replace(/[^\p{L}\p{N} ._()-]/gu, '').slice(-120)}`;
+      const { error: up } = await svc.storage.from('legal').upload(path, new Uint8Array(await f.arrayBuffer()), { contentType: f.type || 'application/octet-stream' });
+      if (up) throw new Error('The file could not be stored.');
+      await svc.from('person_documents').insert({ person_id: p.id, title: field(form, 'title').slice(0, 200) || f.name, kind: field(form, 'kind') in DOC_KINDS ? field(form, 'kind') : 'other', file_path: path, file_name: f.name.slice(0, 200), size_bytes: f.size, visible_to_employee: form.get('visible') === 'on', created_by: userId }).throwOnError();
+      await log('admin_added_person_document'); ok = 'Filed.';
+    } else if (intent === 'doc-visible' || intent === 'doc-delete') {
+      const { data: doc } = await svc.from('person_documents').select('id, file_path, visible_to_employee').eq('id', field(form, 'doc_id')).eq('person_id', p.id).single();
+      if (intent === 'doc-visible') await svc.from('person_documents').update({ visible_to_employee: !doc!.visible_to_employee }).eq('id', doc!.id);
+      else { await svc.storage.from('legal').remove([doc!.file_path]); await svc.from('person_documents').delete().eq('id', doc!.id); }
+      await log(`admin_${intent.replace('-', '_')}_person_document`);
+    } else if (intent === 'private-show' || intent === 'private-save') {
+      if (!privateReady()) throw new Error('Private details can’t be kept on this server yet (its key is missing).');
+      if (intent === 'private-save') {
+        await svc.from('people').update({ private_sealed: sealPerson({ date_of_birth: field(form, 'date_of_birth'), home_address: field(form, 'home_address'), phone: field(form, 'phone'), emergency_contact: field(form, 'emergency_contact') }), updated_at: now }).eq('id', p.id).throwOnError();
+        await log('admin_updated_person_private'); ok = 'Saved their private details.';
+      } else { revealed = openPerson(p.private_sealed); await log('admin_viewed_person_private'); }
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  p = (await svc.from('people').select(PERSON_COLUMNS).eq('id', p.id).single()).data as Person;
+}
+
+const [{ data: tasks }, { data: docs }, { data: grantRows }, { data: colleagues }, policies, { data: acks }] = await Promise.all([
+  svc.from('person_tasks').select('id, kind, title, who, due_on, done_at').eq('person_id', p.id).order('kind').order('sort'),
+  svc.from('person_documents').select('id, title, kind, file_path, file_name, size_bytes, visible_to_employee, created_at').eq('person_id', p.id).order('created_at', { ascending: false }),
+  svc.from('equity_grants').select(`${GRANT_COLUMNS}, equity_plans(name), equity_exercises(number, status)`).eq('person_id', p.id).order('grant_date'),
+  svc.from('people').select('id, full_name').eq('entity_id', company.id).neq('id', p.id).neq('status', 'left').order('full_name'),
+  policiesFor(svc, company.id),
+  svc.from('policy_acks').select('policy_id, version, acked_at').eq('person_id', p.id),
+]);
+const grants = (grantRows ?? []) as unknown as (Grant & { equity_plans: { name: string } | null; equity_exercises: { number: number; status: 'requested' | 'approved' | 'issued' | 'rejected' }[] })[];
+const toAck = policies.filter((x) => x.requires_ack);
+const ackOf = (id: string, v: number) => (acks ?? []).find((a) => a.policy_id === id && a.version === v);
+const day = (s: string | null | undefined) => (s ? shortDate.format(new Date(`${s.slice(0, 10)}T12:00:00+10:00`)) : '—');
+const n = (v: number) => new Intl.NumberFormat('en-AU').format(v);
+const today = todayIn();
+const checklist = (kind: 'onboarding' | 'offboarding') => (tasks ?? []).filter((t) => t.kind === kind);
+---
+
+<Admin title={`HR · ${p.full_name}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/hr" class="hover:text-white">HR · People</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{p.full_name}</h1>
+    <p class="mt-1 text-sm text-white/55">{company.display_name} · {p.job_title || EMPLOYMENT[p.employment_type]} · {PERSON_STATES[p.status]}{p.start_date && ` · started ${day(p.start_date)}`}{p.end_date && ` · last day ${day(p.end_date)}`}{p.user_id && p.status !== 'left' ? ' · in the portal' : ''}</p>
+  </div>
+  <HrNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
+    <div class="grid content-start gap-6">
+      {(['onboarding', 'offboarding'] as const).filter((k) => checklist(k).length).reverse().map((k) => (
+        <section class="card p-0">
+          <h2 class="px-5 pt-5 font-display text-lg font-bold">{k === 'onboarding' ? 'Starting' : 'Leaving'} <span class="text-sm font-normal text-white/45">{checklist(k).filter((t) => t.done_at).length} of {checklist(k).length} done</span></h2>
+          <ul class="mt-2 divide-y divide-white/5">
+            {checklist(k).map((t) => (
+              <li class="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5 text-sm">
+                <form method="post" class="flex items-center gap-3"><input type="hidden" name="task_id" value={t.id} /><input type="hidden" name="done" value={t.done_at ? '0' : '1'} />
+                  <button class:list={['grid size-5 place-items-center rounded border', t.done_at ? 'border-lk-green bg-lk-green/20 text-lk-green' : 'border-white/25']} name="intent" value="task" disabled={!mayDo} aria-label={t.done_at ? 'Mark not done' : 'Mark done'}>{t.done_at ? '✓' : ''}</button>
+                  <span class:list={[t.done_at ? 'text-white/45 line-through' : 'text-white/85']}>{t.title}</span></form>
+                <span class:list={['text-xs', !t.done_at && t.due_on && t.due_on < today ? 'text-lk-red' : 'text-white/45']}>{WHO[t.who as keyof typeof WHO]}{t.due_on && ` · ${day(t.due_on)}`}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+
+      <form method="post" class="card grid gap-3 sm:grid-cols-2">
+        <fieldset disabled={!mayDo} class="contents">
+          <h2 class="font-display text-lg font-bold sm:col-span-2">Details</h2>
+          <div><label class="label" for="full_name">Full name</label><input class="field" id="full_name" name="full_name" value={p.full_name} /></div>
+          <div><label class="label" for="email">Work email</label><input class="field" type="email" id="email" name="email" value={p.email ?? ''} /></div>
+          <div><label class="label" for="job_title">Role</label><input class="field" id="job_title" name="job_title" value={p.job_title} /></div>
+          <div><label class="label" for="team">Team</label><input class="field" id="team" name="team" value={p.team} /></div>
+          <div><label class="label" for="employment_type">Employment</label><select class="field" id="employment_type" name="employment_type">{Object.entries(EMPLOYMENT).map(([k, l]) => <option value={k} selected={k === p!.employment_type}>{l}</option>)}</select></div>
+          <div><label class="label" for="manager_id">Manager</label><select class="field" id="manager_id" name="manager_id"><option value="">—</option>{(colleagues ?? []).map((c) => <option value={c.id} selected={c.id === p!.manager_id}>{c.full_name}</option>)}</select></div>
+          <div><label class="label" for="location">Location</label><input class="field" id="location" name="location" value={p.location} /></div>
+          <div><label class="label" for="start_date">Started</label><input class="field" type="date" id="start_date" name="start_date" value={p.start_date ?? ''} /></div>
+          <div class="sm:col-span-2"><label class="label" for="notes">Notes</label><textarea class="field min-h-16" id="notes" name="notes">{p.notes}</textarea></div>
+          {mayDo && <div class="sm:col-span-2"><button class="btn-ghost" name="intent" value="save">Save</button></div>}
+        </fieldset>
+      </form>
+
+      <section class="card p-0">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Documents</h2>
+        {(docs ?? []).length ? (
+          <ul class="mt-2 divide-y divide-white/5 text-sm">{(docs ?? []).map((doc) => (
+            <li class="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5">
+              <span><a class="text-lk-blue hover:underline" href={`/admin/hr/file?path=${encodeURIComponent(doc.file_path)}`}>{doc.title}</a><span class="block text-xs text-white/45">{DOC_KINDS[doc.kind as keyof typeof DOC_KINDS]} · {fileSize(doc.size_bytes)} · {day(doc.created_at)} · {doc.visible_to_employee ? 'they see it' : 'HR only'}</span></span>
+              {mayDo && <form method="post" class="flex gap-2"><input type="hidden" name="doc_id" value={doc.id} /><button class="btn-ghost !px-2 !py-1 text-xs" name="intent" value="doc-visible">{doc.visible_to_employee ? 'Hide from them' : 'Show to them'}</button><button class="btn-ghost !px-2 !py-1 text-xs text-lk-red" name="intent" value="doc-delete">Delete</button></form>}
+            </li>
+          ))}</ul>
+        ) : <p class="px-5 pt-2 text-sm text-white/55">None yet.</p>}
+        {mayDo && (
+          <form method="post" enctype="multipart/form-data" class="grid gap-2 border-t border-white/5 p-5 sm:grid-cols-[1fr_9rem]">
+            <input class="field !py-1.5 text-sm" type="file" name="file" required aria-label="File" />
+            <select class="field !py-1.5 text-sm" name="kind" aria-label="Kind">{Object.entries(DOC_KINDS).map(([k, l]) => <option value={k}>{l}</option>)}</select>
+            <input class="field !py-1.5 text-sm" name="title" placeholder="Title (optional)" aria-label="Title" />
+            <label class="flex items-center gap-2 text-sm text-white/65"><input type="checkbox" name="visible" class="size-4 accent-lk-blue" /> They see it</label>
+            <div><button class="btn-ghost !py-1.5 text-sm" name="intent" value="doc-add">File it</button></div>
+          </form>
+        )}
+      </section>
+    </div>
+
+    <aside class="grid content-start gap-6">
+      {mayDo && (
+        <section class="card grid gap-3 text-sm">
+          <h2 class="font-display text-lg font-bold">Where they stand</h2>
+          {p.status === 'onboarding' && <form method="post"><button class="btn-ghost w-full" name="intent" value="started">They've started</button></form>}
+          {!p.user_id && p.status !== 'left' && <form method="post"><button class="btn-primary w-full" name="intent" value="invite" disabled={!p.email}>Invite to the portal (My HR)</button>{!p.email && <p class="mt-1 text-xs text-white/45">Add their email first.</p>}</form>}
+          {(p.status === 'active' || p.status === 'onboarding') && <form method="post" class="grid gap-2"><label class="label !mb-0" for="end_date">Leaving: last day</label><input class="field" type="date" id="end_date" name="end_date" required /><button class="btn-ghost" name="intent" value="leaving">Start the leaving checklist</button></form>}
+          {p.status === 'offboarding' && <form method="post"><button class="btn-ghost w-full text-lk-red" name="intent" value="left" data-confirm="Mark them as left? Vesting stops on their last day and their portal access ends.">They've left</button></form>}
+        </section>
+      )}
+      <section class="card grid gap-2 text-sm">
+        <h2 class="font-display text-lg font-bold">Option grants</h2>
+        {grants.length ? grants.map((g) => { const pos = position(g, g.equity_exercises); return <a class="rounded-xl bg-white/[0.04] p-3 hover:bg-white/[0.07]" href={`/admin/hr/equity/${g.id}`}><span class="text-white">{n(g.number)} · {g.equity_plans?.name}</span><span class="block text-xs text-white/50">{g.status === 'granted' ? `${n(pos.vested)} vested · ${n(pos.exercisable)} exercisable${g.accepted_at ? '' : ' · not accepted yet'}` : g.status}</span></a>; }) : <p class="text-white/55">None.</p>}
+        {mayDo && <a class="btn-ghost mt-1" href={`/admin/hr/equity?person=${p.id}#new-grant`}>Grant options</a>}
+      </section>
+      <section class="card grid gap-2 text-sm">
+        <h2 class="font-display text-lg font-bold">Policies</h2>
+        {toAck.length ? toAck.map((x) => { const a = ackOf(x.id, x.version); return <p class="flex justify-between gap-3"><span class="text-white/75">{x.title}</span><span class:list={[a ? 'text-lk-green' : 'text-white/45']}>{a ? `accepted ${day(a.acked_at)}` : 'not yet'}</span></p>; }) : <p class="text-white/55">No policies to accept.</p>}
+      </section>
+      <section class="card grid gap-3 text-sm">
+        <h2 class="font-display text-lg font-bold">Private details</h2>
+        <p class="text-xs text-white/45">Date of birth, home address, phone, emergency contact. Kept encrypted; each look is in the audit log. Pay, tax and bank details belong in payroll.</p>
+        {revealed ? (
+          <form method="post" class="grid gap-2">
+            <input class="field" type="date" name="date_of_birth" value={revealed.date_of_birth ?? ''} aria-label="Date of birth" autocomplete="off" />
+            <input class="field" name="home_address" value={revealed.home_address ?? ''} placeholder="Home address" aria-label="Home address" autocomplete="off" />
+            <input class="field" name="phone" value={revealed.phone ?? ''} placeholder="Phone" aria-label="Phone" autocomplete="off" />
+            <input class="field" name="emergency_contact" value={revealed.emergency_contact ?? ''} placeholder="Emergency contact (name, phone)" aria-label="Emergency contact" autocomplete="off" />
+            <button class="btn-ghost" name="intent" value="private-save">Save</button>
+          </form>
+        ) : mayDo ? <form method="post"><button class="btn-ghost w-full" name="intent" value="private-show">{p.private_sealed ? 'Show and edit' : 'Add them'}</button></form> : <p class="text-white/45">Only people who can change HR records see them.</p>}
+      </section>
+    </aside>
+  </div>
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+</script>

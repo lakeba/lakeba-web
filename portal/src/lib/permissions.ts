@@ -24,6 +24,7 @@ export const AREAS: Area[] = [
   { key: 'legal', label: 'Legal and company secretary', description: 'Company records, officers registers and the deadlines calendar. Lakeba only for now.', levels: ['view', 'do', 'approve'], menu: ['/admin/legal'], groupOnly: true },
   { key: 'reporting', label: 'Reporting packs', description: 'Sending a company’s profit and loss and balance sheet to Lakeba, and answering its questions.', levels: ['view', 'do'], menu: ['/admin/reporting'] },
   { key: 'accounting', label: 'Accounting (Lakeba)', description: 'Reporting schedules, reviewing the ventures’ packs, the group view. Lakeba only.', levels: ['view', 'do', 'approve'], menu: ['/admin/accounting'], groupOnly: true },
+  { key: 'hr', label: 'HR', description: 'People, onboarding and leaving, equity plans and grants, policies, employee documents.', levels: ['view', 'do', 'approve'], menu: ['/admin/hr'] },
   { key: 'capital', label: 'Ventures, prices and trading', description: 'Ventures and reference prices, the secondary trading board.', levels: ['view', 'do', 'approve'], menu: ['/admin/ventures', '/admin/trading'] },
   { key: 'audit', label: 'Audit log', description: 'Who did what, when. “Do” allows deleting entries.', levels: ['view', 'do'], menu: ['/admin/audit'], groupOnly: true },
   { key: 'users', label: 'Users and roles', description: 'Giving and taking roles, custom roles and their permissions.', levels: ['view', 'do'], menu: ['/admin/system'], groupOnly: true },
@@ -40,6 +41,7 @@ export const BUILT_IN_ROLES: { key: string; name: string; description: string; p
   { key: 'marketing', name: 'Marketing', description: 'Prepares news, press releases, newsletters and the LinkedIn campaign; approvers publish.', permissions: P({ news: 'vd', press: 'vd', newsletters: 'vd' }) },
   { key: 'legal', name: 'Legal', description: 'Company secretary work (company records, officers, deadlines); reviews and approves documents, press releases and meeting materials; sees the register and the audit log.', permissions: P({ investors: 'v', documents: 'va', news: 'v', press: 'va', inbox: 'v', ask: 'v', meetings: 'va', legal: 'vda', capital: 'v', audit: 'v' }) },
   { key: 'finance', name: 'Finance', description: 'Does a company’s books: sends its reporting packs (profit and loss, balance sheet) and answers Lakeba’s questions about them.', permissions: P({ reporting: 'vd' }) },
+  { key: 'hr', name: 'HR', description: 'Looks after a company’s people: employees, onboarding and leaving, equity grants, policies and employee documents.', permissions: P({ hr: 'vda' }) },
   { key: 'compliance', name: 'Compliance', description: 'Approves newsletters and secondary trades; sees the register, communications and the audit log.', permissions: P({ investors: 'v', documents: 'v', press: 'v', newsletters: 'va', inbox: 'v', ask: 'v', meetings: 'v', legal: 'v', accounting: 'v', capital: 'va', audit: 'v', users: 'v' }) },
 ];
 

@@ -1,0 +1,86 @@
+---
+import Portal from '../../../layouts/Portal.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { shortDate } from '../../../lib/format';
+import { notifyMembers } from '../../../lib/notify';
+import { EXERCISE_COLUMNS, FREQUENCY, GRANT_COLUMNS, hrTeam, myRecords, position, schedule, todayIn, type Exercise, type Grant } from '../../../lib/hr';
+
+// An employee's option grant: the letter, accepting it, the vesting schedule,
+// and asking to exercise vested options.
+const svc = serviceClient();
+const records = await myRecords(svc, Astro.locals.user!.id);
+const { data: row } = await svc.from('equity_grants').select(`${GRANT_COLUMNS}, equity_plans(name, kind)`).eq('id', Astro.params.id ?? '').in('person_id', records.map((r) => r.id).concat('00000000-0000-0000-0000-000000000000')).in('status', ['granted', 'lapsed']).maybeSingle();
+if (!row) return Astro.redirect('/my-hr');
+let g = row as unknown as Grant & { equity_plans: { name: string; kind: string } | null };
+const plan = g.equity_plans!;
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    if (field(form, 'intent') === 'accept') {
+      if (g.accepted_at) throw new Error('Already accepted.');
+      await svc.from('equity_grants').update({ accepted_at: new Date().toISOString() }).eq('id', g.id).throwOnError();
+      await notifyMembers({ kind: 'hr', userIds: await hrTeam(svc, g.entity_id), origin: Astro.url.origin, link: `/admin/hr/equity/${g.id}`, title: `${g.holder_name} accepted their grant`, body: `${g.holder_name} accepted ${g.number} ${plan.kind} under the ${plan.name}.` }).catch(() => 0);
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'accepted_equity_grant', event_detail: { entity_id: g.entity_id, grant_id: g.id } });
+      ok = 'Accepted.';
+    } else {
+      const number = Math.round(Number(field(form, 'number').replace(/\D/g, '')));
+      const { data: ex } = await svc.from('equity_exercises').select('number, status').eq('grant_id', g.id);
+      if (!g.accepted_at) throw new Error('Accept the grant first.');
+      if (!(number > 0) || number > position(g, (ex ?? []) as Exercise[]).exercisable) throw new Error('That’s more than you can exercise now.');
+      const amount = Math.round(number * Number(g.exercise_price) * 100) / 100;
+      await svc.from('equity_exercises').insert({ grant_id: g.id, number, amount_payable: amount, requested_by: Astro.locals.user!.id }).throwOnError();
+      await notifyMembers({ kind: 'hr', userIds: await hrTeam(svc, g.entity_id), origin: Astro.url.origin, link: `/admin/hr/equity/${g.id}`, title: `${g.holder_name} asked to exercise ${number} ${plan.kind}`, body: `${g.holder_name} asked to exercise ${number} ${plan.kind} under the ${plan.name} (A$${amount} payable). Approve it once paid.` }).catch(() => 0);
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'requested_exercise', event_detail: { entity_id: g.entity_id, grant_id: g.id, number } });
+      ok = `Sent to HR. They’ll tell you how to pay A$${amount}; the shares are issued once it is paid.`;
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  g = { ...((await svc.from('equity_grants').select(GRANT_COLUMNS).eq('id', g.id).single()).data as Grant), equity_plans: g.equity_plans };
+}
+const { data: exRows } = await svc.from('equity_exercises').select(EXERCISE_COLUMNS).eq('grant_id', g.id).order('requested_at');
+const exercises = (exRows ?? []) as Exercise[];
+const pos = position(g, exercises);
+const n = (v: number) => new Intl.NumberFormat('en-AU').format(v);
+const day = (s: string | null) => (s ? shortDate.format(new Date(`${s.slice(0, 10)}T12:00:00+10:00`)) : '—');
+const today = todayIn();
+---
+
+<Portal title={`${plan.name}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/my-hr" class="hover:text-white">My HR</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{n(g.number)} {plan.kind} · {plan.name}</h1>
+    <p class="mt-1 text-sm text-white/55">Granted {day(g.grant_date)} · exercise price A${Number(g.exercise_price)} · expires {day(g.expiry_date)}{g.status === 'lapsed' && ' · lapsed'}</p>
+  </div>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  {g.vesting_stopped_on && <div class="mb-6"><Alert tone="info">Vesting stopped when you left on {day(g.vesting_stopped_on)}. You may exercise vested {plan.kind} until {day(g.exercise_by)}.</Alert></div>}
+  <div class="mb-6 grid gap-4 sm:grid-cols-3">
+    {[['Vested', pos.vested], ['Still to vest', pos.unvested], ['You can exercise now', pos.exercisable]].map(([l, v]) => <div class="card !p-5"><p class="text-sm text-white/55">{l}</p><p class="mt-1 font-display text-2xl font-bold tabular-nums">{n(v as number)}</p></div>)}
+  </div>
+  <div class="grid gap-6 lg:grid-cols-2">
+    <section class="card grid content-start gap-3 text-sm">
+      {g.letter_path && <a class="btn-ghost" href={`/my-hr/file?path=${encodeURIComponent(g.letter_path)}`} target="_blank">Read the grant letter</a>}
+      {!g.accepted_at && g.status === 'granted' ? (
+        <form method="post" class="grid gap-3"><label class="flex items-start gap-3 text-white/75"><input type="checkbox" required class="mt-0.5 size-4 accent-lk-blue" /> I have read the grant letter and the plan rules and accept the grant.</label><button class="btn-primary" name="intent" value="accept">Accept the grant</button></form>
+      ) : g.accepted_at && <p class="text-lk-green">You accepted it on {day(g.accepted_at)}.</p>}
+      {pos.exercisable > 0 && g.accepted_at && (
+        <form method="post" class="grid gap-2 border-t border-white/10 pt-3">
+          <label class="label" for="number">Exercise (up to {n(pos.exercisable)}, A${Number(g.exercise_price)} each)</label>
+          <div class="flex gap-2"><input class="field" id="number" name="number" inputmode="numeric" required /><button class="btn-ghost" name="intent" value="exercise">Ask to exercise</button></div>
+          <p class="text-xs text-white/45">HR confirms and tells you how to pay; the shares are issued once paid. Consider getting tax advice first.</p>
+        </form>
+      )}
+      {exercises.length > 0 && <div class="border-t border-white/10 pt-3"><p class="font-medium text-white">Your exercises</p>{exercises.map((e) => <p class="mt-1 text-white/65">{n(e.number)} · {e.status}{e.issued_on && ` ${day(e.issued_on)}`}</p>)}</div>}
+    </section>
+    <section class="card overflow-x-auto p-0">
+      <h2 class="px-5 pt-5 font-display text-lg font-bold">Vesting</h2>
+      <p class="px-5 pt-1 text-sm text-white/55">From {day(g.vesting_start)} over {g.vesting_months} months, {FREQUENCY[g.frequency].toLowerCase()}{g.cliff_months ? `, after a ${g.cliff_months}-month cliff` : ''}.</p>
+      <table class="mt-3 w-full text-sm"><tbody class="divide-y divide-white/5">{schedule(g).map((s) => <tr class:list={[s.on <= today ? 'text-white' : 'text-white/45']}><td class="px-5 py-1.5">{day(s.on)}</td><td class="px-5 py-1.5 text-right tabular-nums">{n(s.total)}</td></tr>)}</tbody></table>
+    </section>
+  </div>
+</Portal>

@@ -1,0 +1,47 @@
+---
+import Portal from '../../../layouts/Portal.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { shortDate } from '../../../lib/format';
+import { myRecords, policiesFor } from '../../../lib/hr';
+
+// A policy for an employee to read and accept (the current version).
+const svc = serviceClient();
+const records = (await myRecords(svc, Astro.locals.user!.id)).filter((r) => r.status !== 'left');
+const mine = [];
+for (const r of records) if ((await policiesFor(svc, r.entity_id)).some((p) => p.id === Astro.params.id)) mine.push(r);
+const pol = mine.length ? (await policiesFor(svc, mine[0].entity_id)).find((p) => p.id === Astro.params.id)! : null;
+if (!pol) return Astro.redirect('/my-hr');
+let ok = '';
+if (Astro.request.method === 'POST' && pol.requires_ack) {
+  // Accepted for each employment it applies to.
+  await svc.from('policy_acks').upsert(mine.map((r) => ({ policy_id: pol.id, version: pol.version, person_id: r.id })), { onConflict: 'policy_id,version,person_id', ignoreDuplicates: true });
+  await Astro.locals.supabase.rpc('log_event', { event_action: 'accepted_policy', event_detail: { ...(pol.entity_id ? { entity_id: pol.entity_id } : {}), policy_id: pol.id, version: pol.version } });
+  await svc.from('person_tasks').update({ done_at: new Date().toISOString(), done_by: Astro.locals.user!.id }).in('person_id', mine.map((r) => r.id)).eq('kind', 'onboarding').like('title', 'Company policies read%').is('done_at', null);
+  ok = 'Accepted. Thank you.';
+}
+const { data: ack } = await svc.from('policy_acks').select('acked_at').eq('policy_id', pol.id).eq('version', pol.version).in('person_id', mine.map((r) => r.id)).limit(1);
+---
+
+<Portal title={pol.title}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/my-hr" class="hover:text-white">My HR</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{pol.title}</h1>
+    <p class="mt-1 text-sm text-white/55">Version {pol.version} · published {shortDate.format(new Date(pol.published_at))}</p>
+  </div>
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  <article class="card max-w-3xl">
+    {pol.body && <div class="whitespace-pre-line text-sm leading-relaxed text-white/85">{pol.body}</div>}
+    {pol.file_path && <p class:list={[pol.body && 'mt-4']}><a class="btn-ghost" href={`/my-hr/file?path=${encodeURIComponent(pol.file_path)}`} target="_blank">Open the policy (file)</a></p>}
+  </article>
+  {pol.requires_ack && (
+    <div class="mt-6 max-w-3xl">
+      {ack?.length ? <p class="text-sm text-lk-green">You accepted this version on {shortDate.format(new Date(ack[0].acked_at))}.</p> : (
+        <form method="post" class="card flex flex-wrap items-center justify-between gap-3">
+          <label class="flex items-start gap-3 text-sm text-white/75"><input type="checkbox" required class="mt-0.5 size-4 accent-lk-blue" /> I have read and understood this policy and will follow it.</label>
+          <button class="btn-primary">Accept</button>
+        </form>
+      )}
+    </div>
+  )}
+</Portal>

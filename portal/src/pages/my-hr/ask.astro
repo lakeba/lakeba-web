@@ -1,0 +1,54 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import Alert from '../../components/Alert.astro';
+import { serviceClient } from '../../lib/admin';
+import { field } from '../../lib/forms';
+import { dateTime } from '../../lib/format';
+import { askHr, myRecords } from '../../lib/hr';
+
+// HR Ask: an employee's questions answered from their employer's published
+// policies only (never anyone's personal records), with the policy cited.
+const svc = serviceClient();
+const userId = Astro.locals.user!.id;
+const records = (await myRecords(svc, userId)).filter((r) => r.status !== 'left');
+if (!records.length) return Astro.redirect('/');
+let error = '', asked = '';
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  asked = field(form, 'question').slice(0, 1000);
+  try {
+    if (asked.length < 5) throw new Error('Ask a question.');
+    const r = await askHr(svc, records.map((x) => x.entity_id), asked);
+    await svc.from('hr_ask_log').insert({ user_id: userId, question: asked, answer: r.answer, sources: r.sources, cost_usd: r.costUsd }).throwOnError();
+    return Astro.redirect('/my-hr/ask#latest');
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+const { data: rows } = await svc.from('hr_ask_log').select('id, question, answer, sources, created_at').eq('user_id', userId).order('created_at', { ascending: false }).limit(10);
+const history = (rows ?? []).reverse() as { id: string; question: string; answer: string; sources: { ref: string; id: string; title: string }[]; created_at: string }[];
+---
+
+<Portal title="Ask about a policy">
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/my-hr" class="hover:text-white">My HR</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">Ask about a policy</h1>
+    <p class="mt-1 max-w-2xl text-sm text-white/55">Answers come only from your employer's published policies, with the policy named. For anything about you personally (pay, leave balance, your contract), ask HR.</p>
+  </div>
+  <div class="grid max-w-3xl gap-4">
+    {history.map((h, i) => (
+      <article class="card !p-5" id={i === history.length - 1 ? 'latest' : undefined}>
+        <p class="text-xs text-white/45">{dateTime.format(new Date(h.created_at))}</p>
+        <p class="mt-1 font-medium text-white">{h.question}</p>
+        <p class="mt-3 whitespace-pre-line text-sm leading-relaxed text-white/80">{h.answer}</p>
+        {h.sources.length > 0 && <p class="mt-3 flex flex-wrap gap-2 text-xs">{h.sources.map((s) => <a class="rounded-full bg-white/10 px-2.5 py-1 text-white/70 hover:text-white" href={`/my-hr/policies/${s.id}`}>{s.ref} · {s.title}</a>)}</p>}
+      </article>
+    ))}
+    {error && <Alert tone="error">{error}</Alert>}
+    <form method="post" class="card grid gap-3">
+      <label class="label" for="question">Your question</label>
+      <textarea class="field min-h-20" id="question" name="question" required placeholder="e.g. How much notice do I give for annual leave?">{asked}</textarea>
+      <div><button class="btn-primary">Ask</button></div>
+    </form>
+  </div>
+</Portal>

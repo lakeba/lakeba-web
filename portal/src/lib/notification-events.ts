@@ -22,6 +22,7 @@ export const CATEGORIES: Category[] = [
   { key: 'holdings', audience: 'investor', label: 'Your holdings', description: 'A new holding statement is ready, or a note was added to one of your holdings.', email: true, push: true, kinds: ['holding_note', 'statement_ready'] },
   { key: 'trading', audience: 'investor', label: 'Secondary trading', description: 'Your interest to buy or sell shares was matched, completed or cancelled.', email: true, push: true, kinds: ['trade'] },
   { key: 'signing', audience: 'investor', label: 'Documents to sign', description: 'A directors’ resolution or minutes are waiting for your signature (the email always comes).', email: false, push: true, kinds: ['board_sign'] },
+  { key: 'my_hr', audience: 'investor', label: 'My HR', description: 'Policies to accept, option grants, documents and requests from your employer.', email: true, push: true, kinds: ['my_hr'] },
   { key: 'newsletter', audience: 'investor', label: 'Quarterly newsletter', description: 'The company’s quarterly newsletter for shareholders, by email.', email: true, push: false, emailOnly: true, kinds: ['newsletter'] },
   { key: 'digest', audience: 'investor', label: 'Weekly digest', description: 'One email each Monday with the week’s new documents, news and holding updates, instead of a separate email for each.', email: false, push: false, emailOnly: true, kinds: ['digest'] },
   { key: 'security', audience: 'investor', label: 'Account security', description: 'A passkey was added or removed, your password changed, or two-step verification changed.', email: true, push: true, locked: true, kinds: ['security'] },
@@ -37,6 +38,7 @@ export const CATEGORIES: Category[] = [
   { key: 'admin_legal', audience: 'admin', label: 'Legal deadlines', description: 'Each morning, what is overdue or due soon (in 30, 7 and 1 days) for the companies you look after as Legal.', email: true, push: true, kinds: ['admin_legal'] },
   { key: 'legal_requests', audience: 'admin', label: 'Legal requests', description: 'A legal request was sent, answered or changed.', email: true, push: true, kinds: ['legal_request'] },
   { key: 'reporting', audience: 'admin', label: 'Reporting packs', description: 'A reporting pack is due, overdue, sent, accepted or has a question.', email: true, push: true, kinds: ['reporting'] },
+  { key: 'hr', audience: 'admin', label: 'HR', description: 'An employee accepted a grant, asked to exercise options, or a checklist needs a look.', email: true, push: true, kinds: ['hr'] },
   { key: 'admin_setup', audience: 'admin', label: 'Venture set-up', description: 'A venture’s own address or email finished a set-up step, or a venture asked Lakeba for help with it.', email: true, push: true, kinds: ['admin_setup'] },
   { key: 'admin_integrations', audience: 'admin', label: 'Integrations', description: 'An integration needs a look: a webhook was switched off, something received waits for review, or a HubSpot or Xero connection has a problem.', email: true, push: true, kinds: ['admin_integrations'] },
   { key: 'admin_security', audience: 'admin', label: 'Admin security', description: 'An admin account signed in from a new device, or someone’s two-step was reset.', email: true, push: true, locked: true, kinds: ['admin_security'] },
@@ -76,6 +78,8 @@ export function pushText(kind: string, brand: string, detail?: string): { title:
     case 'board_sign': return { title: 'A document is waiting for your signature', body: open };
     case 'legal_request': return { title: 'Legal request: an update', body: open };
     case 'reporting': return { title: 'Reporting packs: an update', body: open };
+    case 'my_hr': return { title: 'My HR: something for you', body: open };
+    case 'hr': return { title: 'HR: an update', body: open };
     case 'admin_legal': return { title: 'Legal: deadlines to look at', body: open };
     case 'admin_setup': return { title: 'Venture set-up: an update', body: open };
     case 'admin_integrations': return { title: 'Integrations: something needs a look', body: open };

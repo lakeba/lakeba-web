@@ -1,0 +1,96 @@
+---
+import Admin from '../../../layouts/Admin.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import Empty from '../../../components/Empty.astro';
+import HrNav from '../../../components/HrNav.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { shortDate } from '../../../lib/format';
+import { EMPLOYMENT, PERSON_STATES, addChecklist, hrCompanies, type Person } from '../../../lib/hr';
+
+// Admin → HR: the people of the companies this person looks after, and adding
+// someone who is starting (their onboarding checklist comes with them).
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await hrCompanies(svc, access);
+const doCompanies = companies.filter((c) => access.can('hr.do', c.id));
+const q = Astro.url.searchParams;
+const pick = companies.find((c) => c.code === q.get('company')?.toUpperCase()) ?? null;
+const show = ['current', 'left', 'all'].includes(q.get('show') ?? '') ? q.get('show')! : 'current';
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    const company = doCompanies.find((c) => c.id === field(form, 'entity_id'));
+    if (!company) throw new Error('Choose the company they work for.');
+    const name = field(form, 'full_name');
+    if (name.length < 2) throw new Error('Give their full name.');
+    const d = (n: string) => (/^\d{4}-\d{2}-\d{2}$/.test(field(form, n)) ? field(form, n) : null);
+    const { data: p } = await svc.from('people').insert({
+      entity_id: company.id, full_name: name.slice(0, 200), email: field(form, 'email').toLowerCase() || null, job_title: field(form, 'job_title').slice(0, 200),
+      team: field(form, 'team').slice(0, 100), employment_type: field(form, 'employment_type') in EMPLOYMENT ? field(form, 'employment_type') : 'full_time',
+      start_date: d('start_date'), status: 'onboarding', created_by: Astro.locals.user!.id,
+    }).select('id, start_date, end_date').single().throwOnError();
+    await addChecklist(svc, p!, 'onboarding');
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_added_person', event_detail: { entity_id: company.id, person_id: p!.id } });
+    return Astro.redirect(`/admin/hr/people/${p!.id}`);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const ids = pick ? [pick.id] : companies.map((c) => c.id);
+let query = svc.from('people').select('id, entity_id, full_name, job_title, team, employment_type, start_date, end_date, status, user_id').in('entity_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']).order('full_name');
+if (show === 'current') query = query.neq('status', 'left');
+if (show === 'left') query = query.eq('status', 'left');
+const { data } = await query;
+const rows = (data ?? []) as Pick<Person, 'id' | 'entity_id' | 'full_name' | 'job_title' | 'team' | 'employment_type' | 'start_date' | 'end_date' | 'status' | 'user_id'>[];
+const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+const day = (d: string | null) => (d ? shortDate.format(new Date(`${d}T12:00:00+10:00`)) : '—');
+const link = (k: string, v: string) => { const p = new URLSearchParams(q); p.set(k, v); return `?${p}`; };
+---
+
+<Admin title="HR">
+  <PageHeader title="HR" subtitle="People, their onboarding and leaving, equity grants, policies and documents. Pay, leave and tax details stay in the payroll system." />
+  <HrNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  <div class="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+    <nav class="flex flex-wrap gap-2" aria-label="Who">{[['current', 'Current'], ['left', 'Left'], ['all', 'All']].map(([k, l]) => <a href={link('show', k)} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}</nav>
+    {companies.length > 1 && <form method="get" class="flex items-center gap-2"><input type="hidden" name="show" value={show} /><select class="field !w-auto !py-1.5" name="company" aria-label="Company"><option value="">All companies</option>{companies.map((c) => <option value={c.code} selected={c.id === pick?.id}>{c.display_name}</option>)}</select><button class="btn-ghost !py-1.5">Show</button></form>}
+  </div>
+  {rows.length ? (
+    <section class="card mb-6 overflow-x-auto p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Name</th>{!pick && companies.length > 1 && <th class="px-5 py-3">Company</th>}<th class="px-5 py-3">Role</th><th class="px-5 py-3">Started</th><th class="px-5 py-3">State</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {rows.map((p) => (
+            <tr>
+              <td class="px-5 py-3"><a href={`/admin/hr/people/${p.id}`} class="font-medium text-white hover:text-lk-blue">{p.full_name}</a><span class="block text-xs text-white/45">{EMPLOYMENT[p.employment_type]}{p.user_id ? ' · in the portal' : ''}</span></td>
+              {!pick && companies.length > 1 && <td class="px-5 py-3 text-white/65">{nameOf.get(p.entity_id)}</td>}
+              <td class="px-5 py-3 text-white/65">{p.job_title || '—'}{p.team && <span class="text-white/40"> · {p.team}</span>}</td>
+              <td class="px-5 py-3 text-white/65">{day(p.start_date)}</td>
+              <td class:list={['px-5 py-3', p.status === 'onboarding' || p.status === 'offboarding' ? 'text-lk-orange' : 'text-white/60']}>{PERSON_STATES[p.status]}{p.status === 'offboarding' && p.end_date && ` ${day(p.end_date)}`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  ) : <div class="mb-6"><Empty title="Nobody here yet">{doCompanies.length ? 'Add the people who work for the company below.' : 'No people recorded.'}</Empty></div>}
+  {doCompanies.length > 0 && (
+    <details class="card" open={Boolean(error) || !rows.length}>
+      <summary class="cursor-pointer font-display text-lg font-bold">Add someone</summary>
+      <form method="post" class="mt-5 grid gap-3 sm:grid-cols-2">
+        <div><label class="label" for="entity_id">Company</label><select class="field" id="entity_id" name="entity_id" required>{doCompanies.length > 1 && <option value="">Choose…</option>}{doCompanies.map((c) => <option value={c.id} selected={c.id === pick?.id}>{c.display_name}</option>)}</select></div>
+        <div><label class="label" for="full_name">Full name</label><input class="field" id="full_name" name="full_name" required /></div>
+        <div><label class="label" for="email">Work email</label><input class="field" type="email" id="email" name="email" /></div>
+        <div><label class="label" for="job_title">Role</label><input class="field" id="job_title" name="job_title" /></div>
+        <div><label class="label" for="team">Team</label><input class="field" id="team" name="team" /></div>
+        <div><label class="label" for="employment_type">Employment</label><select class="field" id="employment_type" name="employment_type">{Object.entries(EMPLOYMENT).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
+        <div><label class="label" for="start_date">Starts</label><input class="field" type="date" id="start_date" name="start_date" /></div>
+        <div class="self-end"><button class="btn-primary">Add, with the onboarding checklist</button></div>
+      </form>
+    </details>
+  )}
+</Admin>

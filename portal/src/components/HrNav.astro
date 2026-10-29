@@ -1,0 +1,12 @@
+---
+// Tabs across Admin → HR.
+const path = Astro.url.pathname;
+const tabs = [
+  { href: '/admin/hr', label: 'People', on: path === '/admin/hr' || path.startsWith('/admin/hr/people') },
+  { href: '/admin/hr/equity', label: 'Equity plans', on: path.startsWith('/admin/hr/equity') },
+  { href: '/admin/hr/policies', label: 'Policies', on: path.startsWith('/admin/hr/policies') },
+];
+---
+<nav class="mb-6 flex flex-wrap gap-1 border-b border-white/10 text-sm" aria-label="HR">
+  {tabs.map((t) => <a href={t.href} aria-current={t.on ? 'page' : undefined} class:list={['-mb-px border-b-2 px-3 py-2', t.on ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{t.label}</a>)}
+</nav>

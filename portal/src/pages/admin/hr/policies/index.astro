@@ -1,0 +1,68 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Alert from '../../../../components/Alert.astro';
+import Empty from '../../../../components/Empty.astro';
+import HrNav from '../../../../components/HrNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { shortDate } from '../../../../lib/format';
+import { hrCompanies } from '../../../../lib/hr';
+
+// Admin → HR → Policies: each company's own policies and the group's (for
+// every company), as drafts, published versions or archived.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await hrCompanies(svc, access);
+const groupWide = access.can('hr.do', null);
+const doCompanies = companies.filter((c) => access.can('hr.do', c.id));
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    const target = field(form, 'entity_id');
+    if (target === 'group' ? !groupWide : !doCompanies.some((c) => c.id === target)) throw new Error('Choose a company you look after.');
+    if (field(form, 'title').length < 3) throw new Error('Give the policy a title.');
+    const { data } = await svc.from('policies').insert({ entity_id: target === 'group' ? null : target, title: field(form, 'title').slice(0, 200), created_by: Astro.locals.user!.id }).select('id').single().throwOnError();
+    return Astro.redirect(`/admin/hr/policies/${data!.id}`);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const ids = companies.map((c) => c.id);
+const { data } = await svc.from('policies').select('id, entity_id, title, version, status, requires_ack, published_at').or(`entity_id.is.null,entity_id.in.(${(ids.length ? ids : ['00000000-0000-0000-0000-000000000000']).join(',')})`).order('status').order('title');
+const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+const states = { draft: 'Draft', published: 'Published', archived: 'Archived' } as Record<string, string>;
+---
+
+<Admin title="HR · Policies">
+  <PageHeader title="HR" subtitle="People, their onboarding and leaving, equity grants, policies and documents. Pay, leave and tax details stay in the payroll system." />
+  <HrNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {(data ?? []).length ? (
+    <section class="card mb-6 overflow-x-auto p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Policy</th><th class="px-5 py-3">For</th><th class="px-5 py-3">State</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {(data ?? []).map((p) => (
+            <tr>
+              <td class="px-5 py-3"><a class="font-medium text-white hover:text-lk-blue" href={`/admin/hr/policies/${p.id}`}>{p.title}</a><span class="block text-xs text-white/45">Version {p.version}{p.requires_ack ? ' · to accept' : ''}</span></td>
+              <td class="px-5 py-3 text-white/65">{p.entity_id ? nameOf.get(p.entity_id) : 'The whole group'}</td>
+              <td class:list={['px-5 py-3', p.status === 'draft' ? 'text-lk-orange' : 'text-white/60']}>{states[p.status]}{p.published_at && p.status === 'published' && ` ${shortDate.format(new Date(p.published_at))}`}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  ) : <div class="mb-6"><Empty title="No policies yet">Add the policies employees should read and accept: code of conduct, IT and data, privacy, work health and safety, leave…</Empty></div>}
+  {(groupWide || doCompanies.length > 0) && (
+    <form method="post" class="card grid max-w-2xl gap-3 sm:grid-cols-2">
+      <h2 class="font-display text-lg font-bold sm:col-span-2">New policy</h2>
+      <div><label class="label" for="entity_id">For</label><select class="field" id="entity_id" name="entity_id">{groupWide && <option value="group">The whole group</option>}{doCompanies.map((c) => <option value={c.id}>{c.display_name}</option>)}</select></div>
+      <div><label class="label" for="title">Title</label><input class="field" id="title" name="title" required placeholder="e.g. Code of conduct" /></div>
+      <div><button class="btn-primary">Write it</button></div>
+    </form>
+  )}
+</Admin>

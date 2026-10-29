@@ -24,7 +24,10 @@ const officers = await currentOfficers(svc, company.id);
 const directors = officers.filter((o) => o.position === 'director');
 const defaults: Record<string, string> = ob?.kind === 'solvency' ? { review: ob.source_key?.split(':').at(-1) ?? '' } : {};
 let error = '';
-let values: Record<string, string> = { ...defaults };
+// Fields can come filled from the link (an HR grant's "Prepare the board resolution").
+const fromLink = Object.fromEntries(template.fields.map((f) => [f.name, q.get(f.name) ?? '']).filter(([, v]) => v));
+let values: Record<string, string> = { ...fromLink, ...defaults };
+const grantId = /^[0-9a-f-]{36}$/.test(q.get('grant') ?? '') ? q.get('grant')! : null;
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -39,6 +42,7 @@ if (Astro.request.method === 'POST') {
     }).select('id').single();
     if (e || !data) error = 'The draft could not be saved.';
     else {
+      if (grantId) await svc.from('equity_grants').update({ board_paper_id: data.id }).eq('id', grantId).eq('entity_id', company.id);
       await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_drafted_resolution', event_detail: { entity_id: company.id, paper_id: data.id, template: template.key } });
       return Astro.redirect(`/admin/legal/papers/${data.id}`);
     }
