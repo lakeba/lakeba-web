@@ -1,0 +1,85 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Empty from '../../../../components/Empty.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { shortDate } from '../../../../lib/format';
+import { addDays, legalCompanies, todayIn } from '../../../../lib/legal';
+import { CONTRACT_STATES, CONTRACT_TYPES, type Contract } from '../../../../lib/legal-contracts';
+
+// Admin → Legal → Contracts: every contract of the companies this person looks
+// after, searchable by company, kind, state and words (title, other party,
+// summary); those waiting to be checked first.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await legalCompanies(svc, access);
+const allCompanies = access.can('legal.view', null);
+const q = Astro.url.searchParams;
+const pick = companies.find((c) => c.code === q.get('company')?.toUpperCase()) ?? null;
+const type = q.get('type') && q.get('type')! in CONTRACT_TYPES ? q.get('type')! : '';
+const show = ['check', 'active', 'ending', 'draft', 'ended', 'all'].includes(q.get('show') ?? '') ? q.get('show')! : 'active';
+const words = (q.get('q') ?? '').trim().slice(0, 100);
+const today = todayIn();
+
+const scopeIds = pick ? [pick.id] : companies.map((c) => c.id);
+let query = svc.from('contracts').select('id, entity_id, title, counterparty, contract_type, status, ends_on, auto_renews, notice_days, flags, checked_at, value, created_at').order('created_at', { ascending: false }).limit(500);
+// Someone who sees every company sees every contract, those whose company isn't chosen yet included.
+if (pick || !allCompanies) query = query.in('entity_id', scopeIds.length ? scopeIds : ['00000000-0000-0000-0000-000000000000']);
+if (type) query = query.eq('contract_type', type);
+if (words) { const w = words.replace(/[%_,()*]/g, ' '); query = query.or(`title.ilike.%${w}%,counterparty.ilike.%${w}%,summary.ilike.%${w}%`); }
+if (show === 'check') query = query.is('checked_at', null);
+else if (show === 'ending') query = query.eq('status', 'active').not('ends_on', 'is', null).lte('ends_on', addDays(today, 120));
+else if (show !== 'all') query = query.eq('status', show);
+const { data } = await query;
+const rows = (data ?? []) as Pick<Contract, 'id' | 'entity_id' | 'title' | 'counterparty' | 'contract_type' | 'status' | 'ends_on' | 'auto_renews' | 'notice_days' | 'flags' | 'checked_at' | 'value' | 'created_at'>[];
+if (show === 'ending') rows.sort((a, b) => (a.ends_on ?? '').localeCompare(b.ends_on ?? ''));
+let checkQuery = svc.from('contracts').select('id', { count: 'exact', head: true }).is('checked_at', null);
+if (pick || !allCompanies) checkQuery = checkQuery.in('entity_id', scopeIds.length ? scopeIds : ['00000000-0000-0000-0000-000000000000']);
+const { count: toCheck } = await checkQuery;
+const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+const day = (d: string | null) => (d ? shortDate.format(new Date(`${d}T12:00:00+10:00`)) : '');
+const mayImport = companies.some((c) => access.can('legal.do', c.id));
+const link = (k: string, v: string) => { const p = new URLSearchParams(q); if (v) p.set(k, v); else p.delete(k); return `?${p}`; };
+const shows: [string, string][] = [['active', 'In force'], ['ending', 'Ending in 4 months'], ['check', `To check${toCheck ? ` (${toCheck})` : ''}`], ['draft', 'Not signed yet'], ['ended', 'Ended'], ['all', 'All']];
+---
+
+<Admin title="Legal · Contracts">
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group.">
+    {mayImport && <a class="btn-primary" href={`/admin/legal/contracts/import${pick ? `?company=${pick.code}` : ''}`}>Import contracts</a>}
+  </PageHeader>
+  <LegalNav />
+  <nav class="mb-4 flex flex-wrap gap-2 text-sm" aria-label="Which contracts">
+    {shows.map(([k, l]) => <a href={link('show', k)} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white', k === 'check' && toCheck && show !== k && 'text-lk-orange']}>{l}</a>)}
+  </nav>
+  <form method="get" class="mb-6 flex flex-wrap items-end gap-3 text-sm">
+    <input type="hidden" name="show" value={show} />
+    <div class="grow"><label class="label" for="f-q">Search</label><input class="field !py-2" id="f-q" name="q" value={words} placeholder="Title, other party, what it's about" /></div>
+    <div><label class="label" for="f-company">Company</label><select class="field !py-2" id="f-company" name="company"><option value="">All</option>{companies.map((c) => <option value={c.code} selected={c.id === pick?.id}>{c.display_name}</option>)}</select></div>
+    <div><label class="label" for="f-type">Kind</label><select class="field !py-2" id="f-type" name="type"><option value="">All</option>{Object.entries(CONTRACT_TYPES).map(([k, l]) => <option value={k} selected={k === type}>{l}</option>)}</select></div>
+    <button class="btn-ghost !py-2">Show</button>
+  </form>
+
+  {rows.length ? (
+    <section class="card overflow-x-auto p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Contract</th>{!pick && <th class="px-5 py-3">Company</th>}<th class="px-5 py-3">Kind</th><th class="px-5 py-3">Ends</th><th class="px-5 py-3"></th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {rows.map((c) => (
+            <tr>
+              <td class="px-5 py-3"><a href={`/admin/legal/contracts/${c.id}`} class="font-medium text-white hover:text-lk-blue">{c.title}</a><span class="block text-xs text-white/45">{c.counterparty}{c.value && ` · ${c.value}`}</span></td>
+              {!pick && <td class="px-5 py-3 text-white/65">{c.entity_id ? nameOf.get(c.entity_id) : <span class="text-lk-orange">Choose</span>}</td>}
+              <td class="px-5 py-3 text-white/65">{CONTRACT_TYPES[c.contract_type]}</td>
+              <td class:list={['px-5 py-3', c.ends_on && c.ends_on < today ? 'text-white/40' : c.ends_on && c.ends_on <= addDays(today, 90) ? 'text-lk-orange' : 'text-white/65']}>{c.ends_on ? `${day(c.ends_on)}${c.auto_renews ? ', renews' : ''}` : '—'}</td>
+              <td class="px-5 py-3 text-right text-xs">
+                {!c.checked_at ? <span class="whitespace-nowrap rounded-full bg-lk-orange/15 px-2 py-0.5 text-lk-orange">To check</span>
+                  : c.status !== 'active' ? <span class="text-white/45">{CONTRACT_STATES[c.status]}</span>
+                  : c.flags.length ? <span class="text-white/45">{c.flags.length} point{c.flags.length === 1 ? '' : 's'} to note</span> : null}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  ) : <Empty title="No contracts here">{mayImport ? 'Import contracts to start: Lakeba AI reads each one for you to check.' : 'Nothing matches.'}</Empty>}
+</Admin>

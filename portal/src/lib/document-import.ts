@@ -19,7 +19,7 @@ type Svc = ReturnType<typeof serviceClient>;
 export const MAX_FILES = 200;
 export const MAX_BYTES = 50 * 1024 * 1024;
 /** Scanned PDFs up to this many pages are read by Lakeba AI (longer ones are flagged). */
-const OCR_PAGES = 40;
+export const OCR_PAGES = 40;
 /** Financial statements older than this aren't used by Lakeba AI unless ticked. */
 export const ASK_YEARS = 3;
 
@@ -94,7 +94,7 @@ async function suggest(input: { fileName: string; folder: string; text: string; 
 }
 
 /** A scanned PDF's text, page by page, as Lakeba AI reads it. */
-async function transcribe(pdf: Uint8Array): Promise<{ pages: string[]; costUsd: number }> {
+export async function transcribe(pdf: Uint8Array): Promise<{ pages: string[]; costUsd: number }> {
   if (!claude) throw new Error('Lakeba AI is not configured (no Lakeba AI key).');
   const res = await claude.beta.messages.stream({
     model: 'claude-haiku-5-5',

@@ -1,0 +1,74 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { legalCompanies } from '../../../../lib/legal';
+import { MAX_CONTRACT_BYTES } from '../../../../lib/legal-contracts';
+
+// Admin → Legal → Contracts → Import: many files at once (PDF or Word), each
+// read by Lakeba AI; they then wait to be checked on the Contracts page.
+const svc = serviceClient();
+const companies = await legalCompanies(svc, Astro.locals.access, 'do');
+const anyCompany = Astro.locals.access.can('legal.do', null);
+const pick = companies.find((c) => c.code === Astro.url.searchParams.get('company')?.toUpperCase());
+---
+
+<Admin title="Legal · Import contracts">
+  <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
+  <LegalNav />
+  <section class="card grid max-w-3xl gap-4">
+    <h2 class="font-display text-lg font-bold">Import contracts</h2>
+    <p class="text-sm text-white/55">PDF or Word (.docx) files, up to {MAX_CONTRACT_BYTES / 1024 / 1024} MB each; scans are read too. Lakeba AI reads each one's parties, dates, renewal and notice terms and the clauses worth knowing (about 1 to 5 cents a contract). Nothing goes on the calendar until a person has checked it.</p>
+    <div><label class="label" for="entity_id">Company</label>
+      <select class="field" id="entity_id">
+        {anyCompany && <option value="">Lakeba AI works it out from the parties</option>}
+        {companies.map((c) => <option value={c.id} selected={c.id === pick?.id}>{c.display_name}</option>)}
+      </select></div>
+    <label id="drop" class="grid cursor-pointer place-items-center rounded-2xl border border-dashed border-white/20 px-6 py-10 text-center text-sm text-white/60 transition hover:border-lk-blue/60">
+      <span><strong class="text-white">Drop files here</strong> or click to choose</span>
+      <input id="files" type="file" multiple accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document" class="sr-only" />
+    </label>
+    <ul id="list" class="grid gap-1.5 text-sm"></ul>
+    <p id="done" class="hidden text-sm"><a class="btn-primary" href="/admin/legal/contracts?show=check">Check them</a></p>
+  </section>
+</Admin>
+
+<script>
+  const list = document.getElementById('list')!;
+  const done = document.getElementById('done')!;
+  const company = document.getElementById('entity_id') as HTMLSelectElement;
+  const MAX = 30 * 1024 * 1024;
+  let queue: File[] = [];
+  let running = 0;
+  const row = (f: File) => { const li = document.createElement('li'); li.className = 'flex justify-between gap-3 rounded-xl bg-white/[0.04] px-3 py-2'; li.innerHTML = '<span class="truncate"></span><span class="shrink-0 text-white/50">Waiting</span>'; li.firstElementChild!.textContent = f.name; list.append(li); return li.lastElementChild as HTMLElement; };
+  const states = new Map<File, HTMLElement>();
+  async function next() {
+    if (running >= 2) return;
+    const f = queue.shift();
+    if (!f) { if (!running) done.classList.remove('hidden'); return; }
+    running++;
+    const st = states.get(f)!;
+    st.textContent = 'Reading…';
+    try {
+      if (f.size > MAX) throw new Error('Larger than 30 MB');
+      const body = new FormData(); body.set('file', f); body.set('entity_id', company.value);
+      const res = await fetch('/admin/legal/contracts/file', { method: 'POST', body });
+      const out = await res.json().catch(() => ({ error: 'No answer' }));
+      if (!res.ok) throw new Error(out.error ?? 'Failed');
+      st.innerHTML = `<a class="text-lk-blue hover:underline" href="/admin/legal/contracts/${out.id}">Read: check it</a>`;
+    } catch (e) {
+      st.textContent = (e as Error).message; st.className = 'shrink-0 text-lk-red';
+    }
+    running--; next(); next();
+  }
+  function add(files: FileList | File[]) {
+    for (const f of Array.from(files)) { if (!/\.(pdf|docx)$/i.test(f.name)) continue; states.set(f, row(f)); queue.push(f); }
+    done.classList.add('hidden'); next(); next();
+  }
+  (document.getElementById('files') as HTMLInputElement).addEventListener('change', (e) => add((e.target as HTMLInputElement).files!));
+  const drop = document.getElementById('drop')!;
+  drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('border-lk-blue'); });
+  drop.addEventListener('dragleave', () => drop.classList.remove('border-lk-blue'));
+  drop.addEventListener('drop', (e) => { e.preventDefault(); drop.classList.remove('border-lk-blue'); add(e.dataTransfer!.files); });
+</script>

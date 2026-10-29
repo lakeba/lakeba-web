@@ -4,6 +4,7 @@ const path = Astro.url.pathname;
 const tabs = [
   { href: '/admin/legal', label: 'Overview', on: path === '/admin/legal' },
   { href: '/admin/legal/companies', label: 'Companies', on: path.startsWith('/admin/legal/companies') || path.startsWith('/admin/legal/extract') },
+  { href: '/admin/legal/contracts', label: 'Contracts', on: path.startsWith('/admin/legal/contracts') },
   { href: '/admin/legal/calendar', label: 'Calendar', on: path.startsWith('/admin/legal/calendar') },
 ];
 ---

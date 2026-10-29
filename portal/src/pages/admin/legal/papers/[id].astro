@@ -104,7 +104,7 @@ const states = { draft: 'Draft', signing: 'Waiting for signatures', signed: 'Sig
           <label class="flex items-start gap-3 text-sm">
             <input type="checkbox" name="signer" value={o.id} checked={preselected(o.id)} disabled={!mayDo || (paper.kind === 'resolution' && o.position === 'director')} class="mt-0.5 size-4 accent-lk-blue" />
             {paper.kind === 'resolution' && o.position === 'director' && <input type="hidden" name="signer" value={o.id} />}
-            <span><span class="text-white">{o.full_name}</span><span class="block text-xs text-white/45">{POSITION_WORD[o.position]}{o.id === meeting?.chair_officer_id && ' · chair'} · {o.user_id ? 'signs in the portal' : <span class="text-amber-300">not invited yet</span>}</span></span>
+            <span><span class="text-white">{o.full_name}</span><span class="block text-xs text-white/45">{POSITION_WORD[o.position]}{o.id === meeting?.chair_officer_id && ' · chair'} · {o.user_id ? 'signs in the portal' : <span class="text-lk-orange">not invited yet</span>}</span></span>
           </label>
         )) : <p class="text-sm text-white/55">No directors are recorded. Add them on the company's Officers tab.</p>}
         <p class="text-xs text-white/40">{paper.kind === 'resolution' ? 'A circular resolution is signed by every director in office.' : 'Minutes are signed by the chair of the meeting (set on the meeting page).'}</p>
@@ -120,7 +120,7 @@ const states = { draft: 'Draft', signing: 'Waiting for signatures', signed: 'Sig
           {signatures.map((s) => (
             <li class="flex flex-wrap items-baseline justify-between gap-2 py-2.5">
               <span><span class="text-white">{s.name}</span><span class="block text-xs text-white/45">{s.position}</span></span>
-              <span class:list={[s.status === 'signed' ? 'text-lk-green' : s.status === 'declined' ? 'text-lk-red' : 'text-amber-300']}>
+              <span class:list={[s.status === 'signed' ? 'text-lk-green' : s.status === 'declined' ? 'text-lk-red' : 'text-lk-orange']}>
                 {s.status === 'signed' ? `Signed ${when(s.signed_at)}` : s.status === 'declined' ? `Declined${s.decline_note ? `: ${s.decline_note}` : ''}` : `Waiting${s.reminded_at ? ` · reminded ${when(s.reminded_at)}` : ''}`}
               </span>
             </li>

@@ -1,0 +1,142 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import LegalNav from '../../../../components/LegalNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { fileSize, shortDate } from '../../../../lib/format';
+import { dropContractItems, legalCompanies, legalTeam, syncObligations } from '../../../../lib/legal';
+import { CONTRACT_COLUMNS, CONTRACT_STATES, CONTRACT_TYPES, moveToCompany, type Contract } from '../../../../lib/legal-contracts';
+
+// Admin → Legal → a contract: Lakeba AI's reading of the key terms beside the
+// file, to check and correct; once checked, its notice and end dates are on
+// the calendar.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const { data: row } = await svc.from('contracts').select(CONTRACT_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
+const companies = await legalCompanies(svc, access);
+let c = row as Contract | null;
+const visible = c && (c.entity_id ? companies.some((x) => x.id === c!.entity_id) : access.can('legal.view', null));
+if (!c || !visible) return Astro.redirect('/admin/legal/contracts');
+const doCompanies = companies.filter((x) => access.can('legal.do', x.id));
+const mayDo = c.entity_id ? access.can('legal.do', c.entity_id) : access.can('legal.do', null);
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { ...(c!.entity_id ? { entity_id: c!.entity_id } : {}), contract_id: c!.id, ...detail } });
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (intent === 'save' || intent === 'check') {
+      const company = doCompanies.find((x) => x.id === field(form, 'entity_id'));
+      if (!company) throw new Error('Choose the group company that is a party.');
+      const d = (n: string) => (/^\d{4}-\d{2}-\d{2}$/.test(field(form, n)) ? field(form, n) : null);
+      const notice = field(form, 'notice_days');
+      const patch = {
+        entity_id: company.id, title: field(form, 'title').slice(0, 300), counterparty: field(form, 'counterparty').slice(0, 300),
+        contract_type: field(form, 'contract_type') in CONTRACT_TYPES ? field(form, 'contract_type') : 'other',
+        status: field(form, 'status') in CONTRACT_STATES ? field(form, 'status') : 'active',
+        signed_on: d('signed_on'), starts_on: d('starts_on'), ends_on: d('ends_on'), auto_renews: form.get('auto_renews') === 'on',
+        renewal_term: field(form, 'renewal_term').slice(0, 300), notice_days: notice === '' ? null : Math.max(0, Math.min(3650, Math.round(Number(notice)) || 0)),
+        value: field(form, 'value').slice(0, 300), governing_law: field(form, 'governing_law').slice(0, 100),
+        change_of_control: field(form, 'change_of_control').slice(0, 1000), assignment: field(form, 'assignment').slice(0, 1000), exclusivity: field(form, 'exclusivity').slice(0, 1000),
+        liability_cap: field(form, 'liability_cap').slice(0, 1000), termination: field(form, 'termination').slice(0, 1000), obligations: field(form, 'obligations').slice(0, 2000),
+        summary: field(form, 'summary').slice(0, 2000), flags: String(form.get('flags') ?? '').split('\n').map((l) => l.trim()).filter(Boolean).slice(0, 10).map((l) => l.slice(0, 300)),
+        owner_id: field(form, 'owner_id') || null, notes: field(form, 'notes').slice(0, 4000), updated_at: new Date().toISOString(),
+        ...(intent === 'check' ? { checked_at: new Date().toISOString(), checked_by: Astro.locals.user!.id } : {}),
+      };
+      if (patch.title.length < 2) throw new Error('Give the contract a title.');
+      if (patch.auto_renews && !patch.ends_on) throw new Error('A contract that renews by itself needs the date it next renews (its end date).');
+      const filePath = await moveToCompany(svc, c, company.id);
+      // Its calendar items are worked out again from the new terms.
+      await dropContractItems(svc, c.id);
+      await svc.from('contracts').update({ ...patch, file_path: filePath }).eq('id', c.id).throwOnError();
+      await syncObligations(svc, [company.id]);
+      await log(intent === 'check' ? 'admin_checked_contract' : 'admin_saved_contract', { entity_id: company.id });
+      ok = intent === 'check' ? 'Checked. Its notice and end dates are on the calendar.' : 'Saved.';
+    } else if (intent === 'delete') {
+      await dropContractItems(svc, c.id);
+      await svc.storage.from('legal').remove([c.file_path]);
+      await svc.from('contracts').delete().eq('id', c.id).throwOnError();
+      await log('admin_deleted_contract', { title: c.title });
+      return Astro.redirect('/admin/legal/contracts');
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  c = (await svc.from('contracts').select(CONTRACT_COLUMNS).eq('id', c.id).single()).data as Contract;
+}
+
+const [{ data: items }, people] = await Promise.all([
+  svc.from('legal_obligations').select('title, due_on, status').like('source_key', `contract:${c.id}:%`).order('due_on'),
+  legalTeam(svc),
+]);
+const day = (d: string | null) => (d ? shortDate.format(new Date(`${d}T12:00:00+10:00`)) : '');
+const read = { text: 'its text', ocr: 'Lakeba AI reading the scanned pages', word: 'the Word document’s text', none: 'the PDF itself (no text kept)' } as Record<string, string>;
+const area = (name: keyof Contract, label: string, rows = 2) => ({ name, label, rows });
+const clauses = [area('change_of_control', 'Change of control'), area('assignment', 'Assignment'), area('exclusivity', 'Exclusivity'), area('liability_cap', 'Liability cap'), area('termination', 'Termination'), area('obligations', 'Our main obligations', 3)];
+---
+
+<Admin title={`Legal · ${c.title}`}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/admin/legal/contracts" class="hover:text-white">Legal · Contracts</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{c.title}</h1>
+    <p class="mt-1 text-sm text-white/55">{c.counterparty}{c.checked_at ? ` · checked ${day(c.checked_at.slice(0, 10))}` : ' · waiting to be checked'}</p>
+  </div>
+  <LegalNav />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  {!c.checked_at && c.ai_notes.length > 0 && <div class="mb-6"><Alert tone="info">To check: {c.ai_notes.join(' · ')}</Alert></div>}
+
+  <form method="post" class="grid gap-6 xl:grid-cols-[1fr_22rem]">
+    <fieldset disabled={!mayDo} class="contents">
+      <div class="grid content-start gap-6">
+        <section class="card grid gap-4 sm:grid-cols-2">
+          <h2 class="font-display text-lg font-bold sm:col-span-2">The contract</h2>
+          <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={c.title} required /></div>
+          <div><label class="label" for="entity_id">Group company</label><select class="field" id="entity_id" name="entity_id" required><option value="">Choose…</option>{(mayDo ? doCompanies : companies).map((x) => <option value={x.id} selected={x.id === c!.entity_id}>{x.display_name}</option>)}</select></div>
+          <div><label class="label" for="counterparty">Other party</label><input class="field" id="counterparty" name="counterparty" value={c.counterparty} /></div>
+          <div><label class="label" for="contract_type">Kind</label><select class="field" id="contract_type" name="contract_type">{Object.entries(CONTRACT_TYPES).map(([k, l]) => <option value={k} selected={k === c!.contract_type}>{l}</option>)}</select></div>
+          <div><label class="label" for="status">State</label><select class="field" id="status" name="status">{Object.entries(CONTRACT_STATES).map(([k, l]) => <option value={k} selected={k === c!.status}>{l}</option>)}</select></div>
+          <div><label class="label" for="value">Value</label><input class="field" id="value" name="value" value={c.value} /></div>
+          <div><label class="label" for="governing_law">Governing law</label><input class="field" id="governing_law" name="governing_law" value={c.governing_law} /></div>
+          <div class="sm:col-span-2"><label class="label" for="summary">What it is</label><textarea class="field min-h-16" id="summary" name="summary">{c.summary}</textarea></div>
+        </section>
+        <section class="card grid gap-4 sm:grid-cols-3">
+          <h2 class="font-display text-lg font-bold sm:col-span-3">Dates</h2>
+          <div><label class="label" for="signed_on">Signed</label><input class="field" type="date" id="signed_on" name="signed_on" value={c.signed_on ?? ''} /></div>
+          <div><label class="label" for="starts_on">Starts</label><input class="field" type="date" id="starts_on" name="starts_on" value={c.starts_on ?? ''} /></div>
+          <div><label class="label" for="ends_on">Ends (or next renews)</label><input class="field" type="date" id="ends_on" name="ends_on" value={c.ends_on ?? ''} /></div>
+          <label class="flex items-center gap-2 text-sm text-white/70 sm:col-span-3"><input type="checkbox" name="auto_renews" checked={c.auto_renews} class="size-4 accent-lk-blue" /> Renews by itself unless notice is given</label>
+          <div class="sm:col-span-2"><label class="label" for="renewal_term">Renewal</label><input class="field" id="renewal_term" name="renewal_term" value={c.renewal_term} placeholder="e.g. for 12 months at a time" /></div>
+          <div><label class="label" for="notice_days">Notice (days before the end)</label><input class="field" type="number" min="0" max="3650" id="notice_days" name="notice_days" value={c.notice_days ?? ''} /></div>
+        </section>
+        <section class="card grid gap-4 sm:grid-cols-2">
+          <h2 class="font-display text-lg font-bold sm:col-span-2">Clauses worth knowing</h2>
+          {clauses.map((a) => <div><label class="label" for={a.name}>{a.label}</label><textarea class="field" style={`min-height:${a.rows * 2.2}rem`} id={a.name} name={a.name}>{String(c![a.name] ?? '')}</textarea></div>)}
+          <div class="sm:col-span-2"><label class="label" for="flags">Points to note</label><textarea class="field min-h-20" id="flags" name="flags">{c.flags.join('\n')}</textarea><p class="mt-1 text-xs text-white/40">One per line: what a lawyer would want to know.</p></div>
+        </section>
+      </div>
+      <aside class="grid content-start gap-6">
+        <div class="card grid gap-3 text-sm">
+          <a class="btn-ghost" href={`/admin/legal/file?path=${encodeURIComponent(c.file_path)}`} target="_blank">Open the contract</a>
+          <p class="text-white/50">{c.file_name} · {fileSize(c.size_bytes)}{c.pages && ` · ${c.pages} page${c.pages === 1 ? '' : 's'}`}. Read by Lakeba AI from {read[c.text_source]}.</p>
+          <div><label class="label" for="owner_id">Looked after by</label><select class="field" id="owner_id" name="owner_id"><option value="">Nobody in particular</option>{people.map((p) => <option value={p.id} selected={p.id === c!.owner_id}>{p.name}</option>)}</select></div>
+          <div><label class="label" for="notes">Notes</label><textarea class="field min-h-20" id="notes" name="notes">{c.notes}</textarea></div>
+          {mayDo && <button class="btn-primary" name="intent" value="check">{c.checked_at ? 'Save' : 'Save and mark checked'}</button>}
+          {mayDo && !c.checked_at && <button class="btn-ghost" name="intent" value="save">Save, check later</button>}
+        </div>
+        <div class="card text-sm">
+          <h2 class="font-display text-lg font-bold">On the calendar</h2>
+          {items?.length ? <ul class="mt-2 grid gap-1.5">{items.map((i) => <li class="flex justify-between gap-3"><span class="text-white/75">{i.title}</span><span class="shrink-0 text-white/45">{i.status === 'open' ? day(i.due_on) : i.status === 'done' ? 'done' : 'not needed'}</span></li>)}</ul>
+            : <p class="mt-2 text-white/55">{c.checked_at ? 'Nothing: it has no end date, or its dates are past.' : 'Its dates go on the calendar once it is checked.'}</p>}
+        </div>
+        {mayDo && <button class="btn-ghost text-lk-red" name="intent" value="delete" formnovalidate data-confirm="Delete this contract and its file?">Delete the contract</button>}
+      </aside>
+    </fieldset>
+  </form>
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+</script>

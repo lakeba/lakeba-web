@@ -20,7 +20,7 @@ if (Astro.request.method === 'POST') result = await obligationAction(svc, Astro.
 
 const ids = companies.map((c) => c.id);
 const { data: recs } = await svc.from('company_records').select('entity_id, acn, company_type, review_date, incorporated_on').in('entity_id', ids);
-await syncObligations(svc, (recs ?? []).map((r) => r.entity_id));
+await syncObligations(svc, ids);
 const today = todayIn();
 const [{ data: rows }, { data: officers }, people] = await Promise.all([
   svc.from('legal_obligations').select(OBLIGATION_COLUMNS).in('entity_id', ids).eq('status', 'open').lte('due_on', addDays(today, 30)).order('due_on'),

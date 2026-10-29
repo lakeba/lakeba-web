@@ -41,6 +41,7 @@
     "grapesjs": "^0.23.6",
     "grapesjs-mjml": "^1.0.8",
     "jszip": "^3.10.1",
+    "mammoth": "^1.13.0",
     "marked": "^18.1.1",
     "mjml": "^5.4.0",
     "nodemailer": "^10.1.7",

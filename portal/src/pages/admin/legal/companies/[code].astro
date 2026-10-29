@@ -231,6 +231,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
     {[['record', 'Record'], ['officers', `Officers (${current.length})`], ['board', `Board${papers.some((p) => p.status === 'signing') ? ` (${papers.filter((p) => p.status === 'signing').length} to sign)` : ''}`], ['calendar', `Calendar (${open.length}${overdue ? `, ${overdue} overdue` : ''})`]].map(([t, l]) => (
       <a href={tabHref(t)} aria-current={tab === t ? 'page' : undefined} class:list={['rounded-full px-3 py-1', tab === t ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white', t === 'calendar' && overdue && tab !== t && 'text-lk-red']}>{l}</a>
     ))}
+    <a href={`/admin/legal/contracts?company=${company.code}&show=all`} class="rounded-full px-3 py-1 text-white/55 hover:text-white">Contracts</a>
   </nav>
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
@@ -397,7 +398,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
             {papers.map((p) => (
               <li class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-3">
                 <span><a href={`/admin/legal/papers/${p.id}`} class="font-medium text-white hover:text-lk-blue">{p.title}</a><span class="block text-xs text-white/45">{p.kind === 'minutes' ? 'Minutes' : 'Resolution'} · {reference(p)} · created {day(p.created_at.slice(0, 10))}</span></span>
-                <span class:list={['text-sm', p.status === 'signed' ? 'text-lk-green' : p.status === 'signing' ? 'text-amber-300' : 'text-white/50']}>{paperStatus(p)}</span>
+                <span class:list={['text-sm', p.status === 'signed' ? 'text-lk-green' : p.status === 'signing' ? 'text-lk-orange' : 'text-white/50']}>{paperStatus(p)}</span>
               </li>
             ))}
           </ul>

@@ -36,7 +36,7 @@ export const POSITIONS = { director: 'Director', alternate_director: 'Alternate 
 export type Position = keyof typeof POSITIONS;
 export const KINDS = {
   annual_review: 'Annual review', solvency: 'Solvency resolution', officer_change: 'Officer change', address_change: 'Address change',
-  share_issue: 'Share issue', agm: 'AGM', financial_report: 'Financial report', minutes: 'Minutes', other: 'Other',
+  share_issue: 'Share issue', agm: 'AGM', financial_report: 'Financial report', minutes: 'Minutes', contract_notice: 'Contract notice', contract_end: 'Contract end', other: 'Other',
 } as const;
 export type Kind = keyof typeof KINDS;
 export const STATES = ['ACT', 'NSW', 'NT', 'QLD', 'SA', 'TAS', 'VIC', 'WA'];
@@ -101,11 +101,12 @@ type Rule = { entity_id: string; kind: Kind; title: string; detail: string; due_
 export async function ruleItems(svc: Svc, entityIds: string[], today = todayIn()): Promise<Rule[]> {
   if (!entityIds.length) return [];
   const since = addDays(today, -LOOK_BACK_DAYS);
-  const [{ data: entities }, { data: records }, { data: officers }, { data: issues }] = await Promise.all([
+  const [{ data: entities }, { data: records }, { data: officers }, { data: issues }, { data: contracts }] = await Promise.all([
     svc.from('entities').select('id, display_name, country').in('id', entityIds),
     svc.from('company_records').select(RECORD_COLUMNS).in('entity_id', entityIds),
     svc.from('company_officers').select('id, entity_id, full_name, position, appointed_on, ceased_on').in('entity_id', entityIds).or(`appointed_on.gte.${since},ceased_on.gte.${since}`),
     svc.from('register_movements').select('entity_id, moved_on, shares, holder_id').in('entity_id', entityIds).in('kind', ['Allotment', 'Subscription']).gte('moved_on', since),
+    svc.from('contracts').select('id, entity_id, title, counterparty, ends_on, auto_renews, notice_days, renewal_term').in('entity_id', entityIds).eq('status', 'active').not('checked_at', 'is', null).not('ends_on', 'is', null),
   ]);
   const out: Rule[] = [];
   const name = new Map((entities ?? []).map((e) => [e.id, e.display_name as string]));
@@ -164,8 +165,26 @@ export async function ruleItems(svc: Svc, entityIds: string[], today = todayIn()
   for (const [k, e] of byDay) out.push({ entity_id: e.entity_id, kind: 'share_issue', source_key: `share_issue:${k}`, due_on: addDays(e.on, 28),
     title: `Tell ASIC about the shares issued on ${e.on}`,
     detail: `${new Intl.NumberFormat('en-AU').format(e.shares)} shares to ${e.holders.size} holder${e.holders.size === 1 ? '' : 's'} (${name.get(e.entity_id) ?? ''}'s register). ASIC must be told within 28 days, on Form 484.` });
+  // Contracts (checked ones): the last day to give notice, and the end of a contract that doesn't renew by itself.
+  for (const c of contracts ?? []) {
+    const what = c.counterparty && !c.title.includes(c.counterparty) ? `${c.title} with ${c.counterparty}` : c.title;
+    if (c.notice_days != null) {
+      const by = addDays(c.ends_on, -c.notice_days);
+      if (fresh(by)) out.push({ entity_id: c.entity_id, kind: 'contract_notice', source_key: `contract:${c.id}:notice:${by}`, due_on: by,
+        title: c.auto_renews ? `Renew or give notice: ${what}` : `Last day for notice: ${what}`,
+        detail: c.auto_renews
+          ? `It renews by itself on ${c.ends_on}${c.renewal_term ? ` (${c.renewal_term})` : ''} unless notice is given ${c.notice_days} days before. Decide whether to keep it; once it renews, update its end date in the portal.`
+          : `It ends on ${c.ends_on}; notice under it is due ${c.notice_days} days before. Decide whether to extend or replace it.` });
+    }
+    if (!c.auto_renews && fresh(c.ends_on)) out.push({ entity_id: c.entity_id, kind: 'contract_end', source_key: `contract:${c.id}:end:${c.ends_on}`, due_on: c.ends_on,
+      title: `Contract ends: ${what}`, detail: 'Extend, replace or let it end; then mark the contract as ended in the portal.' });
+  }
   return out;
 }
+
+/** Open calendar items made from a contract (before its dates change, or when it goes). */
+export const dropContractItems = (svc: Svc, contractId: string) =>
+  svc.from('legal_obligations').delete().eq('status', 'open').eq('date_kept', false).like('source_key', `contract:${contractId}:%`);
 
 /**
  * Brings the calendar in step with the rules: new items are added once; an open
@@ -239,8 +258,8 @@ export async function legalReminders(svc: Svc, origin: string, now = new Date(),
   const { data: claimed } = await svc.from('notification_jobs').upsert({ key }, { onConflict: 'key', ignoreDuplicates: true }).select('key');
   if (!claimed?.length) return 0;
   // The calendar first takes in what the records say today.
-  const { data: all } = await svc.from('company_records').select('entity_id');
-  await syncObligations(svc, (all ?? []).map((r) => r.entity_id), today);
+  const { data: all } = await svc.from('entities').select('id');
+  await syncObligations(svc, (all ?? []).map((r) => r.id), today);
 
   const { data: open } = await svc.from('legal_obligations').select(`${OBLIGATION_COLUMNS}, entities(display_name)`).eq('status', 'open').lte('due_on', addDays(today, 30)).order('due_on');
   const perPerson = new Map<string, { o: Obligation & { company: string }; stage: string }[]>();
