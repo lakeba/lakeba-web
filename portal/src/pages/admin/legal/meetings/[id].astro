@@ -12,6 +12,8 @@ import { PROVIDERS, readyProviders, type Provider } from '../../../../lib/transc
 import { answerHtml, type Source as BoardSource } from '../../../../lib/board-ask';
 import { DECK_COLUMNS, MAX_DECK_FILE, ROLES, draftDeck, readUploadedDeck, type Deck, type Role } from '../../../../lib/decks';
 import { connectTablet, releaseTablet, tabletsOf } from '../../../../lib/tablets';
+import { BOT_STATES, botActive, leaveLex, platformOf, recallReady, sendLex } from '../../../../lib/recall';
+import { consentWording } from '../../../../lib/observer';
 import { MEETING_COLUMNS, PAPER_COLUMNS, TRANSCRIPT_CHARS, draftMinutes, reference, transcriptText, type Attendee, type Meeting, type Paper } from '../../../../lib/legal-board';
 
 // Admin → Legal → a company → Board → a meeting: who was there, the agenda,
@@ -121,6 +123,30 @@ if (Astro.request.method === 'POST' && mayDo) {
       const t = await connectTablet(svc, field(form, 'code'), meeting, Astro.locals.user!.id);
       await log('admin_connected_board_tablet', { tablet_id: t.id, device: t.device_name });
       ok = `Connected${t.device_name ? ` “${t.device_name}”` : ' the tablet'}: it opens this meeting’s Observer now.`;
+    } else if (intent === 'online-send') {
+      // Lex joins the online meeting (lib/recall.ts). Everyone attending agreed to the recording, as the chair confirms on the tablet.
+      if (!assistant) throw new Error('The board assistant isn’t switched on for this company.');
+      if (['processing', 'done'].includes(meeting.recording_status) || meeting.audio_deleted_at) throw new Error('This meeting’s recording is finished.');
+      const present = meeting.attendees.filter((a) => a.present).map((a) => a.name);
+      if (!present.length) throw new Error('Tick who is at the meeting first (above), then send Lex.');
+      if (!platformOf(field(form, 'meeting_url'))) throw new Error('Paste the meeting’s link from Teams, Zoom, Google Meet or Webex (https://…).');
+      if (!meeting.recording_consent) {
+        if (form.get('agreed') !== 'on') throw new Error('Confirm that everyone attending agreed to the recording.');
+        const chairName = meeting.attendees.find((a) => a.officer_id && a.officer_id === meeting.chair_officer_id)?.name ?? '';
+        const profile = Astro.locals.profile;
+        const consent = { at: new Date().toISOString(), by: Astro.locals.user!.id, by_name: [profile?.first_name, profile?.last_name].filter(Boolean).join(' ') || profile?.email || '', chair: chairName, wording: consentWording(company.legal_name ?? company.display_name), present, agreed: present, online: true };
+        await svc.from('board_meetings').update({ recording_consent: consent }).eq('id', meeting.id).throwOnError();
+        meeting = { ...meeting, recording_consent: consent };
+        await log('admin_recorded_meeting_consent', { agreed: present.length, online: true });
+      }
+      const sent = await sendLex(svc, meeting, field(form, 'meeting_url'), Astro.locals.user!.id, Astro.locals.site?.central ?? Astro.url.origin, company.legal_name ?? company.display_name);
+      meeting = { ...meeting, online_bot: sent };
+      await log('admin_sent_lex_online', { platform: sent.platform, bot_id: sent.bot_id });
+      ok = `Lex is on its way to the ${sent.platform} meeting. In Teams and Google Meet, admit “Lex (Lakeba)” from the lobby.`;
+    } else if (intent === 'online-leave') {
+      await leaveLex(svc, meeting);
+      await log('admin_asked_lex_to_leave', { bot_id: meeting.online_bot?.bot_id });
+      ok = 'Lex is leaving the meeting. The full transcript follows here.';
     } else if (intent === 'tablet-release') {
       const t = (await tabletsOf(svc, meeting.id)).find((x) => x.id === field(form, 'tablet_id'));
       if (!t) throw new Error('That tablet isn’t connected to this meeting.');
@@ -164,7 +190,9 @@ const { data: deckRows } = await svc.from('board_decks').select(DECK_COLUMNS).eq
 const decks = (deckRows ?? []) as unknown as Deck[];
 const { data: lexRows } = await svc.from('board_meeting_assistant').select('id, how, offset_ms, question, spoken, answer, sources, status, error, created_at').eq('meeting_id', meeting.id).order('created_at');
 const lexAnswers = (lexRows ?? []) as { id: string; how: string; offset_ms: number | null; question: string; spoken: string; answer: string; sources: BoardSource[]; status: string; error: string | null; created_at: string }[];
-const tablets = assistant ? await tabletsOf(svc, meeting.id) : [];
+const tablets = assistant ? (await tabletsOf(svc, meeting.id)).filter((t) => t.kind !== 'bot') : [];
+const online = meeting.online_bot;
+const onlineReady = recallReady();
 const tabletNames = new Map<string, string>();
 if (tablets.length) {
   const { data: by } = await svc.from('profiles').select('id, first_name, last_name, email').in('id', [...new Set(tablets.map((t) => t.paired_by!))]);
@@ -303,6 +331,34 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
         )}
       </div>
     )}
+    {mayDo && onlineReady && ready.length > 0 && (botActive(online) || (!meeting.audio_deleted_at && meeting.recording_status !== 'processing' && meeting.recording_status !== 'done')) && (
+      <div class="grid gap-3 rounded-xl bg-white/[0.03] p-4" id="online" data-live={botActive(online) ? '1' : ''}>
+        {botActive(online) ? (
+          <form method="post" class="flex flex-wrap items-center justify-between gap-3">
+            <input type="hidden" name="intent" value="online-leave" />
+            <div>
+              <p class="font-semibold text-white">Lex in the {online!.platform} meeting: {BOT_STATES[online!.status] ?? online!.status}</p>
+              <p class="text-xs text-white/45">Sent {new Date(online!.sent_at).toLocaleTimeString('en-AU', { timeZone: 'Australia/Sydney', hour: 'numeric', minute: '2-digit' })}. Its camera shows Lex; the live text and Lex’s answers appear here as on the tablet.</p>
+            </div>
+            <button class="btn-ghost !py-1.5 text-sm">Ask Lex to leave</button>
+          </form>
+        ) : (
+          <form method="post" class="grid gap-3">
+            <input type="hidden" name="intent" value="online-send" />
+            <div class="flex flex-wrap items-end gap-3">
+              <div class="grow">
+                <label class="label" for="meeting-url">Lex in an online meeting</label>
+                <input class="field" id="meeting-url" name="meeting_url" type="url" required placeholder="https://teams.microsoft.com/l/meetup-join/…" />
+              </div>
+              <button class="btn-primary">Send Lex</button>
+            </div>
+            {!meeting.recording_consent && <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="agreed" class="mt-1 size-4 accent-lk-blue" /><span>Everyone attending (in the room and online) agreed to the recording. Lex reads the consent statement aloud and posts it in the meeting’s chat as it joins.</span></label>}
+            <p class="text-xs text-white/45">Teams, Zoom, Google Meet or Webex. “Lex (Lakeba)” joins with Lex’s face as its camera, hears everyone, answers “Lex, …” questions aloud and records the meeting here; it leaves when everyone has gone. In Teams and Google Meet, admit it from the lobby.</p>
+            {online && !botActive(online) && online.error && <p class="text-xs text-lk-orange">Last time: {online.error}</p>}
+          </form>
+        )}
+      </div>
+    )}
     {meeting.recording_status === 'none' && ready.length > 0 && <p class="text-sm text-white/55">Open the Observer on the boardroom tablet (connect it above, or sign in on it as the company secretary). The chair confirms everyone agreed, the tablet records and shows the text live, and after the meeting the full transcript, with speakers, comes here for the minutes. The audio is deleted once the minutes are signed.</p>}
 
     {meeting.recording_takes.some((t) => t.path) && !meeting.audio_deleted_at && (
@@ -370,6 +426,10 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
     )}
   </section>
   </>}
+  <script>
+    // While Lex is on its way to (or in) an online meeting, the page follows its status.
+    if (document.getElementById('online')?.dataset.live) window.setInterval(() => { if (!document.activeElement?.matches('input, textarea, select')) location.reload(); }, 15_000);
+  </script>
 </Admin>
 
 <script>

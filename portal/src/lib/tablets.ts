@@ -14,8 +14,8 @@ const CODE_MINUTES = 5;
 const PAIRED_HOURS = 12;
 const hash = (s: string) => createHash('sha256').update(s).digest('hex');
 
-export type Tablet = { id: string; meeting_id: string | null; entity_id: string | null; paired_by: string | null; paired_at: string | null; expires_at: string | null; released_at: string | null; released_why: string | null; device_name: string; code_expires_at: string | null; last_seen_at: string | null };
-const COLUMNS = 'id, meeting_id, entity_id, paired_by, paired_at, expires_at, released_at, released_why, device_name, code_expires_at, last_seen_at';
+export type Tablet = { id: string; kind: 'tablet' | 'bot'; meeting_id: string | null; entity_id: string | null; paired_by: string | null; paired_at: string | null; expires_at: string | null; released_at: string | null; released_why: string | null; device_name: string; code_expires_at: string | null; last_seen_at: string | null };
+const COLUMNS = 'id, kind, meeting_id, entity_id, paired_by, paired_at, expires_at, released_at, released_why, device_name, code_expires_at, last_seen_at';
 
 /** The pages and requests a connected tablet may reach: its meeting's Observer and what that page calls. */
 export const TABLET_PATH = /^\/admin\/legal\/meetings\/([0-9a-f-]{36})\/(observe|observer|audio|lex|lex-voice|presenter|face)$/;
@@ -92,6 +92,19 @@ export async function connectTablet(svc: Svc, code: string, meeting: { id: strin
     expires_at: new Date(now + PAIRED_HOURS * 3_600_000).toISOString(), code_hash: null, code_expires_at: null,
   }).eq('id', t.id).is('meeting_id', null).throwOnError();
   return t;
+}
+
+/**
+ * Lex in an online meeting (lib/recall.ts): the meeting bot's browser gets a pass like a connected tablet's,
+ * for this meeting only and for at most 12 hours, through a private link only the bot service sees.
+ */
+export async function botPass(svc: Svc, meeting: { id: string; entity_id: string }, userId: string) {
+  const secret = randomBytes(32).toString('base64url');
+  const { data } = await svc.from('board_tablets').insert({
+    kind: 'bot', secret_hash: hash(secret), device_name: 'Lex in the online meeting', meeting_id: meeting.id, entity_id: meeting.entity_id,
+    paired_by: userId, paired_at: new Date().toISOString(), expires_at: new Date(Date.now() + PAIRED_HOURS * 3_600_000).toISOString(),
+  }).select('id').single().throwOnError();
+  return { id: data!.id as string, secret };
 }
 
 export async function releaseTablet(svc: Svc, id: string, why: string) {

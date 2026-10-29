@@ -110,7 +110,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
     const { data: person } = await svc.from('profiles').select('email, first_name, last_name, role, locale').eq('id', t.paired_by).maybeSingle();
     if (!person) return locals.writing ? new Response('Forbidden', { status: 403 }) : redirect('/tablet');
     locals.user = { id: t.paired_by, email: person.email ?? '', aal: 'aal2', strongBy: 'tablet', codeVerified: false };
-    locals.tablet = { id: t.id, meetingId: t.meeting_id };
+    locals.tablet = { id: t.id, meetingId: t.meeting_id, kind: t.kind };
     locals.profile = person as App.Locals['profile'];
     locals.access = await loadAccess(svc, t.paired_by, true);
     if (Date.now() - Date.parse(t.last_seen_at ?? '1970-01-01') > 60_000) await svc.from('board_tablets').update({ last_seen_at: new Date().toISOString() }).eq('id', t.id);

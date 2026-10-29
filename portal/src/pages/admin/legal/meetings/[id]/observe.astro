@@ -7,6 +7,7 @@ import { PROVIDERS, readyProviders } from '../../../../../lib/transcription';
 import { voiceReady } from '../../../../../lib/lex';
 import { FACES, readyFaces } from '../../../../../lib/face';
 import { ROLES, type Slide } from '../../../../../lib/decks';
+import { greeting } from '../../../../../lib/recall';
 
 // The Observer on the boardroom tablet (full screen): the chair confirms
 // everyone present agreed to the recording, then the tablet records the
@@ -30,7 +31,9 @@ const faces = readyFaces().map((f) => ({ id: f, name: FACES[f].name }));
 const defaultFace = faces.some((f) => f.id === 'simli') ? 'simli' : faces[0]?.id ?? '';
 // On a boardroom tablet (lib/tablets.ts) the page can't open the rest of the portal: no link back, a Disconnect instead.
 const onTablet = Boolean(Astro.locals.tablet);
-const state = { id: m.id, tablet: onTablet, decks, faces, voice: voiceReady(), consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
+// Lex in an online meeting (lib/recall.ts): this page is the meeting bot's camera and hears the call.
+const onBot = Astro.locals.tablet?.kind === 'bot';
+const state = { id: m.id, tablet: onTablet, bot: onBot, greeting: onBot ? greeting(companyName) : '', decks, faces, voice: voiceReady(), consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
 ---
 
 <!doctype html>
@@ -157,7 +160,7 @@ const state = { id: m.id, tablet: onTablet, decks, faces, voice: voiceReady(), c
 
     <script>
       type DeckLite = { id: string; title: string; role: string; slides: { title: string; points: string[]; notes: string }[] };
-      type State = { id: string; tablet: boolean; decks: DeckLite[]; faces: { id: string; name: string }[]; voice: boolean; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
+      type State = { id: string; tablet: boolean; bot: boolean; greeting: string; decks: DeckLite[]; faces: { id: string; name: string }[]; voice: boolean; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
       const root = document.getElementById('observer')!;
       const st: State = JSON.parse(root.dataset.state!);
       const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
@@ -188,7 +191,7 @@ const state = { id: m.id, tablet: onTablet, decks, faces, voice: voiceReady(), c
       let take = 0, takeStart = 0, sessionStart = 0, seq = 0, chunkSeq = 0;
       let stream: MediaStream | null = null, recorder: MediaRecorder | null = null, ctx: AudioContext | null = null, ws: WebSocket | null = null;
       let micLevel: AnalyserNode | null = null;
-      let recording = false, wakeLock: { release: () => Promise<void> } | null = null;
+      let recording = false, greeted = false, wakeLock: { release: () => Promise<void> } | null = null;
       const pending: Record<string, unknown>[] = [];
       const uploads: { seq: number; blob: Blob }[] = [];
       const turnSeq = new Map<number, number>();
@@ -315,6 +318,8 @@ const state = { id: m.id, tablet: onTablet, decks, faces, voice: voiceReady(), c
           $('indicator')?.classList.replace('hidden', 'flex');
           $('pause')!.hidden = false; $('finish')!.hidden = false; btn.hidden = true;
           status('Recording. Speak normally; the text appears as people talk.');
+          // In an online meeting, Lex says hello and the consent statement as it starts.
+          if (st.bot && !greeted) { greeted = true; window.setTimeout(() => void say(st.greeting).catch(() => undefined), 1500); }
           void showFace(chosenFace());
         } catch (e) {
           problem((e as Error).name === 'NotAllowedError' ? 'The tablet didn’t allow the microphone. Allow it for this site and try again.' : (e as Error).message);
@@ -778,6 +783,14 @@ const state = { id: m.id, tablet: onTablet, decks, faces, voice: voiceReady(), c
         requestAnimationFrame(draw);
       };
       requestAnimationFrame(draw);
+
+      // Lex in an online meeting: Lex alone on the camera (with captions), recording from the start.
+      if (st.bot) {
+        setFull(true);
+        $('stage-exit')?.classList.add('hidden');
+        if (st.consented && ['none', 'paused', 'recording'].includes(st.status)) window.setTimeout(() => $<HTMLButtonElement>('start')?.click(), 1000);
+        else if (!st.consented) problem('The recording consent for this meeting isn’t recorded: send Lex again from the meeting’s page.');
+      }
     </script>
   </body>
 </html>

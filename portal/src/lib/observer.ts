@@ -15,8 +15,8 @@ import { PROVIDERS, transcribeRecording, type Provider, type Segment } from './t
 type Svc = ReturnType<typeof serviceClient>;
 export type Take = { take: number; started_at: string; ended_at: string | null; chunks: number; path: string | null; bytes: number; mime: string };
 export type Consent = { at: string; by: string; by_name: string; chair: string; wording: string; present: string[]; agreed: string[] };
-export type RecordingMeeting = Meeting & { recording_status: string; recording_consent: Consent | null; recording_takes: Take[]; recording_error: string | null; audio_deleted_at: string | null; transcript_source: string | null; speaker_names: Record<string, Record<string, string>> };
-export const RECORDING_COLUMNS = 'recording_status, recording_consent, recording_takes, recording_error, audio_deleted_at, transcript_source, speaker_names';
+export type RecordingMeeting = Meeting & { recording_status: string; recording_consent: Consent | null; recording_takes: Take[]; recording_error: string | null; audio_deleted_at: string | null; transcript_source: string | null; speaker_names: Record<string, Record<string, string>>; online_bot: import('./recall').OnlineBot | null };
+export const RECORDING_COLUMNS = 'recording_status, recording_consent, recording_takes, recording_error, audio_deleted_at, transcript_source, speaker_names, online_bot';
 export const MAX_CHUNK = 5 * 1024 * 1024;
 export const SOURCE_LABEL = (s: string) => `${s.startsWith('live') ? 'Live' : 'Full pass'}, ${PROVIDERS[s.split(':')[1] as Provider]?.name ?? s}`;
 

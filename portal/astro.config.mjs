@@ -97,6 +97,11 @@ export default defineConfig({
       SIMLI_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       SIMLI_FACE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
       SIMLI_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.simli.ai' }),
+      // Lex in online meetings: Recall.ai's meeting bot. The key is for one region (a separate account per region).
+      RECALL_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      RECALL_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://ap-northeast-1.recall.ai' }),
+      // Signs Recall's status webhooks (whsec_…, from Recall's dashboard → Webhooks).
+      RECALL_WEBHOOK_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
       XERO_AUTH_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://login.xero.com/identity/connect' }),
       XERO_TOKEN_URL: envField.string({ context: 'server', access: 'secret', default: 'https://identity.xero.com/connect/token' }),
       XERO_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.xero.com' }),

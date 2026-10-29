@@ -11,7 +11,7 @@ declare namespace App {
      */
     user: { id: string; email: string; aal: 'aal1' | 'aal2'; strongBy: 'code' | 'passkey' | 'pass' | 'tablet' | null; codeVerified: boolean } | null;
     /** A boardroom tablet connected to a meeting (lib/tablets.ts): it acts for the secretary who connected it, on that meeting's Observer only. */
-    tablet: { id: string; meetingId: string } | null;
+    tablet: { id: string; meetingId: string; kind: 'tablet' | 'bot' } | null;
     profile: {
       email: string;
       first_name: string;
