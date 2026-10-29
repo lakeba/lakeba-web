@@ -28,7 +28,9 @@ const decks = (deckRows ?? []).map((d) => ({ id: d.id as string, title: d.title 
 const faces = readyFaces().map((f) => ({ id: f, name: FACES[f].name }));
 // Simli (with Charlie's voice) was chosen as Lex's face (29 Oct 2026): it shows while recording; the orb otherwise.
 const defaultFace = faces.some((f) => f.id === 'simli') ? 'simli' : faces[0]?.id ?? '';
-const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
+// On a boardroom tablet (lib/tablets.ts) the page can't open the rest of the portal: no link back, a Disconnect instead.
+const onTablet = Boolean(Astro.locals.tablet);
+const state = { id: m.id, tablet: onTablet, decks, faces, voice: voiceReady(), consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
 ---
 
 <!doctype html>
@@ -57,7 +59,9 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
         </div>
         <div class="flex items-center gap-4">
           <span id="indicator" class="hidden items-center gap-2 rounded-full bg-lk-red/15 px-3 py-1.5 text-sm font-semibold text-lk-red"><span class="size-2.5 animate-pulse rounded-full bg-lk-red"></span>Recording <span id="clock" class="tabular-nums">00:00:00</span></span>
-          <a class="text-sm text-white/50 hover:text-white" href={back} id="leave">Meeting page</a>
+          {onTablet
+            ? <button type="button" class="text-sm text-white/50 hover:text-white" id="tablet-leave">Disconnect tablet</button>
+            : <a class="text-sm text-white/50 hover:text-white" href={back} id="leave">Meeting page</a>}
         </div>
       </header>
 
@@ -153,7 +157,7 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
 
     <script>
       type DeckLite = { id: string; title: string; role: string; slides: { title: string; points: string[]; notes: string }[] };
-      type State = { id: string; decks: DeckLite[]; faces: { id: string; name: string }[]; voice: boolean; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
+      type State = { id: string; tablet: boolean; decks: DeckLite[]; faces: { id: string; name: string }[]; voice: boolean; consented: boolean; status: string; takes: { take: number; started_at: string; ended_at: string | null }[] };
       const root = document.getElementById('observer')!;
       const st: State = JSON.parse(root.dataset.state!);
       const $ = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
@@ -350,10 +354,22 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
         if (uploads.length) { problem('Some of the recording hasn’t reached the portal yet. Keep this page open until it does, then finish again.'); $<HTMLButtonElement>('finish')!.disabled = false; return; }
         try {
           await call('finish', { provider: provider || $<HTMLSelectElement>('provider')?.value });
-          location.href = base;
+          location.href = st.tablet ? '/tablet?finished=1' : base;
         } catch (e) { problem((e as Error).message); $<HTMLButtonElement>('finish')!.disabled = false; }
       });
       window.addEventListener('beforeunload', (e) => { if (recording || uploads.length) { e.preventDefault(); } });
+      // A tablet lets go of the meeting (the secretary can also disconnect it from the meeting's page).
+      $('tablet-leave')?.addEventListener('click', async () => {
+        if (recording || !confirm('Disconnect this tablet from the meeting? Someone will need to connect it again with a new code.')) { if (recording) problem('Pause the recording first.'); return; }
+        await fetch('/api/tablet/pair', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ action: 'leave' }) }).catch(() => undefined);
+        location.href = '/tablet';
+      });
+      // A tablet disconnected from the portal goes back to its pairing screen (checked every 30 seconds, never mid-recording).
+      if (st.tablet) setInterval(async () => {
+        if (recording) return;
+        const s = await fetch('/api/tablet/pair').then((r) => r.json()).catch(() => null);
+        if (s && s.status !== 'connected') location.href = '/tablet';
+      }, 30_000);
 
       // Lex: called by name in the live text ("Lex, what's our cash runway?") or with Ask; answers aloud and on screen.
       type LexState = 'idle' | 'listening' | 'following' | 'thinking' | 'speaking';

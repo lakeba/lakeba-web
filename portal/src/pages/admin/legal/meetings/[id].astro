@@ -11,6 +11,7 @@ import { RECORDING_COLUMNS, SOURCE_LABEL, removeAudio, segmentsOf, speakersOf, t
 import { PROVIDERS, readyProviders, type Provider } from '../../../../lib/transcription';
 import { answerHtml, type Source as BoardSource } from '../../../../lib/board-ask';
 import { DECK_COLUMNS, MAX_DECK_FILE, ROLES, draftDeck, readUploadedDeck, type Deck, type Role } from '../../../../lib/decks';
+import { connectTablet, releaseTablet, tabletsOf } from '../../../../lib/tablets';
 import { MEETING_COLUMNS, PAPER_COLUMNS, TRANSCRIPT_CHARS, draftMinutes, reference, transcriptText, type Attendee, type Meeting, type Paper } from '../../../../lib/legal-board';
 
 // Admin → Legal → a company → Board → a meeting: who was there, the agenda,
@@ -113,6 +114,19 @@ if (Astro.request.method === 'POST' && mayDo) {
         await log('admin_uploaded_board_deck', { deck_id: d!.id, role });
       }
       return Astro.redirect(`/admin/legal/meetings/${meeting.id}#decks`);
+    } else if (intent === 'tablet-connect') {
+      // The boardroom tablet shows a code (/tablet); entering it here connects the tablet to this meeting.
+      if (!assistant) throw new Error('The board assistant isn’t switched on for this company.');
+      if (['processing', 'done'].includes(meeting.recording_status) || meeting.audio_deleted_at) throw new Error('This meeting’s recording is finished.');
+      const t = await connectTablet(svc, field(form, 'code'), meeting, Astro.locals.user!.id);
+      await log('admin_connected_board_tablet', { tablet_id: t.id, device: t.device_name });
+      ok = `Connected${t.device_name ? ` “${t.device_name}”` : ' the tablet'}: it opens this meeting’s Observer now.`;
+    } else if (intent === 'tablet-release') {
+      const t = (await tabletsOf(svc, meeting.id)).find((x) => x.id === field(form, 'tablet_id'));
+      if (!t) throw new Error('That tablet isn’t connected to this meeting.');
+      await releaseTablet(svc, t.id, 'Disconnected from the meeting’s page.');
+      await log('admin_disconnected_board_tablet', { tablet_id: t.id });
+      ok = 'Disconnected the tablet. It shows a new code to connect again.';
     } else if (intent === 'full-pass') {
       const provider = field(form, 'provider') as Provider;
       if (!readyProviders().includes(provider)) throw new Error('That transcription service isn’t set up.');
@@ -150,6 +164,12 @@ const { data: deckRows } = await svc.from('board_decks').select(DECK_COLUMNS).eq
 const decks = (deckRows ?? []) as unknown as Deck[];
 const { data: lexRows } = await svc.from('board_meeting_assistant').select('id, how, offset_ms, question, spoken, answer, sources, status, error, created_at').eq('meeting_id', meeting.id).order('created_at');
 const lexAnswers = (lexRows ?? []) as { id: string; how: string; offset_ms: number | null; question: string; spoken: string; answer: string; sources: BoardSource[]; status: string; error: string | null; created_at: string }[];
+const tablets = assistant ? await tabletsOf(svc, meeting.id) : [];
+const tabletNames = new Map<string, string>();
+if (tablets.length) {
+  const { data: by } = await svc.from('profiles').select('id, first_name, last_name, email').in('id', [...new Set(tablets.map((t) => t.paired_by!))]);
+  for (const p of by ?? []) tabletNames.set(p.id, [p.first_name, p.last_name].filter(Boolean).join(' ') || p.email);
+}
 const recordedMinutes = Math.round(meeting.recording_takes.reduce((n, t) => n + (t.ended_at ? Date.parse(t.ended_at) - Date.parse(t.started_at) : 0), 0) / 60000);
 const STATUS: Record<string, string> = { none: 'Not recorded', recording: 'Recording now', paused: 'Paused', processing: 'Preparing the full transcript…', done: 'Recorded and transcribed', failed: 'The transcription failed' };
 const guests = meeting.attendees.filter((a) => !a.officer_id).map((a) => a.name).join('\n');
@@ -260,7 +280,30 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
       )}
     </div>
     {!ready.length && <p class="text-sm text-white/55">Recording needs a transcription service: a Deepgram or AssemblyAI key on the server.</p>}
-    {meeting.recording_status === 'none' && ready.length > 0 && <p class="text-sm text-white/55">Open the Observer on the boardroom tablet (signed in as the company secretary). The chair confirms everyone agreed, the tablet records and shows the text live, and after the meeting the full transcript, with speakers, comes here for the minutes. The audio is deleted once the minutes are signed.</p>}
+    {mayDo && ready.length > 0 && !meeting.audio_deleted_at && meeting.recording_status !== 'processing' && meeting.recording_status !== 'done' && (
+      <div class="grid gap-3 rounded-xl bg-white/[0.03] p-4" id="tablet">
+        <form method="post" class="flex flex-wrap items-end gap-3">
+          <input type="hidden" name="intent" value="tablet-connect" />
+          <div class="grow">
+            <label class="label" for="tablet-code">Connect a tablet</label>
+            <input class="field font-display text-xl tracking-[0.3em]" id="tablet-code" name="code" inputmode="numeric" autocomplete="off" pattern="[0-9 ]{6,7}" maxlength="7" placeholder="000 000" required />
+          </div>
+          <button class="btn-primary">Connect</button>
+          <p class="basis-full text-xs text-white/45">Open the Lex app on the boardroom tablet (or <span class="font-mono">{Astro.url.origin}/tablet</span> in its browser) and enter the six-digit code it shows. The tablet then opens this meeting’s Observer, acting for you, and nothing else; it lets go when the meeting is finished.</p>
+        </form>
+        {tablets.length > 0 && (
+          <ul class="grid gap-2 text-sm">
+            {tablets.map((t) => (
+              <li class="flex flex-wrap items-center justify-between gap-3">
+                <span><span class="mr-2 inline-block size-2 rounded-full bg-lk-green"></span>{t.device_name || 'Boardroom tablet'} · connected by {tabletNames.get(t.paired_by!) ?? 'someone'}{t.last_seen_at && <span class="text-white/45"> · seen {new Date(t.last_seen_at).toLocaleTimeString('en-AU', { timeZone: 'Australia/Sydney', hour: 'numeric', minute: '2-digit' })}</span>}</span>
+                <form method="post"><input type="hidden" name="intent" value="tablet-release" /><input type="hidden" name="tablet_id" value={t.id} /><button class="btn-ghost !py-1.5 text-xs">Disconnect</button></form>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    )}
+    {meeting.recording_status === 'none' && ready.length > 0 && <p class="text-sm text-white/55">Open the Observer on the boardroom tablet (connect it above, or sign in on it as the company secretary). The chair confirms everyone agreed, the tablet records and shows the text live, and after the meeting the full transcript, with speakers, comes here for the minutes. The audio is deleted once the minutes are signed.</p>}
 
     {meeting.recording_takes.some((t) => t.path) && !meeting.audio_deleted_at && (
       <div class="grid gap-2">

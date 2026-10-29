@@ -3,6 +3,7 @@ import { serviceClient } from '../../../../../lib/admin';
 import { mayMeeting } from '../../../../../lib/boardroom';
 import { DECK_COLUMNS, ROLES, type Deck } from '../../../../../lib/decks';
 import { observerMeeting } from '../../../../../lib/observer';
+import { logAs } from '../../../../../lib/tablets';
 
 /**
  * What the room screen shows during a presentation.
@@ -43,7 +44,7 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
   await svc.from('board_meetings').update({ presentation: { deck_id: deck.id, slide, state, at: new Date().toISOString() } }).eq('id', m.id).throwOnError();
   if (!deck.presented_at) {
     await svc.from('board_decks').update({ presented_at: new Date().toISOString() }).eq('id', deck.id);
-    await locals.supabase.rpc('log_event', { event_action: 'admin_presented_board_deck', event_detail: { entity_id: m.entity_id, meeting_id: m.id, deck_id: deck.id, title: deck.title } });
+    await logAs(locals, svc, 'admin_presented_board_deck', { entity_id: m.entity_id, meeting_id: m.id, deck_id: deck.id, title: deck.title });
   }
   return Response.json({ ok: true, slide });
 };

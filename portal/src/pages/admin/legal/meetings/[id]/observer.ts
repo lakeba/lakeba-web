@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { serviceClient } from '../../../../../lib/admin';
 import { consentWording, meetingTerms, observerMeeting, saveSegments, transcribeMeeting, type Take } from '../../../../../lib/observer';
 import { liveSession, PROVIDERS, readyProviders, type Provider } from '../../../../../lib/transcription';
+import { logAs, releaseTablet, tabletsOf } from '../../../../../lib/tablets';
 import { meetingFacts } from '../../../../../lib/lex';
 
 /**
@@ -22,7 +23,7 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
   const b = await request.json().catch(() => ({})) as Record<string, unknown>;
   const provider = (typeof b.provider === 'string' && b.provider in PROVIDERS ? b.provider : readyProviders()[0]) as Provider | undefined;
   const now = new Date().toISOString();
-  const log = (action: string, detail: Record<string, unknown> = {}) => locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: m.entity_id, meeting_id: m.id, ...detail } });
+  const log = (action: string, detail: Record<string, unknown> = {}) => logAs(locals, svc, action, { entity_id: m.entity_id, meeting_id: m.id, ...detail });
   const present = m.attendees.filter((a) => a.present).map((a) => a.name);
   const takes = m.recording_takes;
   const open = takes.find((t) => !t.ended_at);
@@ -71,6 +72,8 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
         if (finishing) {
           await log('admin_finished_meeting_recording', { takes: ended.length, provider });
           if (provider) void transcribeMeeting(svc, m.id, provider).catch((e) => console.error('observer transcription', e));
+          // The meeting is over: its tablets let go of it.
+          for (const t of await tabletsOf(svc, m.id)) await releaseTablet(svc, t.id, 'The meeting is finished.');
         }
         return Response.json({ ok: true });
       }

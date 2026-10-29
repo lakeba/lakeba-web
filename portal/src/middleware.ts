@@ -11,12 +11,13 @@ import { SUPABASE_URL, TWO_STEP_OFF_FOR_TESTING } from 'astro:env/server';
 import { centralOrigin, ownDomainVenture, refreshOwnDomains, siteOf } from './lib/sites';
 import { isKnownHost } from './lib/known-hosts.mjs';
 import { NO_VIEW, VIEW_COOKIE, investorCompanyIds, wantsInvestorView } from './lib/investor-view';
+import { TABLET_COOKIE, TABLET_PATH, connected, tabletOf } from './lib/tablets';
 
 // Sends queued browser notifications and runs scheduled ones (reminders, daily summaries).
 startNotificationWorker();
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/setup', '/go', '/passkey-login', '/e', '/room', '/news-media', '/company-logo', '/api/public', '/api/v1', '/api/hooks', '/developers', '/oauth/token', '/embed', '/n', '/favicon.ico'];
+const PUBLIC_PATHS = ['/tablet', '/api/tablet', '/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/setup', '/go', '/passkey-login', '/e', '/room', '/news-media', '/company-logo', '/api/public', '/api/v1', '/api/hooks', '/developers', '/oauth/token', '/embed', '/n', '/favicon.ico'];
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 
@@ -41,6 +42,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.supabase = createSupabase(context);
   locals.site = { kind: site.kind, venture: null, central: centralOrigin(url) };
   locals.user = null;
+  locals.tablet = null;
   locals.profile = null;
   locals.mfaEnrolled = false;
   locals.companies = [];
@@ -93,6 +95,26 @@ export const onRequest = defineMiddleware(async (context, next) => {
       id: claims.sub, email: String(claims.email ?? ''), aal: codeVerified || passkeyVerified ? 'aal2' : 'aal1',
       strongBy: codeVerified ? 'code' : passkeyVerified ? (usedPasskey ? 'passkey' : 'pass') : null, codeVerified,
     };
+  }
+
+  // A boardroom tablet connected to a meeting (lib/tablets.ts) reaches that meeting's Observer and nothing else,
+  // acting for the company secretary who connected it while signed in with two-step.
+  const tabletPath = TABLET_PATH.exec(path);
+  const tabletSecret = context.cookies.get(TABLET_COOKIE)?.value;
+  if (!locals.user && tabletPath && tabletSecret && site.kind !== 'venture') {
+    const svc = serviceClient();
+    const t = await tabletOf(svc, tabletSecret);
+    if (!connected(t) || t.meeting_id !== tabletPath[1]) {
+      return locals.writing ? new Response('This tablet isn’t connected to this meeting.', { status: 403 }) : redirect('/tablet');
+    }
+    const { data: person } = await svc.from('profiles').select('email, first_name, last_name, role, locale').eq('id', t.paired_by).maybeSingle();
+    if (!person) return locals.writing ? new Response('Forbidden', { status: 403 }) : redirect('/tablet');
+    locals.user = { id: t.paired_by, email: person.email ?? '', aal: 'aal2', strongBy: 'tablet', codeVerified: false };
+    locals.tablet = { id: t.id, meetingId: t.meeting_id };
+    locals.profile = person as App.Locals['profile'];
+    locals.access = await loadAccess(svc, t.paired_by, true);
+    if (Date.now() - Date.parse(t.last_seen_at ?? '1970-01-01') > 60_000) await svc.from('board_tablets').update({ last_seen_at: new Date().toISOString() }).eq('id', t.id);
+    return done(await next());
   }
 
   if (!locals.user) {

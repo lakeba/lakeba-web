@@ -3,6 +3,7 @@ import { serviceClient } from '../../../../../lib/admin';
 import { answerHtml, askBoard } from '../../../../../lib/board-ask';
 import { clean, meetingFacts, splitAnswer, spokenSoFar } from '../../../../../lib/lex';
 import { observerMeeting } from '../../../../../lib/observer';
+import { logAs } from '../../../../../lib/tablets';
 
 /**
  * A question put to Lex at the table (JSON {question, how, offset_ms}),
@@ -27,7 +28,7 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
   const { data: company } = await svc.from('entities').select('id, display_name, legal_name, relationship').eq('id', m.entity_id).single();
   const { data: earlier } = await svc.from('board_meeting_assistant').select('question, answer').eq('meeting_id', m.id).eq('status', 'done').order('created_at', { ascending: false }).limit(3);
   const { data: row } = await svc.from('board_meeting_assistant').insert({ meeting_id: m.id, asked_by: locals.user!.id, how, offset_ms: typeof b.offset_ms === 'number' && Number.isFinite(b.offset_ms) ? Math.max(0, Math.round(b.offset_ms)) : null, question }).select('id').single().throwOnError();
-  await locals.supabase.rpc('log_event', { event_action: 'admin_asked_lex', event_detail: { entity_id: m.entity_id, meeting_id: m.id, how, question: question.slice(0, 200) } });
+  await logAs(locals, svc, 'admin_asked_lex', { entity_id: m.entity_id, meeting_id: m.id, how, question: question.slice(0, 200) });
 
   const central = locals.site?.central ?? url.origin;
   const encoder = new TextEncoder();
