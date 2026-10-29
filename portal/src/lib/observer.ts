@@ -69,14 +69,14 @@ async function assembleTake(svc: Svc, m: RecordingMeeting, t: Take): Promise<Tak
     const { data } = await svc.storage.from('legal').download(`${folder}/${n}`);
     if (data) parts.push(Buffer.from(await data.arrayBuffer()));
   }
-  const ext = t.mime.includes('mp4') ? 'm4a' : t.mime.includes('ogg') ? 'ogg' : 'webm';
-  // With its length and seek index, so the meeting page's player shows the time and can skip.
-  const file = await playable(Buffer.concat(parts), ext);
-  const path = `${audioFolder(m)}/take-${t.take}.${ext}`;
-  const { error } = await svc.storage.from('legal').upload(path, file, { contentType: t.mime || 'audio/webm', upsert: true });
+  // With its timing, length and seek index (as M4A), so the meeting page's player shows the time and can skip.
+  const fixed = await playable(Buffer.concat(parts), t.mime.includes('mp4') ? 'm4a' : t.mime.includes('ogg') ? 'ogg' : 'webm');
+  const file = fixed.audio, mime = fixed.mime ?? (t.mime || 'audio/webm');
+  const path = `${audioFolder(m)}/take-${t.take}.${fixed.ext}`;
+  const { error } = await svc.storage.from('legal').upload(path, file, { contentType: mime, upsert: true });
   if (error) throw new Error(`The recording could not be stored (${error.message}).`);
   await svc.storage.from('legal').remove(names.map((n) => `${folder}/${n}`));
-  return { ...t, path, bytes: file.length, chunks: names.length };
+  return { ...t, path, mime, bytes: file.length, chunks: names.length };
 }
 
 /** Milliseconds from the first take's start to this one's, so all takes share one clock. */
