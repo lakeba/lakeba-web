@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Lex's orb on Lakeba's ink. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <path android:pathData="M54,54m-26,0a26,26 0,1 1,52 0a26,26 0,1 1,-52 0">
+        <aapt:attr name="android:fillColor">
+            <gradient android:type="radial" android:centerX="46" android:centerY="44" android:gradientRadius="34">
+                <item android:offset="0" android:color="#FF9FC2FF" />
+                <item android:offset="0.6" android:color="#FF276AE7" />
+                <item android:offset="1" android:color="#FF0B3A8F" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>
