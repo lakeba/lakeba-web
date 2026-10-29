@@ -38,7 +38,7 @@ export async function meetingTerms(svc: Svc, entityId: string, attendees: Attend
   const own = companies.find((c) => c.id === entityId);
   // "Lakeba Group" also as "Lakeba": the first word of a company's name is often said on its own.
   const names = companies.flatMap((c) => [c.display_name, ...(c.display_name.includes(' ') && c.display_name.split(' ')[0].length > 3 ? [c.display_name.split(' ')[0]] : [])]);
-  return ['Lex', ...(own?.speech_terms ?? []), ...attendees.map((a) => a.name), ...names];
+  return ['Lex', 'ASIC', 'ASX', 'ATO', 'AGM', 'Xero', ...(own?.speech_terms ?? []), ...attendees.map((a) => a.name), ...names];
 }
 
 /** Keeps a piece of audio as it arrives from the tablet. */

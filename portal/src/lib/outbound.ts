@@ -30,7 +30,7 @@ export function outboundProblem(url: string) {
 }
 
 /** One request: at most `max` bytes back, no redirects, 15 seconds. */
-export function outbound(method: string, url: string, opts: { headers?: Record<string, string>; body?: string | Buffer; max?: number; timeout?: number } = {}): Promise<OutResponse> {
+export function outbound(method: string, url: string, opts: { headers?: Record<string, string>; body?: string | Buffer; max?: number; timeout?: number; onData?: (chunk: Buffer) => void } = {}): Promise<OutResponse> {
   const problem = outboundProblem(url);
   if (problem) return Promise.reject(new Error(problem));
   const u = new URL(url);
@@ -41,7 +41,8 @@ export function outbound(method: string, url: string, opts: { headers?: Record<s
       headers: { 'user-agent': 'LakebaPortal/1.0 (integrations)', ...(opts.body !== undefined ? { 'content-length': String(Buffer.byteLength(opts.body)) } : {}), ...opts.headers },
     }, (res) => {
       const chunks: Buffer[] = []; let size = 0;
-      res.on('data', (c: Buffer) => { size += c.length; if (size <= max) chunks.push(c); });
+      // onData: a successful response's body as it arrives (Lex's voice), besides the whole of it at the end.
+      res.on('data', (c: Buffer) => { size += c.length; if (size <= max) { chunks.push(c); if (opts.onData && (res.statusCode ?? 0) < 400) opts.onData(c); } });
       res.on('end', () => { const bytes = Buffer.concat(chunks); resolve({ status: res.statusCode ?? 0, headers: Object.fromEntries(Object.entries(res.headers).map(([k, v]) => [k, String(v)])), text: bytes.toString('utf8'), bytes }); });
       res.on('error', reject);
     });

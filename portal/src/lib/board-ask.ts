@@ -106,12 +106,18 @@ const TOOLS: Anthropic.Beta.BetaTool[] = ([
 ] satisfies Anthropic.Beta.BetaTool[]).map((t) => ({ ...t, eager_input_streaming: true }));
 
 /** One question's state: what the tools found, with their references. */
+/** A session's sources, kept so a later question can carry on from facts gathered earlier (Lex's meeting facts). */
+export type SessionState = { sources: Source[]; items: [string, { kind: string; id: string; chunk?: number }][]; byKey: [string, string][] };
+
 class Session {
   sources: Source[] = [];
   private items = new Map<string, { kind: string; id: string; chunk?: number }>();
   private byKey = new Map<string, string>();
   steps: Step[] = [];
-  constructor(readonly svc: Svc, readonly access: Access, readonly scope: Scope, readonly central: string) {}
+  constructor(readonly svc: Svc, readonly access: Access, readonly scope: Scope, readonly central: string, from?: SessionState) {
+    if (from) { this.sources = from.sources.map((x) => ({ ...x })); this.items = new Map(from.items); this.byKey = new Map(from.byKey); }
+  }
+  state(): SessionState { return { sources: this.sources.map((x) => ({ ...x })), items: [...this.items], byKey: [...this.byKey] }; }
   /** The reference for a source, the same each time it comes up in one question. */
   ref(kind: string, key: string, title: string, company: string, href: string | null, item?: { id: string; chunk?: number }) {
     const k = `${kind}:${key}`;
@@ -433,15 +439,15 @@ async function runTool(s: Session, name: string, input: Input): Promise<string> 
  * each call is a tool name and its input; returns their text, with the
  * sources the text refers to as [S1].
  */
-export async function boardFacts(svc: Svc, access: Access, central: string, only: string[] | undefined, calls: [string, Record<string, unknown>][]) {
+export async function boardFacts(svc: Svc, access: Access, central: string, only: string[] | undefined, calls: [string, Record<string, unknown>][], maxEach = Infinity) {
   const full = await boardScope(svc, access);
   const scope: Scope = only ? { companies: full.companies.filter((c) => only.includes(c.id)), all: false } : full;
   const s = new Session(svc, access, scope, central);
   const parts: string[] = [];
   for (const [name, input] of calls) {
-    try { parts.push(await runTool(s, name, input)); } catch (e) { parts.push(`(${name}: ${(e as Error).message})`); }
+    try { parts.push((await runTool(s, name, input)).slice(0, maxEach)); } catch (e) { parts.push(`(${name}: ${(e as Error).message})`); }
   }
-  return { text: parts.join('\n\n---\n\n'), sources: s.sources };
+  return { text: parts.join('\n\n---\n\n'), sources: s.sources, state: s.state() };
 }
 
 // --- The answer --------------------------------------------------------------
@@ -461,14 +467,18 @@ const costOf = (u: Anthropic.Beta.BetaUsage) => (u.input_tokens * PRICE.in + (u.
  * through `events`. Returns the answer with its sources and what it cost.
  */
 /** Lex in a meeting: only these companies, and a spoken answer first. */
-export type AskOptions = { only?: string[]; voice?: { meeting: string; company: string } };
+export type AskOptions = { only?: string[]; voice?: { meeting: string; company: string; facts?: MeetingFacts } };
+/** What the portal already knows for a meeting, gathered once (Lex): its text and the sources it cites. */
+export type MeetingFacts = { text: string; state: SessionState; at: string };
 /** What Lex says aloud comes first, then this line, then the detail with references. */
 export const SPOKEN_BREAK = '---';
 const VOICE_RULES = (o: NonNullable<AskOptions['voice']>) => [
   `You are Lex, the board's assistant, speaking aloud at the table during "${o.meeting}", a meeting of the directors of ${o.company}. Someone at the table just asked you this; the question comes from speech recognition, so allow for misheard words, above all names: match a name that sounds like one of the companies ("Doc AI" is DoxAI, "La Kiva" is Lakeba) or people in the records to that one.`,
   `Answer in two parts. First, what you will say aloud: one or two short sentences, 35 words at most, in plain spoken English, as a capable company secretary would answer across the table. Start with the answer itself (the figure, the date, yes or no); no greeting, no restating the question, no "let me check" and no offer to say more, since the detail is on the screen. Say numbers the way people say them ("about two point four million dollars", "the thirtieth of June"), give the date or period they relate to, and no references, brackets, lists, symbols or markdown. Then a line containing only ${SPOKEN_BREAK}. Then the detail for the screen, with references as usual. If you need to look things up, do it before writing either part.`,
   `Speed matters: the table is waiting. Look up only what the question needs, with as few lookups as will answer it, ideally all at once.`,
+  `Speak English, even when the question is asked in another language, unless you are asked to answer in that language.`,
   `If the question is unclear, say briefly what you understood and answer that. Never offer an opinion on how the board should vote or decide.`,
+  ...(o.facts ? [`What the portal already knows for this meeting, gathered at ${o.facts.at} (Sydney) today, is below. Answer from it where it covers the question, citing its references as usual, without looking it up again. Look up only what it doesn't cover, or where the question needs something it can't give (live Xero, a document's wording, the law).\n\n<meeting_facts>\n${o.facts.text}\n</meeting_facts>`] : []),
 ].join('\n\n');
 
 export async function askBoard(svc: Svc, access: Access, central: string, question: string, history: Turn[], events: Events = {}, signal?: AbortSignal, opts: AskOptions = {}) {
@@ -476,7 +486,7 @@ export async function askBoard(svc: Svc, access: Access, central: string, questi
   const full = await boardScope(svc, access);
   const scope: Scope = opts.only ? { companies: full.companies.filter((c) => opts.only!.includes(c.id)), all: false } : full;
   if (!scope.companies.length) throw new Error('Board Ask doesn’t cover any company for you.');
-  const s = new Session(svc, access, scope, central);
+  const s = new Session(svc, access, scope, central, opts.voice?.facts?.state);
   const messages: Anthropic.Beta.BetaMessageParam[] = [
     ...history.slice(-6).flatMap((h): Anthropic.Beta.BetaMessageParam[] => [{ role: 'user', content: h.question }, { role: 'assistant', content: h.answer || '(no answer)' }]),
     { role: 'user', content: question },

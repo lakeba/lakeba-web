@@ -74,6 +74,8 @@ export default defineConfig({
       XERO_CLIENT_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
       // The Observer's transcription (board meetings): either or both; keys from deepgram.com and assemblyai.com.
       DEEPGRAM_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // Deepgram's language: 'multi' (English and other languages in the same meeting) or one, e.g. 'en-AU'.
+      DEEPGRAM_LANGUAGE: envField.string({ context: 'server', access: 'secret', default: 'multi' }),
       ASSEMBLYAI_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       DEEPGRAM_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.deepgram.com' }),
       ASSEMBLYAI_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.assemblyai.com' }),
@@ -88,6 +90,9 @@ export default defineConfig({
       // Lex's lifelike face on the Observer tablet: Anam and/or Simli (key + the avatar or face made for Lex).
       ANAM_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       ANAM_AVATAR_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      // Lex's voice with each face (ElevenLabs voice IDs): one that suits the face; without it, ELEVENLABS_VOICE_ID.
+      ANAM_VOICE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      SIMLI_VOICE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
       ANAM_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.anam.ai' }),
       SIMLI_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       SIMLI_FACE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),

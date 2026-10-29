@@ -26,6 +26,8 @@ const closed = Boolean(m.audio_deleted_at) || m.recording_status === 'processing
 const { data: deckRows } = await svc.from('board_decks').select('id, title, role, slides').eq('meeting_id', m.id).eq('status', 'approved').order('created_at');
 const decks = (deckRows ?? []).map((d) => ({ id: d.id as string, title: d.title as string, role: d.role === 'other' ? '' : ROLES[d.role as 'cfo' | 'cro'].name, slides: (d.slides as Slide[]).map((x) => ({ title: x.title, points: x.points, notes: x.notes })) }));
 const faces = readyFaces().map((f) => ({ id: f, name: FACES[f].name }));
+// Simli (with Charlie's voice) was chosen as Lex's face (29 Oct 2026): it shows while recording; the orb otherwise.
+const defaultFace = faces.some((f) => f.id === 'simli') ? 'simli' : faces[0]?.id ?? '';
 const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(m.recording_consent), status: m.recording_status, takes: m.recording_takes.map((t) => ({ take: t.take, started_at: t.started_at, ended_at: t.ended_at })) };
 ---
 
@@ -99,8 +101,8 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
               <video id="face" class="mx-auto hidden aspect-square w-full max-w-80 rounded-2xl bg-black object-cover" playsinline autoplay></video>
               <audio id="face-audio" autoplay hidden></audio>
               {faces.length > 0 && (
-                <label class="flex items-center justify-center gap-2 text-xs text-white/45">Lex’s face
-                  <select class="field !w-auto !py-1 text-xs" id="face-pick"><option value="">Orb</option>{faces.map((f) => <option value={f.id}>{f.name}</option>)}</select>
+                <label class="flex items-center justify-center gap-2 text-xs text-white/45">Lex’s face while recording
+                  <select class="field !w-auto !py-1 text-xs" id="face-pick"><option value="">Orb</option>{faces.map((f) => <option value={f.id} selected={f.id === defaultFace}>{f.name}</option>)}</select>
                 </label>
               )}
               <p id="lex-state" class="text-center text-sm text-white/55">Say “Lex, …” or tap Ask while recording.</p>
@@ -180,13 +182,14 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
         li.append(who, document.createTextNode(text));
         $('live')?.scrollTo({ top: 1e9, behavior: 'smooth' });
       };
-      const segment = (speaker: string, text: string, start: number, end: number, turn?: number) => {
+      // ended: the service says the speaker has finished (Deepgram speech_final, AssemblyAI end of turn).
+      const segment = (speaker: string, text: string, start: number, end: number, turn?: number, ended = false) => {
         const n = turn != null && turnSeq.has(turn) ? turnSeq.get(turn)! : seq++;
         if (turn != null) turnSeq.set(turn, n);
         const offset = sessionStart - takeStart;
         pending.push({ seq: n, speaker, text, start_ms: start + offset, end_ms: end + offset });
         show(n, speaker, text);
-        heard(text);
+        heard(text, ended);
       };
 
       // Live text: Deepgram (Results with words and speaker numbers) or AssemblyAI (Turns with a speaker label).
@@ -204,12 +207,12 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
             if (!cur || cur.speaker !== sp) { if (cur) segment(cur.speaker, cur.words.join(' '), cur.start, cur.end); cur = { speaker: sp, words: [], start: w.start * 1000, end: w.end * 1000 }; }
             cur.words.push(w.punctuated_word ?? w.word); cur.end = w.end * 1000;
           }
-          if (cur) segment(cur.speaker, cur.words.join(' '), cur.start, cur.end);
+          if (cur) segment(cur.speaker, cur.words.join(' '), cur.start, cur.end, undefined, Boolean(msg.speech_final));
         } else if (msg.type === 'Turn') {
           if (!msg.end_of_turn || !msg.turn_is_formatted) { if (interim) interim.textContent = msg.transcript ?? ''; if (msg.transcript) hearing(); return; }
           if (interim) interim.textContent = '';
           const w = msg.words ?? [];
-          if (msg.transcript) segment(msg.speaker_label && msg.speaker_label !== 'UNKNOWN' ? `Speaker ${msg.speaker_label}` : '', msg.transcript, w[0]?.start ?? 0, w.at(-1)?.end ?? 0, msg.turn_order);
+          if (msg.transcript) segment(msg.speaker_label && msg.speaker_label !== 'UNKNOWN' ? `Speaker ${msg.speaker_label}` : '', msg.transcript, w[0]?.start ?? 0, w.at(-1)?.end ?? 0, msg.turn_order, true);
         } else if (msg.type === 'SpeakerRevision') {
           for (const r of msg.revisions ?? []) {
             const n = turnSeq.get(r.turn_order);
@@ -290,6 +293,7 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
           $('indicator')?.classList.replace('hidden', 'flex');
           $('pause')!.hidden = false; $('finish')!.hidden = false; btn.hidden = true;
           status('Recording. Speak normally; the text appears as people talk.');
+          void showFace(chosenFace());
         } catch (e) {
           problem((e as Error).name === 'NotAllowedError' ? 'The tablet didn’t allow the microphone. Allow it for this site and try again.' : (e as Error).message);
           btn.disabled = false;
@@ -305,6 +309,7 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
         stream?.getTracks().forEach((t) => t.stop());
         await ctx?.close().catch(() => undefined);
         await wakeLock?.release().catch(() => undefined);
+        void showFace('');
         $('indicator')?.classList.replace('flex', 'hidden');
         // Last pieces and text before telling the portal.
         await flushUploads();
@@ -333,50 +338,86 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
       window.addEventListener('beforeunload', (e) => { if (recording || uploads.length) { e.preventDefault(); } });
 
       // Lex: called by name in the live text ("Lex, what's our cash runway?") or with Ask; answers aloud and on screen.
-      type LexState = 'idle' | 'listening' | 'thinking' | 'speaking';
+      type LexState = 'idle' | 'listening' | 'following' | 'thinking' | 'speaking';
       let lexState: LexState = 'idle';
-      let collect: { text: string; at: number; how: 'voice' | 'tap'; timer: number | null; giveUp: number | null } | null = null;
+      // follow: words heard just after an answer, without Lex's name: asked only if they are a question.
+      let collect: { text: string; at: number; how: 'voice' | 'tap'; timer: number | null; giveUp: number | null; follow?: boolean } | null = null;
       let outCtx: AudioContext | null = null, outLevel: AnalyserNode | null = null;
       const WAKE = /\b(?:hey\s+|ok(?:ay)?\s+)?(?:lex|lexx|lecks|lexi)\b[\s,.:!?-]*/i;
-      const lexLabel: Record<LexState, string> = { idle: 'Say “Lex, …” or tap Ask while recording.', listening: 'Listening…', thinking: 'Looking it up…', speaking: 'Lex is answering' };
+      const lexLabel: Record<LexState, string> = { idle: 'Say “Lex, …” or tap Ask while recording.', listening: 'Listening…', following: 'Any follow-up? Just ask, or say “thank you”.', thinking: 'Looking it up…', speaking: 'Lex is answering' };
       const setLex = (s: LexState) => { lexState = s; const l = $('lex-state'); if (l) l.textContent = lexLabel[s]; const b = $<HTMLButtonElement>('lex-ask'); if (b) b.disabled = s === 'thinking' || s === 'speaking'; };
       const offsetNow = () => (st.takes.length ? Date.now() - Date.parse(st.takes[0].started_at) : null);
 
-      // Words heard while Lex is listening (after its name, or after Ask) make up the question; a pause ends it.
+      // Words heard while Lex is listening (after its name, or after Ask) make up the question. It is
+      // asked as soon as the service says the speaker has finished, or after a pause.
       const finishQuestion = () => {
         if (!collect) return;
         const c = collect; collect = null;
         if (c.giveUp) clearTimeout(c.giveUp);
         const q = c.text.trim();
+        if (c.follow) {
+          // A question is asked ("Thanks. And the cash?" too); "thank you", or anything else, ends the follow-ups.
+          if (/\?\s*$/.test(q) || (!THANKS.test(q) && QUESTION.test(q))) void askLex(q, 'voice', c.at); else endFollowUps();
+          return;
+        }
         if (q.split(/\s+/).length >= 2) void askLex(q, c.how, c.at); else setLex('idle');
       };
-      const heard = (text: string) => {
+
+      // Follow-ups: for a few seconds after Lex answers, a question needs no "Lex" first.
+      const FOLLOW_MS = 8000;
+      const THANKS = /^(?:ok(?:ay)?[,.]?\s+|great[,.]?\s+|perfect[,.]?\s+|good[,.]?\s+|lovely[,.]?\s+)?(?:thank(?:s| you)|cheers|that'?s (?:all|it|fine|great|enough)|no(?:,| more)? (?:more )?questions?|nothing (?:else|more)|all good)\b/i;
+      const QUESTION = /^(?:and |so |ok(?:ay)?,? |also |then )?(?:what|what's|how|who|whom|whose|when|where|why|which|is|are|was|were|can|could|do|does|did|will|would|should|shall|has|have|had|may|tell me|give me|show me|remind me|explain|any)\b/i;
+      let lastSpoken = '', followTimer: number | null = null;
+      const plainWords = (t: string) => t.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter(Boolean);
+      // Lex's own voice, picked up by the microphone, arrives as text a moment after it stops talking.
+      const isEcho = (t: string) => {
+        const said = new Set(plainWords(lastSpoken)); const w = plainWords(t);
+        return w.length > 0 && w.filter((x) => said.has(x)).length / w.length >= 0.6;
+      };
+      const endFollowUps = () => { if (followTimer) clearTimeout(followTimer); followTimer = null; if (lexState === 'following') setLex('idle'); };
+      const keepFollowing = () => { if (followTimer) clearTimeout(followTimer); followTimer = window.setTimeout(() => { if (!collect) endFollowUps(); }, FOLLOW_MS); };
+      const openFollowUps = () => { if (!recording || run) return; setLex('following'); keepFollowing(); };
+      const words = (t: string) => t.trim().split(/\s+/).filter(Boolean).length;
+      const heard = (text: string, ended = false) => {
         if (run && deckSpeech(text)) return;
         if (lexState === 'thinking' || lexState === 'speaking') return;
         if (collect) {
           collect.text += ` ${text}`;
           if (collect.timer) clearTimeout(collect.timer);
-          collect.timer = window.setTimeout(finishQuestion, 1800);
+          collect.timer = window.setTimeout(finishQuestion, ended && words(collect.text) >= 2 ? 50 : 1800);
           return;
         }
         const m = WAKE.exec(text);
-        if (!m) return;
+        // "Thank you", "Thanks, Lex": nothing more to ask.
+        if (THANKS.test(text.trim()) || (m && THANKS.test(text.replace(WAKE, ' ').trim()))) { endFollowUps(); return; }
+        if (!m) {
+          if (lexState !== 'following' || isEcho(text)) return;
+          if (followTimer) clearTimeout(followTimer);
+          collect = { text, at: offsetNow() ?? 0, how: 'voice', timer: null, giveUp: window.setTimeout(() => { collect = null; endFollowUps(); }, 15000), follow: true };
+          collect.timer = window.setTimeout(finishQuestion, ended ? 50 : 1800);
+          return;
+        }
+        if (followTimer) { clearTimeout(followTimer); followTimer = null; }
         collect = { text: text.slice(m.index + m[0].length), at: offsetNow() ?? 0, how: 'voice', timer: null, giveUp: window.setTimeout(() => { collect = null; setLex('idle'); }, 10000) };
         setLex('listening');
-        collect.timer = window.setTimeout(finishQuestion, collect.text.trim().split(/\s+/).length >= 4 ? 1800 : 4000);
+        // "Lex." on its own: the question may follow after a pause.
+        const n = words(collect.text);
+        collect.timer = window.setTimeout(finishQuestion, ended && n >= 2 ? 50 : n >= 4 ? 1800 : 4000);
       };
       // Someone is still talking (text not yet final): Lex keeps listening, so "Lex." then a pause, then the question, still works.
       const hearing = () => {
-        if (!collect) return;
+        if (!collect) { if (lexState === 'following') keepFollowing(); return; }
         if (collect.timer) clearTimeout(collect.timer);
         collect.timer = window.setTimeout(finishQuestion, 3000);
         if (collect.giveUp) clearTimeout(collect.giveUp);
-        collect.giveUp = window.setTimeout(() => { collect = null; setLex('idle'); }, 15000);
+        const follow = collect.follow;
+        collect.giveUp = window.setTimeout(() => { collect = null; if (follow) endFollowUps(); else setLex('idle'); }, 15000);
       };
       $('lex-ask')?.addEventListener('click', () => {
         ensureOut();
         if (run?.playing) pauseDeck('answering');
         if (!recording) { problem('Start recording first: Lex listens through the meeting’s microphone. Or type the question.'); return; }
+        if (followTimer) { clearTimeout(followTimer); followTimer = null; }
         collect = { text: '', at: offsetNow() ?? 0, how: 'tap', timer: null, giveUp: window.setTimeout(() => { collect = null; setLex('idle'); }, 12000) };
         setLex('listening');
       });
@@ -393,30 +434,82 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
         outCtx = new AudioContext();
         outLevel = outCtx.createAnalyser(); outLevel.fftSize = 512; outLevel.connect(outCtx.destination);
       };
-      const say = async (text: string) => {
-        if (!st.voice || !text.trim()) return;
-        if (face) {
-          const r = await fetch(`${base}/lex-voice?format=pcm`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
-          if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'Lex’s voice is unavailable.');
-          return face.speak(new Uint8Array(await r.arrayBuffer()));
-        }
-        ensureOut();
-        const r = await fetch(`${base}/lex-voice`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
-        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error ?? 'Lex’s voice is unavailable.');
-        const buf = await outCtx!.decodeAudioData(await r.arrayBuffer());
-        await new Promise<void>((done) => { const src = outCtx!.createBufferSource(); current = src; src.buffer = buf; src.connect(outLevel!); src.onended = () => { if (current === src) current = null; done(); }; src.start(); });
+      // Lex's voice: raw 16-bit PCM streamed from the portal as ElevenLabs makes it, fetched as soon as
+      // a sentence is known and played in turn, so the next sentence is ready when the last one ends.
+      const fetchVoice = (text: string, rate: number, faceName: string) => {
+        const got: Uint8Array[] = []; let ended = false, failed: Error | null = null, wake: (() => void) | null = null;
+        const ping = () => { const w = wake; wake = null; w?.(); };
+        void (async () => {
+          try {
+            const r = await fetch(`${base}/lex-voice?rate=${rate}${faceName ? `&face=${faceName}` : ''}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ text }) });
+            if (!r.ok || !r.body) throw new Error((await r.json().catch(() => ({}))).error ?? 'Lex’s voice is unavailable.');
+            const reader = r.body.getReader();
+            let carry: Uint8Array | null = null;
+            for (;;) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              let v = value;
+              if (carry) { const j = new Uint8Array(carry.length + v.length); j.set(carry); j.set(v, carry.length); v = j; carry = null; }
+              // Whole 16-bit samples only; an odd byte waits for the next piece.
+              const even = v.length - (v.length % 2);
+              if (even) got.push(v.slice(0, even));
+              if (even < v.length) carry = v.slice(even);
+              ping();
+            }
+          } catch (e) { failed = e as Error; }
+          ended = true; ping();
+        })();
+        return async function* () {
+          for (let i = 0; ;) {
+            if (i < got.length) { yield got[i++]; continue; }
+            if (failed) throw failed;
+            if (ended) return;
+            await new Promise<void>((r) => { wake = r; });
+          }
+        };
       };
-      let current: AudioBufferSourceNode | null = null;
-      const hush = () => { try { current?.stop(); } catch { /* ended */ } current = null; face?.hush(); };
+      // Through the tablet's speaker: each piece is scheduled straight after the one before.
+      let playing = new Set<AudioBufferSourceNode>(), hushed = 0;
+      const playPcm = async (chunks: AsyncGenerator<Uint8Array>, rate: number) => {
+        ensureOut();
+        const gen = hushed; let at = 0; let last: Promise<void> = Promise.resolve();
+        for await (const c of chunks) {
+          if (gen !== hushed) return;
+          const pcm = new Int16Array(c.buffer, c.byteOffset, c.length / 2);
+          const buf = outCtx!.createBuffer(1, pcm.length, rate);
+          const ch = buf.getChannelData(0);
+          for (let i = 0; i < pcm.length; i++) ch[i] = pcm[i] / 32768;
+          const src = outCtx!.createBufferSource(); src.buffer = buf; src.connect(outLevel!);
+          // A short head start on the first piece, so the next one arrives in time.
+          at = Math.max(at, outCtx!.currentTime + (at ? 0.02 : 0.12));
+          src.start(at); at += buf.duration;
+          playing.add(src);
+          last = new Promise<void>((done) => { src.onended = () => { playing.delete(src); done(); }; });
+        }
+        await last;
+      };
+      let voiceQueue: Promise<void> = Promise.resolve();
+      /** Says this after anything Lex is already saying; resolves when it has been said. */
+      const say = (text: string): Promise<void> => {
+        if (!st.voice || !text.trim()) return Promise.resolve();
+        const rate = face ? 16000 : 24000;
+        const chunks = fetchVoice(text, rate, face ? faceKind : '');
+        const gen = hushed;
+        const p = voiceQueue.then(() => (gen !== hushed ? undefined : face ? face.speak(chunks()) : playPcm(chunks(), rate)));
+        voiceQueue = p.catch(() => undefined);
+        return p;
+      };
+      const hush = () => { hushed++; for (const src of playing) { try { src.stop(); } catch { /* ended */ } } playing = new Set(); face?.hush(); };
 
-      // Lex's lifelike face (Anam or Simli): it lip-syncs Lex's own voice, sent as 16 kHz 16-bit mono audio, and plays it.
-      type Face = { speak: (pcm: Uint8Array) => Promise<void>; hush: () => void; stop: () => Promise<void> };
+      // Lex's lifelike face (Anam or Simli): it lip-syncs Lex's own voice, sent as 16 kHz 16-bit mono audio as it arrives, and plays it.
+      type Face = { speak: (pcm: AsyncGenerator<Uint8Array>) => Promise<void>; hush: () => void; stop: () => Promise<void> };
       let face: Face | null = null;
       // A face's speech ends when its audio has played: wait that long, or until hushed.
       let speaking: { done: () => void; timer: number } | null = null;
       const waitFor = (ms: number) => new Promise<void>((done) => { speaking = { done, timer: window.setTimeout(() => { speaking = null; done(); }, ms) }; });
       const endWait = () => { if (speaking) { clearTimeout(speaking.timer); const d = speaking.done; speaking = null; d(); } };
-      const msOf = (pcm: Uint8Array) => (pcm.length / 32000) * 1000 + 600;
+      // How long until the face has finished saying what it was sent: its length, less what has played while it arrived.
+      const left = (bytes: number, since: number) => Math.max(0, (bytes / 32000) * 1000 + 600 - (performance.now() - since));
       const openFace = async (kind: string) => {
         const r = await fetch(`${base}/face`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ provider: kind }) });
         const j = await r.json();
@@ -428,7 +521,11 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
           await client.streamToVideoElement('face');
           const input = client.createAgentAudioInputStream({ encoding: 'pcm_s16le', sampleRate: 16000, channels: 1 });
           return {
-            speak: async (pcm) => { for (let i = 0; i < pcm.length; i += 32000) input.sendAudioChunk(pcm.slice(i, i + 32000)); input.endSequence(); await waitFor(msOf(pcm)); },
+            speak: async (pcm) => {
+              let bytes = 0, since = 0;
+              for await (const c of pcm) { since ||= performance.now(); for (let i = 0; i < c.length; i += 32000) input.sendAudioChunk(c.slice(i, i + 32000)); bytes += c.length; }
+              input.endSequence(); await waitFor(left(bytes, since || performance.now()));
+            },
             hush: () => { try { client.interruptPersona(); input.endSequence(); } catch { /* idle */ } endWait(); },
             stop: async () => { await client.stopStreaming(); },
           } satisfies Face;
@@ -437,30 +534,47 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
         const client = new SimliClient(j.token, video, $<HTMLAudioElement>('face-audio')!, null, LogLevel.ERROR);
         await client.start();
         return {
-          speak: async (pcm) => { for (let i = 0; i < pcm.length; i += 6000) client.sendAudioData(pcm.slice(i, i + 6000)); await waitFor(msOf(pcm)); },
+          speak: async (pcm) => {
+            let bytes = 0, since = 0;
+            for await (const c of pcm) { since ||= performance.now(); for (let i = 0; i < c.length; i += 6000) client.sendAudioData(c.slice(i, i + 6000)); bytes += c.length; }
+            await waitFor(left(bytes, since || performance.now()));
+          },
           hush: () => { try { client.ClearBuffer(); } catch { /* idle */ } endWait(); },
           stop: async () => { await client.stop(); },
         } satisfies Face;
       };
-      $('face-pick')?.addEventListener('change', async (e) => {
-        const kind = (e.target as HTMLSelectElement).value;
-        const old = face; face = null;
+      // The chosen face shows while recording (so its minutes are used only then); the orb otherwise.
+      let faceKind = '';
+      const showFace = async (kind: string) => {
+        if (kind === faceKind && (face || !kind)) return;
+        const old = face; face = null; faceKind = kind;
+        // The orb comes back at once; the old face closes behind it.
+        hush();
+        const video = $<HTMLVideoElement>('face')!; video.classList.add('hidden'); $('orb')!.classList.remove('hidden');
         await old?.stop().catch(() => undefined);
-        $('face')!.classList.add('hidden'); $('orb')!.classList.remove('hidden');
+        video.srcObject = null;
         if (!kind) return;
         try {
-          problem('');
-          face = await openFace(kind);
+          const opened = await openFace(kind);
+          if (faceKind !== kind) { await opened.stop().catch(() => undefined); return; }
+          face = opened;
           $('orb')!.classList.add('hidden'); $('face')!.classList.remove('hidden');
-        } catch (err) { problem(`Lex’s face: ${(err as Error).message}`); (e.target as HTMLSelectElement).value = ''; }
-      });
+        } catch (err) { faceKind = ''; problem(`Lex’s face: ${(err as Error).message}`); }
+      };
+      const chosenFace = () => $<HTMLSelectElement>('face-pick')?.value ?? '';
+      $('face-pick')?.addEventListener('change', () => { problem(''); if (recording) void showFace(chosenFace()); });
 
       const askLex = async (question: string, how: 'voice' | 'tap' | 'typed', at: number | null) => {
         setLex('thinking'); problem('');
         $('lex-answer')!.hidden = false; $('lex-more')!.hidden = true;
         $('lex-question')!.textContent = `“${question}”`; $('lex-spoken')!.textContent = ''; $('lex-steps')!.innerHTML = ''; $('lex-detail')!.innerHTML = ''; $('lex-sources')!.innerHTML = '';
+        // Each sentence is said as it arrives; the whole spoken answer shows when it is done.
         let speaking: Promise<void> | null = null;
-        const speakOnce = (text: string) => { if (speaking) return; $('lex-spoken')!.textContent = text; setLex('speaking'); speaking = say(text).catch((e) => problem((e as Error).message)); };
+        const sayNext = (text: string) => {
+          const el = $('lex-spoken')!; el.textContent = `${el.textContent} ${text}`.trim();
+          setLex('speaking');
+          speaking = say(text).catch((e) => problem((e as Error).message));
+        };
         try {
           const res = await fetch(`${base}/lex`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ question, how, offset_ms: at, context: run ? slideContext() : undefined }) });
           if (!res.ok || !res.body) throw new Error((await res.json().catch(() => ({}))).error ?? 'Lex couldn’t answer.');
@@ -473,10 +587,11 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
             while ((i = buf.indexOf('\n\n')) >= 0) {
               const ev = JSON.parse(buf.slice(0, i).replace(/^data: /, '')); buf = buf.slice(i + 2);
               if (ev.step) { const li = document.createElement('li'); li.textContent = `· ${ev.step}`; $('lex-steps')!.append(li); }
-              if (ev.spoken) speakOnce(ev.spoken);
+              if (ev.say) sayNext(ev.say);
               if (ev.error) throw new Error(ev.error);
               if (ev.done) {
-                speakOnce(ev.done.spoken);
+                if (!speaking) sayNext(ev.done.spoken); else $('lex-spoken')!.textContent = ev.done.spoken;
+                lastSpoken = ev.done.spoken;
                 $('lex-detail')!.innerHTML = ev.done.html;
                 for (const s of ev.done.sources ?? []) { const li = document.createElement('li'); li.className = 'rounded-full bg-white/10 px-2 py-0.5 text-white/65'; li.textContent = `${s.ref} ${s.title}`; $('lex-sources')!.append(li); }
                 $('lex-more')!.hidden = !ev.done.html;
@@ -484,9 +599,10 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
             }
           }
           await speaking;
+          if (!run && how !== 'typed') { openFollowUps(); return; }
         } catch (e) { problem((e as Error).message); }
         finally {
-          setLex('idle');
+          if (lexState !== 'following') setLex('idle');
           if (run && !run.playing) { await say('Shall I carry on with the presentation?').catch(() => undefined); void showSlide('paused'); }
         }
       };
@@ -584,12 +700,12 @@ const state = { id: m.id, decks, faces, voice: voiceReady(), consented: Boolean(
       const draw = (t: number) => {
         if (g && orb) {
           const W = orb.width, c = W / 2;
-          const live = lexState === 'speaking' ? levelOf(outLevel) : lexState === 'listening' ? levelOf(micLevel) : 0;
+          const live = lexState === 'speaking' ? levelOf(outLevel) : lexState === 'listening' || lexState === 'following' ? levelOf(micLevel) : 0;
           smooth += (live - smooth) * 0.25;
           const breathe = Math.sin(t / 900) * 0.03;
           const r = W * (0.27 + breathe + smooth * 0.12);
           g.clearRect(0, 0, W, W);
-          const hue = lexState === 'listening' ? 150 : lexState === 'thinking' ? 265 : 212;
+          const hue = lexState === 'listening' || lexState === 'following' ? 150 : lexState === 'thinking' ? 265 : 212;
           const glow = g.createRadialGradient(c, c, r * 0.2, c, c, r * 1.6);
           glow.addColorStop(0, `hsla(${hue}, 90%, 65%, 0.35)`); glow.addColorStop(1, `hsla(${hue}, 90%, 55%, 0)`);
           g.fillStyle = glow; g.beginPath(); g.arc(c, c, r * 1.6, 0, Math.PI * 2); g.fill();

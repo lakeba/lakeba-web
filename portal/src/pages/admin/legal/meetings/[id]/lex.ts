@@ -1,14 +1,14 @@
 import type { APIRoute } from 'astro';
 import { serviceClient } from '../../../../../lib/admin';
-import { answerHtml, askBoard, SPOKEN_BREAK } from '../../../../../lib/board-ask';
-import { splitAnswer } from '../../../../../lib/lex';
+import { answerHtml, askBoard } from '../../../../../lib/board-ask';
+import { clean, meetingFacts, splitAnswer, spokenSoFar } from '../../../../../lib/lex';
 import { observerMeeting } from '../../../../../lib/observer';
 
 /**
  * A question put to Lex at the table (JSON {question, how, offset_ms}),
  * answered as server-sent events:
  *   data: {"step": "…"}              what Lex is looking at
- *   data: {"spoken": "…"}            what to say aloud, as soon as it is written
+ *   data: {"say": "…"}               a sentence to say aloud, as soon as it is written
  *   data: {"done": {"spoken", "html", "sources"}}
  *   data: {"error": "…"}
  * Lex uses the meeting company's records (the whole group for Lakeba's own board).
@@ -36,17 +36,26 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
   const stream = new ReadableStream({
     async start(controller) {
       const send = (o: unknown) => { try { controller.enqueue(encoder.encode(`data: ${JSON.stringify(o)}\n\n`)); } catch { /* the page went away */ } };
-      // The spoken part goes out the moment its closing line is written, so Lex can start talking while the detail is still being written.
-      let draft = '', spokenSent = false;
+      // Each sentence of the spoken part goes out the moment it is written, so Lex starts talking at
+      // the first one. At most three sentences, in case the answer has no spoken part.
+      let draft = '', sent = 0, sentences = 0, spokenDone = false;
       try {
+        const facts = await meetingFacts(svc, locals.access, central, locals.user!.id, m).catch((e) => { console.error('lex facts', e); return undefined; });
         const r = await askBoard(svc, locals.access, central, context ? `${context}\n\nQuestion: ${question}` : question, (earlier ?? []).reverse().map((e) => ({ question: e.question, answer: e.answer })), {
           step: (s) => send({ step: s.label }),
-          reset: () => { draft = ''; },
+          reset: () => { draft = ''; sent = 0; },
           text: (d) => {
             draft += d;
-            if (!spokenSent && draft.split('\n').some((l) => l.trim() === SPOKEN_BREAK)) { spokenSent = true; send({ spoken: splitAnswer(draft).spoken }); }
+            if (spokenDone) return;
+            const { upto, head, finished } = spokenSoFar(draft);
+            if (upto > sent) {
+              const piece = clean(head.slice(sent, upto));
+              sent = upto;
+              if (piece) { send({ say: piece }); sentences += piece.match(/[.!?]+(\s|$)/g)?.length ?? 1; }
+            }
+            if (finished || sentences >= 3) spokenDone = true;
           },
-        }, stop.signal, { only: company?.relationship === 'group' ? undefined : [m.entity_id], voice: { meeting: m.title, company: company?.legal_name ?? company?.display_name ?? '' } });
+        }, stop.signal, { only: company?.relationship === 'group' ? undefined : [m.entity_id], voice: { meeting: m.title, company: company?.legal_name ?? company?.display_name ?? '', facts } });
         const { spoken, detail } = splitAnswer(r.answer);
         await svc.from('board_meeting_assistant').update({ spoken, answer: detail, sources: r.sources, steps: r.steps, cost_usd: r.costUsd, status: 'done' }).eq('id', row!.id);
         send({ done: { id: row!.id, spoken, html: answerHtml(detail, r.sources), sources: r.sources } });

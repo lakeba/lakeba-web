@@ -1,8 +1,8 @@
-import { ANAM_API_BASE, ANAM_API_KEY, ANAM_AVATAR_ID, SIMLI_API_BASE, SIMLI_API_KEY, SIMLI_FACE_ID } from 'astro:env/server';
+import { ANAM_API_BASE, ANAM_API_KEY, ANAM_AVATAR_ID, ANAM_VOICE_ID, SIMLI_API_BASE, SIMLI_API_KEY, SIMLI_FACE_ID, SIMLI_VOICE_ID } from 'astro:env/server';
 import { outbound } from './outbound';
 
 // Lex's lifelike face on the Observer tablet (phase 5): Anam or Simli, both
-// lip-syncing Lex's own ElevenLabs voice (so it sounds the same with either),
+// lip-syncing Lex's ElevenLabs voice, each face with a voice that suits it,
 // on a face made for Lex that resembles no real person. Both can be set up to
 // compare them; the tablet chooses. The keys stay here: the tablet gets a
 // short-lived session token.
@@ -12,6 +12,8 @@ export const FACES: Record<FaceProvider, { name: string; ready: () => boolean }>
   anam: { name: 'Anam', ready: () => Boolean(ANAM_API_KEY && ANAM_AVATAR_ID) },
   simli: { name: 'Simli', ready: () => Boolean(SIMLI_API_KEY && SIMLI_FACE_ID) },
 };
+/** The ElevenLabs voice for this face, if it has its own. */
+export const faceVoice = (f: string | null) => (f === 'anam' ? ANAM_VOICE_ID : f === 'simli' ? SIMLI_VOICE_ID : undefined) || undefined;
 export const readyFaces = () => (Object.keys(FACES) as FaceProvider[]).filter((f) => FACES[f].ready());
 
 /** A session token for the tablet to open Lex's face with (Anam: an hour; Simli: 5 minutes to start). */

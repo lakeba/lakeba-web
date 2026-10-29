@@ -2,6 +2,7 @@ import type { APIRoute } from 'astro';
 import { serviceClient } from '../../../../../lib/admin';
 import { consentWording, meetingTerms, observerMeeting, saveSegments, transcribeMeeting, type Take } from '../../../../../lib/observer';
 import { liveSession, PROVIDERS, readyProviders, type Provider } from '../../../../../lib/transcription';
+import { meetingFacts } from '../../../../../lib/lex';
 
 /**
  * The Observer tablet's requests for a meeting (JSON, action):
@@ -47,6 +48,8 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
         const next = open ? takes : [...takes, take];
         await svc.from('board_meetings').update({ recording_status: 'recording', recording_takes: next, recording_error: null, updated_at: now }).eq('id', m.id).throwOnError();
         if (!open) await log('admin_started_meeting_recording', { take: take.take, provider });
+        // Lex's facts for the meeting, gathered now so the first question doesn't wait for them.
+        void meetingFacts(svc, locals.access, locals.site?.central ?? url.origin, locals.user!.id, m).catch(() => undefined);
         return Response.json({ take: take.take, started_at: take.started_at, provider, live });
       }
       case 'token': {

@@ -1,4 +1,4 @@
-import { ASSEMBLYAI_API_BASE, ASSEMBLYAI_API_KEY, ASSEMBLYAI_STREAMING_BASE, DEEPGRAM_API_BASE, DEEPGRAM_API_KEY } from 'astro:env/server';
+import { ASSEMBLYAI_API_BASE, ASSEMBLYAI_API_KEY, ASSEMBLYAI_STREAMING_BASE, DEEPGRAM_API_BASE, DEEPGRAM_API_KEY, DEEPGRAM_LANGUAGE } from 'astro:env/server';
 import { outbound } from './outbound';
 
 // Speech to text for the Observer (board meetings), from Deepgram or
@@ -33,7 +33,7 @@ export async function liveSession(provider: Provider, speakers: number, terms: s
   if (provider === 'deepgram') {
     const res = await outbound('POST', `${DEEPGRAM_API_BASE}/v1/auth/grant`, { headers: { authorization: `Token ${DEEPGRAM_API_KEY}`, 'content-type': 'application/json' }, body: JSON.stringify({ ttl_seconds: 60 }) });
     if (res.status >= 400) throw failed(provider, res.status, res.text);
-    const q = new URLSearchParams({ model: 'nova-3', language: 'en-AU', diarize: 'true', punctuate: 'true', smart_format: 'true', interim_results: 'true', utterance_end_ms: '1500', encoding: 'linear16', sample_rate: String(SAMPLE_RATE), channels: '1' });
+    const q = new URLSearchParams({ model: 'nova-3', language: DEEPGRAM_LANGUAGE, diarize: 'true', punctuate: 'true', smart_format: 'true', interim_results: 'true', utterance_end_ms: '1500', endpointing: '500', encoding: 'linear16', sample_rate: String(SAMPLE_RATE), channels: '1' });
     for (const t of keyterms) q.append('keyterm', t);
     return { url: `${ws(DEEPGRAM_API_BASE)}/v1/listen?${q}`, protocols: ['bearer', json(res.text).access_token as string] };
   }
@@ -47,7 +47,7 @@ export async function liveSession(provider: Provider, speakers: number, terms: s
 export async function transcribeRecording(provider: Provider, audio: Buffer, mime: string, speakers: number, terms: string[] = []): Promise<Segment[]> {
   const keyterms = cleanTerms(terms);
   if (provider === 'deepgram') {
-    const q = new URLSearchParams({ model: 'nova-3', language: 'en-AU', diarize: 'true', utterances: 'true', punctuate: 'true', smart_format: 'true', paragraphs: 'true' });
+    const q = new URLSearchParams({ model: 'nova-3', language: DEEPGRAM_LANGUAGE, diarize: 'true', utterances: 'true', punctuate: 'true', smart_format: 'true', paragraphs: 'true' });
     for (const t of keyterms) q.append('keyterm', t);
     const res = await outbound('POST', `${DEEPGRAM_API_BASE}/v1/listen?${q}`, { headers: { authorization: `Token ${DEEPGRAM_API_KEY}`, 'content-type': mime }, body: audio, max: 50_000_000, timeout: 900_000 });
     if (res.status >= 400) throw failed(provider, res.status, res.text);

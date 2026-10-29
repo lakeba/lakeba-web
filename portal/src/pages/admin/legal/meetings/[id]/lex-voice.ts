@@ -1,9 +1,14 @@
 import type { APIRoute } from 'astro';
 import { serviceClient } from '../../../../../lib/admin';
-import { MAX_SPOKEN, speak, voiceReady } from '../../../../../lib/lex';
+import { faceVoice } from '../../../../../lib/face';
+import { MAX_SPOKEN, speakStream, voiceReady } from '../../../../../lib/lex';
 import { observerMeeting } from '../../../../../lib/observer';
 
-/** Lex's voice for a piece of text (JSON {text}), as MP3 (or ?format=pcm for its face), for the Observer tablet. The key stays on this server. */
+/**
+ * Lex's voice for a piece of text (JSON {text}), for the Observer tablet: raw 16-bit mono PCM
+ * (?rate=24000 for the tablet's speaker, 16000 for its face), streamed as ElevenLabs makes it,
+ * so it starts playing at once; ?face=anam|simli for the voice that suits that face. The key stays on this server.
+ */
 export const POST: APIRoute = async ({ request, params, locals, url }) => {
   if (request.headers.get('origin') !== url.origin) return new Response('Forbidden', { status: 403 });
   if (!voiceReady()) return Response.json({ error: 'Lex’s voice isn’t set up (ElevenLabs key).' }, { status: 503 });
@@ -12,12 +17,17 @@ export const POST: APIRoute = async ({ request, params, locals, url }) => {
   const b = await request.json().catch(() => ({})) as { text?: unknown };
   const text = typeof b.text === 'string' ? b.text.slice(0, MAX_SPOKEN) : '';
   if (!text.trim()) return Response.json({ error: 'Nothing to say.' }, { status: 400 });
-  try {
-    // ?format=pcm: raw 16 kHz 16-bit mono, for Lex's lifelike face to lip-sync.
-    const pcm = url.searchParams.get('format') === 'pcm';
-    const audio = await speak(text, pcm ? 'pcm' : 'mp3');
-    return new Response(new Uint8Array(audio), { headers: { 'Content-Type': pcm ? 'application/octet-stream' : 'audio/mpeg', 'Cache-Control': 'private, max-age=600' } });
-  } catch (e) {
-    return Response.json({ error: (e as Error).message }, { status: 502 });
-  }
+  const rate = url.searchParams.get('rate') === '16000' ? 16000 : 24000;
+  const stream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      try {
+        await speakStream(text, rate, (chunk) => { try { controller.enqueue(new Uint8Array(chunk)); } catch { /* the tablet went away */ } }, faceVoice(url.searchParams.get('face')));
+        controller.close();
+      } catch (e) {
+        console.error('lex-voice', (e as Error).message);
+        try { controller.error(e); } catch { /* closed already */ }
+      }
+    },
+  });
+  return new Response(stream, { headers: { 'Content-Type': 'application/octet-stream', 'Cache-Control': 'no-store', 'X-Accel-Buffering': 'no' } });
 };
