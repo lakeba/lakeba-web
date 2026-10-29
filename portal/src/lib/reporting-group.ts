@@ -33,31 +33,38 @@ export const consolidatedItems = (items: Item[]) => items.filter((i) => i.figure
  * Adds the companies up and removes what they report with each other:
  * charges between them come off revenue (then other income) and other
  * operating expenses; balances between them come off receivables (then other
- * current assets) and payables (then other liabilities). An approximation from
+ * assets) and borrowings (then payables, other liabilities); investments in each
+ * other come off assets and equity. An approximation from
  * what each company reports, not an audited consolidation.
  */
 export function consolidate(items: Item[]) {
   const inside = new Set(items.map((i) => i.id));
   const pl = Object.fromEntries(Object.keys(PL_LINES).map((k) => [k, { period: 0, ytd: 0 }])) as Record<PlLine, { period: number; ytd: number }>;
   const bs = Object.fromEntries(Object.keys(BS_LINES).map((k) => [k, 0])) as Record<BsLine, number>;
-  const removed = { income: 0, expense: 0, receivable: 0, payable: 0 };
+  const removed = { income: 0, expense: 0, receivable: 0, payable: 0, investment: 0 };
   for (const i of items) {
     const f = i.figures!;
     for (const k of Object.keys(PL_LINES) as PlLine[]) { pl[k].period += f.pl?.[k]?.period ?? 0; pl[k].ytd += f.pl?.[k]?.ytd ?? 0; }
     for (const k of Object.keys(BS_LINES) as BsLine[]) bs[k] += f.bs?.[k] ?? 0;
     for (const r of f.ic ?? []) {
       if (!inside.has(r.entity_id)) continue;
-      removed.income += r.income ?? 0; removed.expense += r.expense ?? 0; removed.receivable += r.receivable ?? 0; removed.payable += r.payable ?? 0;
+      removed.income += r.income ?? 0; removed.expense += r.expense ?? 0; removed.receivable += r.receivable ?? 0; removed.payable += r.payable ?? 0; removed.investment += r.investment ?? 0;
     }
   }
-  const takeFrom = (first: { v: number }, second: { v: number }, amount: number) => { const a = Math.min(first.v, amount); first.v -= a; second.v -= amount - a; };
+  /** Takes an amount off lines in order, as far as each goes; what is left comes off the last. */
+  const takeFrom = (lines: { v: number }[], amount: number) => { let left = amount; lines.forEach((l, i) => { const a = i === lines.length - 1 ? left : Math.max(0, Math.min(l.v, left)); l.v -= a; left -= a; }); };
   const rev = { v: pl.revenue.period }, oth = { v: pl.other_income.period };
-  takeFrom(rev, oth, removed.income); pl.revenue.period = rev.v; pl.other_income.period = oth.v;
+  takeFrom([rev, oth], removed.income); pl.revenue.period = rev.v; pl.other_income.period = oth.v;
   pl.other_expenses.period -= removed.expense;
-  const rec = { v: bs.receivables }, oca = { v: bs.other_current_assets };
-  takeFrom(rec, oca, removed.receivable); bs.receivables = rec.v; bs.other_current_assets = oca.v;
-  const pay = { v: bs.payables }, ol = { v: bs.other_liabilities };
-  takeFrom(pay, ol, removed.payable); bs.payables = pay.v; bs.other_liabilities = ol.v;
+  // Owed to each other: off receivables, then other current and non-current assets; owed by each other: off borrowings (loans), then payables, then other liabilities.
+  const rec = { v: bs.receivables }, oca = { v: bs.other_current_assets }, ncaR = { v: bs.non_current_assets };
+  takeFrom([rec, oca, ncaR], removed.receivable); bs.receivables = rec.v; bs.other_current_assets = oca.v; bs.non_current_assets = ncaR.v;
+  const bor = { v: bs.borrowings }, pay = { v: bs.payables }, ol = { v: bs.other_liabilities };
+  takeFrom([bor, pay, ol], removed.payable); bs.borrowings = bor.v; bs.payables = pay.v; bs.other_liabilities = ol.v;
+  // A holding company's investment in a company that is also added up is the same equity counted twice: off its assets (non-current first) and off equity.
+  const nca = { v: bs.non_current_assets }, oca2 = { v: bs.other_current_assets };
+  takeFrom([nca, oca2], removed.investment); bs.non_current_assets = nca.v; bs.other_current_assets = oca2.v;
+  bs.equity -= removed.investment;
   const figures: Figures = { pl, bs };
   return { figures, removed, netAssets: totals(figures).netAssets };
 }

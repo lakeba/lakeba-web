@@ -75,7 +75,8 @@ export default defineConfig({
       XERO_AUTH_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://login.xero.com/identity/connect' }),
       XERO_TOKEN_URL: envField.string({ context: 'server', access: 'secret', default: 'https://identity.xero.com/connect/token' }),
       XERO_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.xero.com' }),
-      XERO_SCOPES: envField.string({ context: 'server', access: 'secret', default: 'openid profile email offline_access accounting.contacts accounting.transactions accounting.reports.read accounting.settings.read' }),
+      // Xero's granular scopes (required for apps created from March 2026): contacts, draft bills, the chart of accounts, and the two reports.
+      XERO_SCOPES: envField.string({ context: 'server', access: 'secret', default: 'openid profile email offline_access accounting.contacts accounting.invoices accounting.settings.read accounting.reports.balancesheet.read accounting.reports.profitandloss.read' }),
       // Ventures on Google Workspace. Sending: Google's SMTP relay (the venture allows this server's address).
       // GOOGLE_RELAY_URL replaces it in tests (e.g. smtp://127.0.0.1:54325).
       GOOGLE_RELAY_URL: envField.string({ context: 'server', access: 'secret', optional: true }),

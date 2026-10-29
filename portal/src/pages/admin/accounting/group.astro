@@ -56,7 +56,7 @@ const sumOf = (fn: (i: (typeof inside)[number]) => number) => inside.reduce((t, 
             <tr class="font-semibold"><td class="px-5 py-1.5">Net assets</td><td class="px-5 py-1.5 text-right tabular-nums">{money(sumOf((i) => totals(i.figures!).netAssets))}</td><td></td><td class="px-5 py-1.5 text-right tabular-nums">{money(c.netAssets)}</td><td></td></tr>
           </tbody>
         </table>
-        <p class="px-5 pb-5 pt-3 text-xs text-white/40">Charges between them come off revenue and other operating expenses ({money(c.removed.income)} and {money(c.removed.expense)}); balances come off receivables and payables ({money(c.removed.receivable)} and {money(c.removed.payable)}), as each company reports them. Each line uses the company's latest pack sent up to {periodLabel(period, 'monthly')}.</p>
+        <p class="px-5 pb-5 pt-3 text-xs text-white/40">Charges between them come off revenue and other operating expenses ({money(c.removed.income)} and {money(c.removed.expense)}); balances come off receivables and payables ({money(c.removed.receivable)} and {money(c.removed.payable)}); investments in each other ({money(c.removed.investment)}) come off assets and equity, as each company reports them. Each line uses the company's latest pack sent up to {periodLabel(period, 'monthly')}.</p>
       </section>
 
       <section class="card mb-6 overflow-x-auto p-0">

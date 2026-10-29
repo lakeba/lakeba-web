@@ -16,7 +16,7 @@ export const GET: APIRoute = async ({ url, locals }) => {
   const bs = [header, ...(Object.entries(BS_LINES) as [BsLine, string][]).map(([k, l]) => [l, ...items.map((i) => i.figures!.bs?.[k] ?? null), c.figures.bs?.[k] ?? null]),
     ['Net assets', ...items.map((i) => totals(i.figures!).netAssets), c.netAssets]];
   const nameOf = new Map(items.map((i) => [i.id, i.name]));
-  const ic = [['Company', 'With', ...Object.values(IC_FIELDS)], ...items.flatMap((i) => (i.figures!.ic ?? []).map((r) => [i.name, nameOf.get(r.entity_id) ?? r.entity_id, r.receivable, r.payable, r.income, r.expense]))];
+  const ic = [['Company', 'With', ...Object.values(IC_FIELDS)], ...items.flatMap((i) => (i.figures!.ic ?? []).map((r) => [i.name, nameOf.get(r.entity_id) ?? r.entity_id, r.receivable, r.payable, r.income, r.expense, r.investment ?? null]))];
   const pairs = [['What', 'First', 'Says', 'Second', 'Says', 'Difference'], ...matchPairs(items).map((p) => [p.what, p.a, p.aSays, p.b, p.bSays, p.difference])];
   const packs = [['Company', 'Pack period', 'State'], ...items.map((i) => [i.name, periodLabel(i.pack!.period_end, i.pack!.cadence), i.pack!.status === 'accepted' ? 'Accepted' : 'Sent, not reviewed'])];
   const widths = [34, ...items.map(() => 16), 20];

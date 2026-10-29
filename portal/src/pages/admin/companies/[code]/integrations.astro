@@ -320,7 +320,7 @@ const deliveryClass = (s: string) => (s === 'delivered' ? 'bg-lk-green/15 text-l
   </div>
   <p class="mt-1 max-w-3xl text-sm text-white/55">Connect {company.display_name}’s other tools to the portal: HubSpot and Xero, your own systems through the API, and webhooks that tell other tools when something happens. Everything here is for {company.display_name} only.</p>
   {!company.integrations_enabled && <div class="mt-4"><Alert tone="error">Integrations are switched off for {company.display_name}: keys are refused, webhooks wait and HubSpot and Xero are paused.{access.groupAdmin ? ' Switch them back on below.' : ' A Lakeba group Admin can switch them back on.'}</Alert></div>}
-  {!LIVE && <div class="mt-4"><Alert>Staging: keys made here are test keys (lk_test_…) and only work on staging. Webhooks, HubSpot and Xero only reach staging’s own test stand-ins.</Alert></div>}
+  {!LIVE && <div class="mt-4"><Alert>Staging: keys made here are test keys (lk_test_…) and only work on staging. Webhooks, HubSpot and Xero reach only the addresses this server allows (its test stand-ins, and any real service switched on for testing).</Alert></div>}
 
   <nav class="mt-6 flex flex-wrap gap-1 border-b border-white/10" aria-label="Integrations">
     {TABS.map((t) => <a href={here(t.key)} class:list={['-mb-px rounded-t-lg border-b-2 px-3 py-2 text-sm', t.key === tab ? 'border-lk-blue font-semibold text-white' : 'border-transparent text-white/55 hover:text-white']} aria-current={t.key === tab ? 'page' : undefined}>{t.label}</a>)}
@@ -505,7 +505,7 @@ const deliveryClass = (s: string) => (s === 'delivered' ? 'bg-lk-green/15 text-l
         </div>
         {!on && <p class="mt-4 max-w-3xl text-sm text-white/60">{p === 'hubspot'
           ? `“Connect” opens HubSpot’s own sign-in: approve access for ${company.display_name}’s HubSpot account. The portal then keeps HubSpot up to date: investors as contacts and holders as companies, with “Lakeba portal” properties (shares, % ownership, portal status, last sign-in) and notes for their activity. It needs to read personal data (names and emails) to do this. Changes from HubSpot are optional and set below once connected; shares, holders and the register never come from HubSpot.`
-          : `“Connect” opens Xero’s own sign-in: approve access to ${company.display_name}’s organisation. The portal then keeps holders as Xero contacts (with the register’s address), checks paid-up capital against the share capital accounts you choose, and can prepare dividends as draft bills. It never approves or pays anything in Xero.`}</p>}
+          : `“Connect” opens Xero’s own sign-in: approve access to ${company.display_name}’s organisation. The portal then checks paid-up capital against the share capital accounts you choose, pulls the figures for its reporting packs, can prepare dividends as draft bills and, if you switch it on, keeps holders as Xero contacts (with the register’s address). It never approves or pays anything in Xero.`}</p>}
       </section>
     );
   })()}

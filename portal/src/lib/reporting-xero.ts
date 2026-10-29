@@ -52,6 +52,7 @@ export function plFromXero(rows: XeroRow[]) {
 const RECEIVABLE = /receivable|debtor/i;
 const PAYABLE = /payable|creditor|accru/i;
 const BORROWING = /loan|borrow|convertible|note|overdraft|credit card|finance lease|hire purchase/i;
+const PROVISION = /provision|deferred|leave|make good|employee benefit/i;
 
 /** A balance sheet report as the standard balance sheet lines. */
 export function bsFromXero(rows: XeroRow[]) {
@@ -61,8 +62,12 @@ export function bsFromXero(rows: XeroRow[]) {
     const t = l.titles.join(' / ').toLowerCase();
     if (/^total|net assets/i.test(l.name)) continue;
     if (/equity/.test(t)) add('equity', l.value);
+    // A liability account in credit the other way (e.g. a loan the other party owes us) is an asset.
+    else if (/liabilit/.test(t) && l.value < 0) add('other_current_assets', -l.value);
     else if (/liabilit/.test(t)) {
-      if (BORROWING.test(l.name)) add('borrowings', l.value);
+      // Long-term liabilities are mostly loans (often from shareholders or group companies), unless they are provisions.
+      const longTerm = /non-current|non current|long term/.test(t);
+      if (BORROWING.test(l.name) || (longTerm && !PROVISION.test(l.name))) add('borrowings', l.value);
       else if (/current liabilit/.test(t) && !/non-current/.test(t) && PAYABLE.test(l.name)) add('payables', l.value);
       else add('other_liabilities', l.value);
     } else if (/bank/.test(t)) add('cash', l.value);
@@ -84,4 +89,24 @@ export function figuresFromXero(period: XeroRow[], ytd: XeroRow[] | null, balanc
     pl: Object.fromEntries(keys.map((k) => [k, { period: p[k] ?? null, ytd: ytd ? (y[k] ?? null) : null }])),
     bs: bsFromXero(balance),
   };
+}
+
+const bare = (n: string) => n.toLowerCase().replace(/\s+(pty\.?\s+)?(ltd|limited)\.?$/, '').trim();
+
+/**
+ * Balance sheet lines named after a group company (e.g. a loan account
+ * "Lakeba Ventures"): which company (the longest name that matches), and
+ * whether the company owes it (a liability) or is owed (an asset).
+ */
+export function groupLines(rows: XeroRow[], companies: { id: string; names: string[] }[]) {
+  const named = companies.flatMap((c) => c.names.map((n) => ({ id: c.id, n: bare(n) }))).filter((x) => x.n.length >= 4).sort((a, b) => b.n.length - a.n.length);
+  return lines(rows).flatMap((l) => {
+    const hit = named.find((x) => l.name.toLowerCase().includes(x.n));
+    if (!hit && !/lakeba/i.test(l.name)) return [];
+    const t = l.titles.join(' / ').toLowerCase();
+    // A negative liability is money owed to us (and a negative asset, money we owe).
+    const base = /liabilit/.test(t) ? 'payable' : /asset|bank/.test(t) ? 'receivable' : null;
+    const side = base && l.value < 0 ? (base === 'payable' ? 'receivable' : 'payable') : base;
+    return [{ name: l.name, value: Math.abs(Math.round(l.value)), entity_id: hit?.id ?? null, side: side as 'payable' | 'receivable' | null }];
+  });
 }

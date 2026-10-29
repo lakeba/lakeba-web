@@ -4,7 +4,7 @@ import type { serviceClient } from '../admin';
 import { holdersIn } from '../api/data';
 import { outboundJson } from '../outbound';
 import { accessToken, raiseIssue, type Connection } from './connections';
-import { figuresFromXero, type XeroRow } from '../reporting-xero';
+import { figuresFromXero, groupLines, type XeroRow } from '../reporting-xero';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -19,7 +19,9 @@ type Svc = ReturnType<typeof serviceClient>;
 
 export type XeroSettings = { tenant_id: string; capital_accounts: string[]; contacts: boolean };
 export const xeroSettings = (s: Record<string, unknown>): XeroSettings => ({
-  tenant_id: typeof s.tenant_id === 'string' ? s.tenant_id : '', capital_accounts: Array.isArray(s.capital_accounts) ? (s.capital_accounts as string[]) : [], contacts: s.contacts !== false,
+  tenant_id: typeof s.tenant_id === 'string' ? s.tenant_id : '', capital_accounts: Array.isArray(s.capital_accounts) ? (s.capital_accounts as string[]) : [],
+  // Holders' names and addresses go to Xero only once someone switches this on.
+  contacts: s.contacts === true,
 });
 
 type Ctx = { svc: Svc; c: Connection; company: { id: string; code: string; display_name: string }; token: string; tenant: string };
@@ -169,5 +171,9 @@ export async function xeroPackFigures(svc: Svc, c: Connection, company: Ctx['com
     xr<Report>(x, 'GET', `/Reports/BalanceSheet?date=${p.end}&standardLayout=true`),
   ]);
   const periodRows = period.Reports?.[0]?.Rows ?? [];
-  return figuresFromXero(periodRows, ytd ? ytd.Reports?.[0]?.Rows ?? [] : periodRows, balance.Reports?.[0]?.Rows ?? []);
+  const balanceRows = balance.Reports?.[0]?.Rows ?? [];
+  // Accounts named after a group company, to point out for the intercompany table.
+  const { data: group } = await svc.from('entities').select('id, display_name, legal_name').in('relationship', ['group', 'controlled']).neq('id', company.id);
+  const named = groupLines(balanceRows, (group ?? []).map((g) => ({ id: g.id as string, names: [g.display_name, g.legal_name].filter(Boolean) as string[] })));
+  return { figures: figuresFromXero(periodRows, ytd ? ytd.Reports?.[0]?.Rows ?? [] : periodRows, balanceRows), named };
 }
