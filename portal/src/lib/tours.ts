@@ -74,3 +74,20 @@ export const tourByKey = (key: string | null | undefined) => TOURS.find((t) => t
 
 /** Texts of the buttons, translated with the shareholder tours. */
 export const TOUR_BUTTONS = ['Next', 'Back', 'Done', 'Take the tour'];
+
+/** Places an announcement's pop-up can point at (Admin → Announcements), by the same data-tour marks. */
+export const POINTS: { el: string; label: string; for: 'investors' | 'staff' }[] = [
+  { el: 'holding', label: 'Their holding (dashboard)', for: 'investors' },
+  { el: 'nav-documents', label: 'The Documents menu', for: 'investors' },
+  { el: 'nav-agm', label: 'The Meetings menu', for: 'investors' },
+  { el: 'nav-news', label: 'The News menu', for: 'investors' },
+  { el: 'nav-ask', label: 'The Ask menu', for: 'investors' },
+  { el: 'nav-board', label: 'Ask the board', for: 'investors' },
+  { el: 'inbox', label: 'The inbox', for: 'investors' },
+  { el: 'account-menu', label: 'Their account menu', for: 'investors' },
+  { el: 'admin-todo', label: 'The to-do list (Overview)', for: 'staff' },
+  { el: 'admin-company', label: 'The company filter', for: 'staff' },
+  { el: 'admin-menu', label: 'The admin menu', for: 'staff' },
+  { el: 'admin-approvals', label: 'Approvals', for: 'staff' },
+  { el: 'admin-whats-new', label: 'What’s new', for: 'staff' },
+];

@@ -16,7 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { CATEGORIES } from '../src/lib/notification-events.ts';
 import { AREAS } from '../src/lib/permissions.ts';
 import { toShown } from '../src/lib/admin-paths.ts';
-import { TOURS, TOUR_BUTTONS } from '../src/lib/tours.ts';
+import { POINTS, TOURS, TOUR_BUTTONS } from '../src/lib/tours.ts';
 
 const root = new URL('..', import.meta.url).pathname;
 const errors = [];
@@ -137,6 +137,10 @@ for (const tour of TOURS) {
       for (const lang of ['es', 'it', 'zh']) if (!has(lang, key)) missing.set(`${lang}: ${key}`, 'src/lib/tours.ts');
     }
   }
+}
+for (const point of POINTS) {
+  const nav = point.el.startsWith('nav-') && portalLayout.includes(`href: '/${point.el.slice(4)}'`);
+  if (!nav && !everything.includes(`data-tour="${point.el}"`)) errors.push(`Announcements: the place "${point.label}" points at data-tour="${point.el}", which no page has.`);
 }
 for (const tour of read('src/lib/whats-new.ts').matchAll(/tour: '([^']+)'/g)) {
   if (!TOURS.some((t) => t.key === tour[1])) errors.push(`What's new: an entry offers the tour "${tour[1]}", which lib/tours.ts doesn't have.`);

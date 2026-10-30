@@ -10,6 +10,7 @@ import { myHolderIds, onBoardOf, onlyMyDocuments } from '../lib/scope';
 import { loadNews } from '../lib/news';
 import { brandName, legalName } from '../lib/companies';
 import { categoryLabels, holderKinds } from '../lib/format';
+import { localised } from '../lib/announcements';
 
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
@@ -31,7 +32,7 @@ const [{ data: moveData }, priceSeries, { data: announcements }, { data: setting
   // Each holding's movements on its company's register (imported from the company secretary's register).
   positions.length ? supabase.from('register_movements').select('holder_id, share_class_id, seq, moved_on, kind, shares, balance, party').in('holder_id', [...new Set(positions.map((p) => p.holder.id))]).order('seq') : Promise.resolve({ data: [] }),
   Promise.all(classIds.map(async (id) => [id, await loadPrices(supabase, id)] as const)),
-  supabase.from('announcements').select('id, title, body, link_url, link_label, tone').eq('entity_id', entityId).order('starts_at', { ascending: false }).limit(2),
+  supabase.from('announcements').select('id, title, body, link_url, link_label, tone, translations').eq('entity_id', entityId).neq('audience', 'staff').order('starts_at', { ascending: false }).limit(2),
   isGroup ? supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle() : Promise.resolve({ data: null }),
   onlyMyDocuments(supabase.from('documents').select('id, title, category, published_at, entity_id, document_reads(user_id)').neq('category', 'video'), { holderIds, onBoard, company }).order('published_at', { ascending: false }).limit(5),
   loadNews(supabase, 3, company),
@@ -91,12 +92,12 @@ const [noHoldingsBefore, noHoldingsAfter] = t('If you are a shareholder, ask a q
 
 <Portal title={t('Dashboard')}>
   {unavailable && <div class="mb-4 rounded-2xl border border-white/10 px-5 py-3.5 text-sm text-white/70">{t('Your account doesn’t have access to that company’s portal. If you think it should, contact the company.')}</div>}
-  {(announcements ?? []).map((a) => (
+  {(announcements ?? []).map((row) => { const a = { ...row, ...localised(row, Astro.locals.locale) }; return (
     <div class:list={['mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-5 py-3.5 text-sm', toneStyles[a.tone as keyof typeof toneStyles]]}>
       <p><span class="font-semibold text-white">{a.title}</span>{a.body && <span class="text-white/65"> · {a.body}</span>}</p>
       {a.link_url && <a href={a.link_url} class="font-semibold text-white underline-offset-4 hover:underline">{a.link_label ?? t('Learn more')} →</a>}
     </div>
-  ))}
+  ); })}
 
   <div class="mt-6 flex flex-wrap items-end justify-between gap-6">
     <div>

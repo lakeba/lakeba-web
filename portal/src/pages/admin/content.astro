@@ -7,6 +7,10 @@ import { parseLocal } from '../../lib/admin-forms';
 import { dateTime } from '../../lib/format';
 import { adminScope, formCompany } from '../../lib/admin-company';
 import CompanySelect from '../../components/CompanySelect.astro';
+import { AUDIENCES, COLUMNS, TONE_LABELS, reach, type Announcement } from '../../lib/announcements';
+import { AREAS } from '../../lib/permissions';
+import { POINTS } from '../../lib/tours';
+import { serviceClient } from '../../lib/admin';
 
 const supabase = Astro.locals.supabase;
 const scope = await adminScope(Astro.locals, Astro.url, true);
@@ -25,14 +29,22 @@ if (Astro.request.method === 'POST') {
   if (intent === 'save-announcement' && !company) {
     error = 'Choose the company.';
   } else if (intent === 'save-announcement') {
+    // The pop-up's options and the other languages (Spanish, Italian, Chinese), where filled in.
+    const audience = AUDIENCES.some(([k]) => k === field(form, 'audience')) ? field(form, 'audience') : 'investors';
+    const translations = Object.fromEntries(['es', 'it', 'zh'].map((l) => [l, Object.fromEntries(['title', 'body', 'link_label'].map((k) => [k, field(form, `tr_${l}_${k}`)]).filter(([, v]) => v))]).filter(([, v]) => Object.keys(v).length));
     const row = {
       entity_id: company!.id,
+      popup: form.get('popup') === 'on',
+      audience,
+      staff_area: audience !== 'investors' && AREAS.some((a) => a.key === field(form, 'staff_area')) ? field(form, 'staff_area') : null,
+      point_at: POINTS.some((p) => p.el === field(form, 'point_at')) ? field(form, 'point_at') : null,
+      translations,
       title: field(form, 'title'), body: field(form, 'body') || null, link_url: field(form, 'link_url') || null, link_label: field(form, 'link_label') || null,
       tone: tones.includes(field(form, 'tone')) ? field(form, 'tone') : 'info',
       starts_at: parseLocal(field(form, 'starts_at')) ?? new Date().toISOString(), ends_at: parseLocal(field(form, 'ends_at')),
     };
     const { error: e } = id ? await supabase.from('announcements').update(row).eq('id', id) : await supabase.from('announcements').insert(row);
-    if (e) error = e.message; else { await log('admin_saved_announcement', { title: row.title }); notice = 'Announcement saved.'; }
+    if (e) error = e.message; else { await log('admin_saved_announcement', { title: row.title, popup: row.popup, audience: row.audience }); notice = row.popup ? 'Announcement saved. Each person it’s for sees the pop-up once.' : 'Announcement saved.'; }
   } else if (intent === 'end-announcement') {
     await supabase.from('announcements').update({ ends_at: new Date().toISOString() }).eq('id', id).throwOnError();
     notice = 'Announcement ended.';
@@ -48,16 +60,19 @@ if (Astro.request.method === 'POST') {
 }
 
 const [{ data: announcements }, { data: liquidityRow }] = await Promise.all([
-  supabase.from('announcements').select('*').in('entity_id', scope.ids).order('starts_at', { ascending: false }),
+  supabase.from('announcements').select(COLUMNS).in('entity_id', scope.ids).order('starts_at', { ascending: false }),
   supabase.from('portal_settings').select('value').eq('key', 'liquidity').maybeSingle(),
 ]);
 const liquidity = (liquidityRow?.value ?? {}) as Record<string, string>;
 const now = new Date();
+// How many of the people each pop-up is for have seen it.
+const seen = await reach(serviceClient(), (announcements ?? []) as Announcement[]);
+const audienceLabel = (k: string, area: string | null) => `${AUDIENCES.find(([a]) => a === k)?.[1] ?? k}${area ? ` · ${AREAS.find((a) => a.key === area)?.label ?? area}` : ''}`;
 const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.starts_at) <= now && (!a.ends_at || new Date(a.ends_at) > now);
 ---
 
 <Admin filter={{ scope }} title="Announcements">
-  <PageHeader title="Announcements" subtitle="The banner at the top of the dashboard and the secondary trading card. News posts are in Admin → News." />
+  <PageHeader title="Announcements" subtitle="A banner at the top of the dashboard (shareholders) or the admin Overview (staff), and optionally a pop-up each person sees once. The secondary trading card is below; news posts are in Admin → News." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 
@@ -67,8 +82,9 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
       {(announcements ?? []).map((a) => (
         <li class="flex flex-wrap items-center justify-between gap-3 py-3">
           <span>{scope.companies.length > 1 && <span class="mr-2 text-xs text-white/45">{companyName(a.entity_id)}</span>}<span class="font-medium text-white/85">{a.title}</span> <span class:list={['ml-2 rounded-full px-2 py-0.5 text-[11px]', live(a) ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/50']}>{live(a) ? 'Showing' : new Date(a.starts_at) > now ? 'Scheduled' : 'Ended'}</span>
-            <span class="block text-xs text-white/40">{dateTime.format(new Date(a.starts_at))}{a.ends_at ? ` → ${dateTime.format(new Date(a.ends_at))}` : ''}</span></span>
+            <span class="block text-xs text-white/40">{dateTime.format(new Date(a.starts_at))}{a.ends_at ? ` → ${dateTime.format(new Date(a.ends_at))}` : ''} · {audienceLabel(a.audience, a.staff_area)}{a.popup && <> · <span class="rounded bg-lk-orange/15 px-1.5 text-lk-orange">Pop-up</span> seen by {seen.get(a.id)?.seen ?? 0} of {seen.get(a.id)?.total ?? 0}{seen.get(a.id)?.total ? ` (${Math.round(((seen.get(a.id)?.seen ?? 0) / seen.get(a.id)!.total) * 100)}%)` : ''}</>}</span></span>
           <form method="post" class="flex gap-3 text-xs"><input type="hidden" name="id" value={a.id} />
+            {a.popup && <a href={`/admin/content?preview-announcement=${a.id}`} class="text-lk-blue hover:underline">Preview pop-up</a>}
             {live(a) && <button name="intent" value="end-announcement" class="text-white/50 hover:text-white">End now</button>}
             <button name="intent" value="delete-announcement" class="text-white/50 hover:text-lk-red">Delete</button></form>
         </li>
@@ -80,11 +96,35 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
       <div class="sm:col-span-2"><label class="label" for="a-body">Text</label><input class="field" id="a-body" name="body" /></div>
       <div><label class="label" for="a-link">Link (optional)</label><input class="field" id="a-link" name="link_url" placeholder="/documents or https://…" /></div>
       <div><label class="label" for="a-label">Link label</label><input class="field" id="a-label" name="link_label" /></div>
-      <div><label class="label" for="a-tone">Style</label><select class="field" id="a-tone" name="tone">{tones.map((t) => <option value={t}>{t}</option>)}</select></div>
+      <div><label class="label" for="a-tone">Style</label><select class="field" id="a-tone" name="tone">{tones.map((t) => <option value={t}>{TONE_LABELS[t]}</option>)}</select></div>
       <div class="grid grid-cols-2 gap-3">
         <div><label class="label" for="a-start">Starts</label><input class="field" id="a-start" name="starts_at" type="datetime-local" /></div>
         <div><label class="label" for="a-end">Ends</label><input class="field" id="a-end" name="ends_at" type="datetime-local" /></div>
       </div>
+      <div><label class="label" for="a-audience">For</label><select class="field" id="a-audience" name="audience" data-audience>{AUDIENCES.map(([k, label]) => <option value={k}>{label}</option>)}</select></div>
+      <div data-staff-only class="hidden"><label class="label" for="a-area">Staff with access to</label><select class="field" id="a-area" name="staff_area"><option value="">Any section</option>{AREAS.map((a) => <option value={a.key}>{a.label}</option>)}</select></div>
+      <div class="rounded-2xl border border-lk-blue/30 bg-lk-blue/[0.06] p-4 sm:col-span-2">
+        <label class="flex items-center gap-2 font-semibold text-white"><input type="checkbox" name="popup" class="size-4 accent-lk-blue" /> Show as a pop-up once</label>
+        <p class="mt-1 text-xs text-white/55">The first time each person it’s for opens the dashboard (shareholders) or the admin Overview (staff) while it’s live. Closing it, “Later” or the button counts as seen. A guided tour waiting for them goes first.</p>
+        <div class="mt-3 max-w-sm"><label class="label" for="a-point">Point at</label><select class="field" id="a-point" name="point_at"><option value="">Nothing: a card in the middle</option>
+          <optgroup label="Shareholders’ pages">{POINTS.filter((p) => p.for === 'investors').map((p) => <option value={p.el}>{p.label}</option>)}</optgroup>
+          <optgroup label="Admin Overview">{POINTS.filter((p) => p.for === 'staff').map((p) => <option value={p.el}>{p.label}</option>)}</optgroup>
+        </select></div>
+      </div>
+      <details class="sm:col-span-2">
+        <summary class="cursor-pointer text-sm text-white/70 hover:text-white">Other languages (optional): Spanish, Italian, Chinese</summary>
+        <p class="mt-2 text-xs text-white/45">Shareholders whose portal is in that language see these; anything left empty shows in English.</p>
+        <div class="mt-3 grid gap-3">
+          {[['es', 'Español'], ['it', 'Italiano'], ['zh', '中文']].map(([l, name]) => (
+            <div class="grid gap-2 sm:grid-cols-[6rem_1fr_1.6fr_1fr] sm:items-center">
+              <span class="text-sm text-white/60">{name}</span>
+              <input class="field" name={`tr_${l}_title`} placeholder="Title" aria-label={`${name}: title`} />
+              <input class="field" name={`tr_${l}_body`} placeholder="Text" aria-label={`${name}: text`} />
+              <input class="field" name={`tr_${l}_link_label`} placeholder="Link label" aria-label={`${name}: link label`} />
+            </div>
+          ))}
+        </div>
+      </details>
       <div><button name="intent" value="save-announcement" class="btn-ghost">Add announcement</button></div>
     </form>
   </section>
@@ -101,3 +141,12 @@ const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.st
     </form>
   </section>}
 </Admin>
+
+<script>
+  // "Staff with access to" only matters when staff are among the people it's for.
+  const audience = document.querySelector<HTMLSelectElement>('[data-audience]');
+  const staffOnly = document.querySelector<HTMLElement>('[data-staff-only]');
+  const sync = () => staffOnly?.classList.toggle('hidden', audience?.value === 'investors');
+  audience?.addEventListener('change', sync);
+  sync();
+</script>

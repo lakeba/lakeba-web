@@ -64,3 +64,13 @@
 .lk-tour .driver-popover-arrow-side-right { border-right-color: var(--color-ink); }
 .lk-tour .driver-popover-arrow-side-top { border-top-color: var(--color-ink); }
 .lk-tour .driver-popover-arrow-side-bottom { border-bottom-color: var(--color-ink); }
+/* Announcement pop-ups (the same popover): a small heading in the announcement's colour, "Later" and its button. */
+.lk-announce .lk-announce-label { @apply mb-1 text-[11px] font-semibold uppercase tracking-widest text-lk-blue; }
+.lk-tone-success .lk-announce-label { @apply text-lk-green; }
+.lk-tone-warning .lk-announce-label { @apply text-lk-orange; }
+.lk-announce.driver-popover { @apply max-w-sm; }
+.lk-announce .driver-popover-footer { @apply justify-end; }
+.lk-announce .driver-popover-navigation-btns { @apply gap-2; }
+.lk-announce .driver-popover-footer a.lk-go {
+  @apply ml-2 inline-flex items-center rounded-lg bg-lk-blue px-3 py-1.5 text-sm font-semibold text-[#fff] no-underline transition hover:bg-[#3a78ee];
+}

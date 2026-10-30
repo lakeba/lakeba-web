@@ -8,6 +8,7 @@ import { displayName } from '../../lib/admin-forms';
 import { adminScope } from '../../lib/admin-company';
 import { serviceClient } from '../../lib/admin';
 import { waitingFor } from '../../lib/approvals';
+import { staffBanners } from '../../lib/announcements';
 import GettingStarted from '../../components/GettingStarted.astro';
 import { gettingStarted, venturesGettingStarted } from '../../lib/getting-started';
 
@@ -51,6 +52,9 @@ const { data: mine } = await svc.from('profiles').select('getting_started_hidden
 const gsHidden = Boolean(mine?.getting_started_hidden_until && mine.getting_started_hidden_until > now);
 const [gsCards, gsVentures] = gsHidden ? [[], []] : await Promise.all([gettingStarted(svc, access), access.groupAdmin ? venturesGettingStarted(svc) : Promise.resolve([])]);
 
+// Live announcements for staff whose roles cover them (Admin → Announcements).
+const banners = await staffBanners(access);
+const bannerTone: Record<string, string> = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-lk-green/30 bg-lk-green/10', warning: 'border-lk-orange/30 bg-lk-orange/10' };
 const stats = [
   { label: 'Investor accounts', value: new Set((members ?? []).map((m) => m.user_id)).size },
   { label: 'Holding entities', value: new Set((held ?? []).map((h) => h.holder_id)).size },
@@ -62,6 +66,12 @@ const stats = [
 
 <Admin filter={{ scope }} title="Overview">
   <PageHeader title="Portal administration" subtitle={scope.isGroupAdmin ? 'Investors, holdings, documents and shareholder questions.' : `Administration for ${scope.companies.map((c) => c.display_name).join(', ')}.`} />
+  {banners.map((a) => (
+    <div class:list={['mb-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border px-5 py-3.5 text-sm', bannerTone[a.tone] ?? bannerTone.info]}>
+      <p><span class="font-semibold text-white">{a.title}</span>{a.body && <span class="text-white/65"> · {a.body}</span>}</p>
+      {a.link_url && <a href={a.link_url} class="font-semibold text-white underline-offset-4 hover:underline">{a.link_label ?? 'Open'} →</a>}
+    </div>
+  ))}
   <GettingStarted cards={gsCards} ventures={gsVentures} />
 
   <section class="card mb-4" aria-labelledby="todo-title" data-tour="admin-todo">

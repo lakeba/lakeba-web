@@ -2,6 +2,8 @@
 import { TOURS, tourByKey, type Tour } from '../lib/tours';
 import { AREAS } from '../lib/permissions';
 import { brandName } from '../lib/companies';
+import { serviceClient } from '../lib/admin';
+import { COLUMNS, localised, popupFor, type Announcement } from '../lib/announcements';
 
 // The guided tour for this page (lib/tours.ts): the one asked for (?tour=key, from "Take the tour" or What's
 // new's "Show me"), else one meant for this person that they haven't seen, started by itself only on a plain
@@ -39,9 +41,39 @@ const data = tour && {
     .map((s) => ({ el: s.el, title: say(s.title), body: say(s.body, vars) })),
   buttons: { next: say('Next'), back: say('Back'), done: say('Done') },
 };
+
+// No tour: an announcement's pop-up waiting for this person on this page (lib/announcements.ts), seen once.
+// "Preview pop-up" (Admin → Announcements) shows any announcement the admin can see, without counting it.
+const previewId = Astro.url.searchParams.get('preview-announcement');
+let pop: Announcement | null = null;
+let preview = false;
+if (user && !tablet && !tour) {
+  if (previewId && /^[0-9a-f-]{36}$/.test(previewId)) {
+    const { data: found } = await serviceClient().from('announcements').select(COLUMNS).eq('id', previewId).maybeSingle();
+    if (found && access.can('news.view', (found as Announcement).entity_id)) { pop = found as Announcement; preview = true; }
+  } else if (!Astro.url.search) pop = await popupFor(Astro.locals, path);
+}
+// Shareholders get it in their language; staff in English, like the admin.
+const forStaff = pop && (pop.audience === 'staff' || (pop.audience === 'everyone' && path.startsWith('/admin') && !preview));
+const TONES: Record<string, string> = { info: t('Announcement'), success: t('Good news'), warning: t('Important') };
+const text = pop && (forStaff ? { title: pop.title, body: pop.body, link_label: pop.link_label } : localised(pop, Astro.locals.locale));
+const safeLink = (href: string | null) => (href && (/^\/(?!\/)/.test(href) || /^https:\/\//.test(href)) ? href : null);
+const announcement = pop && text && {
+  id: pop.id,
+  preview,
+  tone: pop.tone,
+  label: escape(forStaff ? `For staff${pop.staff_area ? ` · ${AREAS.find((a) => a.key === pop!.staff_area)?.label ?? ''}` : ''}` : TONES[pop.tone] ?? TONES.info),
+  title: escape(text.title),
+  body: escape(text.body ?? ''),
+  link: safeLink(pop.link_url),
+  linkLabel: escape(text.link_label || (forStaff ? 'Open' : t('Learn more'))),
+  later: escape(forStaff ? 'Later' : t('Later')),
+  el: pop.point_at,
+};
 ---
 
 {data && <script type="application/json" id="tour-data" set:html={JSON.stringify(data).replace(/</g, '\\u003c')} />}
+{announcement && <script type="application/json" id="announcement-data" set:html={JSON.stringify(announcement).replace(/</g, '\\u003c')} />}
 
 <script>
   // Runs the tour: only the steps whose element is on the page and visible (a feature the person lacks, or the
@@ -77,5 +109,54 @@ const data = tour && {
       });
       tour.drive();
     }
+  })();
+
+  // An announcement's pop-up: a card in the middle, or pointing at a place on the page if it's there. Closing it,
+  // "Later" or its button counts as seen (not in a preview).
+  type Pop = { id: string; preview: boolean; tone: string; label: string; title: string; body: string; link: string | null; linkLabel: string; later: string; el: string | null };
+  const popRaw = !raw && document.getElementById('announcement-data')?.textContent;
+  if (popRaw) void (async () => {
+    const a = JSON.parse(popRaw) as Pop;
+    const node = a.el ? [...document.querySelectorAll<HTMLElement>(`[data-tour="${CSS.escape(a.el)}"]`)].find((n) => n.getClientRects().length > 0) : undefined;
+    const { driver } = await import('driver.js');
+    let recorded = a.preview;
+    const record = () => {
+      if (recorded) return;
+      recorded = true;
+      void fetch('/api/announcements/seen', { method: 'POST', keepalive: true, headers: { 'content-type': 'application/json' }, body: JSON.stringify({ id: a.id }) }).catch(() => {});
+    };
+    const pop = driver({
+      popoverClass: `lk-tour lk-announce lk-tone-${a.tone}`,
+      showButtons: ['close'],
+      animate: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      overlayOpacity: 0.6,
+      stagePadding: 6,
+      stageRadius: 12,
+      onDestroyed: record,
+      onPopoverRender: (popover) => {
+        const label = document.createElement('p');
+        label.className = 'lk-announce-label';
+        label.innerHTML = a.label;
+        popover.title.before(label);
+        const later = document.createElement('button');
+        later.type = 'button';
+        later.innerHTML = a.later;
+        later.addEventListener('click', () => pop.destroy());
+        popover.footerButtons.append(later);
+        if (a.link) {
+          const go = document.createElement('a');
+          go.href = a.link;
+          go.className = 'lk-go';
+          go.innerHTML = `${a.linkLabel} →`;
+          go.addEventListener('click', record);
+          popover.footerButtons.append(go);
+        }
+        // Only "Later" and the announcement's button: no step count, Back or Done.
+        for (const el of [popover.previousButton, popover.nextButton, popover.progress]) el.style.display = 'none';
+        popover.footer.style.display = 'flex';
+      },
+      steps: [{ element: node, popover: { title: a.title, description: a.body || undefined } }],
+    });
+    pop.drive();
   })();
 </script>
