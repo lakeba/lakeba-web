@@ -87,7 +87,7 @@ const pct = members.length ? Math.round((membersClicked / members.length) * 100)
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 
-  <div class="mb-6 grid gap-4 sm:grid-cols-3">
+  <div class="mb-6 grid gap-4 sm:grid-cols-3" data-tour="li-stats">
     <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">Members clicked</p><p class="mt-2 font-display text-3xl font-bold">{membersClicked}<span class="text-lg text-white/40"> / {members.length}</span></p><p class="text-sm text-white/55">{pct}% of members</p></div>
     <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">All clicks</p><p class="mt-2 font-display text-3xl font-bold">{clicks?.length ?? 0}</p><p class="text-sm text-white/55">{signedOut} while signed out (e.g. from email)</p></div>
     <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">Last sent</p><p class="mt-2 text-lg font-bold">{sends?.[0] ? dateTime.format(new Date(sends[0].created_at)) : 'Not yet'}</p><p class="text-sm text-white/55">{sends?.length ? `${sends.length} send${sends.length === 1 ? '' : 's'} so far` : 'Nothing sent'}</p></div>
@@ -97,22 +97,22 @@ const pct = members.length ? Math.round((membersClicked / members.length) * 100)
     <h2 class="flex items-center gap-2 text-lg font-bold"><LinkedInIcon class="size-5 text-[#0A66C2]" /> Invite shareholders</h2>
     <p class="mt-1 text-sm text-white/55">Sends an inbox notification to all {members.length} Lakeba Group members (shareholders and board), and an email to the {optedIn} of them who have email notifications on. Every link goes through the portal’s tracked link, so clicks show up here.</p>
     <form method="post" class="mt-5 grid gap-4" onsubmit="return confirm(event.submitter?.value === 'remind' ? 'Send a reminder to members who haven’t clicked yet?' : 'Send the LinkedIn invitation to all members now?')">
-      <div><label class="label" for="c-title">Title</label><input class="field" id="c-title" name="title" value={DEFAULT_TITLE} maxlength="120" /></div>
-      <div><label class="label" for="c-body">Message</label><textarea class="field" id="c-body" name="body" rows="3" maxlength="600">{DEFAULT_BODY}</textarea></div>
-      <div class="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-white/75">
+      <div data-tour="li-message" class="grid gap-4"><div><label class="label" for="c-title">Title</label><input class="field" id="c-title" name="title" value={DEFAULT_TITLE} maxlength="120" /></div>
+      <div><label class="label" for="c-body">Message</label><textarea class="field" id="c-body" name="body" rows="3" maxlength="600">{DEFAULT_BODY}</textarea></div></div>
+      <div class="flex flex-wrap items-center gap-x-6 gap-y-3 text-sm text-white/75" data-tour="li-options">
         <label class="flex items-center gap-2"><input type="checkbox" name="email" value="yes" checked /> Email those who opted in</label>
         <label class="flex items-center gap-2"><input type="checkbox" name="banner" value="yes" checked /> Show a dashboard banner for <input class="field w-16" name="days" type="number" min="1" max="90" value="14" /> days</label>
       </div>
       <div class="flex flex-wrap gap-3">
-        <button name="intent" value="send" class="btn-primary">Send to all members</button>
-        <button name="intent" value="remind" class="btn-ghost" disabled={!sends?.length || pending === 0}>Remind the {pending} who haven’t clicked</button>
+        <button name="intent" value="send" class="btn-primary" data-tour="li-send">Send to all members</button>
+        <button name="intent" value="remind" class="btn-ghost" data-tour="li-remind" disabled={!sends?.length || pending === 0}>Remind the {pending} who haven’t clicked</button>
       </div>
       <p class="text-xs text-white/40">The reminder skips the banner. A click is not a follow: LinkedIn doesn’t share who follows a page, so clicks are the closest measure we have.</p>
     </form>
   </section>
 
   <div class="grid gap-6 lg:grid-cols-2">
-    <section class="card">
+    <section class="card" data-tour="li-sources">
       <h2 class="text-lg font-bold">Clicks by source</h2>
       {bySource.length ? (
         <ul class="mt-4 divide-y divide-white/5 text-sm">

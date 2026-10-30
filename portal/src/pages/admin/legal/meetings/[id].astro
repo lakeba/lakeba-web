@@ -220,9 +220,9 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
         <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={meeting.title} required /></div>
         <div><label class="label" for="held_at">Held (Sydney time)</label><input class="field" type="datetime-local" id="held_at" name="held_at" value={toSydney(meeting.held_at)} required /></div>
         <div><label class="label" for="location">Where</label><input class="field" id="location" name="location" value={meeting.location} /></div>
-        <div class="sm:col-span-2"><label class="label" for="agenda">Agenda</label><textarea class="field min-h-28" id="agenda" name="agenda" placeholder="1. Apologies and declarations of interest&#10;2. Minutes of the last meeting&#10;3. CEO report&#10;…">{meeting.agenda}</textarea></div>
+        <div class="sm:col-span-2" data-tour="meet-agenda"><label class="label" for="agenda">Agenda</label><textarea class="field min-h-28" id="agenda" name="agenda" placeholder="1. Apologies and declarations of interest&#10;2. Minutes of the last meeting&#10;3. CEO report&#10;…">{meeting.agenda}</textarea></div>
         <div class="sm:col-span-2"><label class="label" for="notes">Notes</label><textarea class="field min-h-48" id="notes" name="notes" placeholder="What was discussed and decided, in any form: Lakeba AI turns it into minutes.">{meeting.notes}</textarea></div>
-        <div class="sm:col-span-2">
+        <div class="sm:col-span-2" data-tour="meet-transcript">
           <label class="label" for="transcript_file">Transcript (optional)</label>
           <input class="field" type="file" id="transcript_file" name="transcript_file" accept=".txt,.vtt,.srt,.md,text/plain,text/vtt" />
           <p class="mt-1 text-xs text-white/40">The transcript Teams, Zoom or Google Meet makes (.vtt or .txt). For a meeting in the room, record it with the Observer below.</p>
@@ -231,7 +231,7 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
         </div>
       </div>
       <aside class="grid content-start gap-6">
-        <div class="card grid gap-3 text-sm">
+        <div class="card grid gap-3 text-sm" data-tour="meet-attendees">
           <h2 class="font-display text-lg font-bold">Who was there</h2>
           {officersPresent.length ? officersPresent.map((a) => (
             <label class="flex items-start gap-3"><input type="checkbox" name={`present-${a.officer_id}`} checked={a.present} class="mt-0.5 size-4 accent-lk-blue" /><span><span class="text-white">{a.name}</span><span class="block text-xs text-white/45">{roleWord[a.role]} · unticked = apology</span></span></label>
@@ -240,7 +240,7 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
           <div><label class="label" for="guests">Also attending</label><textarea class="field min-h-20" id="guests" name="guests" placeholder="One per line, e.g. Jane Smith (CFO)">{guests}</textarea></div>
         </div>
         {mayDo && (
-          <div class="card grid gap-3">
+          <div class="card grid gap-3" data-tour="meet-minutes">
             <button class="btn-ghost" name="intent" value="save">Save</button>
             <button class="btn-primary" name="intent" value="draft" data-busy-label="Drafting…">{minutes ? 'Draft the minutes again' : 'Draft the minutes'}</button>
             <p class="text-xs text-white/45">Lakeba AI writes the minutes from the agenda, notes and transcript (a few cents); you check and change them before they go to the chair.{minutes?.status === 'draft' && ' Drafting again replaces the current draft.'}</p>
@@ -295,7 +295,7 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
     )}
   </section>
 
-  <section class="card mt-6 grid gap-4" id="observer">
+  <section class="card mt-6 grid gap-4" id="observer" data-tour="meet-observer">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <div>
         <h2 class="font-display text-lg font-bold">Observer</h2>
@@ -332,7 +332,7 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
       </div>
     )}
     {mayDo && onlineReady && ready.length > 0 && (botActive(online) || (!meeting.audio_deleted_at && meeting.recording_status !== 'processing' && meeting.recording_status !== 'done')) && (
-      <div class="grid gap-3 rounded-xl bg-white/[0.03] p-4" id="online" data-live={botActive(online) ? '1' : ''}>
+      <div class="grid gap-3 rounded-xl bg-white/[0.03] p-4" id="online" data-live={botActive(online) ? '1' : ''} data-tour="meet-online">
         {botActive(online) ? (
           <form method="post" class="flex flex-wrap items-center justify-between gap-3">
             <input type="hidden" name="intent" value="online-leave" />

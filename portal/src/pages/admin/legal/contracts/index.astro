@@ -47,12 +47,12 @@ const shows: [string, string][] = [['active', 'In force'], ['ending', 'Ending in
 <Admin title="Legal · Contracts">
   <LegalNav />
   <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group.">
-    {mayImport && <a class="btn-primary" href={`/admin/legal/contracts/import${pick ? `?company=${pick.code}` : ''}`}>Import contracts</a>}
+    {mayImport && <a class="btn-primary" data-tour="contracts-import" href={`/admin/legal/contracts/import${pick ? `?company=${pick.code}` : ''}`}>Import contracts</a>}
   </PageHeader>
-  <nav class="mb-4 flex flex-wrap gap-2 text-sm" aria-label="Which contracts">
+  <nav class="mb-4 flex flex-wrap gap-2 text-sm" aria-label="Which contracts" data-tour="contracts-show">
     {shows.map(([k, l]) => <a href={link('show', k)} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white', k === 'check' && toCheck && show !== k && 'text-lk-orange']}>{l}</a>)}
   </nav>
-  <form method="get" class="mb-6 flex flex-wrap items-end gap-3 text-sm">
+  <form method="get" class="mb-6 flex flex-wrap items-end gap-3 text-sm" data-tour="contracts-search">
     <input type="hidden" name="show" value={show} />
     <div class="grow"><label class="label" for="f-q">Search</label><input class="field" id="f-q" name="q" value={words} placeholder="Title, other party, what it's about" /></div>
     <div><label class="label" for="f-company">Company</label><select class="field" id="f-company" name="company"><option value="">All</option>{companies.map((c) => <option value={c.code} selected={c.id === pick?.id}>{c.display_name}</option>)}</select></div>
@@ -61,7 +61,7 @@ const shows: [string, string][] = [['active', 'In force'], ['ending', 'Ending in
   </form>
 
   {rows.length ? (
-    <section class="card overflow-x-auto p-0">
+    <section class="card overflow-x-auto p-0" data-tour="contracts-list">
       <table class="w-full text-left text-sm">
         <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Contract</th>{!pick && <th class="px-5 py-3">Company</th>}<th class="px-5 py-3">Kind</th><th class="px-5 py-3">Ends</th><th class="px-5 py-3"></th></tr></thead>
         <tbody class="divide-y divide-white/5">

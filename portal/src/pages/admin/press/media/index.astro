@@ -31,21 +31,21 @@ const counts = { all: all.length, active: all.filter((c) => c.status === 'active
       <h1 class="font-display text-3xl font-bold">Media database</h1>
       <p class="mt-1 text-sm text-white/55">{counts.all} contacts · {counts.active} active{counts.noEmail ? ` · ${counts.noEmail} without an email address` : ''}. Opted-out addresses are never contacted again, even if imported later.</p>
     </div>
-    <div class="flex flex-wrap gap-2">
+    <div class="flex flex-wrap gap-2" data-tour="media-add">
       <a href={`/admin/press/media/import${desk.q}`} class="btn-ghost">Import a list</a>
       <a href={`/admin/press/research${desk.q}`} class="btn-ghost">Find journalists with AI</a>
       <a href={`/admin/press/media/new${desk.q}`} class="btn-primary">Add a contact</a>
     </div>
   </div>
-  <form method="get" class="card mt-6 grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-[1fr_12rem_12rem_10rem_10rem_auto] lg:items-end">{desk.venture && <input type="hidden" name="desk" value={desk.venture.code} />}
+  <form method="get" data-tour="media-filters" class="card mt-6 grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-[1fr_12rem_12rem_10rem_10rem_auto] lg:items-end">{desk.venture && <input type="hidden" name="desk" value={desk.venture.code} />}
     <div><label class="label" for="q">Search</label><input id="q" name="q" value={sp.get('q') ?? ''} placeholder="Name, email, outlet, notes" class="field" /></div>
     <div><label class="label" for="beat">Beat</label><input id="beat" name="beat" list="beats" value={sp.get('beat') ?? ''} class="field" /><datalist id="beats">{beats.map((b) => <option value={b} />)}</datalist></div>
     <div><label class="label" for="outlet">Outlet</label><select id="outlet" name="outlet" class="field"><option value="">Any</option>{outlets.map((o) => <option value={o.id} selected={o.id === f.outlet}>{o.name}</option>)}</select></div>
     <div><label class="label" for="role">Role</label><select id="role" name="role" class="field"><option value="">Any</option>{ROLES.map((r) => <option value={r} selected={r === f.role}>{r}</option>)}</select></div>
-    <div><label class="label" for="status">Status</label><select id="status" name="status" class="field">{[['active', 'Active'], ['all', 'All'], ...Object.entries(STATUS).filter(([k]) => k !== 'active')].map(([k, l]) => <option value={k} selected={k === f.status}>{l}</option>)}</select></div>
+    <div><label class="label" for="status"><span data-hint="Active contacts can be pitched. Opted out, bounced and do not contact are never emailed, and stay that way if they’re imported again.">Status</span></label><select id="status" name="status" class="field">{[['active', 'Active'], ['all', 'All'], ...Object.entries(STATUS).filter(([k]) => k !== 'active')].map(([k, l]) => <option value={k} selected={k === f.status}>{l}</option>)}</select></div>
     <button class="btn-ghost py-2">Filter</button>
   </form>
-  <section class="card mt-4 overflow-x-auto p-0">
+  <section class="card mt-4 overflow-x-auto p-0" data-tour="media-table">
     <table class="w-full text-left text-sm">
       <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Name</th><th class="px-5 py-3">Outlet</th><th class="px-5 py-3">Beats</th><th class="px-5 py-3">Status</th><th class="px-5 py-3">Last pitched</th></tr></thead>
       <tbody class="divide-y divide-white/5">

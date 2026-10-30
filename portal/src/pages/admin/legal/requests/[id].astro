@@ -85,7 +85,7 @@ const t = r.triage;
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
 
   <div class="grid gap-6 xl:grid-cols-[1fr_24rem]">
-    <div class="grid content-start gap-4">
+    <div class="grid content-start gap-4" data-tour="lreq-thread">
       {messages.map((m) => (
         <article class:list={['card !p-5', m.internal && '!border-lk-orange/40 !bg-lk-orange/[0.06]']}>
           <p class="text-xs text-white/45">{nameOf(m.author_id)}{m.author_id && teamIds.has(m.author_id) ? ' · Lakeba Legal' : ''} · {dateTime.format(new Date(m.created_at))}{m.internal && <span class="text-lk-orange"> · internal note</span>}</p>
@@ -94,12 +94,12 @@ const t = r.triage;
         </article>
       ))}
       {mayDo && (
-        <form method="post" enctype="multipart/form-data" class="card grid gap-3">
+        <form method="post" enctype="multipart/form-data" class="card grid gap-3" data-tour="lreq-reply">
           <label class="label" for="body">Write</label>
           <textarea class="field min-h-32" id="body" name="body"></textarea>
           <input class="field" type="file" name="files" multiple aria-label="Files" />
           <div class="flex flex-wrap items-end gap-3">
-            <div><label class="label" for="then">Then</label><select class="field" id="then" name="then"><option value="">Keep it {TEAM_STATES[r.status === 'new' ? 'in_progress' : r.status].toLowerCase()}</option><option value="waiting">Waiting for the venture</option><option value="done">Done</option></select></div>
+            <div><label class="label" for="then"><span data-hint="Waiting for the venture shows on their side as “Waiting for you”. Done closes the request and tells them.">Then</span></label><select class="field" id="then" name="then"><option value="">Keep it {TEAM_STATES[r.status === 'new' ? 'in_progress' : r.status].toLowerCase()}</option><option value="waiting">Waiting for the venture</option><option value="done">Done</option></select></div>
             <button class="btn-primary" name="intent" value="reply">Reply to the venture</button>
             <button class="btn-ghost" name="intent" value="note">Save as internal note</button>
           </div>
@@ -108,7 +108,7 @@ const t = r.triage;
     </div>
 
     <aside class="grid content-start gap-6">
-      <form method="post" class="card grid gap-3 text-sm">
+      <form method="post" class="card grid gap-3 text-sm" data-tour="lreq-details">
         <fieldset disabled={!mayDo} class="contents">
           <div><label class="label" for="status">State</label><select class="field" id="status" name="status">{Object.entries(TEAM_STATES).map(([k, l]) => <option value={k} selected={k === r!.status}>{l}</option>)}</select></div>
           <div><label class="label" for="assignee_id">With</label><select class="field" id="assignee_id" name="assignee_id"><option value="">Nobody yet</option>{team.map((p) => <option value={p.id} selected={p.id === r!.assignee_id}>{p.name}</option>)}</select></div>
@@ -119,7 +119,7 @@ const t = r.triage;
           {mayDo && <button class="btn-ghost" name="intent" value="details">Save</button>}
         </fieldset>
       </form>
-      <section class="card grid gap-3 text-sm">
+      <section class="card grid gap-3 text-sm" data-tour="lreq-triage">
         <div class="flex items-baseline justify-between gap-2"><h2 class="font-display text-lg font-bold">Lakeba AI's triage</h2><span class="text-xs text-white/40">Legal team only</span></div>
         {t.summary ? (
           <>

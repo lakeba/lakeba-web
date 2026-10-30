@@ -90,7 +90,7 @@ const person = forPerson ? (people ?? []).find((x) => x.id === forPerson) : null
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 
   {plans.length ? (
-    <div class="mb-6 grid gap-4 md:grid-cols-2">
+    <div class="mb-6 grid gap-4 md:grid-cols-2" data-tour="eqp-plans">
       {plans.map((pl) => { const u = usage(pl.id); return (
         <section class="card !p-5">
           <p class="font-display text-lg font-bold text-white">{pl.name}</p>
@@ -103,7 +103,7 @@ const person = forPerson ? (people ?? []).find((x) => x.id === forPerson) : null
   ) : <div class="mb-6"><Empty title="No plans yet">Add the company's employee share option (or rights) plan below.</Empty></div>}
 
   {grants.length > 0 && (
-    <section class="card mb-6 overflow-x-auto p-0">
+    <section class="card mb-6 overflow-x-auto p-0" data-tour="eqp-grants">
       <table class="w-full text-left text-sm">
         <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Holder</th><th class="px-5 py-3">Plan</th><th class="px-5 py-3 text-right">Granted</th><th class="px-5 py-3 text-right">Vested</th><th class="px-5 py-3 text-right">Exercised</th><th class="px-5 py-3">State</th></tr></thead>
         <tbody class="divide-y divide-white/5">
@@ -125,7 +125,7 @@ const person = forPerson ? (people ?? []).find((x) => x.id === forPerson) : null
   {doCompanies.length > 0 && (
     <div class="grid gap-6 lg:grid-cols-2">
       {plans.some((pl) => access.can('hr.do', pl.entity_id)) && (
-        <form method="post" id="new-grant" class="card grid scroll-mt-32 content-start gap-3 sm:grid-cols-2">
+        <form method="post" id="new-grant" class="card grid scroll-mt-32 content-start gap-3 sm:grid-cols-2" data-tour="eqp-grant">
           <h2 class="font-display text-lg font-bold sm:col-span-2">New grant{person && ` for ${person.full_name}`}</h2>
           <div class="sm:col-span-2"><label class="label" for="plan_id">Plan</label><select class="field" id="plan_id" name="plan_id" required>{plans.filter((pl) => access.can('hr.do', pl.entity_id)).map((pl) => <option value={pl.id} selected={person?.entity_id === pl.entity_id}>{pl.name} · {nameOf.get(pl.entity_id)}</option>)}</select></div>
           <div><label class="label" for="person_id">Person</label><select class="field" id="person_id" name="person_id"><option value="">Someone not in People</option>{(people ?? []).map((x) => <option value={x.id} selected={x.id === forPerson}>{x.full_name} · {nameOf.get(x.entity_id)}</option>)}</select></div>
@@ -135,13 +135,13 @@ const person = forPerson ? (people ?? []).find((x) => x.id === forPerson) : null
           <div><label class="label" for="grant_date">Grant date</label><input class="field" type="date" id="grant_date" name="grant_date" value={todayIn()} /></div>
           <div><label class="label" for="vesting_start">Vesting starts</label><input class="field" type="date" id="vesting_start" name="vesting_start" /><p class="mt-1 text-xs text-white/40">Empty: their start date, else the grant date.</p></div>
           <div><label class="label" for="g-vm">Vesting months</label><input class="field" id="g-vm" name="vesting_months" inputmode="numeric" placeholder="Plan's" /></div>
-          <div><label class="label" for="g-cm">Cliff months</label><input class="field" id="g-cm" name="cliff_months" inputmode="numeric" placeholder="Plan's" /></div>
+          <div><label class="label" for="g-cm"><span data-hint="Nothing vests before the cliff. On that date everything vested so far arrives at once, then the rest vests as usual.">Cliff months</span></label><input class="field" id="g-cm" name="cliff_months" inputmode="numeric" placeholder="Plan's" /></div>
           <div><label class="label" for="g-f">Vests</label><select class="field" id="g-f" name="frequency"><option value="">Plan's</option>{Object.entries(FREQUENCY).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
           <div><label class="label" for="expiry_date">Expiry</label><input class="field" type="date" id="expiry_date" name="expiry_date" /></div>
           <div class="sm:col-span-2"><button class="btn-primary" name="intent" value="grant">Draft the grant</button></div>
         </form>
       )}
-      <details class="card content-start" open={!plans.length}>
+      <details class="card content-start" open={!plans.length} data-tour="eqp-plan">
         <summary class="cursor-pointer font-display text-lg font-bold">New plan</summary>
         <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
           <div><label class="label" for="p-entity">Company</label><select class="field" id="p-entity" name="entity_id" required>{doCompanies.map((c) => <option value={c.id}>{c.display_name}</option>)}</select></div>

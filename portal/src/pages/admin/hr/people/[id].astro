@@ -115,7 +115,7 @@ const checklist = (kind: 'onboarding' | 'offboarding') => (tasks ?? []).filter((
   <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
     <div class="grid content-start gap-6">
       {(['onboarding', 'offboarding'] as const).filter((k) => checklist(k).length).reverse().map((k) => (
-        <section class="card p-0">
+        <section class="card p-0" data-tour="person-checklist">
           <h2 class="px-5 pt-5 font-display text-lg font-bold">{k === 'onboarding' ? 'Starting' : 'Leaving'} <span class="text-sm font-normal text-white/45">{checklist(k).filter((t) => t.done_at).length} of {checklist(k).length} done</span></h2>
           <ul class="mt-2 divide-y divide-white/5">
             {checklist(k).map((t) => (
@@ -146,7 +146,7 @@ const checklist = (kind: 'onboarding' | 'offboarding') => (tasks ?? []).filter((
         </fieldset>
       </form>
 
-      <section class="card p-0">
+      <section class="card p-0" data-tour="person-docs">
         <h2 class="px-5 pt-5 font-display text-lg font-bold">Documents</h2>
         {(docs ?? []).length ? (
           <ul class="mt-2 divide-y divide-white/5 text-sm">{(docs ?? []).map((doc) => (
@@ -161,7 +161,7 @@ const checklist = (kind: 'onboarding' | 'offboarding') => (tasks ?? []).filter((
             <input class="field" type="file" name="file" required aria-label="File" />
             <select class="field" name="kind" aria-label="Kind">{Object.entries(DOC_KINDS).map(([k, l]) => <option value={k}>{l}</option>)}</select>
             <input class="field" name="title" placeholder="Title (optional)" aria-label="Title" />
-            <label class="flex items-center gap-2 text-sm text-white/65"><input type="checkbox" name="visible" class="size-4 accent-lk-blue" /> They see it</label>
+            <label class="flex items-center gap-2 text-sm text-white/65"><input type="checkbox" name="visible" class="size-4 accent-lk-blue" /> <span data-hint="Ticked, they can open it in My HR. Unticked, only HR sees it. You can change it later.">They see it</span></label>
             <div><button class="btn-ghost !py-1.5 text-sm" name="intent" value="doc-add">File it</button></div>
           </form>
         )}
@@ -170,7 +170,7 @@ const checklist = (kind: 'onboarding' | 'offboarding') => (tasks ?? []).filter((
 
     <aside class="grid content-start gap-6">
       {mayDo && (
-        <section class="card grid gap-3 text-sm">
+        <section class="card grid gap-3 text-sm" data-tour="person-stand">
           <h2 class="font-display text-lg font-bold">Where they stand</h2>
           {p.status === 'onboarding' && <form method="post"><button class="btn-ghost w-full" name="intent" value="started">They've started</button></form>}
           {!p.user_id && p.status !== 'left' && <form method="post"><button class="btn-primary w-full" name="intent" value="invite" disabled={!p.email}>Invite to the portal (My HR)</button>{!p.email && <p class="mt-1 text-xs text-white/45">Add their email first.</p>}</form>}
@@ -178,16 +178,16 @@ const checklist = (kind: 'onboarding' | 'offboarding') => (tasks ?? []).filter((
           {p.status === 'offboarding' && <form method="post"><button class="btn-ghost w-full text-lk-red" name="intent" value="left" data-confirm="Mark them as left? Vesting stops on their last day and their portal access ends.">They've left</button></form>}
         </section>
       )}
-      <section class="card grid gap-2 text-sm">
+      <section class="card grid gap-2 text-sm" data-tour="person-grants">
         <h2 class="font-display text-lg font-bold">Option grants</h2>
         {grants.length ? grants.map((g) => { const pos = position(g, g.equity_exercises); return <a class="rounded-xl bg-white/[0.04] p-3 hover:bg-white/[0.07]" href={`/admin/hr/equity/${g.id}`}><span class="text-white">{n(g.number)} · {g.equity_plans?.name}</span><span class="block text-xs text-white/50">{g.status === 'granted' ? `${n(pos.vested)} vested · ${n(pos.exercisable)} exercisable${g.accepted_at ? '' : ' · not accepted yet'}` : g.status}</span></a>; }) : <p class="text-white/55">None.</p>}
         {mayDo && <a class="btn-ghost mt-1" href={`/admin/hr/equity?person=${p.id}#new-grant`}>Grant options</a>}
       </section>
-      <section class="card grid gap-2 text-sm">
+      <section class="card grid gap-2 text-sm" data-tour="person-policies">
         <h2 class="font-display text-lg font-bold">Policies</h2>
         {toAck.length ? toAck.map((x) => { const a = ackOf(x.id, x.version); return <p class="flex justify-between gap-3"><span class="text-white/75">{x.title}</span><span class:list={[a ? 'text-lk-green' : 'text-white/45']}>{a ? `accepted ${day(a.acked_at)}` : 'not yet'}</span></p>; }) : <p class="text-white/55">No policies to accept.</p>}
       </section>
-      <section class="card grid gap-3 text-sm">
+      <section class="card grid gap-3 text-sm" data-tour="person-private">
         <h2 class="font-display text-lg font-bold">Private details</h2>
         <p class="text-xs text-white/45">Date of birth, home address, phone, emergency contact. Kept encrypted; each look is in the audit log. Pay, tax and bank details belong in payroll.</p>
         {revealed ? (

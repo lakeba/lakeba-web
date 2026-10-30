@@ -105,7 +105,7 @@ const bskyDefault = r.social.bluesky || r.social.x || r.summary || r.headline;
   <p class="mt-1 text-sm text-white/45">{published ? <>Published · <a href={link} target="_blank" rel="noopener" class="text-lk-blue hover:underline">{link}</a></> : `Approved, publishes ${r.publish_at ? sydneyTime(r.publish_at) : 'soon'}: social posts wait until it’s public; wires can take it now, under embargo.`}</p>
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
 
-  <form method="post" class="mt-6 grid gap-4 lg:grid-cols-3">
+  <form method="post" class="mt-6 grid gap-4 lg:grid-cols-3" data-tour="chan-social">
     <section class="card space-y-3">
       <h2 class="font-display text-lg font-bold">LinkedIn</h2>
       <textarea name="linkedin" rows="8" maxlength="3000" class="field" data-copy-source="linkedin">{r.social.linkedin ?? ''}</textarea>
@@ -127,10 +127,10 @@ const bskyDefault = r.social.bluesky || r.social.x || r.summary || r.headline;
       {!xConfigured() ? <p class="text-xs text-lk-orange">Not set up: add the X app’s keys and the account’s access token to the server.</p>
         : access.approver && <button name="intent" value="post-x" class="btn-primary text-sm" disabled={!published} onclick={posted('x') ? "return confirm('Already posted on X. Post again?')" : "return confirm('Post this on Lakeba’s X now? X charges for it.')"}>Post on X</button>}
     </section>
-    <div class="lg:col-span-3"><button name="intent" value="save-social" class="btn-ghost">Save the texts</button></div>
+    <div class="lg:col-span-3"><button name="intent" value="save-social" class="btn-ghost" data-tour="chan-save">Save the texts</button></div>
   </form>
 
-  <section class="card mt-6 space-y-4">
+  <section class="card mt-6 space-y-4" data-tour="chan-wires">
     <div class="flex flex-wrap items-center justify-between gap-2"><h2 class="font-display text-lg font-bold">Wire services</h2>
       <a href={`/admin/press/${r.id}/wire-package${desk.q}`} class="btn-ghost text-sm">Download the wire package (.zip)</a></div>
     <p class="text-sm text-white/55">The package has what wires ask for: the release as text ({r.status === 'published' ? '“for immediate release”' : 'marked EMBARGOED with its time'}), a copy for Word, the PDF and the images. Upload it on the wire’s website, or email it to a wire’s desk below. Record each submission with its cost and the wire’s link to it.</p>
@@ -141,7 +141,7 @@ const bskyDefault = r.social.bluesky || r.social.x || r.summary || r.headline;
       ))}
       {!s.wires.length && <li class="py-2.5 text-white/45">No wires listed yet{access.approver ? ': add them in Settings and team' : ''}.</li>}
     </ul>
-    <form method="post" class="grid gap-3 border-t border-white/5 pt-4 sm:grid-cols-[10rem_1fr_1fr_7rem_6rem_auto] sm:items-end">
+    <form method="post" class="grid gap-3 border-t border-white/5 pt-4 sm:grid-cols-[10rem_1fr_1fr_7rem_6rem_auto] sm:items-end" data-tour="chan-record">
       <div><label class="label" for="channel">Record</label><select id="channel" name="channel" class="field"><option value="wire">Wire</option><option value="linkedin">LinkedIn post</option><option value="other">Other</option></select></div>
       <div><label class="label" for="target">Where</label><input id="target" name="target" list="wires" placeholder="e.g. EIN Presswire" class="field" /><datalist id="wires">{s.wires.map((w) => <option value={w.name} />)}</datalist></div>
       <div><label class="label" for="url">Link</label><input id="url" name="url" placeholder="https://…" class="field" /></div>
@@ -151,7 +151,7 @@ const bskyDefault = r.social.bluesky || r.social.x || r.summary || r.headline;
     </form>
   </section>
 
-  <section class="card mt-6">
+  <section class="card mt-6" data-tour="chan-history">
     <h2 class="font-display text-lg font-bold">Where it went</h2>
     {costs.size > 0 && <p class="mt-1 text-sm text-white/55">Spent: {[...costs].map(([c, v]) => `${c} ${v.toFixed(2)}`).join(' · ')}</p>}
     <ul class="mt-2 divide-y divide-white/5 text-sm">

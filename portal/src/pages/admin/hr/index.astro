@@ -56,12 +56,12 @@ const link = (k: string, v: string) => { const p = new URLSearchParams(q); p.set
   <HrNav />
   <PageHeader title="People" subtitle="People, their onboarding and leaving, equity grants, policies and documents. Pay, leave and tax details stay in the payroll system." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
-  <div class="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm">
+  <div class="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm" data-tour="hr-show">
     <nav class="flex flex-wrap gap-2" aria-label="Who">{[['current', 'Current'], ['left', 'Left'], ['all', 'All']].map(([k, l]) => <a href={link('show', k)} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}</nav>
     {companies.length > 1 && <form method="get" class="flex items-center gap-2"><input type="hidden" name="show" value={show} /><select class="field !w-auto" name="company" aria-label="Company"><option value="">All companies</option>{companies.map((c) => <option value={c.code} selected={c.id === pick?.id}>{c.display_name}</option>)}</select><button class="btn-ghost !py-1.5">Show</button></form>}
   </div>
   {rows.length ? (
-    <section class="card mb-6 overflow-x-auto p-0">
+    <section class="card mb-6 overflow-x-auto p-0" data-tour="hr-list">
       <table class="w-full text-left text-sm">
         <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Name</th>{!pick && companies.length > 1 && <th class="px-5 py-3">Company</th>}<th class="px-5 py-3">Role</th><th class="px-5 py-3">Started</th><th class="px-5 py-3">State</th></tr></thead>
         <tbody class="divide-y divide-white/5">
@@ -79,7 +79,7 @@ const link = (k: string, v: string) => { const p = new URLSearchParams(q); p.set
     </section>
   ) : <div class="mb-6"><Empty title="Nobody here yet">{doCompanies.length ? 'Add the people who work for the company below.' : 'No people recorded.'}</Empty></div>}
   {doCompanies.length > 0 && (
-    <details class="card" open={Boolean(error) || !rows.length}>
+    <details class="card" open={Boolean(error) || !rows.length} data-tour="hr-add">
       <summary class="cursor-pointer font-display text-lg font-bold">Add someone</summary>
       <form method="post" class="mt-5 grid gap-3 sm:grid-cols-2">
         <div><label class="label" for="entity_id">Company</label><select class="field" id="entity_id" name="entity_id" required>{doCompanies.length > 1 && <option value="">Choose…</option>}{doCompanies.map((c) => <option value={c.id} selected={c.id === pick?.id}>{c.display_name}</option>)}</select></div>

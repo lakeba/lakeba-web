@@ -252,7 +252,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
 
   <form method="post" class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_23rem]" data-press-form>
     <fieldset disabled={!editable} class="min-w-0 space-y-6">
-      <section class="card space-y-4">
+      <section class="card space-y-4" data-tour="press-points">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <h2 class="font-display text-lg font-bold">Head points</h2>
           <span class="text-xs text-white/40">What to announce, in a few lines</span>
@@ -285,7 +285,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
         </div>
       </section>
 
-      <section class="card space-y-4">
+      <section class="card space-y-4" data-tour="press-quotes">
         <div class="flex flex-wrap items-center justify-between gap-2">
           <h2 class="font-display text-lg font-bold">Quotes</h2>
           <button type="button" class="btn-ghost px-3 py-1.5 text-xs" data-add-quote>Add a quote</button>
@@ -356,16 +356,16 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
     </fieldset>
 
     <aside class="space-y-4 xl:sticky xl:top-28 xl:self-start">
-      <section class="card space-y-3">
+      <section class="card space-y-3" data-tour="press-release">
         <h2 class="font-display text-lg font-bold">Release</h2>
-        <div><label class="label" for="embargo_until">Embargoed until (Sydney time, optional)</label><input id="embargo_until" name="embargo_until" type="datetime-local" value={isoToSydney(r.embargo_until)} class="field" disabled={!editable} /></div>
+        <div><label class="label" for="embargo_until"><span data-hint-title="Embargo" data-hint="Journalists who get the release early may not publish it before this time. It doesn’t publish it: the approver chooses when it goes live.">Embargoed until (Sydney time, optional)</span></label><input id="embargo_until" name="embargo_until" type="datetime-local" value={isoToSydney(r.embargo_until)} class="field" disabled={!editable} /></div>
         {editable && r.status !== 'published' && <button name="intent" value="save" class="btn-ghost w-full">Save</button>}
         {editable && r.status === 'published' && access.approver && <button name="intent" value="correct" class="btn-primary w-full" onclick="return confirm('Publish these changes as a correction to the release?')">Publish the correction</button>}
         {canSubmit && <button name="intent" value="submit" class="btn-primary w-full">Send for approval</button>}
         {r.status === 'in_review' && !access.approver && <p class="text-sm text-lk-orange">Waiting for an approver. You can keep improving it; they see the latest version.</p>}
       </section>
 
-      <section class="card space-y-3">
+      <section class="card space-y-3" data-tour="press-checks">
         <div class="flex items-center justify-between"><h2 class="font-display text-lg font-bold">Checks</h2>
           {editable && <button name="intent" value="check" class="btn-ghost px-3 py-1.5 text-xs" data-busy="Checking…">Check the release</button>}</div>
         <ul class="space-y-2 text-sm">
@@ -382,7 +382,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
       </section>
 
       {canApprove && (
-        <section class="card space-y-3 border border-lk-blue/30">
+        <section class="card space-y-3 border border-lk-blue/30" data-tour="press-approve">
           <h2 class="font-display text-lg font-bold">Approve</h2>
           <label class="flex items-center gap-2 text-sm"><input type="radio" name="publish" value="now" checked class="accent-lk-blue" /> Publish now</label>
           <label class="flex items-center gap-2 text-sm"><input type="radio" name="publish" value="later" class="accent-lk-blue" /> Publish at (Sydney time)</label>
@@ -402,7 +402,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
       {access.approver && r.status === 'published' && <button name="intent" value="withdraw" class="btn-ghost w-full text-sm text-lk-red" onclick="return confirm('Take this release off the newsroom and the website?')">Withdraw from the newsroom</button>}
 
       {['approved', 'published'].includes(r.status) && (
-        <section class="card space-y-3">
+        <section class="card space-y-3" data-tour="press-send">
           <div class="flex items-center justify-between gap-2"><h2 class="font-display text-lg font-bold">Send to journalists</h2><a href={`/admin/press/${r.id}/channels${desk.q}`} class="text-xs text-lk-blue hover:underline">Social and wires →</a></div>
           <ul class="divide-y divide-white/5 text-sm">
             {(distributions ?? []).map((d) => <li class="py-2"><a href={`/admin/press/distribution/${d.id}${desk.q}`} class="text-white/80 hover:text-lk-blue">{d.follow_up_of ? 'Follow-up' : 'Distribution'} · {d.status}</a><span class="block text-xs text-white/45">{dateTime.format(new Date(d.created_at))}</span></li>)}

@@ -211,7 +211,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
     <p class="mt-1 text-sm text-white/55">{company.legal_name ?? 'Legal name not recorded'}{rec?.acn && ` · ACN ${rec.acn}`}{rec?.company_type && ` · ${rec.company_type === 'public' ? 'Public' : 'Proprietary'} company`}</p>
     <div class="mt-4"><CompanyTabs company={company} /></div>
   </div>
-  <nav class="mb-6 flex flex-wrap gap-2 text-sm" aria-label="Company">
+  <nav class="mb-6 flex flex-wrap gap-2 text-sm" aria-label="Company" data-tour="co-tabs">
     {[['record', 'Record'], ['officers', `Officers (${current.length})`], ['board', `Board${papers.some((p) => p.status === 'signing') ? ` (${papers.filter((p) => p.status === 'signing').length} to sign)` : ''}`], ['calendar', `Calendar (${open.length}${overdue ? `, ${overdue} overdue` : ''})`]].map(([t, l]) => (
       <a href={tabHref(t)} aria-current={tab === t ? 'page' : undefined} class:list={['rounded-full px-3 py-1', tab === t ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white', t === 'calendar' && overdue && tab !== t && 'text-lk-red']}>{l}</a>
     ))}
@@ -222,7 +222,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
 
   {tab === 'record' && (
     <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
-      <form method="post" class="card">
+      <form method="post" class="card" data-tour="co-record">
         <fieldset disabled={!mayDo} class="grid gap-4 sm:grid-cols-2">
           <h2 class="font-display text-lg font-bold sm:col-span-2">Company record</h2>
           <div class="sm:col-span-2"><label class="label" for="legal_name">Legal name</label><input class="field" id="legal_name" name="legal_name" value={company.legal_name ?? ''} placeholder="e.g. Ezifin Pty Ltd" /></div>
@@ -233,7 +233,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
           <div><label class="label" for="registered_in">Registered in</label>
             <select class="field" id="registered_in" name="registered_in"><option value="">Not recorded</option>{STATES.map((s) => <option selected={rec?.registered_in === s}>{s}</option>)}</select></div>
           <div><label class="label" for="incorporated_on">Registered on</label><input class="field" type="date" id="incorporated_on" name="incorporated_on" value={rec?.incorporated_on ?? ''} /></div>
-          <div><label class="label" for="review_date_month">Annual review date</label>
+          <div><label class="label" for="review_date_month"><span data-hint="The day each year ASIC sends the company’s annual statement and fee. It’s usually the day the company was registered.">Annual review date</span></label>
             <div class="flex gap-2"><select class="field" id="review_date_month" name="review_date_month" aria-label="Review date month"><option value="">{rec?.incorporated_on && !rec.review_date ? 'Registration day' : '—'}</option>{MONTHS.map((m, i) => <option value={i + 1} selected={mdParts(rec?.review_date ?? null).m === i + 1}>{m}</option>)}</select>
               <input class="field w-20" type="number" min="1" max="31" name="review_date_day" aria-label="Review date day" value={mdParts(rec?.review_date ?? null).d || ''} /></div>
             <p class="mt-1 text-xs text-white/40">Leave empty to use the registration day{review && ` (now ${MONTHS[Number(review.slice(0, 2)) - 1]} ${Number(review.slice(3))})`}.</p></div>
@@ -256,7 +256,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
       </form>
       <aside class="grid content-start gap-6">
         {mayDo && (
-          <form method="post" enctype="multipart/form-data" class="card grid gap-3" data-busy>
+          <form method="post" enctype="multipart/form-data" class="card grid gap-3" data-busy data-tour="co-extract">
             <h2 class="font-display text-lg font-bold">Read an ASIC extract</h2>
             <p class="text-sm text-white/55">Upload a current company extract (PDF). Lakeba AI reads the details and officers; you check them before anything is saved. About 1 cent.</p>
             <input class="field" type="file" name="extract" accept="application/pdf,.pdf" required />
@@ -279,7 +279,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
   {tab === 'officers' && (
     <div class="grid gap-6">
       {!privateReady() && <Alert tone="info">Private details (birth details, home address, director ID) can't be stored on this server until its key is set.</Alert>}
-      <section class="card p-0">
+      <section class="card p-0" data-tour="co-officers">
         <h2 class="px-5 pt-5 font-display text-lg font-bold">Current officers</h2>
         {current.length ? (
           <ul class="mt-2 divide-y divide-white/5">
@@ -342,7 +342,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
       )}
 
       {mayDo && (
-        <details class="card" open={Boolean(kept('intent'))}>
+        <details class="card" open={Boolean(kept('intent'))} data-tour="co-add-officer">
           <summary class="cursor-pointer font-display text-lg font-bold">Add an officer</summary>
           <form method="post" enctype="multipart/form-data" class="mt-5 grid gap-3 sm:grid-cols-2">
             <div class="sm:col-span-2"><label class="label" for="full_name">Full name</label><input class="field" id="full_name" name="full_name" value={kept('full_name')} required /></div>
@@ -426,7 +426,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
 
   {tab === 'calendar' && (
     <div class="grid gap-6">
-      <section class="card p-0">
+      <section class="card p-0" data-tour="co-calendar">
         <h2 class="px-5 pt-5 font-display text-lg font-bold">Open</h2>
         {open.length ? <div class="mt-2"><ObligationList items={open} people={people} may={() => mayDo} /></div> : <p class="px-5 pb-5 pt-2 text-sm text-white/55">Nothing open.{!rec && ' Fill in the record so the calendar can work out the deadlines.'}</p>}
       </section>

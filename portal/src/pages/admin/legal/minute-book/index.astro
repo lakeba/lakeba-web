@@ -21,7 +21,7 @@ const rows = companies.map((c) => {
 <Admin title="Minute book">
   <BoardNav />
   <PageHeader title="Minute book" subtitle="Each company’s signed minutes and resolutions, in date order, as one PDF." />
-  <div class="card overflow-x-auto !p-0">
+  <div class="card overflow-x-auto !p-0" data-tour="mb-table">
     <table class="w-full text-left text-sm">
       <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Company</th><th class="px-5 py-3">Signed minutes</th><th class="px-5 py-3">Signed resolutions</th><th class="px-5 py-3">Last signed</th><th class="px-5 py-3"></th></tr></thead>
       <tbody class="divide-y divide-white/5">
@@ -31,7 +31,7 @@ const rows = companies.map((c) => {
             <td class="px-5 py-3">{r.minutes}</td>
             <td class="px-5 py-3">{r.resolutions}</td>
             <td class="px-5 py-3 text-white/55">{r.last ? dateTime.format(new Date(r.last)) : '—'}</td>
-            <td class="px-5 py-3 text-right">{r.minutes + r.resolutions > 0 ? <a class="text-lk-blue hover:underline" href={`/admin/legal/minute-book/${r.c.code}`}>Open the minute book (PDF)</a> : <span class="text-white/40">Nothing signed yet</span>}</td>
+            <td class="px-5 py-3 text-right">{r.minutes + r.resolutions > 0 ? <a class="text-lk-blue hover:underline" data-tour="mb-open" href={`/admin/legal/minute-book/${r.c.code}`}>Open the minute book (PDF)</a> : <span class="text-white/40">Nothing signed yet</span>}</td>
           </tr>
         ))}
       </tbody>

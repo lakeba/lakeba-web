@@ -50,13 +50,13 @@ const local = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Australia/Sydney', y
     {companies.map((c) => {
       const list = (meetings ?? []).filter((m) => m.entity_id === c.id);
       return (
-        <section class="card grid scroll-mt-6 gap-4" id={`company-${c.code}`}>
+        <section class="card grid scroll-mt-6 gap-4" id={`company-${c.code}`} data-tour="br-company">
           <div class="flex flex-wrap items-center justify-between gap-3">
             <h2 class="font-display text-xl font-bold">{c.display_name}</h2>
             <span class:list={['rounded-full px-3 py-1 text-xs', on(c.id) ? 'bg-lk-green/15 text-lk-green' : 'bg-white/5 text-white/50']}>{on(c.id) ? 'Board assistant on' : 'Board assistant not switched on yet'}</span>
           </div>
           {list.length ? (
-            <ul class="divide-y divide-white/5 text-sm">
+            <ul class="divide-y divide-white/5 text-sm" data-tour="br-meetings">
               {list.slice(0, 12).map((m) => (
                 <li class="flex flex-wrap items-center justify-between gap-3 py-2">
                   <a class="text-white hover:underline" href={`/admin/board/meetings/${m.id}`}>{m.title}</a>
@@ -66,7 +66,7 @@ const local = new Intl.DateTimeFormat('sv-SE', { timeZone: 'Australia/Sydney', y
             </ul>
           ) : <p class="text-sm text-white/55">No meetings yet.</p>}
           {mayMeeting(access, c.id, 'do') && (
-            <form method="post" class="grid gap-3 rounded-xl bg-white/[0.03] p-4 sm:grid-cols-[1fr_14rem_1fr_auto] sm:items-end">
+            <form method="post" class="grid gap-3 rounded-xl bg-white/[0.03] p-4 sm:grid-cols-[1fr_14rem_1fr_auto] sm:items-end" data-tour="br-new">
               <input type="hidden" name="company" value={c.id} />
               <div><label class="label" for={`t-${c.id}`}>New meeting</label><input class="field" id={`t-${c.id}`} name="title" required minlength="3" maxlength="200" placeholder="Board meeting – November 2026" /></div>
               <div><label class="label" for={`h-${c.id}`}>When (Sydney time)</label><input class="field" type="datetime-local" id={`h-${c.id}`} name="held_at" required value={local} /></div>

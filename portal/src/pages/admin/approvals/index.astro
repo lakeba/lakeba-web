@@ -30,7 +30,7 @@ const lists = [
 
 <Admin title="Approvals">
   <PageHeader title="Approvals" subtitle="Approval is optional for each item. When someone asks for it, the item waits until a person with “approve” for that area says yes, and the person who asked can’t approve it themselves." />
-  <div class="space-y-6">
+  <div class="space-y-6" data-tour="appr-lists">
     {lists.map((l) => (
       <section class="card overflow-x-auto p-0">
         <h2 class="px-5 pt-4 font-display text-lg font-bold">{l.title}{l.items.length > 0 && <span class="ml-2 text-sm text-white/45">{l.items.length}</span>}</h2>
@@ -38,7 +38,7 @@ const lists = [
           <tbody class="divide-y divide-white/5">
             {l.items.map((a) => (
               <tr>
-                <td class="px-5 py-2.5"><a href={approvalHref(a.item_type, a.item_id)} class="font-medium text-white hover:underline">{a.title || 'Untitled'}</a>
+                <td class="px-5 py-2.5"><a href={approvalHref(a.item_type, a.item_id)} class="font-medium text-white hover:underline" data-tour="appr-item">{a.title || 'Untitled'}</a>
                   <span class="block text-xs text-white/45">{ITEMS[a.item_type].label}{company(a.entity_id) && ` · ${company(a.entity_id)}`}</span></td>
                 <td class="px-5 py-2.5 text-xs text-white/55">asked by {email(a.requested_by)}<span class="block">{dateTime.format(new Date(a.requested_at))}</span></td>
                 <td class:list={['px-5 py-2.5 text-xs', tone[a.status]]}>{STATUS_TEXT[a.status]}{a.decided_by && <span class="block text-white/45">by {email(a.decided_by)}</span>}</td>

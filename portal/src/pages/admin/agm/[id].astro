@@ -109,13 +109,13 @@ const votedShares = (rid: string) => ['for', 'against'].reduce((a, v) => a + Num
 <Admin title={m.title}>
   <a href="/admin/agm" class="text-sm text-white/50 hover:text-white">← Meetings</a>
   <PageHeader title={m.title} subtitle={`${dateTime.format(new Date(m.starts_at))} · proxies close ${dateTime.format(new Date(m.proxy_deadline))}`}>
-    <a href={`/agm/${m.id}`} class="btn-ghost">View as shareholder</a>
+    <a href={`/agm/${m.id}`} class="btn-ghost" data-tour="sm-preview">View as shareholder</a>
   </PageHeader>
   <div class="-mt-2 mb-6"><ApprovalChip type="meeting" id={m.id} approval={meetingApproval} /></div>
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 
-  <details class="card mb-6">
+  <details class="card mb-6" data-tour="sm-details">
     <summary class="cursor-pointer font-display text-lg font-bold text-white">Meeting details and status <span class="ml-2 rounded-full bg-white/10 px-2.5 py-0.5 text-xs font-normal capitalize text-white/70">{m.status}</span></summary>
     <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
       <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={m.title} required /></div>
@@ -125,7 +125,7 @@ const votedShares = (rid: string) => ['for', 'against'].reduce((a, v) => a + Num
       <div><label class="label" for="livestream_url">Livestream link</label><input class="field" id="livestream_url" name="livestream_url" type="url" value={m.livestream_url} /></div>
       <div><label class="label" for="notice">Notice of meeting</label><select class="field" id="notice" name="notice_document_id"><option value="">—</option>{(docs ?? []).map((d) => <option value={d.id} selected={d.id === m.notice_document_id}>{d.title}</option>)}</select></div>
       <div><label class="label" for="minutes">Minutes</label><select class="field" id="minutes" name="minutes_document_id"><option value="">—</option>{(docs ?? []).map((d) => <option value={d.id} selected={d.id === m.minutes_document_id}>{d.title}</option>)}</select></div>
-      <div><label class="label" for="status">Status</label><select class="field" id="status" name="status">{statuses.map((s) => <option value={s} selected={s === m.status}>{s}</option>)}</select>
+      <div data-tour="sm-status"><label class="label" for="status">Status</label><select class="field" id="status" name="status">{statuses.map((s) => <option value={s} selected={s === m.status}>{s}</option>)}</select>
         <p class="mt-1 text-xs text-white/40">Moving to “open” notifies shareholders. “Results” shows outcomes.</p></div>
       <div class="flex items-end"><button name="intent" value="save-meeting" class="btn-primary">Save meeting</button></div>
     </form>
@@ -133,7 +133,7 @@ const votedShares = (rid: string) => ['for', 'against'].reduce((a, v) => a + Num
 
   <section class="card mb-6">
     <h2 class="text-lg font-bold">Resolutions and proxy votes</h2>
-    <div class="mt-4 space-y-4">
+    <div class="mt-4 space-y-4" data-tour="sm-votes">
       {(resolutions ?? []).map((r) => {
         const total = votedShares(r.id);
         return (
@@ -164,16 +164,16 @@ const votedShares = (rid: string) => ['for', 'against'].reduce((a, v) => a + Num
         );
       })}
     </div>
-    <form method="post" class="mt-5 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-[6rem_1fr_10rem]">
+    <form method="post" class="mt-5 grid gap-4 border-t border-white/5 pt-5 sm:grid-cols-[6rem_1fr_10rem]" data-tour="sm-new-resolution">
       <div><label class="label" for="number">No.</label><input class="field" id="number" name="number" type="number" min="1" value={(resolutions?.length ?? 0) + 1} required /></div>
       <div><label class="label" for="r-title">Title</label><input class="field" id="r-title" name="title" required /></div>
-      <div><label class="label" for="r-kind">Type</label><select class="field" id="r-kind" name="kind"><option value="ordinary">Ordinary</option><option value="special">Special</option></select></div>
+      <div><label class="label" for="r-kind"><span data-hint="An ordinary resolution passes with more than half the votes cast; a special resolution needs at least 75%.">Type</span></label><select class="field" id="r-kind" name="kind"><option value="ordinary">Ordinary</option><option value="special">Special</option></select></div>
       <div class="sm:col-span-3"><label class="label" for="r-desc">Explanation</label><textarea class="field" id="r-desc" name="description" rows="2"></textarea></div>
       <div><button name="intent" value="add-resolution" class="btn-ghost">Add resolution</button></div>
     </form>
   </section>
 
-  <section class="card">
+  <section class="card" data-tour="sm-questions">
     <h2 class="text-lg font-bold">Questions sent in advance</h2>
     <div class="mt-4 space-y-4">
       {(questions ?? []).map((q) => (

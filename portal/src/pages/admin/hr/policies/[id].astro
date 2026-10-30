@@ -86,11 +86,11 @@ const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
     <form method="post" enctype="multipart/form-data" class="card grid content-start gap-4">
       <fieldset disabled={!mayDo} class="contents">
         <div><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={pol.title} required /></div>
-        <div><label class="label" for="body">Text</label><textarea class="field min-h-[24rem] leading-relaxed" id="body" name="body">{pol.body}</textarea><p class="mt-1 text-xs text-white/40">Plain text; HR Ask answers staff questions from it. A blank line starts a new paragraph.</p></div>
+        <div data-tour="pol-text"><label class="label" for="body">Text</label><textarea class="field min-h-[24rem] leading-relaxed" id="body" name="body">{pol.body}</textarea><p class="mt-1 text-xs text-white/40">Plain text; HR Ask answers staff questions from it. A blank line starts a new paragraph.</p></div>
         <div><label class="label" for="file">Or as a file (PDF)</label><input class="field" type="file" id="file" name="file" accept="application/pdf,.pdf,.docx" />{pol.file_path && <a class="mt-1 block text-xs text-lk-blue hover:underline" href={`/admin/hr/file?path=${encodeURIComponent(pol.file_path)}`}>Open the attached file</a>}</div>
-        <div class="flex flex-wrap items-center gap-4 text-sm"><label class="flex items-center gap-2 text-white/70"><input type="checkbox" name="requires_ack" checked={pol.requires_ack} class="size-4 accent-lk-blue" /> Staff must read and accept it</label><label class="flex items-center gap-2 text-white/70">within <input class="field !w-16" name="ack_due_days" value={pol.ack_due_days} inputmode="numeric" aria-label="Days to accept" /> days</label></div>
+        <div class="flex flex-wrap items-center gap-4 text-sm" data-tour="pol-ack"><label class="flex items-center gap-2 text-white/70"><input type="checkbox" name="requires_ack" checked={pol.requires_ack} class="size-4 accent-lk-blue" /> Staff must read and accept it</label><label class="flex items-center gap-2 text-white/70">within <input class="field !w-16" name="ack_due_days" value={pol.ack_due_days} inputmode="numeric" aria-label="Days to accept" /> days</label></div>
         {mayDo && (
-          <div class="flex flex-wrap gap-3">
+          <div class="flex flex-wrap gap-3" data-tour="pol-publish">
             {pol.status === 'draft' && <button class="btn-ghost" name="intent" value="save">Save the draft</button>}
             <button class="btn-primary" name="intent" value="publish" data-confirm={pol.status === 'published' ? 'Publish the changes as a new version? Everyone accepts it again.' : 'Publish it? Staff are asked to accept it.'}>{pol.status === 'published' ? 'Publish the changes' : 'Publish'}</button>
             {pol.status === 'published' && <button class="btn-ghost" name="intent" value="archive" formnovalidate>Archive</button>}
@@ -98,7 +98,7 @@ const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
         )}
       </fieldset>
     </form>
-    <aside class="card grid content-start gap-2 text-sm">
+    <aside class="card grid content-start gap-2 text-sm" data-tour="pol-accepted">
       <h2 class="font-display text-lg font-bold">Accepted</h2>
       <p class="text-white/55">{pol.status === 'published' ? `${accepted} of ${(staff ?? []).length} for version ${pol.version}.` : 'Once it is published.'}</p>
       {pol.status === 'published' && (staff ?? []).map((s) => <p class="flex justify-between gap-3"><span class="text-white/80">{s.full_name}{!pol!.entity_id && <span class="text-white/40"> · {nameOf.get(s.entity_id)}</span>}</span><span class:list={[ackOf.has(s.id) ? 'text-lk-green' : s.user_id ? 'text-white/45' : 'text-white/30']}>{ackOf.has(s.id) ? shortDate.format(new Date(ackOf.get(s.id)!)) : s.user_id ? 'not yet' : 'not in the portal'}</span></p>)}

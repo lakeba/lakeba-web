@@ -42,9 +42,9 @@ const followsOn = history.length > 0 && Date.now() - new Date(history.at(-1)!.cr
   <LegalNav />
   <PageHeader title="Legal" subtitle="Company records, officers and what is due, for every company in the group." />
   <div class="grid max-w-3xl gap-4">
-    <p class="text-sm text-white/55">Ask about the companies' contracts, records, officers, deadlines, signed resolutions, minutes and governance documents. Lakeba AI answers from what is in the portal, with links to its sources; it finds and summarises, it doesn't give legal advice. A few cents a question.</p>
+    <p class="text-sm text-white/55" data-tour="la-about">Ask about the companies' contracts, records, officers, deadlines, signed resolutions, minutes and governance documents. Lakeba AI answers from what is in the portal, with links to its sources; it finds and summarises, it doesn't give legal advice. A few cents a question.</p>
     {history.map((h, i) => (
-      <article class="card !p-5" id={i === history.length - 1 ? 'latest' : undefined}>
+      <article class="card !p-5" id={i === history.length - 1 ? 'latest' : undefined} data-tour="la-answer">
         <p class="text-xs text-white/45">{dateTime.format(new Date(h.created_at))}</p>
         <p class="mt-1 font-medium text-white">{h.question}</p>
         <div class="mt-3 whitespace-pre-line text-sm leading-relaxed text-white/80" set:html={answerHtml(h.answer, h.sources)} />
@@ -54,7 +54,7 @@ const followsOn = history.length > 0 && Date.now() - new Date(history.at(-1)!.cr
       </article>
     ))}
     {error && <Alert tone="error">{error}</Alert>}
-    <form method="post" class="card grid gap-3" data-busy>
+    <form method="post" class="card grid gap-3" data-busy data-tour="la-question">
       <label class="label" for="question">{followsOn ? 'Ask a follow-up' : 'Ask'}</label>
       <textarea class="field min-h-24" id="question" name="question" required placeholder="e.g. Which contracts renew before March and have a change-of-control clause?">{asked}</textarea>
       <div class="flex flex-wrap gap-3">

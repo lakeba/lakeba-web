@@ -91,7 +91,7 @@ const clauses = [area('change_of_control', 'Change of control'), area('assignmen
   <form method="post" class="grid gap-6 xl:grid-cols-[1fr_22rem]">
     <fieldset disabled={!mayDo} class="contents">
       <div class="grid content-start gap-6">
-        <section class="card grid gap-4 sm:grid-cols-2">
+        <section class="card grid gap-4 sm:grid-cols-2" data-tour="contract-terms">
           <h2 class="font-display text-lg font-bold sm:col-span-2">The contract</h2>
           <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={c.title} required /></div>
           <div><label class="label" for="entity_id">Group company</label><select class="field" id="entity_id" name="entity_id" required><option value="">Choose…</option>{(mayDo ? doCompanies : companies).map((x) => <option value={x.id} selected={x.id === c!.entity_id}>{x.display_name}</option>)}</select></div>
@@ -102,23 +102,23 @@ const clauses = [area('change_of_control', 'Change of control'), area('assignmen
           <div><label class="label" for="governing_law">Governing law</label><input class="field" id="governing_law" name="governing_law" value={c.governing_law} /></div>
           <div class="sm:col-span-2"><label class="label" for="summary">What it is</label><textarea class="field min-h-16" id="summary" name="summary">{c.summary}</textarea></div>
         </section>
-        <section class="card grid gap-4 sm:grid-cols-3">
+        <section class="card grid gap-4 sm:grid-cols-3" data-tour="contract-dates">
           <h2 class="font-display text-lg font-bold sm:col-span-3">Dates</h2>
           <div><label class="label" for="signed_on">Signed</label><input class="field" type="date" id="signed_on" name="signed_on" value={c.signed_on ?? ''} /></div>
           <div><label class="label" for="starts_on">Starts</label><input class="field" type="date" id="starts_on" name="starts_on" value={c.starts_on ?? ''} /></div>
           <div><label class="label" for="ends_on">Ends (or next renews)</label><input class="field" type="date" id="ends_on" name="ends_on" value={c.ends_on ?? ''} /></div>
           <label class="flex items-center gap-2 text-sm text-white/70 sm:col-span-3"><input type="checkbox" name="auto_renews" checked={c.auto_renews} class="size-4 accent-lk-blue" /> Renews by itself unless notice is given</label>
           <div class="sm:col-span-2"><label class="label" for="renewal_term">Renewal</label><input class="field" id="renewal_term" name="renewal_term" value={c.renewal_term} placeholder="e.g. for 12 months at a time" /></div>
-          <div><label class="label" for="notice_days">Notice (days before the end)</label><input class="field" type="number" min="0" max="3650" id="notice_days" name="notice_days" value={c.notice_days ?? ''} /></div>
+          <div><label class="label" for="notice_days"><span data-hint="How many days before the end (or the next renewal) notice must be given to end it. Once checked, the last day to give notice goes on the calendar.">Notice (days before the end)</span></label><input class="field" type="number" min="0" max="3650" id="notice_days" name="notice_days" value={c.notice_days ?? ''} /></div>
         </section>
-        <section class="card grid gap-4 sm:grid-cols-2">
+        <section class="card grid gap-4 sm:grid-cols-2" data-tour="contract-clauses">
           <h2 class="font-display text-lg font-bold sm:col-span-2">Clauses worth knowing</h2>
           {clauses.map((a) => <div><label class="label" for={a.name}>{a.label}</label><textarea class="field" style={`min-height:${a.rows * 2.2}rem`} id={a.name} name={a.name}>{String(c![a.name] ?? '')}</textarea></div>)}
           <div class="sm:col-span-2"><label class="label" for="flags">Points to note</label><textarea class="field min-h-20" id="flags" name="flags">{c.flags.join('\n')}</textarea><p class="mt-1 text-xs text-white/40">One per line: what a lawyer would want to know.</p></div>
         </section>
       </div>
       <aside class="grid content-start gap-6">
-        <div class="card grid gap-3 text-sm">
+        <div class="card grid gap-3 text-sm" data-tour="contract-check">
           <a class="btn-ghost" href={`/admin/legal/file?path=${encodeURIComponent(c.file_path)}`} target="_blank">Open the contract</a>
           <p class="text-white/50">{c.file_name} · {fileSize(c.size_bytes)}{c.pages && ` · ${c.pages} page${c.pages === 1 ? '' : 's'}`}. Read by Lakeba AI from {read[c.text_source]}.</p>
           <div><label class="label" for="owner_id">Looked after by</label><select class="field" id="owner_id" name="owner_id"><option value="">Nobody in particular</option>{people.map((p) => <option value={p.id} selected={p.id === c!.owner_id}>{p.name}</option>)}</select></div>
@@ -126,7 +126,7 @@ const clauses = [area('change_of_control', 'Change of control'), area('assignmen
           {mayDo && <button class="btn-primary" name="intent" value="check">{c.checked_at ? 'Save' : 'Save and mark checked'}</button>}
           {mayDo && !c.checked_at && <button class="btn-ghost" name="intent" value="save">Save, check later</button>}
         </div>
-        <div class="card text-sm">
+        <div class="card text-sm" data-tour="contract-calendar">
           <h2 class="font-display text-lg font-bold">On the calendar</h2>
           {items?.length ? <ul class="mt-2 grid gap-1.5">{items.map((i) => <li class="flex justify-between gap-3"><span class="text-white/75">{i.title}</span><span class="shrink-0 text-white/45">{i.status === 'open' ? day(i.due_on) : i.status === 'done' ? 'done' : 'not needed'}</span></li>)}</ul>
             : <p class="mt-2 text-white/55">{c.checked_at ? 'Nothing: it has no end date, or its dates are past.' : 'Its dates go on the calendar once it is checked.'}</p>}

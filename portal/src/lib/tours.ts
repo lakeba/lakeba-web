@@ -4,12 +4,15 @@
 // the people it's meant for; "Take the tour" in the profile menu and What's new's "Show me" replay them.
 // Guides (`guide: true`) are tours for one page's task: they never start by themselves; the page shows a
 // "Guide me" button. A step can wait for the person to act (`advanceOn`), and a step whose element is inside
-// a closed fold-out opens it. `start` may end in /* for pages with an id (/agm/*).
+// a closed fold-out opens it. `start` may end in /* for pages with an id (/agm/*),
+// or have a * in the middle (/admin/press/*/channels).
 // npm run check:portal checks that every step's element exists and that shareholder tours are translated.
 // No imports: the check script loads this file directly.
 
 export type Who = 'investor' | 'staff' | 'director' | 'audit' | 'anyone' | 'documents' | 'register' | 'papers'
-  | 'investors' | 'news' | 'newsletters' | 'data-rooms' | 'announcements' | 'roles' | 'equity' | 'reporting';
+  | 'investors' | 'news' | 'newsletters' | 'data-rooms' | 'announcements' | 'roles' | 'equity' | 'reporting'
+  /** Whoever may open the guide's page (the admin's own access check). */
+  | 'page';
 /** `when`: shown only to people who can switch views (`switch`), or who have Ask (`ask`). */
 export type TourStep = { el: string; title: string; body: string; when?: 'switch' | 'ask'; advanceOn?: 'click' | 'change' };
 export type Tour = {
@@ -60,7 +63,7 @@ export const TOURS: Tour[] = [
     ],
   },
   {
-    key: 'audit-conditions', start: '/admin/audit', who: 'audit', auto: false, translate: false,
+    key: 'audit-conditions', start: '/admin/audit', who: 'audit', auto: false, translate: false, guide: true,
     steps: [
       { el: 'audit-rules', title: 'Conditions', body: 'Each line is a field, a rule and a value: for example Person · is not · you. Every condition must match.' },
       { el: 'audit-add', title: 'More conditions', body: 'Add as many as you need, then Filter. × removes one.' },
@@ -246,11 +249,261 @@ export const TOURS: Tour[] = [
       { el: 'rep-messages', title: 'Messages with Lakeba', body: 'Questions and answers about this pack. Once it’s sent, tell Lakeba about any change here.' },
     ],
   },
+
+  // ── Marketing ──
+  {
+    key: 'guide-media', start: '/admin/press/media', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'media-add', title: 'Add journalists', body: 'Import a list (CSV or Excel), let Lakeba AI find journalists for a beat, or add one contact by hand. Each email is added once.' },
+      { el: 'media-filters', title: 'Find contacts', body: 'Search by name, email, outlet or notes, and narrow by beat, outlet, role and status. Only active contacts show until you change Status.' },
+      { el: 'media-table', title: 'The list', body: 'Open a name to change their details or notes. Last pitched shows when they last got a release from you.' },
+    ],
+  },
+  {
+    key: 'guide-press', start: '/admin/press/*', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'press-points', title: 'Start from the head points', body: 'What to announce, in a few lines. Draft with AI writes the headline, text, quotes and summary from them; [square brackets] mark what to fill in.' },
+      { el: 'press-quotes', title: 'Quotes', body: 'Each quote must also be in the text exactly as written. Send for approval emails the person a link to approve or change their words.' },
+      { el: 'press-checks', title: 'Check the release', body: 'Lakeba AI reads the text and lists points to check; serious ones are in red. Run it again after any change: approval needs a check of the final text.' },
+      { el: 'press-release', title: 'Embargo and approval', body: 'Set an embargo if journalists get it early, save, then Send for approval. You can keep improving it while it waits.' },
+      { el: 'press-approve', title: 'Approve and publish', body: 'For approvers: publish now or at a set time, and choose whether the company’s investors are told in the portal.' },
+      { el: 'press-send', title: 'Send it out', body: 'Once approved, New distribution pitches it to journalists from the media database. Social and wires has the LinkedIn, Bluesky and X posts and the wire services.' },
+    ],
+  },
+  {
+    key: 'guide-channels', start: '/admin/press/*/channels', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'chan-social', title: 'Social posts', body: 'The texts for LinkedIn, Bluesky and X. Approvers post on Bluesky and X from here once the release is public; LinkedIn is shared by a page admin.' },
+      { el: 'chan-save', title: 'Save the texts', body: 'Anyone writing the release can prepare and save them. Posting waits for an approver.' },
+      { el: 'chan-wires', title: 'Wire services', body: 'Download the wire package (text, Word copy, PDF and images), or email it to a wire’s desk. Before publication it’s marked embargoed.' },
+      { el: 'chan-record', title: 'Record where it went', body: 'After a wire submission or a LinkedIn post, record it with its link and any cost.' },
+      { el: 'chan-history', title: 'Where it went', body: 'Every post and submission, with what it cost in all.' },
+    ],
+  },
+  {
+    key: 'guide-linkedin', start: '/admin/linkedin', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'li-stats', title: 'How it’s going', body: 'How many Lakeba Group members have clicked the link, all clicks, and when it was last sent. A click isn’t a follow: LinkedIn doesn’t say who follows.' },
+      { el: 'li-message', title: 'The message', body: 'The title and text members get in their inbox, and by email if they’ve turned email on.' },
+      { el: 'li-options', title: 'Email and banner', body: 'Untick email to send to the inbox only. The banner shows on the dashboard for the days you choose.' },
+      { el: 'li-send', title: 'Send to all members', body: 'Sends the invitation to every Lakeba Group member: shareholders and the board.' },
+      { el: 'li-remind', title: 'Remind the rest', body: 'Later, send a reminder only to members who haven’t clicked yet. It skips the banner.' },
+      { el: 'li-sources', title: 'Where clicks come from', body: 'The banner, the inbox, email and other links, so you can see what works.' },
+    ],
+  },
+
+  // ── Legal ──
+  {
+    key: 'guide-legal', start: '/admin/legal', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'legal-stats', title: 'At a glance', body: 'What’s overdue, what’s due in the next 30 days, open requests from the ventures, and records still to complete.' },
+      { el: 'legal-due', title: 'What’s due', body: 'Open one to mark it done with its proof, say it isn’t needed, give it to someone or move the date. Lodging with ASIC stays with you.' },
+      { el: 'legal-records', title: 'Records to complete', body: 'The calendar works out deadlines from each company’s record. Reading a current ASIC extract fills in most of it.' },
+    ],
+  },
+  {
+    key: 'guide-contracts', start: '/admin/legal/contracts', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'contracts-import', title: 'Import contracts', body: 'Drop in PDF or Word files, many at once. Lakeba AI reads each one’s parties, dates, renewal and notice terms.' },
+      { el: 'contracts-show', title: 'Which contracts', body: 'In force, ending in the next four months, to check, not signed yet or ended. To check lists those Lakeba AI read that nobody has checked.' },
+      { el: 'contracts-search', title: 'Search', body: 'By title, other party or what it’s about, and by company and kind.' },
+      { el: 'contracts-list', title: 'Open a contract', body: 'Check what Lakeba AI read against the file and correct it. Its dates go on the calendar once it’s checked.' },
+    ],
+  },
+  {
+    key: 'guide-contract', start: '/admin/legal/contracts/*', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'contract-check', title: 'Read it beside the file', body: 'Open the contract and compare it with what Lakeba AI read. Choose who looks after it, and add notes.' },
+      { el: 'contract-terms', title: 'The contract', body: 'The group company that’s a party, the other party, kind, state, value and what it is.' },
+      { el: 'contract-dates', title: 'Dates', body: 'When it ends or next renews, whether it renews by itself, and the notice needed to end it. These set the calendar reminders.' },
+      { el: 'contract-clauses', title: 'Clauses worth knowing', body: 'Change of control, assignment, exclusivity, liability cap, termination and our main obligations, with points a lawyer would want to know.' },
+      { el: 'contract-calendar', title: 'Check, then calendar', body: 'Save and mark checked puts the last day to give notice and the end date on the Legal calendar.' },
+    ],
+  },
+  {
+    key: 'guide-company-legal', start: '/admin/legal/companies/*', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'co-tabs', title: 'The record’s parts', body: 'Record, Officers, Board (its resolutions, minutes and meetings) and Calendar, plus the company’s contracts.' },
+      { el: 'co-extract', title: 'Read an ASIC extract', body: 'The quickest start: upload a current company extract and Lakeba AI reads the details and officers. You check them before anything is saved.' },
+      { el: 'co-record', title: 'Company record', body: 'Keep it matching ASIC’s. The calendar works out the annual review, solvency resolution and other deadlines from it.' },
+      { el: 'co-officers', title: 'Officers', body: 'Open someone to change their details, file their consent or invite them to sign in the portal. When they resign, set the date they stopped.' },
+      { el: 'co-add-officer', title: 'Add an officer', body: 'A recent appointment adds “Tell ASIC” to the calendar, due 28 days after it.' },
+      { el: 'co-calendar', title: 'What’s due', body: 'Open an item to mark it done with its proof, give it to someone or move it. Add your own items below.' },
+    ],
+  },
+  {
+    key: 'guide-legal-request', start: '/admin/legal/requests/*', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'lreq-thread', title: 'The conversation', body: 'The venture’s request and every reply. Internal notes, in orange, are for the Legal team only.' },
+      { el: 'lreq-triage', title: 'Lakeba AI’s triage', body: 'A summary, what to watch for, what’s still needed, related contracts and a first view. Only the Legal team sees it; it’s a starting point, not advice.' },
+      { el: 'lreq-reply', title: 'Reply or note', body: 'Reply to the venture tells them, and Then sets where it stands. Save as internal note keeps it in the team. Either can carry files.' },
+      { el: 'lreq-details', title: 'Who has it', body: 'Its state, who it’s with, urgency and kind. Marking it done or cancelled tells the venture.' },
+    ],
+  },
+  {
+    key: 'guide-ask-legal', start: '/admin/legal-requests', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'lr-new', title: 'A new request', body: 'Choose the company it’s for and what you need: a contract to review or draft, a question, anything legal.' },
+      { el: 'lr-details', title: 'Say what you need', body: 'What it’s about, who the other party is, what worries you and any deadline. Add the contract or other files.' },
+      { el: 'lr-send', title: 'Send to Lakeba Legal', body: 'The Legal team is told straight away. You’re told when they reply.' },
+      { el: 'lr-open', title: 'Your requests', body: 'Where each one stands. “Waiting for you” means Legal needs something from you: open it to reply.' },
+    ],
+  },
+  {
+    key: 'guide-legal-ask', start: '/admin/legal/ask', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'la-about', title: 'What it knows', body: 'The companies’ contracts, records, officers, deadlines, signed papers and governance documents in the portal. It finds and summarises; it doesn’t give legal advice.' },
+      { el: 'la-question', title: 'Ask in your own words', body: 'A question within half an hour of your last follows on from it. Ask as a new topic starts afresh.' },
+      { el: 'la-answer', title: 'Answers and sources', body: 'Each answer links to the records it used. Open one to check it before relying on the answer.' },
+    ],
+  },
+
+  // ── Board & governance ──
+  {
+    key: 'guide-board-meeting', start: '/admin/legal/meetings/*', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'meet-agenda', title: 'Agenda and notes', body: 'Write the agenda, and your notes of what was discussed and decided, in any form. Lakeba AI turns them into minutes.' },
+      { el: 'meet-attendees', title: 'Who was there', body: 'Untick a director who sent apologies, choose the chair, and add anyone else attending, one per line.' },
+      { el: 'meet-observer', title: 'Record it in the room', body: 'Open the Observer on the boardroom tablet: connect it with the six-digit code it shows. After the meeting the transcript comes here; the audio is deleted once the minutes are signed.' },
+      { el: 'meet-online', title: 'Lex in an online meeting', body: 'Paste the Teams, Zoom, Google Meet or Webex link and Send Lex: it joins, records and answers “Lex, …” questions. In Teams and Google Meet, admit it from the lobby.' },
+      { el: 'meet-transcript', title: 'Or add a transcript', body: 'For a meeting recorded elsewhere, upload the transcript Teams, Zoom or Google Meet made (.vtt or .txt).' },
+      { el: 'meet-minutes', title: 'Draft the minutes', body: 'Lakeba AI writes them from the agenda, notes and transcript. Check and change them before they go to the chair to sign.' },
+    ],
+  },
+  {
+    key: 'guide-boardroom', start: '/admin/boardroom', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'br-company', title: 'Each board you run', body: 'One card per company. The badge shows whether its board assistant (the Observer, Lex and the decks Lex presents) is switched on.' },
+      { el: 'br-meetings', title: 'Its meetings', body: 'Newest first, and whether each was recorded and where its minutes stand. Open one for the agenda, recording and minutes.' },
+      { el: 'br-new', title: 'A new meeting', body: 'Its title, when and where. Add opens it, ready for the agenda.' },
+    ],
+  },
+  {
+    key: 'guide-board-ask', start: '/admin/board-ask', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'bask-examples', title: 'Not sure where to start?', body: 'Pick one of these to see how Board Ask answers.' },
+      { el: 'bask-input', title: 'Ask about the companies or the law', body: 'Their figures, records, contracts and deadlines, and the law that applies. Thorough answers take a minute or so.' },
+      { el: 'bask-sources', title: 'Every fact has a source', body: 'Records, documents, the law library or official websites. Open one to check it; answers aren’t legal or financial advice.' },
+      { el: 'bask-rate', title: 'Was it right?', body: 'Helpful, or Something’s wrong with a note: Lakeba’s admins use it to check the answers.' },
+      { el: 'bask-history', title: 'Your conversations', body: 'Open one to read it again or carry on. New conversation starts afresh.' },
+    ],
+  },
+  {
+    key: 'guide-shareholder-meeting', start: '/admin/agm/*', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'sm-details', title: 'Meeting details', body: 'When it starts, the proxy deadline, where it is, a livestream link, and the notice of meeting from Documents.' },
+      { el: 'sm-new-resolution', title: 'Add the resolutions', body: 'Number, title, ordinary or special, and the explanation shareholders read before they vote.' },
+      { el: 'sm-status', title: 'Open proxy voting', body: 'Moving it to open tells shareholders and opens proxy voting. Results publishes the outcomes and tells them. If approval was asked for, both wait for it.' },
+      { el: 'sm-votes', title: 'Votes as they come in', body: 'For, against and abstain, in shares and holders. After the meeting, set each resolution’s outcome.' },
+      { el: 'sm-questions', title: 'Questions sent in advance', body: 'Answer each one here. The shareholder sees the answer and is told.' },
+      { el: 'sm-preview', title: 'See what shareholders see', body: 'View as shareholder opens the meeting’s page in the portal.' },
+    ],
+  },
+  {
+    key: 'guide-minute-book', start: '/admin/legal/minute-book', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'mb-table', title: 'Each company’s minute book', body: 'How many minutes and resolutions are signed, and when the last one was.' },
+      { el: 'mb-open', title: 'One PDF', body: 'Open the minute book: every signed minutes and resolution, in date order, as one PDF.' },
+    ],
+  },
+  {
+    key: 'guide-deadlines', start: '/admin/legal/calendar', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'cal-filters', title: 'What to show', body: 'By company, kind, who looks after it, and open or done.' },
+      { el: 'cal-items', title: 'Deal with an item', body: 'Open one to mark it done with its proof (an ASIC receipt or signed resolution), say it isn’t needed, give it to someone or move the date.' },
+      { el: 'cal-add', title: 'Add your own', body: 'Deadlines the portal can’t work out, such as renewing a business name.' },
+      { el: 'cal-feed', title: 'In your own calendar', body: 'A private address for Outlook or Google Calendar with the open deadlines. Keep it to yourself: anyone with it can see them.' },
+    ],
+  },
+
+  // ── HR ──
+  {
+    key: 'guide-people', start: '/admin/hr', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'hr-show', title: 'Who to show', body: 'Current staff, those who have left, or all, and by company.' },
+      { el: 'hr-list', title: 'The list', body: 'Open someone for their checklist, documents, grants and policies. Starting and leaving show in orange.' },
+      { el: 'hr-add', title: 'Someone starting', body: 'Their company, name, work email, role and start date. They’re added with the onboarding checklist.' },
+    ],
+  },
+  {
+    key: 'guide-person', start: '/admin/hr/people/*', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'person-checklist', title: 'Starting or leaving', body: 'The checklist, with who does each task and by when. Tick each one as it’s done.' },
+      { el: 'person-stand', title: 'Where they stand', body: 'Mark that they’ve started and invite them to My HR. When they resign, set their last day to start the leaving checklist.' },
+      { el: 'person-docs', title: 'Documents', body: 'Their contract, letters, reviews and other files. Tick They see it to share one with them in My HR.' },
+      { el: 'person-grants', title: 'Option grants', body: 'Their grants and how many have vested. Grant options opens a new grant for them.' },
+      { el: 'person-policies', title: 'Policies', body: 'The policies they must accept, and when they did.' },
+      { el: 'person-private', title: 'Private details', body: 'Date of birth, home address, phone and emergency contact, kept encrypted. Each look is recorded in the audit log.' },
+    ],
+  },
+  {
+    key: 'guide-policy', start: '/admin/hr/policies/*', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'pol-text', title: 'The policy', body: 'Its text, in plain words: HR Ask answers staff questions from it. Or attach it as a PDF.' },
+      { el: 'pol-ack', title: 'Must staff accept it?', body: 'Tick it and choose within how many days. Leave it unticked for a policy that’s for reference only.' },
+      { el: 'pol-publish', title: 'Publish', body: 'Staff are asked to accept it in My HR. Changing a published policy makes a new version that everyone accepts again; Archive hides it.' },
+      { el: 'pol-accepted', title: 'Who has accepted', body: 'Everyone it applies to, and when they accepted this version. “Not in the portal” means they haven’t been invited to My HR.' },
+    ],
+  },
+  {
+    key: 'guide-equity-plans', start: '/admin/hr/equity', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'eqp-plans', title: 'The plans', body: 'Each plan’s pool: how much is in use, vested, exercised and left.' },
+      { el: 'eqp-grants', title: 'Every grant', body: 'Who holds it, how many have vested and been exercised. Open one to grant it, see its vesting and record exercises.' },
+      { el: 'eqp-grant', title: 'A new grant', body: 'The plan, the person (or another holder’s name), how many and the exercise price. Empty vesting fields use the plan’s. It starts as a draft.' },
+      { el: 'eqp-plan', title: 'A new plan', body: 'The company’s option, rights or share plan: its pool, usual vesting and cliff, and how long a leaver has to exercise.' },
+    ],
+  },
+  {
+    key: 'guide-my-hr', start: '/my-hr', who: 'anyone', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'myhr-accept', title: 'To read and accept', body: 'New and updated policies your employer asks you to accept. Open one to read it.' },
+      { el: 'myhr-grants', title: 'Your option grants', body: 'How many have vested and how many you can exercise now. Open a grant to accept it or ask to exercise.' },
+      { el: 'myhr-docs', title: 'Your documents', body: 'Files HR has shared with you, such as your contract.' },
+      { el: 'myhr-policies', title: 'All policies', body: 'Everything your employer has published, and which ones you’ve accepted.' },
+      { el: 'myhr-ask', title: 'Ask about a policy', body: 'HR Ask answers questions from your employer’s policies.' },
+    ],
+  },
+  {
+    key: 'guide-sign', start: '/sign/*', who: 'anyone', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'sign-doc', title: 'Read it first', body: 'The resolution or minutes exactly as they’ll be signed. Open it in a new tab to read it full size.' },
+      { el: 'sign-verify', title: 'Confirm it’s you', body: 'Signing needs two-step verification, with an authenticator app or a passkey. The first time takes a minute to set up.' },
+      { el: 'sign-form', title: 'Sign', body: 'Type your full name and tick that you’ve read it. Your electronic signature has the same effect as your handwritten one.' },
+      { el: 'sign-decline', title: 'Can’t sign it?', body: 'Say why and decline. The company secretary sees your note.' },
+      { el: 'sign-others', title: 'Who has signed', body: 'Each signer and where they stand. Once everyone has signed, the signed copy opens here.' },
+    ],
+  },
+
+  // ── Compliance ──
+  {
+    key: 'guide-approvals', start: '/admin/approvals', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'appr-lists', title: 'Three lists', body: 'Waiting for your approval: what you can decide. Asked by you: your open requests and any sent back. Others: recent decisions in your areas.' },
+      { el: 'appr-item', title: 'Open an item', body: 'See what it is and its history, then approve it or ask for changes. You can’t approve something you asked for yourself.' },
+    ],
+  },
+  {
+    key: 'guide-approval', start: '/admin/approvals/*/*', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'appr-what', title: 'What it is', body: 'The item’s key facts, a link to open or preview it, and who asked, approved or sent it back.' },
+      { el: 'appr-state', title: 'Where it stands', body: 'Who asked and when. While it waits, the item is held back; once approved it can go ahead, and changing it asks again.' },
+      { el: 'appr-decide', title: 'Your decision', body: 'Approve lets it go ahead. Ask for changes sends it back with your note, which is needed. The person who asked is told either way.' },
+      { el: 'appr-ask', title: 'Ask for approval', body: 'Approval is optional. Ask, with a note for the approver if you like, and people who can approve are told.' },
+    ],
+  },
 ];
 
 export const tourByKey = (key: string | null | undefined) => TOURS.find((t) => t.key === key) ?? null;
-/** Whether a tour's page is this one (`/agm/*`: any one page under /agm/). */
-export const onPage = (start: string, path: string) => (start.endsWith('/*') ? path.startsWith(start.slice(0, -1)) && !path.slice(start.length - 1).includes('/') && path.length > start.length - 1 : start === path);
+// Whether a tour's page is this one (`/agm/*`: any one page under /agm/; `/admin/press/*/channels`: a * in the
+// middle stands for one part of the address).
+export const onPage = (start: string, path: string) => {
+  if (start.includes('/*/')) {
+    const a = start.split('/'), b = path.split('/');
+    return a.length === b.length && a.every((part, i) => (part === '*' ? b[i] !== '' : part === b[i]));
+  }
+  return start.endsWith('/*') ? path.startsWith(start.slice(0, -1)) && !path.slice(start.length - 1).includes('/') && path.length > start.length - 1 : start === path;
+};
 
 /** Texts of the buttons, translated with the shareholder tours. */
 export const TOUR_BUTTONS = ['Next', 'Back', 'Done', 'Take the tour'];

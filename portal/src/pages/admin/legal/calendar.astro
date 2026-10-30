@@ -61,7 +61,7 @@ const groups = state === 'open'
   {result?.error && <div class="mb-6"><Alert tone="error">{result.error}</Alert></div>}
   {result?.ok && <div class="mb-6"><Alert tone="success">{result.ok}</Alert></div>}
 
-  <form method="get" class="mb-6 flex flex-wrap items-end gap-3 text-sm">
+  <form method="get" class="mb-6 flex flex-wrap items-end gap-3 text-sm" data-tour="cal-filters">
     <div><label class="label" for="f-company">Company</label><select class="field" id="f-company" name="company"><option value="">All</option>{companies.map((c) => <option value={c.code} selected={c.id === pickCompany?.id}>{c.display_name}</option>)}</select></div>
     <div><label class="label" for="f-kind">Kind</label><select class="field" id="f-kind" name="kind"><option value="">All</option>{Object.entries(KINDS).map(([k, l]) => <option value={k} selected={k === kind}>{l}</option>)}</select></div>
     <div><label class="label" for="f-owner">Looked after by</label><select class="field" id="f-owner" name="owner"><option value="">Anyone</option><option value="none" selected={owner === 'none'}>Nobody yet</option>{people.map((p) => <option value={p.id} selected={p.id === owner}>{p.name}</option>)}</select></div>
@@ -70,7 +70,7 @@ const groups = state === 'open'
   </form>
 
   {items.length ? groups.filter(([, list]) => list.length).map(([label, list]) => (
-    <section class="card mb-6 p-0">
+    <section class="card mb-6 p-0" data-tour="cal-items">
       <h2 class:list={['px-5 pt-5 font-display text-lg font-bold', label === 'Overdue' && 'text-lk-red']}>{label} <span class="text-sm font-normal text-white/45">{list.length}</span></h2>
       <div class="mt-2"><ObligationList items={list} people={people} may={may} showCompany={!pickCompany} /></div>
     </section>
@@ -78,7 +78,7 @@ const groups = state === 'open'
 
   <div class="grid items-start gap-6 lg:grid-cols-2">
     {companies.some((c) => may(c.id)) && (
-      <details class="card">
+      <details class="card" data-tour="cal-add">
         <summary class="cursor-pointer font-display text-lg font-bold">Add an item</summary>
         <form method="post" class="mt-5 grid gap-3 sm:grid-cols-2">
           <div class="sm:col-span-2"><label class="label" for="ob-company">Company</label><select class="field" id="ob-company" name="entity_id" required>{companies.filter((c) => may(c.id)).map((c) => <option value={c.id} selected={c.id === pickCompany?.id}>{c.display_name}</option>)}</select></div>
@@ -91,7 +91,7 @@ const groups = state === 'open'
         </form>
       </details>
     )}
-    <section class="card grid content-start gap-3 text-sm">
+    <section class="card grid content-start gap-3 text-sm" data-tour="cal-feed">
       <h2 class="font-display text-lg font-bold">In your own calendar</h2>
       <p class="text-white/55">A private address that Outlook or Google Calendar can subscribe to, with the open deadlines of the companies you look after. It shows titles and dates only; anyone with the address can see them, so keep it to yourself.</p>
       {feedUrl ? (

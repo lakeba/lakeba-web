@@ -1,6 +1,7 @@
 ---
 import { TOURS, onPage, tourByKey, type Tour } from '../lib/tours';
 import { AREAS } from '../lib/permissions';
+import { mayOpenItem } from '../lib/access';
 import { brandName } from '../lib/companies';
 import { serviceClient } from '../lib/admin';
 import { COLUMNS, localised, popupFor, type Announcement } from '../lib/announcements';
@@ -30,6 +31,8 @@ const fits = (tour: Tour) => {
   if (tour.who === 'roles') return access.mayOpen('/admin/system/roles');
   if (tour.who === 'equity') return access.mayOpen('/admin/hr/equity');
   if (tour.who === 'reporting') return access.mayOpen('/admin/reporting');
+  // Whoever may open this page (the admin's one gate, so its exceptions count: Approvals, Legal requests…).
+  if (tour.who === 'page') return !path.startsWith('/admin') || mayOpenItem(access, path);
   return true;
 };
 const asked = tourByKey(Astro.url.searchParams.get('tour'));

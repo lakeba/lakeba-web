@@ -69,7 +69,7 @@ const ownRequest = Boolean(a && a.status === 'pending' && a.requested_by === me 
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
 
   <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
-    <section class="card space-y-4">
+    <section class="card space-y-4" data-tour="appr-what">
       <ul class="space-y-1 text-sm text-white/70">{item.facts.map((f) => <li>{f}</li>)}</ul>
       <div class="flex flex-wrap gap-2">
         <a href={item.open} class="btn-ghost text-sm">Open the {ITEMS[type].label.toLowerCase()}</a>
@@ -86,7 +86,7 @@ const ownRequest = Boolean(a && a.status === 'pending' && a.requested_by === me 
     </section>
 
     <aside class="space-y-4">
-      <section class="card space-y-3">
+      <section class="card space-y-3" data-tour="appr-state">
         <h2 class="font-display text-lg font-bold">{a ? STATUS_TEXT[a.status] : 'No approval needed'}</h2>
         {!a && <p class="text-sm text-white/55">Approval is optional. Ask for it and {ITEMS[type].holds} waits until someone with “approve” for {ITEMS[type].label.toLowerCase()}s says yes.</p>}
         {a && <p class="text-sm text-white/60">Asked by {who(a.requested_by)}, {dateTime.format(new Date(a.requested_at))}{a.note && <>: “{a.note}”</>}</p>}
@@ -96,14 +96,14 @@ const ownRequest = Boolean(a && a.status === 'pending' && a.requested_by === me 
         {ownRequest && <p class="text-xs text-white/45">You asked for this one, so someone else has to approve it.</p>}
       </section>
       {canDecide && (
-        <form method="post" class="card space-y-3">
+        <form method="post" class="card space-y-3" data-tour="appr-decide">
           <h2 class="font-display text-lg font-bold">Your decision</h2>
           <div><label class="label" for="dnote">Note (needed when asking for changes)</label><textarea id="dnote" name="note" rows="3" maxlength="1000" class="field"></textarea></div>
           <div class="flex gap-2"><button name="intent" value="approve" class="btn-primary">Approve</button><button name="intent" value="changes" class="btn-ghost">Ask for changes</button></div>
         </form>
       )}
       {canAsk && (
-        <form method="post" class="card space-y-3">
+        <form method="post" class="card space-y-3" data-tour="appr-ask">
           <h2 class="font-display text-lg font-bold">{a ? 'Ask for approval again' : 'Ask for approval'}</h2>
           <div><label class="label" for="anote">Note for the approver (optional)</label><textarea id="anote" name="note" rows="3" maxlength="1000" class="field" placeholder="e.g. please check the figures in the second paragraph"></textarea></div>
           <button name="intent" value="ask" class="btn-primary w-full">Ask for approval</button>
