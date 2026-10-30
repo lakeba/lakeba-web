@@ -116,12 +116,12 @@ const here = `${path}${Astro.url.search}`;
         </a>
         )}
         {onAdmin ? (adminFilter && (adminFilter.scope.companies.length > 1 ? (
-          <details class="relative mr-auto">
+          <details data-menu class="relative mr-auto">
             <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label="Company">
               {filterActive ? <><span class="size-2.5 rounded-full" style={`background:${filterActive.brand_color ?? '#2563EB'}`}></span><span class="max-w-[10rem] truncate font-medium">{filterActive.display_name}</span></> : <span class="font-medium">All companies</span>}
               <svg viewBox="0 0 20 20" class="size-4 text-white/45" fill="currentColor" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </summary>
-            <div class="glass absolute left-0 mt-2 w-64 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
+            <div class="absolute border border-white/10 bg-ink left-0 mt-2 w-64 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
               <p class="px-3 py-2 text-xs text-white/45">Show</p>
               {adminFilter.allowAll !== false && (
                 <a href={filterHref('all')} aria-current={!filterActive ? 'true' : undefined} class:list={['flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-white/5', !filterActive && 'bg-white/5 text-white']}>
@@ -141,13 +141,13 @@ const here = `${path}${Astro.url.search}`;
             <span class="size-2.5 rounded-full" style={`background:${adminFilter.scope.companies[0].brand_color ?? '#2563EB'}`}></span>{adminFilter.scope.companies[0].display_name}
           </span>
         ))) : company && (companies.length > 1 ? (
-          <details class="relative mr-auto">
+          <details data-menu class="relative mr-auto">
             <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label={t('Switch company')}>
               {onVenture ? <span class="hidden font-medium sm:inline">{t('Your companies')}</span>
                 : <><span class="size-2.5 rounded-full" style={`background:${company.brand_color ?? '#2563EB'}`}></span><span class="max-w-[10rem] truncate font-medium">{company.display_name}</span></>}
               <svg viewBox="0 0 20 20" class="size-4 text-white/45" fill="currentColor" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </summary>
-            <div class="glass absolute left-0 mt-2 w-64 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
+            <div class="absolute border border-white/10 bg-ink left-0 mt-2 w-64 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
               <p class="px-3 py-2 text-xs text-white/45">{t('Your companies')}</p>
               {companies.map((c) => (
                 <a href={switchHref(c.code)} aria-current={c.id === company.id ? 'true' : undefined} class:list={['flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-white/5', c.id === company.id && 'bg-white/5 text-white']}>
@@ -169,9 +169,9 @@ const here = `${path}${Astro.url.search}`;
             <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1112 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 003.4 0" /></svg>
             {unread ? <span class="absolute -top-0.5 -right-0.5 grid min-w-4 place-items-center rounded-full bg-lk-orange px-1 text-[10px] font-bold text-ink">{unread > 9 ? '9+' : unread}</span> : null}
           </a>
-          <details class="relative">
-            <summary class="grid size-9 cursor-pointer list-none place-items-center rounded-full bg-gradient-to-br from-lk-blue to-lk-green font-display text-sm font-bold text-white" title={profile?.email}>{initials}</summary>
-            <div class="glass absolute right-0 mt-2 w-56 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
+          <details data-menu class="relative">
+            <summary class="grid size-9 cursor-pointer list-none place-items-center overflow-hidden rounded-full bg-gradient-to-br from-lk-blue to-lk-green font-display text-sm font-bold text-white" title={profile?.email}>{profile?.avatar_path ? <img src={`/avatar/${profile.avatar_path}`} alt="" class="size-full object-cover" /> : initials}</summary>
+            <div class="absolute border border-white/10 bg-ink right-0 mt-2 w-56 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
               <p class="truncate px-3 py-2 text-xs text-white/45">{profile?.email}</p>
               <a href="/profile" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Profile')}</a>
               <a href="/account/security" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Security')}</a>
@@ -207,7 +207,7 @@ const here = `${path}${Astro.url.search}`;
             <span class="truncate">{n.label}</span>
           </a>
         ))}
-        <details class="group/more relative">
+        <details data-menu class="group/more relative">
           <summary class:list={['flex cursor-pointer list-none flex-col items-center gap-1 px-1 py-2.5', more.some((n) => isActive(n.href)) ? 'text-lk-blue' : 'text-white/55']}>
             <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" aria-hidden="true"><path d={ICONS.more} /></svg>
             <span>{t('More')}</span>
@@ -227,5 +227,14 @@ const here = `${path}${Astro.url.search}`;
       <p>{isGroup || !company ? `© ${new Date().getFullYear()} Lakeba Group Limited` : t('{company} Investor Portal, powered by Lakeba', { company: company.display_name })}</p>
       <p>{t('Questions:')} {features.boardQa && !adminMode && <><a href="/board" class="hover:text-white">{t('Board Q&A')}</a> · </>}<a href={`mailto:${contact}`} class="hover:text-white">{contact}</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
     </footer>
+    <script>
+      // Header menus (details[data-menu]) close when the page is clicked elsewhere, on Escape, and when another opens.
+      const menus = () => document.querySelectorAll<HTMLDetailsElement>('details[data-menu][open]');
+      document.addEventListener('click', (e) => { for (const m of menus()) if (!m.contains(e.target as Node)) m.open = false; });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') for (const m of menus()) { m.open = false; m.querySelector('summary')?.focus(); } });
+      for (const m of document.querySelectorAll<HTMLDetailsElement>('details[data-menu]')) {
+        m.addEventListener('toggle', () => { if (m.open) for (const other of menus()) if (other !== m) other.open = false; });
+      }
+    </script>
   </body>
 </html>

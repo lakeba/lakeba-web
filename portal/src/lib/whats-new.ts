@@ -6,6 +6,7 @@
 export type Entry = { date: string; title: string; body: string; link?: string; area?: string };
 
 export const WHATS_NEW: Entry[] = [
+  { date: '2026-10-30', title: 'Profile photos and tidier menus', body: 'Everyone can add a profile photo on Profile, moving and zooming it inside a circle before saving; it shows in the account menu. The menus at the top are now solid and close when you click anywhere else or press Escape.', link: '/profile' },
   { date: '2026-10-30', title: 'One company filter in the admin', body: 'On admin pages the company switcher at the top is now the filter: pick a company (or All companies) and every page that works by company follows it, remembered as you move around. Overview counts of investor accounts and holding entities now follow it too.', link: '/admin' },
   { date: '2026-10-30', title: 'View all, as admin or as investor', body: 'Your profile menu has three views: View all (every menu, as before), View as admin (only your work: Admin, To sign and My HR) and, if you hold shares, View as investor. The portal remembers your choice; in the admin or investor view, a link to the other side switches for you.' },
   { date: '2026-10-30', title: 'Notifications fit what you do', body: 'Profile → Notifications now lists only the topics that can reach you, grouped like the admin menu. New topic: Board meetings (recording and transcript ready, or Lex couldn’t join an online meeting).', link: '/account/notifications' },

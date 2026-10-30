@@ -18,6 +18,8 @@ declare namespace App {
       last_name: string;
       role: 'investor' | 'board' | 'admin';
       locale: import('./lib/i18n').Locale | null;
+      /** Their profile photo in the "avatars" bucket (served at /avatar/<file>), if any. */
+      avatar_path: string | null;
     } | null;
     /** Whether the user has a verified MFA factor. */
     mfaEnrolled: boolean;

@@ -14,6 +14,8 @@ const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
 const { t } = Astro.locals;
 let notice = '';
+let photoNotice = '';
+let photoError = '';
 let shareNotice = '';
 let shareError = '';
 
@@ -70,6 +72,28 @@ if (form && intent === 'share') {
     return Astro.redirect('/profile?saved=language', 303);
   }
   notice = t('Your changes could not be saved.');
+} else if (form && (intent === 'photo' || intent === 'photo-remove')) {
+  // The photo comes cropped and square from the page (a JPEG of at most 1 MB); written with the service key on
+  // the person's own row, and the old file removed.
+  const svc = serviceClient();
+  const file = form.get('photo');
+  const old = Astro.locals.profile?.avatar_path ?? null;
+  let path: string | null = null;
+  if (intent === 'photo') {
+    const bytes = file instanceof File && file.size && file.size <= 1024 * 1024 ? new Uint8Array(await file.arrayBuffer()) : null;
+    if (!bytes || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) photoError = t('That photo couldn’t be read. Try a JPEG or PNG.');
+    else {
+      path = `${userId}-${Date.now()}.jpg`;
+      const { error } = await svc.storage.from('avatars').upload(path, bytes, { contentType: 'image/jpeg' });
+      if (error) { photoError = t('The photo could not be saved. Please try again.'); path = null; }
+    }
+  }
+  if (!photoError) {
+    await svc.from('profiles').update({ avatar_path: path }).eq('id', userId).throwOnError();
+    if (old) await svc.storage.from('avatars').remove([old]);
+    await supabase.rpc('log_event', { event_action: path ? 'profile_photo_changed' : 'profile_photo_removed' });
+    return Astro.redirect(`/profile?saved=${path ? 'photo' : 'photo-removed'}`, 303);
+  }
 } else if (form) {
   const { error } = await supabase.from('profiles').update({
     first_name: field(form, 'first_name'),
@@ -81,7 +105,7 @@ if (form && intent === 'share') {
 }
 
 const [{ data: profile }, { data: links }] = await Promise.all([
-  supabase.from('profiles').select('email, first_name, last_name, phone, notify_email, locale').eq('id', userId).single(),
+  supabase.from('profiles').select('email, first_name, last_name, phone, notify_email, locale, avatar_path').eq('id', userId).single(),
   supabase.from('holder_members').select('holder_id, access, holders(name, kind, registry_ref)').eq('user_id', userId),
 ]);
 // Who else can see the holders this person owns (read with the service key: RLS only shows own links).
@@ -92,6 +116,10 @@ const { data: others } = owned.length
 const othersOf = (holderId: string) => (others ?? []).filter((o) => o.holder_id === holderId) as unknown as { user_id: string; access: string; profiles: { email: string; first_name: string | null; last_name: string | null } | null }[];
 // Tax packs for completed financial years only (the current one isn't over yet).
 const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
+const saved = Astro.url.searchParams.get('saved');
+if (saved === 'photo') photoNotice = t('Photo saved.');
+if (saved === 'photo-removed') photoNotice = t('Photo removed.');
+const initials = `${profile?.first_name?.[0] ?? ''}${profile?.last_name?.[0] ?? ''}`.toUpperCase() || '·';
 const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder_id as string, (await taxYears(supabase, l.holder_id as string)).filter((y) => y <= lastClosedFy).slice(0, 4)] as const)));
 ---
 
@@ -99,6 +127,40 @@ const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder
   <AccountNav title={t('Profile')} />
   {!owned.length && shareError && <div class="mb-4 max-w-4xl"><Alert tone="error">{shareError}</Alert></div>}
   <div class="grid max-w-4xl gap-4 lg:grid-cols-2">
+    <section class="card lg:col-span-2" id="photo">
+      <h2 class="text-lg font-bold">{t('Profile photo')}</h2>
+      <p class="mt-1 text-sm text-white/55">{t('Shown in the portal next to your name.')}</p>
+      {photoNotice && <div class="mt-4"><Alert tone="success">{photoNotice}</Alert></div>}
+      {photoError && <div class="mt-4"><Alert tone="error">{photoError}</Alert></div>}
+      <p class="mt-4 hidden text-sm text-lk-red" data-photo-error role="alert">{t('That photo couldn’t be read. Try a JPEG or PNG.')}</p>
+      <div class="mt-4 flex flex-wrap items-center gap-5" data-photo-current>
+        {profile?.avatar_path
+          ? <img src={`/avatar/${profile.avatar_path}`} alt="" class="size-20 rounded-full object-cover" />
+          : <span class="grid size-20 place-items-center rounded-full bg-gradient-to-br from-lk-blue to-lk-green font-display text-2xl font-bold text-white">{initials}</span>}
+        <div class="flex flex-wrap items-center gap-3">
+          <label class="btn-primary cursor-pointer">{profile?.avatar_path ? t('Change photo') : t('Choose a photo')}<input type="file" accept="image/*" class="sr-only" data-photo-input /></label>
+          {profile?.avatar_path && <form method="post"><input type="hidden" name="intent" value="photo-remove" /><button class="btn-ghost">{t('Remove photo')}</button></form>}
+        </div>
+      </div>
+      <form method="post" enctype="multipart/form-data" class="mt-4 hidden" data-photo-crop>
+        <input type="hidden" name="intent" value="photo" />
+        <input type="file" name="photo" class="hidden" data-photo-file />
+        <div class="flex flex-wrap items-start gap-6">
+          <div class="relative size-64 touch-none select-none overflow-hidden rounded-2xl bg-black outline-none focus-visible:ring-2 focus-visible:ring-lk-blue cursor-grab active:cursor-grabbing" tabindex="0" aria-label={t('Drag to position, use the slider to zoom.')} data-photo-stage>
+            <img alt="" class="pointer-events-none absolute left-0 top-0 max-w-none origin-top-left" draggable="false" data-photo-image />
+            <div class="pointer-events-none absolute inset-0 rounded-full shadow-[0_0_0_9999px_rgb(0_0_0/0.55)] ring-1 ring-white/60"></div>
+          </div>
+          <div class="min-w-48 flex-1 space-y-4">
+            <p class="text-sm text-white/55">{t('Drag to position, use the slider to zoom.')}</p>
+            <div><label class="label" for="photo_zoom">{t('Zoom')}</label><input id="photo_zoom" type="range" min="1" max="4" step="0.01" value="1" class="w-full accent-lk-blue" data-photo-zoom /></div>
+            <div class="flex flex-wrap gap-3">
+              <button class="btn-primary" data-photo-save>{t('Save photo')}</button>
+              <button type="button" class="btn-ghost" data-photo-cancel>{t('Cancel')}</button>
+            </div>
+          </div>
+        </div>
+      </form>
+    </section>
     <form method="post" class="card space-y-4">
       <h2 class="text-lg font-bold">{t('Contact details')}</h2>
       {notice && <Alert tone={notice === t('Saved.') ? 'success' : 'error'}>{notice}</Alert>}
@@ -171,3 +233,95 @@ const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder
     )}
   </div>
 </Portal>
+
+<script>
+  // Profile photo: choose a picture, move and zoom it inside the circle, and save a 512×512 JPEG of the square
+  // around it (shown round everywhere). Everything happens in the browser; only the cropped photo is sent.
+  const SIZE = 256;
+  const OUT = 512;
+  const input = document.querySelector<HTMLInputElement>('[data-photo-input]');
+  const crop = document.querySelector<HTMLFormElement>('[data-photo-crop]');
+  const stage = document.querySelector<HTMLElement>('[data-photo-stage]');
+  const image = document.querySelector<HTMLImageElement>('[data-photo-image]');
+  const zoom = document.querySelector<HTMLInputElement>('[data-photo-zoom]');
+  const fileField = document.querySelector<HTMLInputElement>('[data-photo-file]');
+  const current = document.querySelector<HTMLElement>('[data-photo-current]');
+  const problem = document.querySelector<HTMLElement>('[data-photo-error]');
+  if (input && crop && stage && image && zoom && fileField && current && problem) {
+    let base = 1; let scale = 1; let x = 0; let y = 0; let url = '';
+    const w = () => image.naturalWidth * scale;
+    const h = () => image.naturalHeight * scale;
+    const place = () => {
+      // The picture always covers the whole square.
+      x = Math.min(0, Math.max(SIZE - w(), x));
+      y = Math.min(0, Math.max(SIZE - h(), y));
+      image.style.transform = `translate(${x}px, ${y}px) scale(${scale})`;
+    };
+    const zoomTo = (z: number, cx = SIZE / 2, cy = SIZE / 2) => {
+      const next = base * Math.min(4, Math.max(1, z));
+      x = cx - ((cx - x) / scale) * next;
+      y = cy - ((cy - y) / scale) * next;
+      scale = next;
+      zoom.value = String(scale / base);
+      place();
+    };
+    const close = () => { crop.classList.add('hidden'); current.classList.remove('hidden'); input.value = ''; if (url) URL.revokeObjectURL(url); };
+    input.addEventListener('change', () => {
+      const file = input.files?.[0];
+      problem.classList.add('hidden');
+      if (!file) return;
+      if (url) URL.revokeObjectURL(url);
+      url = URL.createObjectURL(file);
+      image.onload = () => {
+        base = SIZE / Math.min(image.naturalWidth, image.naturalHeight);
+        scale = base;
+        x = (SIZE - w()) / 2;
+        y = (SIZE - h()) / 2;
+        zoom.value = '1';
+        place();
+        current.classList.add('hidden');
+        crop.classList.remove('hidden');
+        stage.focus();
+      };
+      image.onerror = () => { problem.classList.remove('hidden'); close(); };
+      image.src = url;
+    });
+    let drag: { id: number; sx: number; sy: number; x: number; y: number } | null = null;
+    stage.addEventListener('pointerdown', (e) => { drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x, y }; stage.setPointerCapture(e.pointerId); });
+    stage.addEventListener('pointermove', (e) => { if (drag?.id !== e.pointerId) return; x = drag.x + e.clientX - drag.sx; y = drag.y + e.clientY - drag.sy; place(); });
+    const end = (e: PointerEvent) => { if (drag?.id === e.pointerId) drag = null; };
+    stage.addEventListener('pointerup', end);
+    stage.addEventListener('pointercancel', end);
+    stage.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      const r = stage.getBoundingClientRect();
+      zoomTo(scale / base * (e.deltaY < 0 ? 1.08 : 1 / 1.08), e.clientX - r.left, e.clientY - r.top);
+    }, { passive: false });
+    stage.addEventListener('keydown', (e) => {
+      const step = e.shiftKey ? 20 : 5;
+      const moves: Record<string, [number, number]> = { ArrowLeft: [step, 0], ArrowRight: [-step, 0], ArrowUp: [0, step], ArrowDown: [0, -step] };
+      if (moves[e.key]) { e.preventDefault(); x += moves[e.key][0]; y += moves[e.key][1]; place(); }
+      else if (e.key === '+' || e.key === '=') zoomTo(scale / base * 1.1);
+      else if (e.key === '-') zoomTo(scale / base / 1.1);
+    });
+    zoom.addEventListener('input', () => zoomTo(Number(zoom.value)));
+    document.querySelector('[data-photo-cancel]')?.addEventListener('click', close);
+    crop.addEventListener('submit', (e) => {
+      if (fileField.files?.length) return;
+      e.preventDefault();
+      const canvas = document.createElement('canvas');
+      canvas.width = OUT; canvas.height = OUT;
+      const ctx = canvas.getContext('2d')!;
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, OUT, OUT);
+      ctx.drawImage(image, -x / scale, -y / scale, SIZE / scale, SIZE / scale, 0, 0, OUT, OUT);
+      canvas.toBlob((blob) => {
+        if (!blob) { problem.classList.remove('hidden'); return; }
+        const files = new DataTransfer();
+        files.items.add(new File([blob], 'photo.jpg', { type: 'image/jpeg' }));
+        fileField.files = files.files;
+        crop.requestSubmit();
+      }, 'image/jpeg', 0.88);
+    });
+  }
+</script>

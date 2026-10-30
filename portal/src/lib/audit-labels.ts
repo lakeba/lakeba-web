@@ -6,7 +6,7 @@ const LABELS: Record<string, string> = {
   sign_in: 'Signed in', sign_out: 'Signed out',
   mfa_enrolled: 'Set up two-step sign-in', mfa_verified: 'Passed two-step sign-in', mfa_removed: 'Removed two-step sign-in',
   passkey_added: 'Added a passkey', passkey_removed: 'Removed a passkey', password_changed: 'Changed their password',
-  profile_updated: 'Updated their details', language_changed: 'Changed their language', notification_preferences_saved: 'Changed their notification choices',
+  profile_updated: 'Updated their details', profile_photo_changed: 'Changed their profile photo', profile_photo_removed: 'Removed their profile photo', language_changed: 'Changed their language', notification_preferences_saved: 'Changed their notification choices',
   push_enabled: 'Turned on browser notifications', push_disabled: 'Turned off browser notifications',
   statement_downloaded: 'Downloaded a holding statement', tax_pack_downloaded: 'Downloaded a tax-time pack',
   holding_note_banner_closed: 'Closed a holding note', holding_shared: 'Shared a holding with someone', holding_unshared: 'Stopped sharing a holding',
