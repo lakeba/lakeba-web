@@ -31,7 +31,11 @@ function covered(access: Access, path: string, level: 'view' | 'do'): 'all' | st
   return [...new Set((lists as string[][]).flat())];
 }
 
-export async function adminScope(locals: App.Locals, url: URL): Promise<AdminScope> {
+/** The company picked in the header's filter on admin pages (?company=CODE or "all"), remembered between pages (middleware). */
+export const ADMIN_COMPANY_COOKIE = 'lakeba-admin-company';
+
+/** `filter`: the page shows the company filter in the header (Admin layout's `filter`), so the remembered pick applies. */
+export async function adminScope(locals: App.Locals, url: URL, filter = false): Promise<AdminScope> {
   const isGroupAdmin = locals.access.groupAdmin;
   const ids = covered(locals.access, url.pathname, locals.writing ? 'do' : 'view');
   // The service client: a role may cover a company the person has no shares in.
@@ -39,7 +43,7 @@ export async function adminScope(locals: App.Locals, url: URL): Promise<AdminSco
   if (ids !== 'all') query = query.in('id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']);
   const { data } = await query;
   const companies = (data ?? []) as Company[];
-  const code = url.searchParams.get('company')?.toUpperCase();
+  const code = (url.searchParams.get('company') ?? (filter ? locals.adminCompany : null))?.toUpperCase();
   const selected = companies.find((c) => c.code === code) ?? (companies.length === 1 ? companies[0] : null);
   return {
     companies, selected, isGroupAdmin,

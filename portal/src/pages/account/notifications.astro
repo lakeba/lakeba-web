@@ -26,7 +26,7 @@ const has = { trading, employee: Boolean(employments), signer: Boolean(signature
 const isAdmin = access.groupAdmin || access.roles.some((r) => r.role_key === 'admin');
 const reaches = (c: Category) => {
   if (c.audience === 'investor') return !c.when || has[c.when];
-  if (Astro.locals.investorView.on) return false;
+  if (Astro.locals.viewMode.on) return false;
   if (access.groupAdmin) return true;
   if (!c.for) return isAdmin;
   return c.for.some((f) => (f === 'staff' ? access.roles.length > 0 : f === 'approvers' ? ALL_PERMISSIONS.some((p) => !p.endsWith('.view') && access.canAny(p)) : access.canAny(`${f}.view`)));

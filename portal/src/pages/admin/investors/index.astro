@@ -8,7 +8,6 @@ import { addInvestor } from '../../../lib/people';
 import { brandOf } from '../../../lib/brand';
 import { adminScope } from '../../../lib/admin-company';
 import { memberIds } from '../../../lib/notify';
-import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
 import HoldingNote from '../../../components/HoldingNote.astro';
 import { field } from '../../../lib/forms';
 import { displayName } from '../../../lib/admin-forms';
@@ -18,7 +17,7 @@ import { latestPrices, loadHolderPositions, type Position } from '../../../lib/h
 
 const supabase = Astro.locals.supabase;
 const svc = serviceClient();
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 // Batch welcomes are sent for one company at a time.
 const welcomeCompany = scope.selected ?? (scope.companies.length === 1 ? scope.companies[0] : null);
 const BATCH = 50;
@@ -186,9 +185,8 @@ const ariaSort = (key: SortKey) => (sort === key ? (dir === 1 ? 'ascending' : 'd
 import ShareLink from '../../../components/ShareLink.astro';
 ---
 
-<Admin title="Investors">
+<Admin filter={{ scope }} title="Investors">
   <PageHeader title="Investors" subtitle="Shareholders’ accounts and which holding entities each person can see. Staff and their roles are managed in System → Users." />
-  <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {Astro.url.searchParams.get('deleted') && <div class="mb-6"><Alert tone="success">Deleted {Astro.url.searchParams.get('deleted')}.</Alert></div>}

@@ -2,7 +2,6 @@
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Alert from '../../components/Alert.astro';
-import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
 import { approvalHref, approvalsFor, getApproval, heldBack } from '../../lib/approvals';
 import ApprovalChip from '../../components/ApprovalChip.astro';
@@ -17,7 +16,7 @@ import { LIVE, fills, forgetTradingSetting, latestShares, refreshStatus, trading
 // pairing sellers with buyers, and completing a transfer (which updates the
 // register). Service key throughout, limited to the companies this admin manages.
 const svc = serviceClient();
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const company = scope.selected ?? scope.defaultCompany;
 // Trading for a venture waits for legal advice or the Assetora agreement: only a Lakeba group admin can switch it on.
 const lockedOn = Boolean(company && company.relationship !== 'group' && !scope.isGroupAdmin);
@@ -148,9 +147,8 @@ const state = settings ? windowState(settings) : 'off';
 const statusTone: Record<string, string> = { open: 'bg-white/10 text-white/70', matched: 'bg-lk-blue/15 text-lk-blue', completed: 'bg-lk-green/15 text-lk-green', withdrawn: 'bg-white/5 text-white/40', cancelled: 'bg-white/5 text-white/40' };
 ---
 
-<Admin title="Secondary trading">
+<Admin filter={{ scope, allowAll: false }} title="Secondary trading">
   <PageHeader title="Secondary trading" subtitle="Shareholders register non-binding interests to buy or sell. You pair a seller with a buyer once any pre-emptive rights and approvals are dealt with, then complete the transfer, which updates the register." />
-  <AdminCompanyFilter scope={scope} allowAll={false} />
   {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
   {!company || !settings ? <p class="text-white/55">No company to show.</p> : (

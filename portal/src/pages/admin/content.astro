@@ -6,11 +6,10 @@ import { field } from '../../lib/forms';
 import { parseLocal } from '../../lib/admin-forms';
 import { dateTime } from '../../lib/format';
 import { adminScope, formCompany } from '../../lib/admin-company';
-import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import CompanySelect from '../../components/CompanySelect.astro';
 
 const supabase = Astro.locals.supabase;
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 const tones = ['info', 'success', 'warning'];
 let error = '';
@@ -57,9 +56,8 @@ const now = new Date();
 const live = (a: { starts_at: string; ends_at: string | null }) => new Date(a.starts_at) <= now && (!a.ends_at || new Date(a.ends_at) > now);
 ---
 
-<Admin title="Announcements">
+<Admin filter={{ scope }} title="Announcements">
   <PageHeader title="Announcements" subtitle="The banner at the top of the dashboard and the secondary trading card. News posts are in Admin → News." />
-  <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 

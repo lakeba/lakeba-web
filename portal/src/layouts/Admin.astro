@@ -5,8 +5,13 @@ import { toPage, toShown } from '../lib/admin-paths';
 import { serviceClient } from '../lib/admin';
 import { waitingFor } from '../lib/approvals';
 import { WHATS_NEW } from '../lib/whats-new';
-interface Props { title: string }
-const { title } = Astro.props;
+import type { AdminScope } from '../lib/admin-company';
+interface Props {
+  title: string;
+  /** Pages that work by company (adminScope(…, true)): the company filter in the header. `allowAll: false` on pages that work on one company at a time. */
+  filter?: { scope: AdminScope; allowAll?: boolean };
+}
+const { title, filter } = Astro.props;
 // The address shown (a rewritten page's own path maps back to it).
 const path = toShown(Astro.url.pathname);
 const access = Astro.locals.access;
@@ -87,7 +92,7 @@ const visible = groups
 const current = visible.flatMap((g) => g.items).find((i) => active(i.href, i))?.label ?? (path === '/admin' ? 'Overview' : active('/admin/approvals') ? 'Approvals' : active('/admin/whats-new') ? 'What\'s new' : title);
 ---
 
-<Portal title={`${title} · Admin`}>
+<Portal title={`${title} · Admin`} adminFilter={filter && { ...filter, path }}>
   <div class="grid gap-6 lg:grid-cols-[12rem_1fr] xl:gap-8">
     <aside class="lg:sticky lg:top-32 lg:max-h-[calc(100vh-9rem)] lg:self-start lg:overflow-y-auto">
       <!-- On phones the whole menu folds away under the current page's name. -->

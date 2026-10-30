@@ -14,11 +14,10 @@ import { adminScope, formCompany } from '../../lib/admin-company';
 import { serviceClient } from '../../lib/admin';
 import { approvalHref, approvalsFor, getApproval, heldBack, requestApproval } from '../../lib/approvals';
 import ApprovalChip from '../../components/ApprovalChip.astro';
-import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import CompanySelect from '../../components/CompanySelect.astro';
 
 const supabase = Astro.locals.supabase;
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const categories = Object.keys(categoryLabels);
 const audiences = { all_investors: 'All investors', board: 'Board only', holder: 'One holder' };
 let error = '';
@@ -155,11 +154,10 @@ const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD',
 const docApprovals = await approvalsFor(serviceClient(), 'document', (docs ?? []).map((d) => d.id));
 ---
 
-<Admin title="Documents">
+<Admin filter={{ scope }} title="Documents">
   <PageHeader title="Documents" subtitle="Files are stored privately; investors get short-lived links only for documents they are allowed to see.">
     <a href="/admin/documents/import" class="btn-primary text-sm">Import documents</a>
   </PageHeader>
-  <AdminCompanyFilter scope={scope} />
   <section class="card mb-6 !p-5">
     <div class="flex flex-wrap items-center justify-between gap-3">
       <h2 class="text-lg font-bold">{askName(kbCompany)} knowledge base</h2>

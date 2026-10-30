@@ -3,7 +3,6 @@ import SystemNav from '../../components/SystemNav.astro';
 import AskNav from '../../components/AskNav.astro';
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
-import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import CompanySelect from '../../components/CompanySelect.astro';
 import { adminScope, formCompany } from '../../lib/admin-company';
 import Alert from '../../components/Alert.astro';
@@ -16,7 +15,7 @@ import { buildKnowledgeBase } from '../../lib/knowledge';
 import { runTestSet, STARTER_TESTS } from '../../lib/ask-tests';
 
 const supabase = Astro.locals.supabase;
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 const userId = Astro.locals.user!.id;
 let notice = '';
@@ -112,9 +111,8 @@ const usd = new Intl.NumberFormat('en-AU', { style: 'currency', currency: 'USD' 
 const running = run?.status === 'running';
 ---
 
-<Admin title="Ask tests">
+<Admin filter={{ scope }} title="Ask tests">
   {running && <meta http-equiv="refresh" content="5" />}
-  <AdminCompanyFilter scope={scope} />
   <SystemNav />
   <PageHeader title="Ask test set" subtitle="Re-run these questions after changing documents, house rules, approved answers, the prompt or the model, and see what got worse." />
   <AskNav />

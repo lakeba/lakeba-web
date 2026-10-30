@@ -5,10 +5,9 @@ import Empty from '../../../components/Empty.astro';
 import { displayName } from '../../../lib/admin-forms';
 import { shortDate } from '../../../lib/format';
 import { adminScope, withCompany } from '../../../lib/admin-company';
-import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
 
 const supabase = Astro.locals.supabase;
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 const filter = Astro.url.searchParams.get('status') ?? 'open';
 const statuses = ['open', 'answered', 'closed', 'all'];
@@ -22,9 +21,8 @@ const { data: queries } = await query;
 const now = new Date().toISOString();
 ---
 
-<Admin title="Board Q&A">
+<Admin filter={{ scope }} title="Board Q&A">
   <PageHeader title="Board Q&A" subtitle="Shareholder questions. The terms promise a reply within 7 working days." />
-  <AdminCompanyFilter scope={scope} />
   <nav class="mb-6 flex gap-2 text-sm">
     {statuses.map((s) => (
       <a href={withCompany(scope, `?status=${s}`)} class:list={['rounded-full px-4 py-1.5 capitalize transition', filter === s ? 'bg-white text-ink' : 'bg-white/5 text-white/60 hover:text-white']}>{s}</a>

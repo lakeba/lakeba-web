@@ -1,7 +1,6 @@
 ---
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
-import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
 import { adminScope } from '../../lib/admin-company';
 import { memberIds } from '../../lib/notify';
@@ -13,7 +12,7 @@ import { percent, shortDate } from '../../lib/format';
 // The people are worked out with the service key, then every query is limited
 // to this company, so company admins only ever see their own shareholders.
 const svc = serviceClient();
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const company = scope.selected ?? scope.defaultCompany;
 const quiet = Astro.url.searchParams.get('quiet') === '1';
 const DAY = 86_400_000;
@@ -83,9 +82,8 @@ const audienceLabel: Record<string, string> = { all_investors: 'All investors', 
 const quietHref = (on: boolean) => `${Astro.url.pathname}?${new URLSearchParams({ ...(company && scope.companies.length > 1 ? { company: company.code } : {}), ...(on ? { quiet: '1' } : {}) })}`;
 ---
 
-<Admin title="Engagement">
+<Admin filter={{ scope, allowAll: false }} title="Engagement">
   <PageHeader title="Engagement" subtitle="Who is using the portal, and which documents are being read. Activity counts cover the last 90 days." />
-  <AdminCompanyFilter scope={scope} allowAll={false} />
   {!company ? <p class="text-white/55">No company to show.</p> : (
     <>
       <div class="mb-6 grid gap-3 sm:grid-cols-3">

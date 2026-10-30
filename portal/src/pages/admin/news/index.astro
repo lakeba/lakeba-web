@@ -1,7 +1,6 @@
 ---
 import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
-import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
 import { adminScope, withCompany } from '../../../lib/admin-company';
 import { serviceClient } from '../../../lib/admin';
 import { websiteSyncConfigured } from '../../../lib/news-cms';
@@ -9,7 +8,7 @@ import { dateTime, shortDate } from '../../../lib/format';
 
 // All news: public posts (portal and website) and shareholder-only posts.
 const supabase = Astro.locals.supabase;
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const q = Astro.url.searchParams.get('q')?.trim() ?? '';
 const show = Astro.url.searchParams.get('show') ?? 'all';
 let query = supabase.from('posts').select('id, slug, title, entity_id, visibility, venture, published_at, updated_at, external, autosave_at')
@@ -29,11 +28,10 @@ const pending = s.changed_at && (!s.requested_at || s.changed_at > s.requested_a
 const link = (params: Record<string, string>) => `?${new URLSearchParams({ ...(scope.selected ? { company: scope.selected.code } : {}), ...(q ? { q } : {}), show, ...params })}`;
 ---
 
-<Admin title="News">
+<Admin filter={{ scope }} title="News">
   <PageHeader title="News" subtitle="Public news goes on the website and to every investor; shareholder posts only to that company's shareholders.">
     <a href={withCompany(scope, '/admin/news/new')} class="btn-primary">New post</a>
   </PageHeader>
-  <AdminCompanyFilter scope={scope} />
 
   {scope.isGroupAdmin && (
     <p class="mb-4 text-sm text-white/55">

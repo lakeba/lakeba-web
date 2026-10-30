@@ -7,10 +7,9 @@ import { holderKindValues } from '../../lib/admin-forms';
 import { applyImport, parseHoldingsCsv, previewImport, type Preview } from '../../lib/admin-import';
 import { holderKinds, shares, shortDate } from '../../lib/format';
 import { adminScope } from '../../lib/admin-company';
-import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 
 const supabase = Astro.locals.supabase;
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 let error = '';
 let notice = Astro.url.searchParams.get('deleted') ? `${Astro.url.searchParams.get('deleted')} was deleted.` : '';
 let preview: Preview | null = null;
@@ -85,9 +84,8 @@ const selectable = (h: (typeof holders)[number]) => latestOf(h.holdings as unkno
 const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 'Changed', unchanged: 'Unchanged' };
 ---
 
-<Admin title="Holders & holdings">
+<Admin filter={{ scope }} title="Holders & holdings">
   <PageHeader title="Holders & holdings" subtitle="Holding entities and their latest positions. Open a holder to change its details, holdings, access and notes; share classes are on each company’s page (Companies)." />
-  <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 

@@ -2,7 +2,6 @@
 import Admin from '../../../layouts/Admin.astro';
 import PageHeader from '../../../components/PageHeader.astro';
 import Alert from '../../../components/Alert.astro';
-import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../../lib/admin';
 import { adminScope, withCompany } from '../../../lib/admin-company';
 import { field } from '../../../lib/forms';
@@ -14,7 +13,7 @@ import { brandName } from '../../../lib/companies';
 // Newsletter issues (for each company's shareholders, and its public newsletter)
 // and the subscriber list of the company being looked at (Lakeba's by default).
 const svc = serviceClient();
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const group = scope.isGroupAdmin;
 let notice = '';
 let error = '';
@@ -83,11 +82,10 @@ const templates = await listTemplates(svc, editor.mayEdit, group);
 const statusTone: Record<string, string> = { draft: 'bg-white/10 text-white/60', scheduled: 'bg-lk-orange/15 text-lk-orange', sending: 'bg-lk-blue/15 text-lk-blue', sent: 'bg-lk-green/15 text-lk-green', cancelled: 'bg-white/5 text-white/40' };
 ---
 
-<Admin title="Newsletters">
+<Admin filter={{ scope }} title="Newsletters">
   <PageHeader title="Newsletters" subtitle="Quarterly newsletters for each company's shareholders, and the public newsletter for people who subscribe on the website.">
     <a href={withCompany(scope, '/admin/newsletters/new')} class="btn-primary">New issue</a>
   </PageHeader>
-  <AdminCompanyFilter scope={scope} />
   {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
 

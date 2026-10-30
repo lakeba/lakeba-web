@@ -2,7 +2,6 @@
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Alert from '../../components/Alert.astro';
-import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
 import { adminScope, formCompany, withCompany } from '../../lib/admin-company';
 import { DEFAULT_NDA, inviteGuest, newGuestToken } from '../../lib/data-rooms';
@@ -12,7 +11,7 @@ import { dateTime, shortDate } from '../../lib/format';
 // Data rooms for prospective investors (see the data_rooms migration). All
 // reads and writes use the service key, limited to the companies this admin manages.
 const svc = serviceClient();
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const userId = Astro.locals.user!.id;
 let notice = '';
 let error = '';
@@ -145,9 +144,8 @@ const viewsBy = Map.groupBy(views, (v) => v.guest_id);
 const status = (g: (typeof guests)[number]) => g.is_test ? (g.nda_accepted_at ? 'Opened' : 'Not opened yet') : g.revoked_at ? 'Revoked' : new Date(g.expires_at) < new Date() ? 'Expired' : g.nda_accepted_at ? 'Agreed' : 'Invited';
 ---
 
-<Admin title="Data rooms">
+<Admin filter={{ scope }} title="Data rooms">
   <PageHeader title="Data rooms" subtitle="Share chosen PDFs with prospective investors. Guests agree to confidentiality terms, every page is marked with their name, and each view is recorded." />
-  <AdminCompanyFilter scope={scope} />
   {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
   {Astro.url.searchParams.get('deleted') && <div class="mb-4"><Alert tone="success">Deleted the data room “{Astro.url.searchParams.get('deleted')}”.</Alert></div>}

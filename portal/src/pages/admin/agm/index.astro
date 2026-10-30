@@ -8,11 +8,10 @@ import { field } from '../../../lib/forms';
 import { parseLocal } from '../../../lib/admin-forms';
 import { dateTime } from '../../../lib/format';
 import { adminScope, formCompany } from '../../../lib/admin-company';
-import AdminCompanyFilter from '../../../components/AdminCompanyFilter.astro';
 import CompanySelect from '../../../components/CompanySelect.astro';
 
 const supabase = Astro.locals.supabase;
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const companyName = (id: string) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 let error = '';
 
@@ -35,10 +34,9 @@ if (Astro.request.method === 'POST') {
 const { data: meetings } = await supabase.from('meetings').select('id, entity_id, title, kind, starts_at, status, resolutions(count)').in('entity_id', scope.ids).order('starts_at', { ascending: false });
 ---
 
-<Admin title="Shareholder meetings">
+<Admin filter={{ scope }} title="Shareholder meetings">
   <BoardNav />
   <PageHeader title="Shareholder meetings" subtitle="AGMs and EGMs: notices, resolutions, proxy votes and shareholder questions." />
-  <AdminCompanyFilter scope={scope} />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {Astro.url.searchParams.get('deleted') && <div class="mb-6"><Alert tone="success">Deleted the meeting “{Astro.url.searchParams.get('deleted')}”.</Alert></div>}
 

@@ -3,7 +3,6 @@ import SystemNav from '../../components/SystemNav.astro';
 import AskNav from '../../components/AskNav.astro';
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
-import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { adminScope } from '../../lib/admin-company';
 import Alert from '../../components/Alert.astro';
 import Empty from '../../components/Empty.astro';
@@ -12,7 +11,7 @@ import { field } from '../../lib/forms';
 import { dateTime } from '../../lib/format';
 
 const supabase = Astro.locals.supabase;
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const companyName = (id: string | null) => scope.companies.find((c) => c.id === id)?.display_name ?? '';
 const RETENTION_MONTHS = 12;
 const PAGE = 20;
@@ -151,11 +150,10 @@ const statusLabel: Record<string, string> = { unreviewed: 'Not reviewed', good: 
 const statusStyle: Record<string, string> = { unreviewed: 'bg-white/10 text-white/60', good: 'bg-lk-green/15 text-lk-green', corrected: 'bg-lk-blue/15 text-lk-blue', out_of_scope: 'bg-white/10 text-white/70', missing_document: 'bg-lk-orange/15 text-lk-orange' };
 ---
 
-<Admin title="Ask review">
+<Admin filter={{ scope }} title="Ask review">
   <SystemNav />
   <PageHeader title="Ask review" subtitle={`Every question and answer, for checking and correcting. Only admins can see who asked; records are deleted after ${RETENTION_MONTHS} months.`} />
   <AskNav />
-  <AdminCompanyFilter scope={scope} />
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 

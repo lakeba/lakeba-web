@@ -6,18 +6,18 @@ import Empty from '../../components/Empty.astro';
 import { dateTime, shortDate } from '../../lib/format';
 import { displayName } from '../../lib/admin-forms';
 import { adminScope } from '../../lib/admin-company';
-import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
 import { waitingFor } from '../../lib/approvals';
 import GettingStarted from '../../components/GettingStarted.astro';
 import { gettingStarted, venturesGettingStarted } from '../../lib/getting-started';
 
 const supabase = Astro.locals.supabase;
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const now = new Date().toISOString();
-const [investors, holders, open, overdue, published, { data: queue }, { data: events }, { data: reads }] = await Promise.all([
-  supabase.from('profiles').select('id', { count: 'exact', head: true }).eq('role', 'investor'),
-  supabase.from('holders').select('id', { count: 'exact', head: true }),
+const [{ data: held }, { data: members }, open, overdue, published, { data: queue }, { data: events }, { data: reads }] = await Promise.all([
+  // Holding entities with shares in the companies shown, and the investor accounts linked to them.
+  supabase.from('holdings').select('holder_id, share_classes!inner(entity_id)').gt('shares', 0).in('share_classes.entity_id', scope.ids).limit(100_000),
+  supabase.from('holder_members').select('user_id, holders!inner(holdings!inner(shares, share_classes!inner(entity_id)))').gt('holders.holdings.shares', 0).in('holders.holdings.share_classes.entity_id', scope.ids).limit(100_000),
   supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').in('entity_id', scope.ids),
   supabase.from('queries').select('id', { count: 'exact', head: true }).eq('status', 'open').lt('due_at', now).in('entity_id', scope.ids),
   supabase.from('documents').select('id', { count: 'exact', head: true }).lte('published_at', now).in('entity_id', scope.ids),
@@ -52,17 +52,16 @@ const gsHidden = Boolean(mine?.getting_started_hidden_until && mine.getting_star
 const [gsCards, gsVentures] = gsHidden ? [[], []] : await Promise.all([gettingStarted(svc, access), access.groupAdmin ? venturesGettingStarted(svc) : Promise.resolve([])]);
 
 const stats = [
-  { label: 'Investor accounts', value: investors.count ?? 0 },
-  { label: 'Holding entities', value: holders.count ?? 0 },
+  { label: 'Investor accounts', value: new Set((members ?? []).map((m) => m.user_id)).size },
+  { label: 'Holding entities', value: new Set((held ?? []).map((h) => h.holder_id)).size },
   { label: 'Open queries', value: open.count ?? 0 },
   { label: 'Overdue queries', value: overdue.count ?? 0, alert: (overdue.count ?? 0) > 0 },
   { label: 'Published documents', value: published.count ?? 0 },
 ];
 ---
 
-<Admin title="Overview">
+<Admin filter={{ scope }} title="Overview">
   <PageHeader title="Portal administration" subtitle={scope.isGroupAdmin ? 'Investors, holdings, documents and shareholder questions.' : `Administration for ${scope.companies.map((c) => c.display_name).join(', ')}.`} />
-  <AdminCompanyFilter scope={scope} />
   <GettingStarted cards={gsCards} ventures={gsVentures} />
 
   <section class="card mb-4" aria-labelledby="todo-title">

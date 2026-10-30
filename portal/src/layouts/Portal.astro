@@ -8,13 +8,16 @@ import { brandName } from '../lib/companies';
 import { accentOf, brandOf } from '../lib/brand';
 import NoteBanner from '../components/NoteBanner.astro';
 import { HTML_LANG } from '../lib/i18n';
-import { ADMIN_KINDS } from '../lib/investor-view';
-import { serviceClient } from '../lib/admin';
-interface Props { title: string }
-const { title } = Astro.props;
+import { ADMIN_KINDS, workHome } from '../lib/view-mode';
+import type { AdminScope } from '../lib/admin-company';
+interface Props {
+  title: string;
+  /** Admin pages that work by company (Admin layout): the header's company switcher becomes their filter. */
+  adminFilter?: { scope: AdminScope; allowAll?: boolean; path: string };
+}
+const { title, adminFilter } = Astro.props;
 const { profile, supabase, user, company, companies, adminOf, features, t, locale } = Astro.locals;
 const path = Astro.url.pathname;
-const canAdmin = Astro.locals.access.mayOpen('/admin');
 const isGroup = company?.relationship === 'group';
 const brand = brandName(company);
 const contact = brandOf(company).contactEmail;
@@ -22,13 +25,17 @@ const contact = brandOf(company).contactEmail;
 const onVenture = Astro.locals.site?.kind === 'venture';
 // A venture's colour as the accent while its investors look at it (Lakeba's blue otherwise).
 const accent = accentOf(company);
-// Directors' resolutions and minutes sent to this person to sign (pages/sign).
-const { data: toSign } = user ? await serviceClient().from('board_signatures').select('status, board_papers!inner(status)').eq('user_id', user.id).in('board_papers.status', ['signing', 'signed']) : { data: null };
-// An employee of a group company (HR): their own space, My HR.
-const { count: employments } = user ? await serviceClient().from('people').select('id', { count: 'exact', head: true }).eq('user_id', user.id).neq('status', 'left') : { count: 0 };
-const waitingToSign = (toSign ?? []).filter((s) => s.status === 'pending' && (s.board_papers as unknown as { status: string }).status === 'signing').length;
-
-const nav: { href: string; label: string; tag?: string }[] = [
+// All, admin or investor view (view-mode.ts): all shows every menu, the others their own. The work ones: the admin, directors'
+// resolutions and minutes to sign (pages/sign), My HR for an employee of a group company.
+const view = Astro.locals.viewMode;
+const { work } = view;
+const adminMode = view.mode === 'admin';
+const workNav: { href: string; label: string; tag?: string }[] = [
+  ...(work.admin && Astro.locals.access.mayOpen('/admin') ? [{ href: '/admin', label: t('Admin') }] : []),
+  ...(work.toSign ? [{ href: '/sign', label: t('To sign'), ...(work.waiting ? { tag: String(work.waiting) } : {}) }] : []),
+  ...(work.hr ? [{ href: '/my-hr', label: t('My HR') }] : []),
+];
+const nav: { href: string; label: string; tag?: string }[] = adminMode ? workNav : [
   { href: '/', label: t('Dashboard') },
   { href: '/documents', label: t('Documents') },
   ...(isGroup ? [{ href: '/portfolio', label: t('Portfolio') }] : []),
@@ -37,12 +44,12 @@ const nav: { href: string; label: string; tag?: string }[] = [
   ...(company && features.ask ? [{ href: '/ask', label: company.ask_name?.trim() || t('Ask {brand}', { brand }), tag: 'AI' }] : []),
   ...(features.boardQa ? [{ href: '/board', label: t('Ask the board') }] : []),
   ...(features.trading ? [{ href: '/trading', label: t('Trading') }] : []),
-  ...(employments ? [{ href: '/my-hr', label: t('My HR') }] : []),
-  ...(toSign?.length ? [{ href: '/sign', label: t('To sign'), ...(waitingToSign ? { tag: String(waitingToSign) } : {}) }] : []),
-  ...(canAdmin ? [{ href: '/admin', label: t('Admin') }] : []),
+  // Not in the investor view of someone who works here (a venture's own domain keeps them).
+  ...(view.on ? [] : workNav),
 ];
+const home = adminMode ? workHome(work) : '/';
 // Phones: four main sections in the bottom bar; everything else under More.
-const PRIMARY = ['/', '/documents', '/agm', '/news'];
+const PRIMARY = adminMode ? workNav.map((n) => n.href) : ['/', '/documents', '/agm', '/news'];
 const primary = nav.filter((n) => PRIMARY.includes(n.href));
 const more = nav.filter((n) => !PRIMARY.includes(n.href));
 const ICONS: Record<string, string> = {
@@ -50,14 +57,20 @@ const ICONS: Record<string, string> = {
   '/documents': 'M7 3.5h7l4.5 4.5v12.5H7zM14 3.5V8h4.5M9.5 13h6M9.5 16.5h6',
   '/agm': 'M4 6.5h16v13H4zM8 4v5M16 4v5M4 11h16',
   '/news': 'M5 5.5h11v14H6.5A1.5 1.5 0 0 1 5 18zM16 9h3v9a1.5 1.5 0 0 1-3 0M8 9h5M8 12.5h5M8 16h3',
+  '/admin': 'M4 5h16v14H4zM9 5v14M12 9h5M12 12.5h5',
+  '/sign': 'M4 19.5h16M6 16l9.5-9.5 2.5 2.5L8.5 18.5H6z',
+  '/my-hr': 'M12 11a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7M5 20c.8-3.5 3.6-5.5 7-5.5s6.2 2 7 5.5',
   more: 'M5 12h.01M12 12h.01M19 12h.01',
 };
+// On admin pages the investor's company switcher gives way to the admin's company filter (or nothing).
+const onAdmin = path === '/admin' || path.startsWith('/admin/');
+const filterActive = adminFilter && (adminFilter.scope.selected ?? (adminFilter.allowAll === false ? adminFilter.scope.defaultCompany : null));
+const filterHref = (code: string) => `${adminFilter?.path ?? path}?company=${code}`;
 const switchHref = (code: string) => `/company/${code}?next=${encodeURIComponent(path)}`;
 const isActive = (href: string) => (href === '/' ? path === '/' : path === href || path.startsWith(`${href}/`));
 const initials = `${profile?.first_name?.[0] ?? ''}${profile?.last_name?.[0] ?? ''}`.toUpperCase() || '·';
 
-// View as investor (investor-view.ts): admin notifications stay out of sight too.
-const view = Astro.locals.investorView;
+// Investor mode for someone who also works here: admin notifications stay out of sight too.
 const unreadQuery = supabase.from('notifications').select('id', { count: 'exact', head: true }).is('read_at', null);
 const { count: unread } = user ? await (view.on ? unreadQuery.not('kind', 'in', ADMIN_KINDS) : unreadQuery) : { count: 0 };
 const here = `${path}${Astro.url.search}`;
@@ -77,7 +90,7 @@ const here = `${path}${Astro.url.search}`;
     <meta name="apple-mobile-web-app-title" content={`${brand} Investors`} />
     <meta name="theme-color" content="#050b16" />
     <ThemeInit />
-    <title>{title} · {t('{brand} Investor Portal', { brand })}</title>
+    <title>{title} · {adminMode ? brand : t('{brand} Investor Portal', { brand })}</title>
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
@@ -87,15 +100,6 @@ const here = `${path}${Astro.url.search}`;
       <div class="absolute -top-48 left-1/4 h-[30rem] w-[30rem] rounded-full bg-lk-blue/15 blur-[120px]"></div>
     </div>
     <header class="sticky top-0 z-40 border-b border-white/5 bg-ink/80 backdrop-blur-xl">
-      {view.on && (
-        <div class="bg-lk-orange/15 text-sm text-white/85">
-          <form method="post" action="/account/view" class="container-portal flex flex-wrap items-center justify-between gap-x-4 gap-y-1 py-1.5">
-            <span>{t('You’re viewing the portal as an investor.')}</span>
-            <input type="hidden" name="next" value={here} />
-            <button name="view" value="admin" class="font-medium text-lk-orange hover:underline">{t('View as admin')}</button>
-          </form>
-        </div>
-      )}
       <div class="container-portal flex h-16 items-center justify-between gap-4">
         {onVenture && company ? (
         <a href="/" class="flex min-w-0 shrink items-center gap-2.5">
@@ -105,13 +109,38 @@ const here = `${path}${Astro.url.search}`;
           <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">{t('Investors')}</span>
         </a>
         ) : (
-        <a href="/" class="flex shrink-0 items-center gap-2.5">
+        <a href={home} class="flex shrink-0 items-center gap-2.5">
           <Mark class="size-7" />
           <span class:list={["font-display text-lg font-bold text-white", company && (companies.length > 1 || !isGroup) && "hidden sm:inline"]}>lakeba</span>
-          <span class="hidden rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-medium text-white/70 sm:inline">{t('Investors')}</span>
+          <span class:list={['hidden rounded-md px-1.5 py-0.5 text-[11px] font-medium sm:inline', adminMode ? 'bg-lk-orange/15 text-lk-orange' : 'bg-white/10 text-white/70']}>{adminMode ? t('Admin') : t('Investors')}</span>
         </a>
         )}
-        {company && (companies.length > 1 ? (
+        {onAdmin ? (adminFilter && (adminFilter.scope.companies.length > 1 ? (
+          <details class="relative mr-auto">
+            <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label="Company">
+              {filterActive ? <><span class="size-2.5 rounded-full" style={`background:${filterActive.brand_color ?? '#2563EB'}`}></span><span class="max-w-[10rem] truncate font-medium">{filterActive.display_name}</span></> : <span class="font-medium">All companies</span>}
+              <svg viewBox="0 0 20 20" class="size-4 text-white/45" fill="currentColor" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </summary>
+            <div class="glass absolute left-0 mt-2 w-64 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
+              <p class="px-3 py-2 text-xs text-white/45">Show</p>
+              {adminFilter.allowAll !== false && (
+                <a href={filterHref('all')} aria-current={!filterActive ? 'true' : undefined} class:list={['flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-white/5', !filterActive && 'bg-white/5 text-white']}>
+                  <span class="size-2.5 shrink-0 rounded-full border border-white/30"></span><span>All companies</span>
+                </a>
+              )}
+              {adminFilter.scope.companies.map((c) => (
+                <a href={filterHref(c.code)} aria-current={c.id === filterActive?.id ? 'true' : undefined} class:list={['flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-white/5', c.id === filterActive?.id && 'bg-white/5 text-white']}>
+                  <span class="size-2.5 shrink-0 rounded-full" style={`background:${c.brand_color ?? '#2563EB'}`}></span>
+                  <span class="truncate">{c.display_name}</span>
+                </a>
+              ))}
+            </div>
+          </details>
+        ) : adminFilter.scope.companies[0] && (
+          <span class="mr-auto flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm font-medium text-white/85">
+            <span class="size-2.5 rounded-full" style={`background:${adminFilter.scope.companies[0].brand_color ?? '#2563EB'}`}></span>{adminFilter.scope.companies[0].display_name}
+          </span>
+        ))) : company && (companies.length > 1 ? (
           <details class="relative mr-auto">
             <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label={t('Switch company')}>
               {onVenture ? <span class="hidden font-medium sm:inline">{t('Your companies')}</span>
@@ -151,11 +180,10 @@ const here = `${path}${Astro.url.search}`;
               {view.offered && (
                 <form method="post" action="/account/view" class="border-t border-white/5 mt-1 pt-1">
                   <input type="hidden" name="next" value={here} />
-                  {view.on
-                    ? <button name="view" value="admin" class="w-full rounded-lg px-3 py-2 text-left hover:bg-white/5">{t('View as admin')}</button>
-                    : view.available
-                      ? <button name="view" value="investor" class="w-full rounded-lg px-3 py-2 text-left hover:bg-white/5">{t('View as investor')}</button>
-                      : <button type="button" disabled class="w-full cursor-not-allowed rounded-lg px-3 py-2 text-left text-white/35" title={t('You don’t hold shares in any company')}>{t('View as investor')}<span class="block text-xs">{t('You don’t hold shares in any company')}</span></button>}
+                  {([['all', t('View all')], ['admin', t('View as admin')], ...(view.investor ? [['investor', t('View as investor')]] : [])] as [string, string][]).map(([value, label]) => (
+                    <button name="view" value={value} aria-current={view.mode === value ? 'true' : undefined}
+                      class:list={['flex w-full items-center justify-between rounded-lg px-3 py-2 text-left hover:bg-white/5', view.mode === value && 'text-white']}>{label}{view.mode === value && <span class="text-lk-blue" aria-hidden="true">✓</span>}</button>
+                  ))}
                 </form>
               )}
               <form method="post" action="/logout"><button class="w-full rounded-lg px-3 py-2 text-left text-white/70 hover:bg-white/5 hover:text-white">{t('Sign out')}</button></form>
@@ -197,7 +225,7 @@ const here = `${path}${Astro.url.search}`;
     </main>
     <footer class="container-portal flex flex-col justify-between gap-2 border-t border-white/5 py-8 pb-28 text-xs text-white/35 sm:flex-row sm:pb-8">
       <p>{isGroup || !company ? `© ${new Date().getFullYear()} Lakeba Group Limited` : t('{company} Investor Portal, powered by Lakeba', { company: company.display_name })}</p>
-      <p>{t('Questions:')} {features.boardQa && <><a href="/board" class="hover:text-white">{t('Board Q&A')}</a> · </>}<a href={`mailto:${contact}`} class="hover:text-white">{contact}</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
+      <p>{t('Questions:')} {features.boardQa && !adminMode && <><a href="/board" class="hover:text-white">{t('Board Q&A')}</a> · </>}<a href={`mailto:${contact}`} class="hover:text-white">{contact}</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>
     </footer>
   </body>
 </html>

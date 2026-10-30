@@ -10,9 +10,10 @@ import { formats } from './lib/format';
 import { SUPABASE_URL, TWO_STEP_OFF_FOR_TESTING } from 'astro:env/server';
 import { centralOrigin, ownDomainVenture, refreshOwnDomains, siteOf } from './lib/sites';
 import { isKnownHost } from './lib/known-hosts.mjs';
-import { NO_VIEW, VIEW_COOKIE, investorCompanyIds, wantsInvestorView } from './lib/investor-view';
+import { NO_VIEW, chosenMode, hasWork, investorCompanyIds, rememberMode, sideOf, workHome, workOf } from './lib/view-mode';
 import { TABLET_COOKIE, TABLET_PATH, connected, tabletOf } from './lib/tablets';
 import { MOVED, toPage, toShown } from './lib/admin-paths';
+import { ADMIN_COMPANY_COOKIE } from './lib/admin-company';
 
 // Sends queued browser notifications and runs scheduled ones (reminders, daily summaries).
 startNotificationWorker();
@@ -54,10 +55,11 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.mfaEnrolled = false;
   locals.companies = [];
   locals.company = null;
+  locals.adminCompany = null;
   locals.group = null;
   locals.adminOf = [];
   locals.access = NO_ACCESS;
-  locals.investorView = NO_VIEW;
+  locals.viewMode = NO_VIEW;
   locals.writing = !['GET', 'HEAD'].includes(context.request.method);
   locals.features = { ask: false, boardQa: false, trading: false };
   // Language: ?lang= (remembered in a cookie), else the cookie, else the browser; the profile choice wins once signed in.
@@ -125,8 +127,6 @@ export const onRequest = defineMiddleware(async (context, next) => {
   }
 
   if (!locals.user) {
-    // A session's investor view ends with it.
-    if (wantsInvestorView(context.cookies)) context.cookies.delete(VIEW_COOKIE, { path: '/' });
     if (matches(path, PUBLIC_PATHS)) return done(await go());
     if (site.kind === 'venture') return redirect(`${locals.site.central}/login?${new URLSearchParams({ ...(site.slug ? { venture: site.slug } : {}), next: url.href })}`, 302);
     return redirect(`/login?next=${encodeURIComponent(path + url.search)}`);
@@ -158,12 +158,24 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // Roles (System → Users); their permissions count only after two-step, like the database's can().
   locals.access = await loadAccess(serviceClient(), locals.user.id, locals.user.aal === 'aal2');
   const staff = locals.access.staff;
-  // View as investor (investor-view.ts): an admin who holds shares, without their admin powers for now.
-  if (staff || locals.adminOf.length > 0 || profile?.role === 'admin') {
-    const own = await investorCompanyIds(serviceClient(), locals.user.id);
-    const on = own.holdings.size > 0 && wantsInvestorView(context.cookies);
-    locals.investorView = { offered: true, available: own.holdings.size > 0, on };
-    if (on) {
+  // All, admin and investor views (view-mode.ts). On a venture's own domain only its investor side is shown.
+  const svc = serviceClient();
+  const work = await workOf(svc, locals.user.id, locals.access.mayOpen('/admin'));
+  if (hasWork(work) && site.kind !== 'venture') {
+    const own = await investorCompanyIds(svc, locals.user.id);
+    const investor = own.holdings.size > 0;
+    let mode = chosenMode(context.cookies) ?? 'all';
+    if (mode === 'investor' && !investor) mode = 'all';
+    // In the admin or investor view, opening the other side's page (a link in an email, a bookmark) switches to that side.
+    const side = sideOf(path);
+    if (mode !== 'all' && navigating && side && side !== mode && path !== '/' && (side === 'admin' || investor)) {
+      mode = side;
+      rememberMode(context.cookies, mode, url.protocol === 'https:');
+    }
+    // Home in the admin view is the person's work.
+    if (mode === 'admin' && path === '/' && navigating) return redirect(workHome(work) + url.search);
+    locals.viewMode = { mode, work, offered: true, investor, on: mode === 'investor' };
+    if (locals.viewMode.on) {
       locals.access = NO_ACCESS;
       locals.adminOf = [];
       if (locals.profile) locals.profile = { ...locals.profile, role: 'investor' };
@@ -172,6 +184,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
       locals.company = locals.companies.find((c) => c.id === locals.company?.id) ?? locals.group ?? locals.companies[0] ?? null;
       if (matches(path, ['/admin', '/api/admin'])) return locals.writing ? new Response('Forbidden', { status: 403 }) : redirect('/');
     }
+  } else {
+    locals.viewMode = { ...NO_VIEW, work };
   }
   // On a venture's own domain, that venture is the company being viewed; people who don't belong to it go to the central address.
   if (locals.site.venture) {
@@ -190,6 +204,13 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // Anyone with a staff role cannot use the portal until they have enrolled MFA.
   if (staff && !locals.mfaEnrolled && !twoStepOff && !matches(path, MFA_PATHS)) {
     return redirect('/mfa/setup?required=1');
+  }
+
+  // The admin's company filter (header), remembered between admin pages.
+  if (matches(path, ['/admin'])) {
+    const picked = url.searchParams.get('company');
+    if (picked && navigating && /^[A-Za-z0-9_-]{1,20}$/.test(picked)) context.cookies.set(ADMIN_COMPANY_COOKIE, picked.toUpperCase(), { path: '/admin', maxAge: 31_536_000, sameSite: 'lax', secure: url.protocol === 'https:', httpOnly: true });
+    locals.adminCompany = picked ?? context.cookies.get(ADMIN_COMPANY_COOKIE)?.value ?? null;
   }
 
   // Every admin request: "see" for the page's area, "do" (or an approval action) to send a form.

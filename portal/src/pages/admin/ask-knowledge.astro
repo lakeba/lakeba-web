@@ -11,7 +11,6 @@ import { shortDate, dateTime } from '../../lib/format';
 import { buildKnowledgeBase } from '../../lib/knowledge';
 import { askEnabled, askName, buildMessages, client, coreRules, HOUSE_RULES_MAX, houseRulesKey, loadHouseRules, MODEL, systemPrompt } from '../../lib/ask';
 import { adminScope } from '../../lib/admin-company';
-import AdminCompanyFilter from '../../components/AdminCompanyFilter.astro';
 import { serviceClient } from '../../lib/admin';
 import { DEFAULT_LIMITS, loadLimits, spendThisMonth, spendToday } from '../../lib/ask-limits';
 import { ensureIndex, loadRetrieval } from '../../lib/retrieval';
@@ -19,7 +18,7 @@ import { ensureIndex, loadRetrieval } from '../../lib/retrieval';
 const supabase = Astro.locals.supabase;
 const userId = Astro.locals.user!.id;
 // One company at a time: its knowledge base, house rules and approved answers.
-const scope = await adminScope(Astro.locals, Astro.url);
+const scope = await adminScope(Astro.locals, Astro.url, true);
 const company = scope.selected ?? scope.defaultCompany;
 const companyId = company?.id ?? '00000000-0000-0000-0000-000000000000';
 let notice = '';
@@ -159,11 +158,10 @@ const tabs = [
 const expired = (d: string) => d < today;
 ---
 
-<Admin title="Ask knowledge">
+<Admin filter={{ scope, allowAll: false }} title="Ask knowledge">
   <SystemNav />
   <PageHeader title={`${askName(company)} knowledge`} subtitle={`Approved answers and house rules shape what ${askName(company)} says. Changes apply from the next question.`} />
   <AskNav />
-  <AdminCompanyFilter scope={scope} allowAll={false} />
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
 

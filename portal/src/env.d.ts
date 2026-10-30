@@ -24,6 +24,8 @@ declare namespace App {
     /** Companies this person belongs to and the one being viewed (signed-in pages). */
     companies: import('./lib/companies').Company[];
     company: import('./lib/companies').Company | null;
+    /** The company remembered in the admin's company filter (admin-company.ts), or null. */
+    adminCompany: string | null;
     group: import('./lib/companies').Company | null;
     /** Companies this person administers as a company admin. */
     adminOf: string[];
@@ -33,8 +35,8 @@ declare namespace App {
     writing: boolean;
     /** Per-person switches set by admins (Admin → Investors). */
     features: { ask: boolean; boardQa: boolean; trading: boolean };
-    /** View as investor (investor-view.ts): offered to admins, available when they hold shares, on for this session. */
-    investorView: import('./lib/investor-view').InvestorView;
+    /** Admin or investor mode (view-mode.ts): the person's work in the portal, and whether they can switch. */
+    viewMode: import('./lib/view-mode').ViewMode;
     /** Which address the request came to (sites.ts): the central one, a venture's, or any other (one portal, as before). */
     site: { kind: import('./lib/sites').SiteKind; venture: import('./lib/companies').Company | null; central: string };
     /** Interface language, its translate function and date/number formats. */
