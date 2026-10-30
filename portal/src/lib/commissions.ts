@@ -302,7 +302,8 @@ export async function commissionCompanies(svc: Svc, access: Access) {
   // Finance who prepare or approve runs; "see" alone (Board, Compliance) doesn't show what reps earn.
   const doing = access.companies('accounting.do'), approving = access.companies('accounting.approve');
   const list = doing === 'all' || approving === 'all' ? 'all' : [...new Set([...doing, ...approving])];
-  let q = svc.from('entities').select('id, code, display_name').eq('portal', 'full').order('sort');
+  // Ventures with the full portal and the group's own back-office companies (controlled, not in the portal, e.g. DoxAI Operations).
+  let q = svc.from('entities').select('id, code, display_name').or('portal.eq.full,relationship.in.(group,controlled)').order('sort');
   if (list !== 'all') q = q.in('id', ids(list));
   return ((await q).data ?? []) as Company[];
 }

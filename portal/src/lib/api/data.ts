@@ -26,12 +26,16 @@ export async function holdersIn(svc: Svc, companyIds: string[], opts: { holderId
     holders.push(...(data ?? []));
   }
   holders.sort((a, b) => a.name.localeCompare(b.name));
-  return { classes, holders, byHolder };
+  // A holder that is a company in the portal: Lakeba Group's own stake, or a venture's holding company.
+  const reps = [...new Set(holders.map((h) => h.represents_entity_id).filter(Boolean))] as string[];
+  const { data: repRows } = reps.length ? await svc.from('entities').select('id, code, relationship').in('id', reps) : { data: [] };
+  const repOf = new Map((repRows ?? []).map((e) => [e.id as string, { code: e.code as string, relationship: e.relationship as string }]));
+  return { classes, holders: holders.map((h) => ({ ...h, represents: h.represents_entity_id ? repOf.get(h.represents_entity_id) ?? null : null })), byHolder };
 }
 
-export function holderView(h: { id: string; name: string; kind: string; registry_ref: string | null; represents_entity_id: string | null }, rows: { share_class_id: string; shares: number; as_at: string; exercise_price: number | null; expires_on: string | null }[], classes: Classes, ext?: Record<string, string>) {
+export function holderView(h: { id: string; name: string; kind: string; registry_ref: string | null; represents?: { code: string; relationship: string } | null }, rows: { share_class_id: string; shares: number; as_at: string; exercise_price: number | null; expires_on: string | null }[], classes: Classes, ext?: Record<string, string>) {
   return {
-    id: h.id, name: h.name, kind: h.kind, registry_ref: h.registry_ref, is_group_stake: Boolean(h.represents_entity_id), external_ids: ext ?? {},
+    id: h.id, name: h.name, kind: h.kind, registry_ref: h.registry_ref, is_group_stake: h.represents?.relationship === 'group', represents_company: h.represents?.code ?? null, external_ids: ext ?? {},
     holdings: rows.map((r) => {
       const c = classes.get(r.share_class_id)!;
       return {

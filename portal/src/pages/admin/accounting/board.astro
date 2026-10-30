@@ -8,7 +8,7 @@ import AccountingNav from '../../../components/AccountingNav.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { monthEnd, periodLabel, todayIn } from '../../../lib/reporting';
-import { boardSummaryPdf, draftCommentary, groupItems } from '../../../lib/reporting-group';
+import { boardSummaryPdf, draftCommentary, groupItems, ventureGroups } from '../../../lib/reporting-group';
 import { boardPeople, showPercent } from '../../../lib/kpis';
 import { aud } from '../../../lib/format';
 
@@ -34,9 +34,9 @@ if (Astro.request.method === 'POST' && mayDo) {
   commentary = String(form.get('commentary') ?? '').replace(/\r\n/g, '\n').trim().slice(0, 4000);
   try {
     let cost = Number(saved?.ai_cost_usd ?? 0);
-    if (intent === 'draft') { const d = await draftCommentary(svc, period, await groupItems(svc, period)); commentary = d.text; cost += d.costUsd; ok = 'Lakeba AI drafted the commentary: read it and change it as needed.'; }
+    if (intent === 'draft') { const d = await draftCommentary(svc, period, await groupItems(svc, period), await ventureGroups(svc)); commentary = d.text; cost += d.costUsd; ok = 'Lakeba AI drafted the commentary: read it and change it as needed.'; }
     if (intent === 'file') {
-      const pdf = await boardSummaryPdf(period, await groupItems(svc, period), commentary);
+      const pdf = await boardSummaryPdf(period, await groupItems(svc, period), commentary, await ventureGroups(svc));
       const { data: group } = await svc.from('entities').select('id').eq('relationship', 'group').single();
       const path = `entity/${group!.id}/financials/${period.slice(0, 4)}/${randomUUID()}-board-summary-${period}.pdf`;
       const { error: up } = await svc.storage.from('documents').upload(path, pdf, { contentType: 'application/pdf' });
@@ -55,6 +55,7 @@ if (Astro.request.method === 'POST' && mayDo) {
     error = (e as Error).message;
   }
 }
+const groups = await ventureGroups(svc);
 const people = periods.length ? (await boardPeople(svc, period)).filter((p) => p.people || p.commission) : [];
 const quarterOf = (d: string) => { const m = Number(d.slice(5, 7)); return `${['Jan–Mar', 'Apr–Jun', 'Jul–Sep', 'Oct–Dec'][Math.floor((m - 1) / 3)]} ${d.slice(0, 4)}`; };
 ---
@@ -71,7 +72,7 @@ const quarterOf = (d: string) => { const m = Number(d.slice(5, 7)); return `${['
         <button class="btn-ghost !py-2">Show</button>
       </form>
       <form method="post" class="card grid gap-3" data-busy>
-        <p class="text-sm text-white/55">One landscape page: every venture's revenue, net profit (month and year to date), cash and net assets for {periodLabel(period, 'monthly')}, the consolidated line, and the commentary below.</p>
+        <p class="text-sm text-white/55">One landscape page: every venture's revenue, net profit (month and year to date), cash and net assets for {periodLabel(period, 'monthly')}, the consolidated line, and the commentary below. A venture with companies of its own is one line, added up{groups.length > 0 && <> ({groups.map((g) => `${g.name}: ${g.members.map((m) => m.name).join(' + ')}`).join('; ')})</>}.</p>
         <label class="label" for="commentary">Commentary</label>
         <textarea class="field min-h-48" id="commentary" name="commentary" disabled={!mayDo}>{commentary}</textarea>
         {mayDo && (

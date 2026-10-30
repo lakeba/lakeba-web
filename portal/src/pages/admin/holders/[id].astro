@@ -28,6 +28,10 @@ if (!rights.sees) return new Response('Not found', { status: 404 });
 type Row = { id: string; share_class_id: string; shares: number; as_at: string; exercise_price: number | null; expires_on: string | null };
 type Cls = { id: string; code: string; name: string; entity_id: string; entities: { code: string; display_name: string } | null };
 const { data: allClasses } = await svc.from('share_classes').select('id, code, name, entity_id, entities(code, display_name)').order('code');
+// The portal's companies, for "this holder is a company in the portal" (Lakeba's own stake, or a venture's holding company).
+const { data: entityRows } = await svc.from('entities').select('id, code, display_name, relationship').order('sort');
+const entityList = entityRows ?? [];
+const entityName = (eid: string | null) => { const e = entityList.find((x) => x.id === eid); return e ? `${e.display_name} (${e.code})` : '—'; };
 const classes = (allClasses ?? []) as unknown as Cls[];
 const classById = new Map(classes.map((c) => [c.id, c]));
 const classLabel = (cid: string) => { const c = classById.get(cid); return c ? `${c.entities?.code}-${c.code} ${c.name}` : 'unknown class'; };
@@ -71,6 +75,26 @@ if (Astro.request.method === 'POST') {
         await svc.from('holders').update(next).eq('id', id).throwOnError();
         await log('register_holder_updated', { changes: lines });
         return 'Details saved.';
+      } };
+    }
+    if (action === 'represents') {
+      if (!rights.group) return 'Only people who manage the whole register can say a holder is a company in the portal.';
+      const next = field(form, 'represents_entity_id') || null;
+      if (next && !entityList.some((e) => e.id === next)) return 'Choose the company.';
+      if (next === (holder!.represents_entity_id ?? null)) return 'Nothing changed.';
+      if (next && companies.includes(next)) return `${entityName(next)} can’t hold its own shares: choose the company this holder is.`;
+      const held = [...new Set(companies.map((e) => entityList.find((x) => x.id === e)?.display_name).filter(Boolean))].join(', ');
+      const group = entityList.find((e) => e.relationship === 'group');
+      const lines = [
+        `Company in the portal: ${entityName(holder!.represents_entity_id)} → ${next ? entityName(next) : 'none (an ordinary holder)'}`,
+        ...(next ? [`${entityName(next)} counts as holding this holder’s shares${held ? ` in ${held}` : ''}: over half of a company’s shares makes it controlled (its group in Finance → Consolidated), and Lakeba’s share through it is worked out from them.`] : []),
+        ...(holder!.represents_entity_id === group?.id || next === group?.id ? [`This changes Lakeba’s own stake as the register shows it${held ? ` in ${held}` : ''}.`] : []),
+      ];
+      return { title: next ? 'Say this holder is a company in the portal?' : 'Make this an ordinary holder?', lines, apply: async () => {
+        await svc.from('holders').update({ represents_entity_id: next }).eq('id', id).throwOnError();
+        // A change to the holder, like its name: "holder.updated" for webhooks.
+        await log('register_holder_updated', { changes: lines.slice(0, 1) });
+        return next ? `${holder!.name} is now ${entityName(next)} in the portal.` : `${holder!.name} is now an ordinary holder.`;
       } };
     }
     if (action === 'add-row' || action === 'edit-row') {
@@ -214,6 +238,7 @@ const onRegisters = ((regNames ?? []) as unknown as RegName[]).filter((n) => Ast
 const money = (n: number | null) => (n == null ? '—' : `$${Number(n).toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`);
 const noteOf = new Map((notes ?? []).filter((n) => viewable(n.share_class_id)).map((n) => [n.share_class_id, n.note]));
 const editableClasses = classes.filter((c) => rights.company(c.entity_id));
+const represents = entityList.find((e) => e.id === holder!.represents_entity_id) ?? null;
 const companyNames = [...new Set(rows.map((r) => classById.get(r.share_class_id)?.entities?.display_name).filter(Boolean))];
 const self = Astro.url.pathname;
 const btn = 'text-xs text-white/55 hover:text-white';
@@ -223,6 +248,7 @@ const btn = 'text-xs text-white/55 hover:text-white';
   <a href="/admin/holdings" class="text-sm text-white/50 hover:text-white">← Holders &amp; holdings</a>
   <h1 class="mt-2 font-display text-3xl font-bold">{holder.name}</h1>
   <p class="mt-1 text-sm text-white/50">{HOLDER_KINDS[holder.kind as keyof typeof HOLDER_KINDS] ?? holder.kind} · Holder ID {holder.registry_ref ?? '—'}{companyNames.length > 0 && ` · ${companyNames.join(', ')}`}</p>
+  {represents && <p class="mt-1 text-sm text-white/70">This holder is a company in the portal: <a href={`/admin/companies/${represents.code}`} class="text-lk-blue hover:underline">{represents.display_name}</a>{represents.relationship === 'group' && ' (Lakeba’s own stake)'}</p>}
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
   {review && <div class="mt-5"><ReviewChange {...review} cancel={self} /></div>}
   {changedHoldings && (
@@ -327,6 +353,18 @@ const btn = 'text-xs text-white/55 hover:text-white';
             <button name="intent" value="review" class="btn-ghost text-sm">Check and save</button>
           </form>
         ) : <p class="text-sm text-white/55">Changed by people who manage the whole register.</p>}
+        {rights.group && (holder.kind !== 'individual' || represents) && (
+          <form method="post" class="space-y-2 border-t border-white/5 pt-3">
+            <input type="hidden" name="op" value="represents" />
+            <label class="label" for="represents_entity_id">This holder is a company in the portal</label>
+            <select id="represents_entity_id" name="represents_entity_id" class="field">
+              <option value="">No, an ordinary holder</option>
+              {entityList.filter((e) => !companies.includes(e.id)).map((e) => <option value={e.id} selected={e.id === holder!.represents_entity_id}>{e.display_name} ({e.code})</option>)}
+            </select>
+            <p class="text-xs text-white/40">For a company in the portal that holds shares in another: Lakeba’s own stake, or a venture’s holding company (DoxAI Australia holding DoxAI Operations). Who controls whom, the venture groups in Finance and Lakeba’s share through them come from it.</p>
+            <button name="intent" value="review" class="btn-ghost text-sm">Check and save</button>
+          </form>
+        )}
       </section>
 
       <section class="card space-y-3">

@@ -13,6 +13,7 @@ import { brandOf } from '../../../lib/brand';
 import { spendThisMonth } from '../../../lib/ask-limits';
 import { RESERVED_SLUGS, forgetVentureSites } from '../../../lib/sites';
 import { CLASS_KINDS, PORTAL_ACCESS, POSITIONS, RELATIONSHIPS, amount, changes, classBlocker, fmt, isDate, wholeShares } from '../../../lib/register';
+import { ownership, pctText } from '../../../lib/ownership';
 
 // One company: its details, its share classes (add, edit, remove when
 // nothing uses them) and its board positions. Changes are checked first
@@ -237,6 +238,15 @@ for (const h of holdings ?? []) { const k = `${h.holder_id}|${h.share_class_id}`
 const heldIn = (cid: string) => [...latest.values()].filter((x) => x.cls === cid).reduce((a, x) => a + x.shares, 0);
 const self = Astro.url.pathname;
 const askUsed = (await spendThisMonth(svc, c.id)).get(c.id) ?? { cost: 0, questions: 0 };
+// Who owns whom among the portal's companies (holders that are a company in the portal), and Lakeba's share through them.
+const own = await ownership(svc);
+const ownedBy = own.ownersOf(c.id), owns = own.holdingsOf(c.id);
+const lakebaShare = c.relationship === 'group' ? null : own.lakeba(c.id);
+const throughOwners = ownedBy.filter((s) => s.owner !== own.group?.id && (own.lakeba(s.owner).effective > 0 || own.companies.get(s.owner)?.lakeba_stake != null));
+const myGroup = own.groupOf(c.id);
+const coName = (id: string) => own.companies.get(id)?.display_name ?? '?';
+const coLink = (id: string) => (access.can('investors.view', id) ? `/admin/companies/${own.companies.get(id)?.code}` : null);
+const stakeText = (s: { pct: number; classes: { code: string; shares: number }[] }) => `${pctText(s.pct)} (${s.classes.map((k) => `${fmt(k.shares)} ${k.code}`).join(', ')})`;
 const sel = 'field';
 ---
 
@@ -252,6 +262,20 @@ const sel = 'field';
 
   <div class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_24rem]">
     <section class="space-y-6">
+      {(ownedBy.length > 0 || owns.length > 0 || (lakebaShare && lakebaShare.effective > 0)) && (
+        <div class="card">
+          <h2 class="font-display text-lg font-bold">Ownership</h2>
+          <p class="mt-1 text-xs text-white/45">From the share register: holders that are a company in the portal (set on the holder’s page), with each holder’s latest balance in the classes that count toward %. Over half makes it controlled.</p>
+          <ul class="mt-3 space-y-1.5 text-sm">
+            {ownedBy.map((s) => <li><span class="text-white/45">Owned by</span> {coLink(s.owner) ? <a href={coLink(s.owner)} class="text-white/85 hover:text-lk-blue">{coName(s.owner)}</a> : coName(s.owner)}: {stakeText(s)}{s.pct > 0.5 && <span class="ml-1 text-xs text-lk-green">controls it</span>}</li>)}
+            {owns.map((s) => <li><span class="text-white/45">Owns</span> {coLink(s.company) ? <a href={coLink(s.company)} class="text-white/85 hover:text-lk-blue">{coName(s.company)}</a> : coName(s.company)}: {stakeText(s)}{s.pct > 0.5 && <span class="ml-1 text-xs text-lk-green">controlled</span>}</li>)}
+            {lakebaShare && lakebaShare.effective > 0 && (
+              <li><span class="text-white/45">Lakeba’s share</span> {pctText(lakebaShare.effective)}{lakebaShare.through > 0 ? ` (${[lakebaShare.direct > 0 && `${pctText(lakebaShare.direct)} directly`, `${pctText(lakebaShare.through)} through ${throughOwners.map((s) => coName(s.owner)).join(', ')}`].filter(Boolean).join(', ')})` : ' (held directly)'}{lakebaShare.stated != null && Math.abs(lakebaShare.stated - lakebaShare.effective) >= 0.0005 && <span class="block text-xs text-white/45">The Lakeba stake typed in Details is {pctText(lakebaShare.stated)}{c.stake_as_at && ` as at ${shortDate.format(new Date(c.stake_as_at))}`}.</span>}</li>
+            )}
+          </ul>
+          {myGroup.length > 1 && c.relationship !== 'group' && <p class="mt-3 text-xs text-white/45">{c.display_name}’s group: {myGroup.map(coName).join(' + ')}. {access.can('accounting.view', null) ? <a href={`/admin/accounting/group?group=${c.code}`} class="text-lk-blue hover:underline">Added up in Finance → Consolidated</a> : 'Added up in Finance → Consolidated'}; one line on the board summary.</p>}
+        </div>
+      )}
       <div class="card @container p-0">
         <h2 class="px-5 pt-4 font-display text-lg font-bold">Share classes</h2>
         <p class="px-5 text-xs text-white/45">Held = the sum of each holder’s latest balance. Official on issue comes from the share register; percentages use it when set.</p>

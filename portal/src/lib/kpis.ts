@@ -326,7 +326,8 @@ export async function performanceCompanies(svc: Svc, access: Access) {
   const hr = await hrCompanies(svc, access);
   const fin = access.companies('accounting.do');
   if (fin !== 'all' && !fin.length) return { companies: hr, finance: new Set<string>() };
-  let q = svc.from('entities').select('id, code, display_name, legal_name').eq('portal', 'full').order('sort');
+  // As commissions: full-portal ventures and the controlled companies not in the portal.
+  let q = svc.from('entities').select('id, code, display_name, legal_name').or('portal.eq.full,relationship.in.(group,controlled)').order('sort');
   if (fin !== 'all') q = q.in('id', ids(fin));
   const more = ((await q).data ?? []) as Company[];
   const extra = more.filter((c) => !hr.some((h) => h.id === c.id));

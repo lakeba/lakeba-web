@@ -16,7 +16,9 @@
 // else a suggestion: a holder of this company with the same number of shares
 // in the same class or a similar name, or another holder with the same names
 // in another order. The rest are new holders; one named "Lakeba …" on a
-// venture's register is Lakeba's own stake (it represents the group). Group Admins may
+// venture's register is Lakeba's own stake (it represents the group); another company in
+// the portal holding shares (a venture's holding company) is set on the holder's page, and
+// importing a register leaves that as it is. Group Admins may
 // match a name to any holder; a venture's own admins to holders of their
 // company only. Choices are remembered when the register is applied.
 //

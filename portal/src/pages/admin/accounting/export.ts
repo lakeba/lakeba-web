@@ -1,17 +1,21 @@
 import type { APIRoute } from 'astro';
 import { serviceClient } from '../../../lib/admin';
 import { BS_LINES, IC_FIELDS, PL_LINES, periodLabel, totals, type BsLine, type PlLine } from '../../../lib/reporting';
-import { consolidate, consolidatedItems, groupItems, matchPairs } from '../../../lib/reporting-group';
+import { consolidate, consolidatedItems, groupItems, matchPairs, ventureGroups, ventureItems } from '../../../lib/reporting-group';
 import { writeXlsx } from '../../../lib/xlsx-write';
 
-/** The group for a period as an Excel workbook: every company's lines, the consolidated view, what is between them. */
+/** The group for a period as an Excel workbook: every company's lines, the consolidated view, what is between them. ?group=DOX: a venture's own group. */
 export const GET: APIRoute = async ({ url, locals }) => {
   const period = url.searchParams.get('period') ?? '';
   if (!/^\d{4}-\d{2}-\d{2}$/.test(period)) return new Response('Choose a period.', { status: 400 });
   const svc = serviceClient();
-  const items = (await groupItems(svc, period)).filter((i) => i.figures);
-  const c = consolidate(consolidatedItems(items));
-  const header = ['Line', ...items.map((i) => `${i.name}${i.currency !== 'AUD' ? ` (${i.currency})` : ''}`), 'Consolidated (AUD)'];
+  const venture = url.searchParams.get('group') ? (await ventureGroups(svc)).find((g) => g.code === url.searchParams.get('group')!.toUpperCase()) : null;
+  if (venture === undefined) return new Response('No such group.', { status: 404 });
+  const items = (await groupItems(svc, period)).filter((i) => i.figures && (!venture || venture.members.some((m) => m.id === i.id)));
+  const inside = venture ? ventureItems(items, venture) : consolidatedItems(items);
+  const c = consolidate(inside);
+  const currency = inside[0]?.currency ?? 'AUD';
+  const header = ['Line', ...items.map((i) => `${i.name}${i.currency !== currency ? ` (${i.currency})` : ''}`), `Consolidated (${currency})`];
   const pl = (w: 'period' | 'ytd') => [header, ...(Object.entries(PL_LINES) as [PlLine, string][]).map(([k, l]) => [l, ...items.map((i) => i.figures!.pl?.[k]?.[w] ?? null), c.figures.pl?.[k]?.[w] ?? null])];
   const bs = [header, ...(Object.entries(BS_LINES) as [BsLine, string][]).map(([k, l]) => [l, ...items.map((i) => i.figures!.bs?.[k] ?? null), c.figures.bs?.[k] ?? null]),
     ['Net assets', ...items.map((i) => totals(i.figures!).netAssets), c.netAssets]];
@@ -24,6 +28,6 @@ export const GET: APIRoute = async ({ url, locals }) => {
     { name: 'P&L period', rows: pl('period'), widths }, { name: 'P&L year to date', rows: pl('ytd'), widths }, { name: 'Balance sheet', rows: bs, widths },
     { name: 'Intercompany', rows: ic, widths: [24, 24, 18, 18, 22, 22] }, { name: 'Matching', rows: pairs, widths: [44, 20, 14, 20, 14, 14] }, { name: 'Packs', rows: packs, widths: [24, 22, 20] },
   ]);
-  await locals.supabase.rpc('log_event', { event_action: 'admin_exported_group_accounts', event_detail: { period } });
-  return new Response(xlsx, { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="lakeba-group-${period}.xlsx"` } });
+  await locals.supabase.rpc('log_event', { event_action: 'admin_exported_group_accounts', event_detail: { period, ...(venture ? { group: venture.code } : {}) } });
+  return new Response(xlsx, { headers: { 'Content-Type': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', 'Content-Disposition': `attachment; filename="${venture ? `${venture.code.toLowerCase()}-group` : 'lakeba-group'}-${period}.xlsx"` } });
 };

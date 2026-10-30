@@ -5,21 +5,29 @@ import Empty from '../../../components/Empty.astro';
 import AccountingNav from '../../../components/AccountingNav.astro';
 import { serviceClient } from '../../../lib/admin';
 import { BS_LINES, PL_LINES, monthEnd, periodLabel, todayIn, totals, type BsLine, type PlLine } from '../../../lib/reporting';
-import { consolidate, consolidatedItems, groupItems, matchPairs } from '../../../lib/reporting-group';
+import { consolidate, consolidatedItems, groupItems, matchPairs, ventureGroups, ventureItems } from '../../../lib/reporting-group';
 
 // Admin → Accounting → Consolidated: Lakeba and its controlled ventures added
 // up for a period, with what they report between each other removed, the
-// pair-by-pair matching of those amounts, and the Excel export.
+// pair-by-pair matching of those amounts, and the Excel export. Or a venture's
+// own group (?group=DOX): the venture and the companies it controls, from the
+// share register (DoxAI = DoxAI Australia + DoxAI Operations).
 const svc = serviceClient();
 const { data: periodRows } = await svc.from('reporting_packs').select('period_end').in('status', ['submitted', 'accepted']).order('period_end', { ascending: false });
 const periods = [...new Set((periodRows ?? []).map((r) => r.period_end as string))];
 const asked = Astro.url.searchParams.get('period');
 const period = asked && periods.includes(asked) ? asked : periods[0] ?? monthEnd(todayIn(), -1);
-const items = await groupItems(svc, period);
-const inside = consolidatedItems(items);
+const groups = await ventureGroups(svc);
+const venture = groups.find((g) => g.code === Astro.url.searchParams.get('group')?.toUpperCase()) ?? null;
+const all = await groupItems(svc, period);
+// A venture's view: only its companies (those without a schedule simply aren't there).
+const items = venture ? all.filter((i) => venture.members.some((m) => m.id === i.id)) : all;
+const inside = venture ? ventureItems(items, venture) : consolidatedItems(items);
 const c = consolidate(inside);
 const pairs = matchPairs(items);
 const outside = items.filter((i) => !inside.includes(i));
+const notScheduled = venture ? venture.members.filter((m) => !items.some((i) => i.id === m.id)) : [];
+const currency = inside[0]?.currency ?? 'AUD';
 const money = (v: number | null | undefined) => (v == null ? '—' : new Intl.NumberFormat('en-AU', { maximumFractionDigits: 0 }).format(v));
 const sumOf = (fn: (i: (typeof inside)[number]) => number) => inside.reduce((t, i) => t + fn(i), 0);
 ---
@@ -30,13 +38,14 @@ const sumOf = (fn: (i: (typeof inside)[number]) => number) => inside.reduce((t, 
   {periods.length ? (
     <>
       <form method="get" class="mb-4 flex flex-wrap items-end gap-3 text-sm">
+        {groups.length > 0 && <div><label class="label" for="group">Group</label><select class="field" id="group" name="group"><option value="">Lakeba Group</option>{groups.map((g) => <option value={g.code} selected={g.id === venture?.id}>{g.name} ({g.members.map((m) => m.name).join(' + ')})</option>)}</select></div>}
         <div><label class="label" for="period">Period</label><select class="field" id="period" name="period">{periods.map((p) => <option value={p} selected={p === period}>{periodLabel(p, 'monthly')}</option>)}</select></div>
         <button class="btn-ghost !py-2">Show</button>
-        <a class="btn-ghost !py-2" href={`/admin/accounting/export?period=${period}`}>Download Excel</a>
+        <a class="btn-ghost !py-2" href={`/admin/accounting/export?period=${period}${venture ? `&group=${venture.code}` : ''}`}>Download Excel</a>
       </form>
       <section class="card mb-6 overflow-x-auto p-0">
-        <h2 class="px-5 pt-5 font-display text-lg font-bold">Lakeba and its controlled ventures, AUD</h2>
-        <p class="px-5 pt-1 text-sm text-white/55">{inside.map((i) => i.name).join(', ') || 'No packs yet'}. An approximation from what each company reports, not an audited consolidation.</p>
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">{venture ? `${venture.name} and the companies it controls, ${currency}` : 'Lakeba and its controlled ventures, AUD'}</h2>
+        <p class="px-5 pt-1 text-sm text-white/55">{inside.map((i) => i.name).join(', ') || 'No packs yet'}. An approximation from what each company reports, not an audited consolidation.{venture && ' Who controls whom comes from the share register: over half of the shares that count toward ownership.'}</p>
         <table class="mt-3 w-full text-sm">
           <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-2 text-left">Profit and loss</th><th class="px-5 py-2 text-right">Added up</th><th class="px-5 py-2 text-right">Between them</th><th class="px-5 py-2 text-right">Consolidated</th><th class="px-5 py-2 text-right">Year to date (added up)</th></tr></thead>
           <tbody class="divide-y divide-white/5">
@@ -74,11 +83,14 @@ const sumOf = (fn: (i: (typeof inside)[number]) => number) => inside.reduce((t, 
         ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">No company reported balances or charges with another group company for this period.</p>}
       </section>
 
-      {outside.length > 0 && (
+      {(outside.length > 0 || notScheduled.length > 0) && (
         <section class="card p-0">
           <h2 class="px-5 pt-5 font-display text-lg font-bold">Not consolidated</h2>
-          <p class="px-5 pt-1 text-sm text-white/55">Non-controlling investments, companies reporting in another currency, and those without a pack yet.</p>
-          <ul class="mt-2 divide-y divide-white/5 text-sm">{outside.map((i) => <li class="flex justify-between gap-3 px-5 py-2"><span class="text-white">{i.name}</span><span class="text-white/50">{!i.figures ? 'No pack sent' : i.currency !== 'AUD' ? i.currency : 'Non-controlling'}{i.figures && ` · net profit ${money(i.figures.pl?.net_profit?.period)}`}</span></li>)}</ul>
+          <p class="px-5 pt-1 text-sm text-white/55">{venture ? 'Companies in the group reporting in another currency, without a pack yet, or without a reporting schedule.' : 'Non-controlling investments, companies reporting in another currency, and those without a pack yet.'}</p>
+          <ul class="mt-2 divide-y divide-white/5 text-sm">
+            {outside.map((i) => <li class="flex justify-between gap-3 px-5 py-2"><span class="text-white">{i.name}</span><span class="text-white/50">{!i.figures ? 'No pack sent' : i.currency !== currency ? i.currency : 'Non-controlling'}{i.figures && ` · net profit ${money(i.figures.pl?.net_profit?.period)}`}</span></li>)}
+            {notScheduled.map((m) => <li class="flex justify-between gap-3 px-5 py-2"><span class="text-white">{m.name}</span><span class="text-white/50">No reporting schedule (Finance → Schedules)</span></li>)}
+          </ul>
         </section>
       )}
     </>

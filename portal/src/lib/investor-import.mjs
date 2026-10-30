@@ -273,6 +273,7 @@ export async function runImport({ data, name, svc, apply, target, remove = false
   if (scope) {
     for (const c of dbClasses) if (c.entity_id === scope.entityId) own.classIds.add(c.id);
     for (const h of dbHoldings) (own.classIds.has(h.share_class_id) ? own.holderIds : own.sharedHolders).add(h.holder_id);
+    // A holder that is a company in the portal (Lakeba's own stake, or a venture's holding company) is Lakeba's to change.
     for (const h of dbHolders) if (h.represents_entity_id) own.sharedHolders.add(h.id);
     for (const m of dbMembers) {
       if (own.holderIds.has(m.holder_id)) own.people.add(m.user_id);
@@ -585,7 +586,8 @@ export async function runImport({ data, name, svc, apply, target, remove = false
       // A holder exported without a register reference gets this ID as its reference now.
       const portalOnly = holderByRef.get(h.ref);
       if (portalOnly && !portalOnly.registry_ref) await svc.from('holders').update({ registry_ref: h.ref }).eq('id', portalOnly.id).throwOnError();
-      const represents = h.ref.endsWith('-GROUP') ? entityByCode.get(h.ref.slice(0, -6))?.id ?? null : null;
+      // LKB-GROUP is the group's own stake; a holder set as a portal company on its page (a venture's holding company) stays one.
+      const represents = h.ref.endsWith('-GROUP') ? entityByCode.get(h.ref.slice(0, -6))?.id ?? null : portalOnly?.represents_entity_id ?? null;
       const row = { registry_ref: h.ref, name: h.name, kind: h.kind, represents_entity_id: represents };
       const { data } = await svc.from('holders').upsert(row, { onConflict: 'registry_ref' }).select('*').single().throwOnError();
       holderByRef.set(h.ref, data);

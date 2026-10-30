@@ -8,6 +8,7 @@ import { CONTRACT_TYPES, type ContractType } from './legal-contracts';
 import { BS_LINES, IC_FIELDS, PL_LINES, checks, periodDates, periodLabel, todayIn, totals, xeroConnected, type BsLine, type Figures, type PlLine } from './reporting';
 import { consolidate, consolidatedItems, groupItems, matchPairs } from './reporting-group';
 import { EMPLOYMENT, GRANT_STATES, PERSON_STATES, vestedOn } from './hr';
+import { ownership, pctText } from './ownership';
 
 // Board Ask (Admin → Board Ask): directors' questions answered by Lakeba AI
 // (Claude Opus 5.5) with tools over the portal, live Xero, the law library
@@ -147,11 +148,15 @@ async function companiesTool(s: Session) {
     s.svc.from('connections').select('entity_id, status').in('entity_id', s.ids).eq('provider', 'xero'),
   ]);
   const rel: Record<string, string> = { group: 'the group\'s parent', controlled: 'controlled by Lakeba', portfolio: 'non-controlling investment' };
+  // Who holds it among the portal's companies (a venture's holding company), and Lakeba's share from the register.
+  const own = await ownership(s.svc);
+  const heldBy = (id: string) => own.ownersOf(id).filter((x) => x.owner !== own.group?.id).map((x) => `${pctText(x.pct)} held by ${own.companies.get(x.owner)?.display_name}`).join(', ');
+  const share = (c: Company) => { const l = own.lakeba(c.id); return c.relationship !== 'group' && l.effective > 0 ? `; Lakeba's share from the register ${pctText(l.effective)}${l.through > 0 ? ' (partly through its holding company)' : ''}` : ''; };
   return [`Today is ${todayIn()} (Sydney). You may answer about ${s.scope.all ? 'every company in the group' : 'these companies only'}:`,
     ...s.scope.companies.map((c) => {
       const pack = (packs ?? []).find((p) => p.entity_id === c.id);
       const xero = (conns ?? []).some((x) => x.entity_id === c.id && x.status === 'connected');
-      return `- ${c.code}: ${c.display_name}${c.legal_name && c.legal_name !== c.display_name ? ` (${c.legal_name})` : ''}; ${rel[c.relationship] ?? c.relationship}${c.lakeba_stake != null && c.relationship !== 'group' ? `; Lakeba holds ${c.lakeba_stake}%${c.stake_as_at ? ` as at ${c.stake_as_at}` : ''}` : ''}; Xero ${xero ? 'connected' : 'not connected'}; latest reporting pack ${pack ? periodLabel(pack.period_end, pack.cadence) : 'none'}`;
+      return `- ${c.code}: ${c.display_name}${c.legal_name && c.legal_name !== c.display_name ? ` (${c.legal_name})` : ''}; ${rel[c.relationship] ?? c.relationship}${c.lakeba_stake != null && c.relationship !== 'group' ? `; Lakeba holds ${c.lakeba_stake}%${c.stake_as_at ? ` as at ${c.stake_as_at}` : ''}` : ''}${heldBy(c.id) ? `; ${heldBy(c.id)}` : ''}${share(c)}; Xero ${xero ? 'connected' : 'not connected'}; latest reporting pack ${pack ? periodLabel(pack.period_end, pack.cadence) : 'none'}`;
     }),
     s.scope.all ? 'The consolidated group view is available (financials with company "GROUP").' : 'The consolidated group view is not available to this person.'].join('\n');
 }
