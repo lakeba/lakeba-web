@@ -1,0 +1,139 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import Alert from '../../components/Alert.astro';
+import Empty from '../../components/Empty.astro';
+import KpiItems from '../../components/KpiItems.astro';
+import KpiCheckins from '../../components/KpiCheckins.astro';
+import { serviceClient } from '../../lib/admin';
+import { field } from '../../lib/forms';
+import { dateTime, shortDate } from '../../lib/format';
+import { myRecords } from '../../lib/hr';
+import { CARD_STATES, PERIOD_COLUMNS, RATINGS, loadScorecard, namesOf, ratingLabel, reportsOf, scoresFor, showPercent, showValue, updatedFrom, type Period, type Scorecard } from '../../lib/kpis';
+
+// My HR → My team: for managers, everyone below them in the org chart and their scorecards (once active):
+// KPIs, results and score, check-ins (private ones too, which the person never sees), and the manager's
+// part of the review.
+const svc = serviceClient();
+const userId = Astro.locals.user!.id;
+const records = (await myRecords(svc, userId)).filter((r) => r.status !== 'left');
+if (!records.length) return Astro.redirect('/');
+const reports = await reportsOf(svc, records.map((r) => r.id));
+if (!reports.length) return Astro.redirect('/my-hr');
+const { data: cardRows } = await svc.from('kpi_scorecards').select('id, entity_id, period_id, person_id, status, role_set_id, activated_at, created_at').in('person_id', reports.map((p) => p.id)).neq('status', 'draft');
+const cards = (cardRows ?? []) as Scorecard[];
+const { data: periodRows } = await svc.from('kpi_periods').select(PERIOD_COLUMNS).in('id', cards.length ? [...new Set(cards.map((c) => c.period_id))] : ['00000000-0000-0000-0000-000000000000']);
+const periods = (periodRows ?? []) as Period[];
+const periodOf = new Map(periods.map((p) => [p.id, p]));
+const chosenId = Astro.url.searchParams.get('card');
+let card = chosenId && cards.some((c) => c.id === chosenId) ? await loadScorecard(svc, chosenId, { privateToo: true }) : null;
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && card) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const now = new Date().toISOString();
+  const c = card;
+  const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: c.entity_id, scorecard_id: c.id, person_id: c.person_id, ...detail } });
+  try {
+    if (intent === 'checkin') {
+      const body = field(form, 'body').slice(0, 4000);
+      if (!body) throw new Error('Write the check-in.');
+      const priv = form.get('private') === 'on';
+      await svc.from('kpi_checkins').insert({ scorecard_id: c.id, author_id: userId, author_role: 'manager', body, private: priv }).throwOnError();
+      await log('manager_added_kpi_checkin', { private: priv }); ok = priv ? 'Added, privately: HR and managers see it; they don’t.' : 'Added.';
+    } else if (intent === 'manager-review') {
+      if (c.status !== 'in_review') throw new Error('The manager’s part opens when the review starts.');
+      const rating = Number(field(form, 'manager_rating'));
+      if (!(rating in RATINGS)) throw new Error('Choose your rating.');
+      await svc.from('kpi_reviews').update({ manager_text: field(form, 'manager_text').slice(0, 8000), manager_rating: rating, manager_by: userId, manager_at: now, updated_at: now }).eq('scorecard_id', c.id).throwOnError();
+      await log('manager_saved_kpi_review', { rating }); ok = 'Saved. HR agrees the rating and signs the review off.';
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  card = await loadScorecard(svc, c.id, { privateToo: true });
+}
+
+const scores = await scoresFor(svc, cards, periods);
+const names = card ? await namesOf(svc, card.checkins.map((x) => x.author_id)) : new Map<string, string>();
+const { data: entities } = await svc.from('entities').select('id, display_name').in('id', [...new Set(reports.map((p) => p.entity_id))]);
+const companyOf = new Map((entities ?? []).map((e) => [e.id as string, e.display_name as string]));
+const day = (s: string | null | undefined) => (s ? shortDate.format(new Date(`${s.slice(0, 10)}T12:00:00+10:00`)) : '—');
+const cardsOf = (personId: string) => cards.filter((c) => c.person_id === personId).sort((a, b) => (periodOf.get(b.period_id)?.starts_on ?? '').localeCompare(periodOf.get(a.period_id)?.starts_on ?? ''));
+const r = card?.review ?? null;
+---
+
+<Portal title={card ? `My team · ${card.person.full_name}` : 'My team'}>
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/my-hr" class="hover:text-white">My HR</a>{card && <> · <a href="/my-hr/team" class="hover:text-white">My team</a></>}</p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{card ? card.person.full_name : 'My team'}</h1>
+    <p class="mt-1 max-w-2xl text-sm text-white/55">{card ? `${card.person.job_title || '—'} · ${card.period.label} · ${CARD_STATES[card.status]}` : 'Everyone who reports to you, directly or through their managers, and how their KPIs are going.'}</p>
+  </div>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  {!card ? (
+    <section class="card overflow-x-auto p-0" data-tour="myteam-list">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Person</th><th class="px-5 py-3">Scorecards</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {reports.map((p) => (
+            <tr class="align-top">
+              <td class="px-5 py-3"><span class="font-medium text-white">{p.full_name}</span><span class="block text-xs text-white/45">{p.job_title || '—'}{companyOf.size > 1 && ` · ${companyOf.get(p.entity_id)}`}</span></td>
+              <td class="px-5 py-3">{cardsOf(p.id).length ? <ul class="grid gap-1">{cardsOf(p.id).map((c) => { const s = scores.get(c.id)!; return <li><a class="text-lk-blue hover:underline" href={`?card=${c.id}`}>{periodOf.get(c.period_id)?.label}</a><span class="text-white/55"> · {CARD_STATES[c.status]} · score {showPercent(s.score)}</span>{s.off > 0 && <span class="text-lk-red"> · {s.off} off track</span>}{c.status === 'in_review' && <span class="text-lk-orange"> · review</span>}</li>; })}</ul> : <span class="text-white/45">None yet</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  ) : (
+    <>
+      <section class="card mb-6 overflow-x-auto p-0" data-tour="myteam-items">
+        <div class="flex flex-wrap items-baseline justify-between gap-3 px-5 pt-5">
+          <h2 class="font-display text-lg font-bold">{card.period.label} <span class="text-sm font-normal text-white/45">{day(card.period.starts_on)} to {day(card.period.ends_on)}</span></h2>
+          <p class="text-sm text-white/65">Score <span class="font-semibold text-white">{showPercent(card.score)}</span> · suggests {ratingLabel(card.suggested)}</p>
+        </div>
+        <div class="mt-2"><KpiItems items={card.items} /></div>
+        <ul class="divide-y divide-white/5 border-t border-white/5 text-sm">{card.items.flatMap((i) => i.results.filter((x) => x.status === 'confirmed').map((x) => ({ ...x, item: i }))).sort((a, b) => b.as_of.localeCompare(a.as_of)).slice(0, 12).map((x) => (
+          <li class="flex justify-between gap-3 px-5 py-2"><span class="text-white/75">{x.item.definition.name}{x.note && <span class="text-white/45"> · {x.note}</span>}{updatedFrom(x) && <span class="text-white/45"> · {updatedFrom(x)}</span>}</span><span class="tabular-nums text-white/85">{showValue(x.value, x.item.definition.unit)} <span class="text-xs text-white/45">{day(x.as_of)}</span></span></li>
+        ))}</ul>
+      </section>
+      <div class="grid gap-6 lg:grid-cols-2">
+        <section class="card grid content-start gap-4" data-tour="myteam-checkins">
+          <h2 class="font-display text-lg font-bold">Check-ins</h2>
+          <KpiCheckins checkins={card.checkins} names={names} />
+          <form method="post" class="grid gap-2 text-sm">
+            <label class="label !mb-0" for="body">Add a check-in</label>
+            <textarea class="field min-h-20" id="body" name="body" required placeholder="What you talked about, what was agreed"></textarea>
+            <div class="flex flex-wrap items-center justify-between gap-3"><label class="flex items-center gap-2 text-white/65"><input type="checkbox" name="private" class="size-4 accent-lk-blue" /> <span data-hint="Private check-ins are for HR and managers only; the person never sees them.">Private</span></label><button class="btn-ghost" name="intent" value="checkin">Add</button></div>
+          </form>
+        </section>
+        <section class="card grid content-start gap-4 text-sm" data-tour="myteam-review">
+          <h2 class="font-display text-lg font-bold">Review</h2>
+          {card.status === 'active' && <p class="text-white/55">The review starts at the end of {card.period.label}: then you add your assessment and rating here.</p>}
+          {r && card.status !== 'active' && (
+            <>
+              <div><p class="label !mb-1">Their self-assessment</p>{r.self_at ? <><p class="text-white/85">{ratingLabel(r.self_rating)}</p>{r.self_text && <p class="mt-1 whitespace-pre-line text-white/70">{r.self_text}</p>}</> : <p class="text-white/45">Not yet.</p>}</div>
+              {card.status === 'in_review' ? (
+                <form method="post" class="grid gap-2">
+                  <label class="label !mb-0" for="manager_text">Your assessment</label>
+                  <textarea class="field min-h-28" id="manager_text" name="manager_text" placeholder="What went well, what to work on">{r.manager_text}</textarea>
+                  <select class="field" name="manager_rating" aria-label="Your rating" required><option value="">Your rating…</option>{Object.entries(RATINGS).map(([k, l]) => <option value={k} selected={Number(k) === r.manager_rating}>{k} · {l}</option>)}</select>
+                  <div><button class="btn-primary" name="intent" value="manager-review">{r.manager_at ? 'Save changes' : 'Send to HR'}</button>{r.manager_at && <span class="ml-3 text-xs text-white/45">Saved {dateTime.format(new Date(r.manager_at))}</span>}</div>
+                  <p class="text-xs text-white/45">They see your assessment once HR signs the review off. The score suggests {ratingLabel(card.suggested)}; it’s a guide, not the rating.</p>
+                </form>
+              ) : (
+                <>
+                  <div><p class="label !mb-1">Manager’s assessment</p><p class="text-white/85">{ratingLabel(r.manager_rating)}</p>{r.manager_text && <p class="mt-1 whitespace-pre-line text-white/70">{r.manager_text}</p>}</div>
+                  <p class="text-white/85">Agreed rating: <span class="font-semibold text-white">{ratingLabel(r.agreed_rating)}</span>{r.acknowledged_at ? <span class="block text-xs text-lk-green">They acknowledged it {dateTime.format(new Date(r.acknowledged_at))}</span> : <span class="block text-xs text-white/45">Not acknowledged yet</span>}</p>
+                  {r.employee_comment && <div><p class="label !mb-1">Their comment</p><p class="whitespace-pre-line text-white/70">{r.employee_comment}</p></div>}
+                </>
+              )}
+            </>
+          )}
+        </section>
+      </div>
+    </>
+  )}
+  {!cards.length && !card && <div class="mt-6"><Empty title="No scorecards yet">Your team’s scorecards show here once HR makes them active.</Empty></div>}
+</Portal>

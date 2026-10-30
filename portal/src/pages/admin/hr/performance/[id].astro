@@ -1,0 +1,329 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import HrNav from '../../../../components/HrNav.astro';
+import KpiItems from '../../../../components/KpiItems.astro';
+import KpiCheckins from '../../../../components/KpiCheckins.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime, shortDate } from '../../../../lib/format';
+import { notifyMembers } from '../../../../lib/notify';
+import { hrTeam, todayIn } from '../../../../lib/hr';
+import {
+  CARD_STATES, GOAL_COLUMNS, PERIOD_STATES, RATINGS, UNITS, activateScorecard, evidencePath, libraryFor, loadScorecard, namesOf, ratingLabel, readNumber, readyProblems,
+  showPercent, showValue, signOffReview, startReview, updatedFrom, type Goal, type Rating,
+} from '../../../../lib/kpis';
+
+// Admin → People → Performance → a scorecard: its KPIs with targets, weights and thresholds (HR sets them
+// while it's a draft or running), results (HR enters or confirms; Finance proposes), the score, check-ins,
+// and the review: the person's self-assessment, the manager's (in My HR, or by HR here), the agreed rating
+// and HR's sign-off, then the person's acknowledgement.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const userId = Astro.locals.user!.id;
+const id = Astro.params.id ?? '';
+let card = await loadScorecard(svc, id, { privateToo: true });
+if (!card) return Astro.redirect('/admin/hr/performance');
+const mayView = access.can('hr.view', card.entity_id);
+const mayPropose = access.can('accounting.do', card.entity_id);
+// Finance without HR: the KPIs and results of a running scorecard, to propose results. No check-ins, ratings or review.
+const financeOnly = !mayView;
+if (!mayView && !(mayPropose && ['active', 'in_review'].includes(card.status))) return Astro.redirect('/admin/hr/performance');
+const mayDo = access.can('hr.do', card.entity_id);
+const mayApprove = access.can('hr.approve', card.entity_id);
+const { data: company } = await svc.from('entities').select('id, code, display_name').eq('id', card.entity_id).single();
+const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: card!.entity_id, scorecard_id: card!.id, person_id: card!.person_id, ...detail } });
+const editable = mayDo && (card.status === 'draft' || card.status === 'active');
+const running = card.status === 'active' || card.status === 'in_review';
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const now = new Date().toISOString();
+  const c = card;
+  try {
+    const itemOf = (v: string) => c.items.find((i) => i.id === v);
+    if ((intent === 'items-save' || intent.startsWith('remove:')) && editable) {
+      if (intent.startsWith('remove:')) {
+        const item = itemOf(intent.slice(7));
+        if (!item) throw new Error('That KPI isn’t on the scorecard.');
+        if (item.results.length) throw new Error('It has results: keep it, or give it a weight of 0.');
+        await svc.from('kpi_scorecard_items').delete().eq('id', item.id).throwOnError();
+        await log('admin_removed_kpi_item', { definition_id: item.definition_id }); ok = 'Removed.';
+      } else {
+        const rows = c.items.map((i) => ({
+          id: i.id, target: readNumber(field(form, `target_${i.id}`)), weight: readNumber(field(form, `weight_${i.id}`)) ?? 0,
+          below: readNumber(field(form, `below_${i.id}`)), stretch: readNumber(field(form, `stretch_${i.id}`)),
+          goal_id: field(form, `goal_${i.id}`) || null, note: field(form, `note_${i.id}`).slice(0, 500),
+        }));
+        if (rows.some((r) => r.weight < 0 || r.weight > 100)) throw new Error('A weight is between 0 and 100.');
+        // A running scorecard stays ready: the weights still make 100 and every KPI has a target.
+        if (c.status === 'active') { const p = readyProblems(rows); if (p.length) throw new Error(p.join(' ')); }
+        const { data: goalRows } = await svc.from('kpi_goals').select('id').eq('period_id', c.period_id);
+        for (const r of rows) {
+          const { id: itemId, ...rest } = r;
+          await svc.from('kpi_scorecard_items').update({ ...rest, goal_id: (goalRows ?? []).some((g) => g.id === r.goal_id) ? r.goal_id : null }).eq('id', itemId).eq('scorecard_id', c.id).throwOnError();
+        }
+        await svc.from('kpi_scorecards').update({ updated_at: now }).eq('id', c.id);
+        await log('admin_saved_kpi_items'); ok = 'Saved.';
+      }
+    } else if (intent === 'item-add' && editable) {
+      const lib = await libraryFor(svc, [c.entity_id]);
+      const def = lib.definitions.find((d) => d.id === field(form, 'definition_id'));
+      if (!def) throw new Error('Choose a KPI from the library.');
+      if (c.items.some((i) => i.definition_id === def.id)) throw new Error('It’s on the scorecard already.');
+      if (c.status === 'active') throw new Error('Put it back to draft to add KPIs (the weights must still make 100).');
+      await svc.from('kpi_scorecard_items').insert({ scorecard_id: c.id, definition_id: def.id, weight: readNumber(field(form, 'weight')) ?? 0, sort: c.items.length }).throwOnError();
+      await log('admin_added_kpi_item', { definition_id: def.id }); ok = `${def.name} added: set its target and weight.`;
+    } else if (intent === 'activate' && mayDo && c.status === 'draft') {
+      const p = readyProblems(c.items);
+      if (p.length) throw new Error(p.join(' '));
+      if (c.period.status !== 'open') throw new Error(`Open ${c.period.label} first (Performance page).`);
+      await activateScorecard(svc, c, Astro.url.origin);
+      await log('admin_activated_kpi_scorecard'); ok = c.person.user_id ? 'Active: they can see it in My HR, and were told.' : 'Active. They aren’t in the portal, so they weren’t told.';
+    } else if (intent === 'to-draft' && mayDo && c.status === 'active') {
+      await svc.from('kpi_scorecards').update({ status: 'draft', updated_at: now }).eq('id', c.id).throwOnError();
+      await log('admin_returned_kpi_scorecard_to_draft'); ok = 'Back to draft: they don’t see it until it’s active again.';
+    } else if (intent === 'start-review' && mayDo && c.status === 'active') {
+      await startReview(svc, [c], c.period.label, Astro.url.origin);
+      await log('admin_started_kpi_review'); ok = 'Review started: they were asked for their self-assessment.';
+    } else if ((intent === 'result-add' && mayDo) || (intent === 'propose' && mayPropose)) {
+      if (!running) throw new Error('Results go on a scorecard that’s active or in review.');
+      const item = itemOf(field(form, 'item_id'));
+      if (!item) throw new Error('Choose the KPI.');
+      const value = readNumber(field(form, 'value'));
+      if (value == null) throw new Error('Give the value.');
+      const asOf = /^\d{4}-\d{2}-\d{2}$/.test(field(form, 'as_of')) ? field(form, 'as_of') : todayIn();
+      if (asOf < c.period.starts_on || asOf > c.period.ends_on) throw new Error(`The date must be within ${c.period.label}.`);
+      let path: string | null = null;
+      const f = form.get('evidence');
+      if (f instanceof File && f.size) {
+        if (f.size > 25 * 1024 * 1024) throw new Error('The file is larger than 25 MB.');
+        path = evidencePath(c.entity_id, c.id, f.name);
+        const { error: up } = await svc.storage.from('legal').upload(path, new Uint8Array(await f.arrayBuffer()), { contentType: f.type || 'application/octet-stream' });
+        if (up) throw new Error('The file could not be stored.');
+      }
+      const confirmed = intent === 'result-add';
+      const { data: r } = await svc.from('kpi_results').insert({
+        item_id: item.id, value, as_of: asOf, note: field(form, 'note').slice(0, 1000), evidence_path: path, status: confirmed ? 'confirmed' : 'proposed',
+        proposed_by: userId, proposed_at: now, confirmed_by: confirmed ? userId : null, confirmed_at: confirmed ? now : null,
+      }).select('id').single().throwOnError();
+      if (!confirmed) {
+        await notifyMembers({ kind: 'hr', userIds: await hrTeam(svc, c.entity_id), origin: Astro.url.origin, link: `/admin/hr/performance/${c.id}`, title: `A result to confirm for ${c.person.full_name}`, body: `Finance proposed ${showValue(value, item.definition.unit)} for ${item.definition.name} (${c.period.label}). It counts once HR confirms it.` }).catch(() => 0);
+      }
+      await log(confirmed ? 'admin_added_kpi_result' : 'admin_proposed_kpi_result', { result_id: r!.id, definition_id: item.definition_id });
+      ok = confirmed ? 'Result added.' : 'Proposed: HR confirms it, then it counts.';
+    } else if ((intent === 'result-confirm' || intent === 'result-reject' || intent === 'result-delete') && mayDo) {
+      const result = c.items.flatMap((i) => i.results).find((r) => r.id === field(form, 'result_id'));
+      if (!result) throw new Error('That result isn’t on the scorecard.');
+      if (c.status === 'signed_off') throw new Error('The review is signed off: its results are kept as they were.');
+      if (intent === 'result-confirm') {
+        if (result.status !== 'proposed') throw new Error('Already confirmed.');
+        await svc.from('kpi_results').update({ status: 'confirmed', confirmed_by: userId, confirmed_at: now, updated_at: now }).eq('id', result.id).throwOnError();
+        await log('admin_confirmed_kpi_result', { result_id: result.id }); ok = 'Confirmed: it counts now.';
+      } else {
+        if (result.evidence_path) await svc.storage.from('legal').remove([result.evidence_path]);
+        await svc.from('kpi_results').delete().eq('id', result.id).throwOnError();
+        await log(intent === 'result-reject' ? 'admin_rejected_kpi_result' : 'admin_deleted_kpi_result', { result_id: result.id, value: result.value, as_of: result.as_of });
+        ok = intent === 'result-reject' ? 'Rejected and removed.' : 'Deleted.';
+      }
+    } else if (intent === 'checkin' && mayDo) {
+      const body = field(form, 'body').slice(0, 4000);
+      if (!body) throw new Error('Write the check-in.');
+      await svc.from('kpi_checkins').insert({ scorecard_id: c.id, author_id: userId, author_role: 'hr', body, private: form.get('private') === 'on' }).throwOnError();
+      await log('admin_added_kpi_checkin', { private: form.get('private') === 'on' }); ok = 'Added.';
+    } else if (intent === 'manager-review' && mayDo && c.status === 'in_review') {
+      const rating = Number(field(form, 'manager_rating'));
+      await svc.from('kpi_reviews').update({ manager_text: field(form, 'manager_text').slice(0, 8000), manager_rating: rating in RATINGS ? rating : null, manager_by: userId, manager_at: now, updated_at: now }).eq('scorecard_id', c.id).throwOnError();
+      await log('admin_saved_kpi_manager_review'); ok = 'Saved the manager’s assessment.';
+    } else if (intent === 'sign-off' && mayApprove && c.status === 'in_review') {
+      const rating = Number(field(form, 'agreed_rating'));
+      if (!(rating in RATINGS)) throw new Error('Choose the agreed rating.');
+      await signOffReview(svc, c, rating as Rating, userId, Astro.url.origin);
+      await log('admin_signed_off_kpi_review', { rating }); ok = c.person.user_id ? 'Signed off: they were asked to read and acknowledge it in My HR.' : 'Signed off. They aren’t in the portal, so share it with them yourself.';
+    } else throw new Error('That can’t be done here.');
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  card = (await loadScorecard(svc, id, { privateToo: true }))!;
+}
+
+const c = card;
+// After an action the scorecard may have moved on (made active, review started…): the page shows where it is now.
+const editableNow = mayDo && (c.status === 'draft' || c.status === 'active');
+const runningNow = c.status === 'active' || c.status === 'in_review';
+const [{ data: goalRows }, lib, names] = await Promise.all([
+  svc.from('kpi_goals').select(GOAL_COLUMNS).eq('period_id', c.period_id).order('sort'),
+  mayDo ? libraryFor(svc, [c.entity_id]) : Promise.resolve({ definitions: [], roleSets: [] }),
+  namesOf(svc, [...c.checkins.map((x) => x.author_id), ...c.items.flatMap((i) => i.results.flatMap((r) => [r.proposed_by, r.confirmed_by])), c.review?.self_by ?? null, c.review?.manager_by ?? null, c.review?.signed_off_by ?? null]),
+]);
+const goals = (goalRows ?? []) as Goal[];
+const goalNames = new Map(goals.map((g) => [g.id, g.title]));
+const results = c.items.flatMap((i) => i.results.map((r) => ({ ...r, item: i }))).sort((a, b) => b.as_of.localeCompare(a.as_of) || b.created_at.localeCompare(a.created_at));
+const problems = readyProblems(c.items);
+const weightTotal = c.items.reduce((s, i) => s + Number(i.weight), 0);
+const day = (s: string | null | undefined) => (s ? shortDate.format(new Date(`${s.slice(0, 10)}T12:00:00+10:00`)) : '—');
+const when = (s: string | null | undefined) => (s ? dateTime.format(new Date(s)) : '—');
+const nameOr = (u: string | null | undefined) => (u && names.get(u)) || 'someone';
+const r = c.review;
+const offTrack = c.items.filter((i) => i.track === 'off').length;
+---
+
+<Admin title={`Performance · ${c.person.full_name}`}>
+  <HrNav />
+  <div class="mb-6" data-tour="card-head">
+    <p class="text-sm text-white/45"><a href={`/admin/hr/performance?company=${company?.code ?? ''}&period=${c.period_id}`} class="hover:text-white">Performance · {c.period.label}</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{financeOnly ? c.person.full_name : <a class="hover:text-lk-blue" href={`/admin/hr/people/${c.person_id}`}>{c.person.full_name}</a>}</h1>
+    <p class="mt-1 text-sm text-white/55">{company?.display_name} · {c.person.job_title || '—'} · {c.period.label} ({day(c.period.starts_on)} to {day(c.period.ends_on)}, {PERIOD_STATES[c.period.status].toLowerCase()}) · <span class:list={[c.status === 'draft' ? 'text-lk-orange' : c.status === 'signed_off' ? 'text-lk-green' : 'text-white/80']}>{CARD_STATES[c.status]}</span>
+      {!financeOnly && <> · score {showPercent(c.score)}{c.score != null && c.coverage < 1 && ` (${showPercent(c.coverage)} of the weight has results)`} · suggests {ratingLabel(c.suggested)}</>}
+      {offTrack > 0 && c.status !== 'draft' && <span class="text-lk-red"> · {offTrack} off track</span>}</p>
+  </div>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
+    <div class="grid content-start gap-6">
+      <section class="card overflow-x-auto p-0" data-tour="card-items">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">KPIs</h2>
+        {c.items.length ? (editableNow ? (
+          <form method="post">
+            <table class="mt-2 w-full text-left text-sm">
+              <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-4 py-3">KPI</th><th class="px-2 py-3">Target</th><th class="px-2 py-3">Weight %</th><th class="px-2 py-3"><span data-hint="In the KPI’s unit. Under it (over it, when lower is better) the KPI shows off track. Empty: under 80% of the target.">Off track</span></th><th class="px-2 py-3"><span data-hint="In the KPI’s unit: reaching it shows Stretch. Attainment is capped at 150% either way.">Stretch</span></th><th class="px-2 py-3">Actual</th><th class="px-2 py-3"></th></tr></thead>
+              <tbody class="divide-y divide-white/5">
+                {c.items.map((i) => (
+                  <tr class="align-top">
+                    <td class="px-4 py-2.5"><span class="font-medium text-white">{i.definition.name}</span><span class="block text-xs text-white/45">{UNITS[i.definition.unit]}{i.definition.direction === 'lower' && ' · lower is better'}</span>
+                      <select class="field mt-1.5 !py-1 text-xs" name={`goal_${i.id}`} aria-label="Serves the goal"><option value="">No goal</option>{goals.map((g) => <option value={g.id} selected={g.id === i.goal_id}>{g.parent_id ? '– ' : ''}{g.title}</option>)}</select>
+                      <input class="field mt-1.5 !py-1 text-xs" name={`note_${i.id}`} value={i.note} placeholder="Note (optional)" aria-label="Note" /></td>
+                    <td class="px-2 py-2.5"><input class="field !w-28" name={`target_${i.id}`} value={i.target ?? ''} inputmode="decimal" aria-label={`${i.definition.name} target`} required={c.status === 'active'} /></td>
+                    <td class="px-2 py-2.5"><input class="field !w-20" name={`weight_${i.id}`} value={Number(i.weight)} inputmode="decimal" aria-label={`${i.definition.name} weight`} /></td>
+                    <td class="px-2 py-2.5"><input class="field !w-24" name={`below_${i.id}`} value={i.below ?? ''} inputmode="decimal" aria-label={`${i.definition.name} off track threshold`} /></td>
+                    <td class="px-2 py-2.5"><input class="field !w-24" name={`stretch_${i.id}`} value={i.stretch ?? ''} inputmode="decimal" aria-label={`${i.definition.name} stretch`} /></td>
+                    <td class="px-2 py-2.5 tabular-nums text-white/70">{showValue(i.actual, i.definition.unit)}<span class="block text-xs text-white/45">{showPercent(i.attainment)}</span>{i.definition.source !== 'manual' && <span class="block text-xs text-white/40">automatic</span>}</td>
+                    <td class="px-2 py-2.5">{c.status === 'draft' && !i.results.length && <button class="btn-ghost !px-2 !py-1 text-xs text-lk-red" name="intent" value={`remove:${i.id}`} formnovalidate>Remove</button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+            <div class="flex flex-wrap items-center justify-between gap-3 border-t border-white/5 px-5 py-3 text-sm"><span class:list={[Math.abs(weightTotal - 100) > 0.001 ? 'text-lk-orange' : 'text-white/55']}>Weights add up to {Math.round(weightTotal * 100) / 100} of 100</span><button class="btn-ghost" name="intent" value="items-save">Save the KPIs</button></div>
+          </form>
+        ) : <div class="mt-2"><KpiItems items={c.items} goals={goalNames} /></div>) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">No KPIs yet.{editable && ' Add them below, or give the scorecard from a role set on the Performance page.'}</p>}
+        {editableNow && c.status === 'draft' && (
+          <form method="post" class="flex flex-wrap items-end gap-2 border-t border-white/5 p-5 text-sm">
+            <div class="min-w-56 flex-1"><label class="label" for="definition_id">Add a KPI</label><select class="field" id="definition_id" name="definition_id" required><option value="">Choose…</option>{lib.definitions.filter((d) => !c.items.some((i) => i.definition_id === d.id)).map((d) => <option value={d.id}>{d.name} · {UNITS[d.unit]}</option>)}</select></div>
+            <div><label class="label" for="weight">Weight %</label><input class="field !w-24" id="weight" name="weight" inputmode="decimal" placeholder="0" /></div>
+            <button class="btn-ghost" name="intent" value="item-add">Add</button>
+            <a class="self-center text-xs text-lk-blue hover:underline" href={`/admin/hr/performance/library?company=${company?.code ?? ''}`}>KPI library</a>
+          </form>
+        )}
+      </section>
+
+      <section class="card p-0" data-tour="card-results">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Results</h2>
+        <p class="px-5 text-xs text-white/45">Only confirmed results count. Finance proposes; HR confirms or enters them.</p>
+        {results.length ? (
+          <ul class="mt-2 divide-y divide-white/5 text-sm">{results.map((x) => (
+            <li class="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5">
+              <span><span class="text-white">{x.item.definition.name}: {showValue(x.value, x.item.definition.unit)}</span><span class="block text-xs text-white/45">{day(x.as_of)} · {x.source === 'manual' ? (x.status === 'proposed' ? `proposed by ${nameOr(x.proposed_by)}` : `${x.proposed_by && x.proposed_by !== x.confirmed_by ? `proposed by ${nameOr(x.proposed_by)}, ` : ''}confirmed by ${nameOr(x.confirmed_by)}`) : <span class="text-lk-blue/80">{updatedFrom(x)}</span>}{x.note && ` · ${x.note}`}{x.evidence_path && !financeOnly && <> · <a class="text-lk-blue hover:underline" href={`/admin/hr/file?path=${encodeURIComponent(x.evidence_path)}`}>evidence</a></>}</span></span>
+              <span class="flex items-center gap-2">{x.status === 'proposed' && <span class="text-xs text-lk-orange">to confirm</span>}
+                {mayDo && c.status !== 'signed_off' && <form method="post" class="flex gap-2"><input type="hidden" name="result_id" value={x.id} />{x.status === 'proposed' ? <><button class="btn-ghost !px-2 !py-1 text-xs" name="intent" value="result-confirm">Confirm</button><button class="btn-ghost !px-2 !py-1 text-xs text-lk-red" name="intent" value="result-reject">Reject</button></> : <button class="btn-ghost !px-2 !py-1 text-xs text-lk-red" name="intent" value="result-delete" data-confirm="Delete this result?">Delete</button>}</form>}</span>
+            </li>
+          ))}</ul>
+        ) : <p class="px-5 pt-2 text-sm text-white/55">None yet.</p>}
+        {runningNow && c.items.length > 0 && (mayDo || mayPropose) && (
+          <form method="post" enctype="multipart/form-data" class="grid gap-2 border-t border-white/5 p-5 text-sm sm:grid-cols-2" data-tour="card-add-result">
+            <div class="sm:col-span-2"><label class="label" for="item_id">{mayDo ? 'Add a result' : 'Propose a result'}</label><select class="field" id="item_id" name="item_id" required>{c.items.map((i) => <option value={i.id}>{i.definition.name} · {UNITS[i.definition.unit]}</option>)}</select></div>
+            <div><label class="label" for="value">Value</label><input class="field" id="value" name="value" inputmode="decimal" required /></div>
+            <div><label class="label" for="as_of"><span data-hint="The day the value is for. It must be within the period; KPIs that add up count every result in it.">As of</span></label><input class="field" type="date" id="as_of" name="as_of" min={c.period.starts_on} max={c.period.ends_on} value={todayIn() > c.period.ends_on ? c.period.ends_on : todayIn() < c.period.starts_on ? c.period.starts_on : todayIn()} /></div>
+            <div class="sm:col-span-2"><input class="field" name="note" placeholder="Note, e.g. where it comes from" aria-label="Note" /></div>
+            <div class="sm:col-span-2"><label class="label" for="evidence">Evidence (optional)</label><input class="field" type="file" id="evidence" name="evidence" /></div>
+            <div class="sm:col-span-2">{mayDo ? <button class="btn-primary" name="intent" value="result-add">Add the result</button> : <button class="btn-primary" name="intent" value="propose">Propose it to HR</button>}</div>
+          </form>
+        )}
+      </section>
+
+      {!financeOnly && (
+        <section class="card grid gap-4" data-tour="card-checkins">
+          <h2 class="font-display text-lg font-bold">Check-ins</h2>
+          <KpiCheckins checkins={c.checkins} names={names} />
+          {mayDo && (
+            <form method="post" class="grid gap-2 text-sm">
+              <label class="label !mb-0" for="body">Add a check-in</label>
+              <textarea class="field min-h-20" id="body" name="body" required placeholder="How it’s going, what was agreed"></textarea>
+              <div class="flex flex-wrap items-center justify-between gap-3"><label class="flex items-center gap-2 text-white/65"><input type="checkbox" name="private" class="size-4 accent-lk-blue" /> <span data-hint="Private check-ins are for HR and their managers only; they never see them.">Private</span></label><button class="btn-ghost" name="intent" value="checkin">Add</button></div>
+            </form>
+          )}
+        </section>
+      )}
+    </div>
+
+    {!financeOnly && (
+      <aside class="grid content-start gap-6">
+        {mayDo && (c.status === 'draft' || c.status === 'active') && (
+          <section class="card grid gap-3 text-sm" data-tour="card-status">
+            <h2 class="font-display text-lg font-bold">Where it stands</h2>
+            {c.status === 'draft' ? (
+              <>
+                {problems.length ? <ul class="grid gap-1 text-lk-orange">{problems.map((p) => <li>{p}</li>)}</ul> : <p class="text-white/65">Ready: the weights make 100 and every KPI has a target.</p>}
+                {c.period.status !== 'open' && <p class="text-white/45">{c.period.label} is {PERIOD_STATES[c.period.status].toLowerCase()}: open it on the Performance page to make scorecards active.</p>}
+                <form method="post"><button class="btn-primary w-full" name="intent" value="activate" disabled={problems.length > 0 || c.period.status !== 'open'}>Make it active</button></form>
+                <p class="text-xs text-white/45">Active, they see it in My HR{c.person.user_id ? ' and are told' : ' (once they’re invited to the portal)'}.</p>
+              </>
+            ) : (
+              <>
+                <p class="text-white/65">Active since {day(c.activated_at)}. Its review starts when {c.period.label} is closed, or now:</p>
+                <form method="post"><button class="btn-primary w-full" name="intent" value="start-review" data-confirm="Start the review now? They’re asked for their self-assessment.">Start the review</button></form>
+                <form method="post"><button class="btn-ghost w-full" name="intent" value="to-draft">Back to draft</button></form>
+              </>
+            )}
+          </section>
+        )}
+
+        <section class="card grid gap-4 text-sm" data-tour="card-review">
+          <h2 class="font-display text-lg font-bold">Review</h2>
+          {c.status === 'draft' || c.status === 'active' ? <p class="text-white/55">The review starts when {c.period.label} is closed (or HR starts it). They add a self-assessment, their manager adds theirs, then HR agrees the rating and signs it off.</p> : (
+            <>
+              <div>
+                <p class="label !mb-1">Their self-assessment</p>
+                {r?.self_at ? <><p class="text-white/85">{ratingLabel(r.self_rating)}</p>{r.self_text && <p class="mt-1 whitespace-pre-line text-white/70">{r.self_text}</p>}<p class="mt-1 text-xs text-white/40">{when(r.self_at)}</p></> : <p class="text-white/45">Not yet{c.person.user_id ? '' : ' (they aren’t in the portal)'}.</p>}
+              </div>
+              <div>
+                <p class="label !mb-1">Manager’s assessment</p>
+                {c.status === 'in_review' && mayDo ? (
+                  <form method="post" class="grid gap-2">
+                    <textarea class="field min-h-24" name="manager_text" aria-label="Manager’s assessment" placeholder="What went well, what to work on">{r?.manager_text ?? ''}</textarea>
+                    <select class="field" name="manager_rating" aria-label="Manager’s rating"><option value="">Rating…</option>{Object.entries(RATINGS).map(([k, l]) => <option value={k} selected={Number(k) === r?.manager_rating}>{k} · {l}</option>)}</select>
+                    <button class="btn-ghost" name="intent" value="manager-review">Save the manager’s part</button>
+                    {r?.manager_at && <p class="text-xs text-white/40">Last saved by {nameOr(r.manager_by)}, {when(r.manager_at)}. Their manager can also fill it in My HR → My team.</p>}
+                  </form>
+                ) : r?.manager_at ? <><p class="text-white/85">{ratingLabel(r.manager_rating)}</p>{r.manager_text && <p class="mt-1 whitespace-pre-line text-white/70">{r.manager_text}</p>}<p class="mt-1 text-xs text-white/40">{nameOr(r.manager_by)}, {when(r.manager_at)}</p></> : <p class="text-white/45">Not yet.</p>}
+              </div>
+              <div data-tour="card-signoff">
+                <p class="label !mb-1">Agreed rating</p>
+                {c.status === 'signed_off' ? (
+                  <>
+                    <p class="font-medium text-white">{ratingLabel(r?.agreed_rating)}</p>
+                    <p class="mt-1 text-xs text-white/40">Signed off by {nameOr(r?.signed_off_by)}, {when(r?.signed_off_at)}. The score suggested {ratingLabel(c.suggested)}.</p>
+                    <p class="mt-3 label !mb-1">Their acknowledgement</p>
+                    {r?.acknowledged_at ? <><p class="text-lk-green">Acknowledged {when(r.acknowledged_at)}</p>{r.employee_comment && <p class="mt-1 whitespace-pre-line text-white/70">{r.employee_comment}</p>}</> : <p class="text-white/45">Not yet.</p>}
+                  </>
+                ) : mayApprove ? (
+                  <form method="post" class="grid gap-2">
+                    <select class="field" name="agreed_rating" aria-label="Agreed rating" required><option value="">Choose…</option>{Object.entries(RATINGS).map(([k, l]) => <option value={k} selected={Number(k) === (r?.manager_rating ?? c.suggested)}>{k} · {l}</option>)}</select>
+                    <p class="text-xs text-white/45">The score ({showPercent(c.score)}) suggests {ratingLabel(c.suggested)}; it never sets the rating.</p>
+                    <button class="btn-primary" name="intent" value="sign-off" data-confirm="Sign off the review? They’re told and asked to acknowledge it. It can’t be changed afterwards.">Sign off</button>
+                  </form>
+                ) : <p class="text-white/45">HR (approve) agrees the rating and signs it off.</p>}
+              </div>
+            </>
+          )}
+        </section>
+      </aside>
+    )}
+  </div>
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+</script>

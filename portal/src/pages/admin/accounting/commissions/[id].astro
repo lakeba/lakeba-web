@@ -1,0 +1,256 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import Alert from '../../../../components/Alert.astro';
+import AccountingNav from '../../../../components/AccountingNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { dateTime, shortDate } from '../../../../lib/format';
+import { namesOf, showPercent } from '../../../../lib/kpis';
+import { xeroConnected } from '../../../../lib/reporting';
+import {
+  RUN_STATES, SOURCES, approveRun, buildRun, commissionCompanies, fetchFromXero, invoicesFromCsv, linesCsv, loadRun, mayApproveRun, money, nextStart, periodText, rateText,
+  repTotals, runApprovers, saveAttribution, setupOf, submitRun, tiersText, voidedFromCsv,
+} from '../../../../lib/commissions';
+
+// Admin → Finance → Commissions → a run: each rep's credited revenue, % of target and commission, every line,
+// the invoices nobody is credited with (assign them here: the draft is built again), building it again while
+// it's a draft (from Xero, or a new CSV), sending it for approval, approval by someone else with Finance
+// "approve" (reps are told and their sales KPIs filled in), marking it paid, and the lines as CSV.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const userId = Astro.locals.user!.id;
+let run = await loadRun(svc, Astro.params.id ?? '');
+const company = run ? (await commissionCompanies(svc, access)).find((c) => c.id === run!.entity_id) : null;
+if (!run || !company || !access.can('accounting.view', run.entity_id)) return Astro.redirect('/admin/accounting/commissions');
+const mayDo = access.can('accounting.do', company.id);
+const central = Astro.locals.site?.central ?? Astro.url.origin;
+const label = periodText(run.period_start, run.period_end);
+const nameOfPerson = async () => new Map(((await svc.from('people').select('id, full_name').eq('entity_id', company.id)).data ?? []).map((p) => [p.id as string, p.full_name as string]));
+
+// The lines as CSV.
+if (Astro.url.searchParams.get('format') === 'csv') {
+  const names = await nameOfPerson();
+  await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_exported_commission_run', event_detail: { entity_id: company.id, run_id: run.id } });
+  return new Response(`﻿${linesCsv(run.lines, (id) => (id && names.get(id)) || 'Someone')}`, { headers: { 'Content-Type': 'text/csv; charset=utf-8', 'Content-Disposition': `attachment; filename="commission-${company.code.toLowerCase()}-${run.period_start}-${run.period_end}.csv"` } });
+}
+
+let error = '', ok = '';
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const r = run;
+  const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, run_id: r.id, ...detail } });
+  const now = new Date().toISOString();
+  try {
+    if (intent === 'approve-run') {
+      if (r.status !== 'draft' || !r.submitted_at) throw new Error('It isn’t waiting for approval.');
+      if (!mayApproveRun(access, userId, r)) throw new Error('Someone with Finance “approve” who didn’t build or send it approves it.');
+      const { kpis, told } = await approveRun(svc, r, company, userId, Astro.url.origin);
+      await log('admin_approved_commission_run', { kpis, told });
+      ok = `Approved.${told ? ` ${told} rep${told === 1 ? ' was' : 's were'} told their statement is in My HR.` : ''}${kpis ? ` ${kpis} sales KPI${kpis === 1 ? '' : 's'} updated.` : ''} Mark it paid once it’s in the pay run.`;
+    } else if (!mayDo) throw new Error('You can see this run but not change it.');
+    else if (intent === 'paid') {
+      if (r.status !== 'approved') throw new Error('Only an approved run is marked paid.');
+      await svc.from('commission_runs').update({ status: 'paid', paid_by: userId, paid_at: now, updated_at: now }).eq('id', r.id).eq('status', 'approved').throwOnError();
+      await log('admin_marked_commission_run_paid'); ok = 'Marked paid.';
+    } else if (intent === 'notes') {
+      await svc.from('commission_runs').update({ notes: field(form, 'notes').slice(0, 2000), updated_at: now }).eq('id', r.id).throwOnError();
+      ok = 'Saved the note.';
+    } else {
+      if (r.status !== 'draft') throw new Error('It’s approved: it stays as it is. Changes go in the next run.');
+      if (intent === 'rebuild') {
+        const file = form.get('file');
+        if (file instanceof File && file.size > 0) {
+          if (file.size > 5 * 1024 * 1024) throw new Error('The file is larger than 5 MB.');
+          const parsed = invoicesFromCsv(await file.text(), { start: r.period_start, end: r.period_end });
+          if (!parsed.invoices.length) throw new Error('No invoices in the file for this period.');
+          await buildRun(svc, r, userId, { invoices: parsed.invoices, earlier: await voidedFromCsv(svc, r, parsed.voided), source: 'upload', upload_name: file.name.slice(0, 200) });
+          ok = `Built again from ${file.name}: ${parsed.invoices.length} invoices${parsed.skipped.outside + parsed.skipped.unreadable + parsed.skipped.zero ? ` (${parsed.skipped.outside + parsed.skipped.unreadable + parsed.skipped.zero} rows skipped)` : ''}.`;
+        } else if (r.source === 'xero' && field(form, 'refetch') === '1') {
+          await buildRun(svc, r, userId, { ...(await fetchFromXero(svc, r, company, central)), source: 'xero', upload_name: null });
+          ok = 'Fetched again from Xero and built.';
+        } else {
+          await buildRun(svc, r, userId);
+          ok = 'Built again with today’s plans, targets and attribution.';
+        }
+        await log('admin_rebuilt_commission_run', { source: r.source });
+      } else if (intent === 'assign') {
+        const line = r.lines.find((l) => l.id === field(form, 'line_id') && !l.person_id);
+        if (!line) throw new Error('That invoice is credited already.');
+        const personId = field(form, 'person_id');
+        const setup = await setupOf(svc, company.id);
+        if (!setup.people.some((p) => p.id === personId && p.status !== 'left')) throw new Error('Choose who sold it.');
+        const client = { contact_id: line.contact_id, contact_name: line.contact_name };
+        // From the run's first day (or the invoice's, if earlier) until the client's next attribution, if any.
+        const from = line.invoice_date < r.period_start ? line.invoice_date : r.period_start;
+        const problems = await saveAttribution(svc, { entityId: company.id, contact: { id: line.contact_id, name: line.contact_name }, rows: [{ person_id: personId, share: 100 }], starts_on: from, ends_on: nextStart(setup.attributions, client, from), userId });
+        await buildRun(svc, r, userId);
+        await log('admin_saved_commission_attribution', { contact: line.contact_name, xero_contact_id: line.contact_id, people: 1, from_run: true });
+        ok = `${line.contact_name} is credited to ${setup.people.find((p) => p.id === personId)?.full_name} from ${from}, and the run was built again.${problems.length ? ` ${problems.join(' ')}` : ''}`;
+      } else if (intent === 'submit') {
+        if (r.submitted_at) throw new Error('It’s waiting for approval already.');
+        if (!r.lines.some((l) => l.person_id)) throw new Error('Nothing is credited to anyone yet.');
+        const n = await submitRun(svc, r, company, userId, Astro.url.origin);
+        await log('admin_submitted_commission_run');
+        ok = `Sent for approval: ${n} ${n === 1 ? 'person' : 'people'} with Finance “approve” were told.`;
+      } else if (intent === 'withdraw') {
+        await svc.from('commission_runs').update({ submitted_by: null, submitted_at: null, updated_at: now }).eq('id', r.id).throwOnError();
+        await log('admin_withdrew_commission_run'); ok = 'Taken back: it’s a draft again.';
+      } else if (intent === 'delete') {
+        await svc.from('commission_runs').delete().eq('id', r.id).eq('status', 'draft').throwOnError();
+        await log('admin_deleted_commission_run', { period_start: r.period_start, period_end: r.period_end });
+        return Astro.redirect(`/admin/accounting/commissions?company=${company.code}`);
+      } else throw new Error('That can’t be done here.');
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  run = (await loadRun(svc, r.id))!;
+}
+
+// Everything below is read after any action above: the run may have been built again, sent, approved or paid.
+const R = run;
+const setup = await setupOf(svc, company.id);
+const totals = repTotals(R.lines, setup.assignments, R).sort((a, b) => b.commission - a.commission);
+const personName = new Map(setup.people.map((p) => [p.id, p.full_name]));
+const planOf = new Map(setup.plans.map((p) => [p.id, p]));
+const unattributed = R.lines.filter((l) => !l.person_id);
+const credited = R.lines.filter((l) => l.person_id);
+const total = credited.reduce((s, l) => s + l.commission, 0);
+const draft = R.status === 'draft';
+const waiting = draft && Boolean(R.submitted_at);
+const mayApprove = waiting && mayApproveRun(access, userId, R);
+const xeroNow = R.source === 'xero' && Boolean(await xeroConnected(svc, company.id));
+const [names, approvers] = await Promise.all([
+  namesOf(svc, [R.built_by, R.submitted_by, R.approved_by, R.paid_by]),
+  waiting && !mayApprove ? runApprovers(svc, R.entity_id, R.submitted_by ?? '') : Promise.resolve([]),
+]);
+const nameOr = (u: string | null) => (u && names.get(u)) || 'someone';
+const when = (s: string | null) => (s ? dateTime.format(new Date(s)) : '—');
+const day = (s: string) => shortDate.format(new Date(`${s}T12:00:00+10:00`));
+const current = setup.people.filter((p) => p.status !== 'left');
+const invoiceCount = new Set(R.lines.filter((l) => l.kind === 'earned').map((l) => l.invoice_id)).size;
+const status = waiting ? 'Waiting for approval' : RUN_STATES[R.status];
+---
+
+<Admin title={`Commissions · ${label}`}>
+  <AccountingNav />
+  <div class="mb-6" data-tour="run-head">
+    <p class="text-sm text-white/45"><a href={`/admin/accounting/commissions?company=${company.code}`} class="hover:text-white">Commissions · {company.display_name}</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">{label}</h1>
+    <p class="mt-1 text-sm text-white/55">{R.plan_id ? planOf.get(R.plan_id)?.name ?? 'Plan' : 'All plans'} · {SOURCES[R.source]}{R.upload_name && ` (${R.upload_name})`} · {invoiceCount} invoice{invoiceCount === 1 ? '' : 's'} · fetched {when(R.fetched_at)} · <span class:list={[R.status === 'paid' ? 'text-lk-green' : draft ? 'text-lk-orange' : 'text-white/80']}>{status}</span> · commission {money(total)}</p>
+  </div>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
+    <div class="grid content-start gap-6">
+      <section class="card overflow-x-auto p-0" data-tour="run-reps">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">By rep</h2>
+        {totals.length ? (
+          <table class="mt-2 w-full text-left text-sm">
+            <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Rep</th><th class="px-3 py-3 text-right">Credited</th><th class="px-3 py-3 text-right">Target</th><th class="px-3 py-3 text-right">Of target</th><th class="px-3 py-3 text-right">Earned</th><th class="px-3 py-3 text-right">Clawback</th><th class="px-5 py-3 text-right">Commission</th></tr></thead>
+            <tbody class="divide-y divide-white/5">
+              {totals.map((t) => (
+                <tr>
+                  <td class="px-5 py-2.5"><span class="text-white">{personName.get(t.person_id) ?? 'Someone'}</span><span class="block text-xs text-white/45">{t.plan_id && planOf.get(t.plan_id) ? `${planOf.get(t.plan_id)!.name}: ${tiersText(planOf.get(t.plan_id)!.tiers)}` : 'Not on a plan for this period'}</span></td>
+                  <td class="px-3 py-2.5 text-right tabular-nums">{money(t.credited)}</td>
+                  <td class="px-3 py-2.5 text-right tabular-nums text-white/55">{money(t.target)}</td>
+                  <td class="px-3 py-2.5 text-right tabular-nums">{showPercent(t.attainment)}</td>
+                  <td class="px-3 py-2.5 text-right tabular-nums">{money(t.earned)}</td>
+                  <td class:list={['px-3 py-2.5 text-right tabular-nums', t.clawback < 0 ? 'text-lk-red' : 'text-white/40']}>{t.clawback ? money(t.clawback) : '—'}</td>
+                  <td class="px-5 py-2.5 text-right font-medium tabular-nums text-white">{money(t.commission)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">Nobody is on a plan for this period, and no invoice is credited to anyone.</p>}
+      </section>
+
+      {unattributed.length > 0 && (
+        <section class="card overflow-x-auto p-0" data-tour="run-unattributed">
+          <h2 class="px-5 pt-5 font-display text-lg font-bold text-lk-orange">Not credited to anyone ({unattributed.length})</h2>
+          <p class="px-5 text-xs text-white/45">Nobody is credited with these clients on the invoice date, so they earn no commission.{draft && mayDo && ' Choose who sold it: the client is credited to them from this period on, and the run is built again.'}</p>
+          <table class="mt-2 w-full text-left text-sm">
+            <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Invoice</th><th class="px-3 py-3">Client</th><th class="px-3 py-3">Date</th><th class="px-3 py-3 text-right">Ex GST</th>{draft && mayDo && <th class="px-5 py-3">Sold by</th>}</tr></thead>
+            <tbody class="divide-y divide-white/5">
+              {unattributed.map((l) => (
+                <tr>
+                  <td class="px-5 py-2.5 text-white">{l.invoice_number || '—'}</td>
+                  <td class="px-3 py-2.5 text-white/80">{l.contact_name}</td>
+                  <td class="px-3 py-2.5 text-white/55">{day(l.invoice_date)}</td>
+                  <td class="px-3 py-2.5 text-right tabular-nums">{money(l.amount)}</td>
+                  {draft && mayDo && <td class="px-5 py-2.5"><form method="post" class="flex gap-2"><input type="hidden" name="line_id" value={l.id} /><select class="field !w-44 !py-1 text-xs" name="person_id" aria-label={`Who sold ${l.contact_name}`} required><option value="">Choose…</option>{current.map((p) => <option value={p.id}>{p.full_name}</option>)}</select><button class="btn-ghost !px-2 !py-1 text-xs" name="intent" value="assign">Assign</button></form></td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </section>
+      )}
+
+      <section class="card overflow-x-auto p-0" data-tour="run-lines">
+        <div class="flex flex-wrap items-center justify-between gap-3 px-5 pt-5"><h2 class="font-display text-lg font-bold">Lines</h2><a class="btn-ghost !py-1.5 text-sm" href="?format=csv" data-tour="run-export">Download CSV</a></div>
+        {credited.length ? (
+          <table class="mt-2 w-full text-left text-sm">
+            <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Rep</th><th class="px-3 py-3">Invoice</th><th class="px-3 py-3">Client</th><th class="px-3 py-3">Date</th><th class="px-3 py-3 text-right">Ex GST</th><th class="px-3 py-3 text-right">Share</th><th class="px-3 py-3 text-right">Credited</th><th class="px-3 py-3 text-right">Rate</th><th class="px-5 py-3 text-right">Commission</th></tr></thead>
+            <tbody class="divide-y divide-white/5">
+              {credited.map((l) => (
+                <tr class:list={[l.kind === 'clawback' && 'bg-lk-red/5']}>
+                  <td class="px-5 py-2 text-white/80">{personName.get(l.person_id!) ?? 'Someone'}</td>
+                  <td class="px-3 py-2 text-white">{l.invoice_number || '—'}{l.kind === 'clawback' && <span class="block text-xs text-lk-red">clawback</span>}</td>
+                  <td class="px-3 py-2 text-white/70">{l.contact_name}{l.note && <span class="block text-xs text-white/40">{l.note}</span>}</td>
+                  <td class="px-3 py-2 text-white/55">{day(l.invoice_date)}</td>
+                  <td class="px-3 py-2 text-right tabular-nums">{money(l.amount)}</td>
+                  <td class="px-3 py-2 text-right tabular-nums text-white/55">{l.share}%</td>
+                  <td class="px-3 py-2 text-right tabular-nums">{money(l.credited)}</td>
+                  <td class="px-3 py-2 text-right tabular-nums text-white/55">{rateText(l.rate)}</td>
+                  <td class="px-5 py-2 text-right tabular-nums text-white">{money(l.commission)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">No invoice is credited to anyone yet.</p>}
+      </section>
+    </div>
+
+    <aside class="grid content-start gap-6">
+      <section class="card grid gap-3 text-sm" data-tour="run-status">
+        <h2 class="font-display text-lg font-bold">Where it stands</h2>
+        <p class="text-white/65">Built by {nameOr(R.built_by)}, {when(R.built_at)}.{R.submitted_at && ` Sent for approval by ${nameOr(R.submitted_by)}, ${when(R.submitted_at)}.`}{R.approved_at && ` Approved by ${nameOr(R.approved_by)}, ${when(R.approved_at)}.`}{R.paid_at && ` Marked paid by ${nameOr(R.paid_by)}, ${when(R.paid_at)}.`}</p>
+        {draft && mayDo && !waiting && (
+          <>
+            {unattributed.length > 0 && <p class="text-lk-orange">{unattributed.length} invoice{unattributed.length === 1 ? ' isn’t' : 's aren’t'} credited to anyone.</p>}
+            <form method="post"><button class="btn-primary w-full" name="intent" value="submit" disabled={!credited.length} data-confirm={unattributed.length ? `${unattributed.length} invoice(s) aren’t credited to anyone and earn nothing. Send it for approval anyway?` : undefined}>Send for approval</button></form>
+            <p class="text-xs text-white/45">Someone else with Finance “approve” approves it; they’re told.</p>
+          </>
+        )}
+        {waiting && (mayApprove ? (
+          <form method="post" data-tour="run-approve"><button class="btn-primary w-full" name="intent" value="approve-run" data-confirm="Approve this run? Reps with a portal account are told their statement is in My HR, and their sales KPIs are updated. It can’t be changed afterwards.">Approve</button></form>
+        ) : <p class="text-white/55" data-tour="run-approve">Waiting for {approvers.length ? `one of ${approvers.length} approver${approvers.length === 1 ? '' : 's'}` : 'an approver'} (Finance “approve”, not the person who built or sent it).</p>)}
+        {waiting && mayDo && <form method="post"><button class="btn-ghost w-full" name="intent" value="withdraw">Take it back to change it</button></form>}
+        {R.status === 'approved' && mayDo && <form method="post"><button class="btn-primary w-full" name="intent" value="paid" data-confirm="Mark it paid (in the pay run)?">Mark paid</button></form>}
+        {R.status === 'paid' && <p class="text-lk-green">Paid.</p>}
+      </section>
+
+      {draft && mayDo && (
+        <section class="card grid gap-3 text-sm" data-tour="run-rebuild">
+          <h2 class="font-display text-lg font-bold">Build it again</h2>
+          <p class="text-white/55">With today’s plans, targets and attribution{waiting ? ' (it comes back from approval)' : ''}.</p>
+          <form method="post"><button class="btn-ghost w-full" name="intent" value="rebuild">Build again</button></form>
+          {xeroNow && <form method="post"><input type="hidden" name="refetch" value="1" /><button class="btn-ghost w-full" name="intent" value="rebuild">Fetch from Xero and build</button></form>}
+          <form method="post" enctype="multipart/form-data" class="grid gap-2"><label class="label !mb-0" for="file">{R.source === 'upload' ? 'A new CSV' : 'Or from a CSV'}</label><input class="field" type="file" accept=".csv,text/csv" id="file" name="file" required /><button class="btn-ghost" name="intent" value="rebuild">Upload and build</button></form>
+          <form method="post"><button class="btn-ghost w-full text-lk-red" name="intent" value="delete" data-confirm="Delete this draft run?">Delete the draft</button></form>
+        </section>
+      )}
+
+      <section class="card grid gap-2 text-sm">
+        <h2 class="font-display text-lg font-bold">Note</h2>
+        {mayDo ? <form method="post" class="grid gap-2"><textarea class="field min-h-20" name="notes" aria-label="Note">{R.notes}</textarea><button class="btn-ghost" name="intent" value="notes">Save the note</button></form> : <p class="whitespace-pre-line text-white/65">{R.notes || '—'}</p>}
+      </section>
+    </aside>
+  </div>
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+</script>

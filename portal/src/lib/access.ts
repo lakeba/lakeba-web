@@ -61,6 +61,10 @@ const GROUP_ADMIN_ONLY = ['/admin/notifications', '/admin/linkedin', '/admin/ask
  */
 const APPROVAL_ACTIONS: Record<string, { intents: string[]; paths?: string[] }> = {
   press: { intents: ['approve', 'request-changes', 'unschedule', 'withdraw', 'correct', 'post-bluesky', 'post-x', 'wire-email', 'record', 'remove', 'send'], paths: ['/admin/press/settings'] },
+  // HR: signing off a performance review.
+  hr: { intents: ['sign-off'] },
+  // Finance: approving a commission run.
+  accounting: { intents: ['approve-run'] },
 };
 /** The form's action, as approval checks see it ("then=send" on a distribution counts as send). */
 export const formAction = (form: FormData | null) => (form?.get('then') === 'send' ? 'send' : String(form?.get('intent') ?? ''));
@@ -87,6 +91,8 @@ export function adminMayRequest(a: Access, path: string, writing: boolean, actio
   // Board Ask: asking (and rating answers) needs only "see"; the law library, tests and review need "do".
   if (under(path, '/admin/board-ask') && !['library', 'tests', 'review'].some((p) => under(path, `/admin/board-ask/${p}`))) return a.canAny('boardask.view');
   if (under(path, '/admin/import')) return a.canAny('investors.do');
+  // Performance: Finance (accounting.do) opens the scorecards to propose results, which HR confirms; each page checks the company.
+  if (/^\/admin\/hr\/performance(\/[0-9a-f-]{36})?$/.test(path) && a.canAny('accounting.do') && (!writing || action === 'propose')) return true;
   if (path.startsWith('/admin/investors/')) return !writing && a.can('investors.view', null);
   // Approvals: for anyone who prepares or approves something; each item checks its own area.
   if (under(path, '/admin/approvals')) return ALL_PERMISSIONS.some((p) => !p.endsWith('.view') && a.canAny(p));

@@ -1,0 +1,343 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Alert from '../../../../components/Alert.astro';
+import Empty from '../../../../components/Empty.astro';
+import AccountingNav from '../../../../components/AccountingNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { shortDate } from '../../../../lib/format';
+import { todayIn } from '../../../../lib/hr';
+import { readNumber } from '../../../../lib/kpis';
+import { xeroConnected } from '../../../../lib/reporting';
+import {
+  DEFAULT_TIERS, RUN_COLUMNS, allRows, RUN_STATES, SOURCES, buildRun, clientKey, commissionCompanies, fetchFromXero, invoicesFromCsv, lastPeriod, money, overlappingRun, periodText,
+  saveAttribution, setupOf, tierProblems, tiersFrom, tiersText, voidedFromCsv, type Attribution, type Run,
+} from '../../../../lib/commissions';
+
+// Admin → Finance → Commissions: a company's commission plans (tiers by % of target, cap, clawback), who is on
+// them with what target, who sold to which client (attribution, with splits), and its runs: a period's invoices
+// from Xero (or a CSV) credited to reps. Finance sees (accounting.view), changes (accounting.do) and approves on
+// the run's page (accounting.approve).
+const svc = serviceClient();
+const access = Astro.locals.access;
+const userId = Astro.locals.user!.id;
+const companies = await commissionCompanies(svc, access);
+const q = Astro.url.searchParams;
+const company = companies.find((c) => c.code === q.get('company')?.toUpperCase()) ?? companies[0] ?? null;
+const mayDo = company ? access.can('accounting.do', company.id) : false;
+const central = Astro.locals.site?.central ?? Astro.url.origin;
+const xero = company ? Boolean(await xeroConnected(svc, company.id)) : false;
+const today = todayIn();
+let error = '', ok = '';
+const d = (form: FormData, n: string) => (/^\d{4}-\d{2}-\d{2}$/.test(field(form, n)) ? field(form, n) : null);
+
+if (Astro.request.method === 'POST' && company && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, ...detail } });
+  const now = new Date().toISOString();
+  try {
+    const setup = await setupOf(svc, company.id);
+    const personOk = (id: string) => setup.people.some((p) => p.id === id && p.status !== 'left');
+    if (intent === 'plan-save') {
+      const old = field(form, 'id') ? setup.plans.find((p) => p.id === field(form, 'id')) : null;
+      if (field(form, 'id') && !old) throw new Error('That plan isn’t this company’s.');
+      const name = field(form, 'name').slice(0, 200);
+      if (name.length < 2) throw new Error('Name the plan.');
+      const tiers = tiersFrom(form, readNumber);
+      const problems = tierProblems(tiers);
+      if (problems.length) throw new Error(problems.join(' '));
+      const cap = readNumber(field(form, 'cap'));
+      if (cap != null && cap < 0) throw new Error('The cap can’t be negative.');
+      const row = { name, tiers, cap, clawback: form.get('clawback') === 'on', active: old ? form.get('active') === 'on' : true, notes: field(form, 'notes').slice(0, 2000), updated_at: now };
+      if (old) await svc.from('commission_plans').update(row).eq('id', old.id).throwOnError();
+      else await svc.from('commission_plans').insert({ ...row, entity_id: company.id, created_by: userId }).throwOnError();
+      await log(old ? 'admin_saved_commission_plan' : 'admin_added_commission_plan', { name });
+      ok = old ? 'Saved. Draft runs use it when they’re built again; approved runs stay as they were.' : 'Plan added: put people on it below.';
+    } else if (intent === 'assign-save' || intent === 'assign-delete') {
+      const old = field(form, 'id') ? setup.assignments.find((a) => a.id === field(form, 'id')) : null;
+      if (field(form, 'id') && !old) throw new Error('That isn’t on this company’s plans.');
+      if (intent === 'assign-delete') {
+        await svc.from('commission_assignments').delete().eq('id', old!.id).throwOnError();
+        await log('admin_removed_commission_assignment', { person_id: old!.person_id, plan_id: old!.plan_id });
+        ok = 'Removed from the plan. Approved runs keep their lines.';
+      } else {
+        const planId = old?.plan_id ?? field(form, 'plan_id');
+        const personId = old?.person_id ?? field(form, 'person_id');
+        if (!setup.plans.some((p) => p.id === planId)) throw new Error('Choose the plan.');
+        if (!old && !personOk(personId)) throw new Error('Choose the person.');
+        const target = readNumber(field(form, 'target'));
+        if (!target || target <= 0) throw new Error('Give their target for each run’s period (A$, excluding GST).');
+        const starts = d(form, 'starts_on');
+        if (!starts) throw new Error('Choose when they start on the plan.');
+        const ends = d(form, 'ends_on');
+        if (ends && ends < starts) throw new Error('The end is before the start.');
+        // One plan at a time per person: otherwise an invoice would earn twice.
+        const clash = setup.assignments.find((a) => a.id !== old?.id && a.person_id === personId && a.starts_on <= (ends ?? '9999-12-31') && starts <= (a.ends_on ?? '9999-12-31'));
+        if (clash) throw new Error(`They’re already on ${setup.plans.find((p) => p.id === clash.plan_id)?.name ?? 'a plan'} for some of those days: end that first.`);
+        const row = { target, starts_on: starts, ends_on: ends, updated_at: now };
+        if (old) await svc.from('commission_assignments').update(row).eq('id', old.id).throwOnError();
+        else await svc.from('commission_assignments').insert({ ...row, plan_id: planId, person_id: personId, created_by: userId }).throwOnError();
+        await log(old ? 'admin_saved_commission_assignment' : 'admin_added_commission_assignment', { person_id: personId, plan_id: planId, target });
+        ok = old ? 'Saved.' : 'Added to the plan.';
+      }
+    } else if (intent === 'attribute') {
+      const picked = field(form, 'contact');
+      const typed = field(form, 'contact_name');
+      const contact = picked && picked.includes('|') && !typed ? { id: picked.slice(0, picked.indexOf('|')), name: picked.slice(picked.indexOf('|') + 1) } : { id: null, name: typed };
+      const rows = [0, 1, 2, 3].map((i) => ({ person_id: field(form, `person_${i}`), share: readNumber(field(form, `share_${i}`)) ?? (i === 0 && !field(form, 'person_1') ? 100 : 0) })).filter((r) => r.person_id);
+      if (rows.some((r) => !personOk(r.person_id))) throw new Error('Choose people who are with the company.');
+      const starts = d(form, 'starts_on');
+      if (!starts) throw new Error('Choose the day it starts.');
+      const problems = await saveAttribution(svc, { entityId: company.id, contact, rows, starts_on: starts, ends_on: d(form, 'ends_on'), userId });
+      await log('admin_saved_commission_attribution', { contact: contact.name, xero_contact_id: contact.id, people: rows.length });
+      ok = problems.length ? `Saved, but: ${problems.join(' ')}` : `Saved: ${contact.name} from ${starts}. Draft runs pick it up when they’re built again.`;
+    } else if (intent === 'attribution-end' || intent === 'attribution-delete') {
+      const key = field(form, 'key'), starts = field(form, 'from');
+      const group = setup.attributions.filter((a) => clientKey(a) === key && a.starts_on === starts);
+      if (!group.length) throw new Error('That attribution isn’t there any more.');
+      if (intent === 'attribution-delete') await svc.from('commission_attributions').delete().in('id', group.map((a) => a.id)).throwOnError();
+      else {
+        const ends = d(form, 'ends_on');
+        if (!ends || ends < starts) throw new Error('Choose an end on or after its start.');
+        await svc.from('commission_attributions').update({ ends_on: ends }).in('id', group.map((a) => a.id)).throwOnError();
+      }
+      await log(intent === 'attribution-end' ? 'admin_ended_commission_attribution' : 'admin_deleted_commission_attribution', { contact: group[0].contact_name, from: starts });
+      ok = intent === 'attribution-end' ? 'Ended.' : 'Deleted.';
+    } else if (intent === 'run-new') {
+      const start = d(form, 'period_start'), end = d(form, 'period_end');
+      if (!start || !end || end < start) throw new Error('Choose the period: its first and last day.');
+      if (end > today) throw new Error('Run commission for a period that has ended (or ends today).');
+      const planId = field(form, 'plan_id') || null;
+      if (planId && !setup.plans.some((p) => p.id === planId)) throw new Error('Choose the plan.');
+      if (!setup.plans.some((p) => p.active)) throw new Error('Add a plan first.');
+      const clash = await overlappingRun(svc, { entity_id: company.id, plan_id: planId, period_start: start, period_end: end });
+      if (clash) throw new Error(`There’s already a run for ${periodText(clash.period_start, clash.period_end)} that covers some of those days.`);
+      const file = form.get('file');
+      const upload = file instanceof File && file.size > 0;
+      if (!upload && !xero) throw new Error('Xero isn’t connected for this company: upload a CSV of the period’s invoices.');
+      if (upload && file.size > 5 * 1024 * 1024) throw new Error('The file is larger than 5 MB.');
+      const base = { id: '', entity_id: company.id, period_start: start, period_end: end };
+      const fresh = upload
+        ? await (async () => { const r = invoicesFromCsv(await file.text(), { start, end }); if (!r.invoices.length) throw new Error(`No invoices in the file for that period (${r.skipped.outside} outside it, ${r.skipped.unreadable} unreadable). Columns: invoice number, contact, date, amount excluding GST.`); return { invoices: r.invoices, earlier: await voidedFromCsv(svc, base, r.voided), source: 'upload' as const, upload_name: file.name.slice(0, 200) }; })()
+        : { ...(await fetchFromXero(svc, base, company, central)), source: 'xero' as const, upload_name: null };
+      const { data: run } = await svc.from('commission_runs').insert({ entity_id: company.id, plan_id: planId, period_start: start, period_end: end, source: fresh.source, created_by: userId, notes: field(form, 'notes').slice(0, 2000) }).select(RUN_COLUMNS).single().throwOnError();
+      await buildRun(svc, run as Run, userId, fresh);
+      await log('admin_built_commission_run', { run_id: run!.id, source: fresh.source, invoices: fresh.invoices.length });
+      return Astro.redirect(`/admin/accounting/commissions/${run!.id}`);
+    } else throw new Error('That can’t be done here.');
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+// Everything below is read after any change above.
+const setup = company ? await setupOf(svc, company.id) : { plans: [], people: [], attributions: [], assignments: [] };
+const { data: runRows } = company ? await svc.from('commission_runs').select('id, plan_id, period_start, period_end, status, source, submitted_at, approved_at, paid_at').eq('entity_id', company.id).order('period_start', { ascending: false }) : { data: [] };
+const runs = (runRows ?? []) as Pick<Run, 'id' | 'plan_id' | 'period_start' | 'period_end' | 'status' | 'source' | 'submitted_at' | 'approved_at' | 'paid_at'>[];
+const sums = runs.length ? await allRows<{ run_id: string; person_id: string | null; commission: number }>(() => svc.from('commission_run_lines').select('run_id, person_id, commission').in('run_id', runs.map((r) => r.id)).order('id')) : [];
+const sumOf = (runId: string) => {
+  const mine = sums.filter((s) => s.run_id === runId);
+  return { commission: mine.reduce((s, l) => s + Number(l.commission), 0), reps: new Set(mine.filter((l) => l.person_id).map((l) => l.person_id)).size, unattributed: mine.filter((l) => !l.person_id).length };
+};
+const personName = new Map(setup.people.map((p) => [p.id, p.full_name]));
+const planName = new Map(setup.plans.map((p) => [p.id, p.name]));
+const current = setup.people.filter((p) => p.status !== 'left');
+const assignments = setup.assignments.filter((a) => !a.ends_on || a.ends_on >= today || q.get('past') === '1').sort((a, b) => (personName.get(a.person_id) ?? '').localeCompare(personName.get(b.person_id) ?? '') || a.starts_on.localeCompare(b.starts_on));
+// Attribution grouped by client and start: one split per row.
+const groups = [...setup.attributions.reduce((m, a) => { const k = `${clientKey(a)}|${a.starts_on}`; m.set(k, [...(m.get(k) ?? []), a]); return m; }, new Map<string, Attribution[]>()).values()]
+  .filter((g) => !g[0].ends_on || g[0].ends_on >= today || q.get('past') === '1')
+  .sort((a, b) => a[0].contact_name.localeCompare(b[0].contact_name) || a[0].starts_on.localeCompare(b[0].starts_on));
+// Xero contacts matching the search, to attribute.
+const term = (q.get('q') ?? '').trim().slice(0, 100);
+let contacts: { id: string; name: string }[] = [];
+if (company && xero && term.length >= 2) {
+  try {
+    const c = await xeroConnected(svc, company.id);
+    const { xeroContactSearch } = await import('../../../../lib/integrations/xero');
+    contacts = await xeroContactSearch(svc, c!, company, central, term);
+  } catch (e) { error ||= `Xero: ${(e as Error).message}`; }
+}
+const lq = lastPeriod('quarter', today);
+const day = (s: string | null) => (s ? shortDate.format(new Date(`${s}T12:00:00+10:00`)) : '—');
+const href = (extra: Record<string, string>) => `?${new URLSearchParams({ ...(company ? { company: company.code } : {}), ...extra })}`;
+const tierRows = (tiers: { upTo: number | null; rate: number }[]) => [...tiers, ...Array(Math.max(0, 3 - tiers.length)).fill({ upTo: null, rate: null })].slice(0, 6);
+---
+
+<Admin title="Finance · Commissions">
+  <AccountingNav />
+  <PageHeader eyebrow="Finance" title="Commissions" subtitle="Sales commission on invoices raised: plans and targets, who sold to which client, and each period’s run from Xero (or a CSV), approved by Finance. Reps see their statements in My HR.">
+    {company && <a class="btn-ghost" href={href(q.get('past') === '1' ? {} : { past: '1' })}>{q.get('past') === '1' ? 'Hide ended' : 'Show ended'}</a>}
+  </PageHeader>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  {!company ? <Empty title="No companies">You don’t look after any company’s commissions.</Empty> : (
+    <>
+      <form method="get" class="mb-6 flex flex-wrap items-center gap-2 text-sm" data-tour="com-company">
+        {companies.length > 1 && <><select class="field !w-auto" name="company" aria-label="Company">{companies.map((c) => <option value={c.code} selected={c.id === company.id}>{c.display_name}</option>)}</select><button class="btn-ghost !py-1.5">Show</button></>}
+        <span class="text-white/55">{xero ? 'Xero is connected: runs read its sales invoices.' : <>Xero isn’t connected: runs are built from a CSV of invoices{access.groupAdmin ? <> (or <a class="text-lk-blue hover:underline" href={`/admin/companies/${company.code}/integrations?tab=xero`}>connect Xero</a>)</> : ''}.</>}</span>
+      </form>
+
+      <section class="card mb-6 overflow-x-auto p-0" data-tour="com-runs">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Runs</h2>
+        {runs.length ? (
+          <table class="mt-2 w-full text-left text-sm">
+            <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Period</th><th class="px-3 py-3">Plan</th><th class="px-3 py-3">From</th><th class="px-3 py-3">Reps</th><th class="px-3 py-3 text-right">Commission</th><th class="px-5 py-3">Status</th></tr></thead>
+            <tbody class="divide-y divide-white/5">
+              {runs.map((r) => { const s = sumOf(r.id); return (
+                <tr>
+                  <td class="px-5 py-2.5"><a class="font-medium text-white hover:text-lk-blue" href={`/admin/accounting/commissions/${r.id}`}>{periodText(r.period_start, r.period_end)}</a></td>
+                  <td class="px-3 py-2.5 text-white/70">{r.plan_id ? planName.get(r.plan_id) ?? 'Plan' : 'All plans'}</td>
+                  <td class="px-3 py-2.5 text-white/55">{SOURCES[r.source]}</td>
+                  <td class="px-3 py-2.5 text-white/70">{s.reps}{s.unattributed > 0 && <span class="block text-xs text-lk-orange">{s.unattributed} not credited</span>}</td>
+                  <td class="px-3 py-2.5 text-right tabular-nums text-white">{money(s.commission)}</td>
+                  <td class="px-5 py-2.5"><span class:list={[r.status === 'paid' ? 'text-lk-green' : r.status === 'approved' ? 'text-white' : 'text-lk-orange']}>{r.status === 'draft' && r.submitted_at ? 'Waiting for approval' : RUN_STATES[r.status]}</span>{r.status !== 'draft' && <span class="block text-xs text-white/45">{r.status === 'paid' ? `paid ${day(r.paid_at!.slice(0, 10))}` : `approved ${day(r.approved_at!.slice(0, 10))}`}</span>}</td>
+                </tr>
+              ); })}
+            </tbody>
+          </table>
+        ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">No runs yet.</p>}
+        {mayDo && (
+          <form method="post" enctype="multipart/form-data" class="grid gap-3 border-t border-white/5 p-5 text-sm sm:grid-cols-4" data-tour="com-new-run">
+            <p class="font-medium text-white sm:col-span-4">New run</p>
+            <div><label class="label" for="r-plan">Plan</label><select class="field" id="r-plan" name="plan_id"><option value="">All plans</option>{setup.plans.filter((p) => p.active).map((p) => <option value={p.id}>{p.name}</option>)}</select></div>
+            <div><label class="label" for="r-start">First day</label><input class="field" type="date" id="r-start" name="period_start" value={lq.start} required /></div>
+            <div><label class="label" for="r-end">Last day</label><input class="field" type="date" id="r-end" name="period_end" value={lq.end} max={today} required /></div>
+            <div><label class="label" for="r-file"><span data-hint="Columns: invoice number, contact, date, amount excluding GST (and optionally status: VOIDED marks an earlier invoice that was voided). Contacts are matched to attribution by name.">{xero ? 'Or a CSV instead of Xero' : 'Invoices (CSV)'}</span></label><input class="field" type="file" accept=".csv,text/csv" id="r-file" name="file" required={!xero} /></div>
+            <div class="sm:col-span-3"><input class="field" name="notes" placeholder="Note (optional)" aria-label="Note" /></div>
+            <div><button class="btn-primary w-full" name="intent" value="run-new">{xero ? 'Build from Xero' : 'Build the run'}</button></div>
+            <p class="text-xs text-white/40 sm:col-span-4">{xero ? 'Reads the period’s sales invoices (approved or paid, by invoice date, excluding GST) and checks earlier runs’ invoices for voids and credits. Nothing is written to Xero.' : 'Each invoice is credited by its contact’s name.'} You check the draft, then send it for approval.</p>
+          </form>
+        )}
+      </section>
+
+      <section class="card mb-6 p-0" data-tour="com-plans">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Plans</h2>
+        <p class="px-5 text-xs text-white/45">Commission is earned when an invoice is raised. Tiers are marginal, by % of the rep’s target for the run’s period: with 8% up to 100% and 12% above, only the part over target earns 12%.</p>
+        {setup.plans.length ? (
+          <ul class="mt-2 divide-y divide-white/5 text-sm">
+            {setup.plans.map((p) => (
+              <li class="px-5 py-3">
+                <details>
+                  <summary class="flex cursor-pointer flex-wrap items-baseline justify-between gap-2">
+                    <span><span class:list={['font-medium', p.active ? 'text-white' : 'text-white/45 line-through']}>{p.name}</span><span class="block text-xs text-white/45">{tiersText(p.tiers)}{p.cap != null && ` · cap ${money(p.cap)} a run`} · {p.clawback ? 'clawback on' : 'no clawback'}</span></span>
+                    <span class="text-xs text-white/45">{setup.assignments.filter((a) => a.plan_id === p.id && (!a.ends_on || a.ends_on >= today)).length} on it</span>
+                  </summary>
+                  {mayDo && (
+                    <form method="post" class="mt-3 grid gap-3 sm:grid-cols-2">
+                      <input type="hidden" name="id" value={p.id} />
+                      <div><label class="label" for={`pn-${p.id}`}>Name</label><input class="field" id={`pn-${p.id}`} name="name" value={p.name} required /></div>
+                      <div><label class="label" for={`pc-${p.id}`}><span data-hint="The most a rep earns in one run, in A$. Empty: no cap. Clawbacks aren’t capped.">Cap per run (A$)</span></label><input class="field" id={`pc-${p.id}`} name="cap" value={p.cap ?? ''} inputmode="decimal" /></div>
+                      <fieldset class="grid gap-2 sm:col-span-2"><legend class="label">Tiers</legend>{tierRows(p.tiers).map((t, i) => (
+                        <div class="flex flex-wrap items-center gap-2 text-white/65"><input class="field !w-20" name={`rate_${i}`} value={t.rate ?? ''} inputmode="decimal" aria-label={`Tier ${i + 1} rate %`} placeholder="Rate" />% on revenue up to <input class="field !w-20" name={`upto_${i}`} value={t.upTo ?? ''} inputmode="decimal" aria-label={`Tier ${i + 1} up to % of target`} placeholder="—" />% of target</div>
+                      ))}<p class="text-xs text-white/40">Leave the last tier’s “up to” empty: it covers everything above. Empty rows are ignored.</p></fieldset>
+                      <div class="sm:col-span-2"><label class="label" for={`pno-${p.id}`}>Notes</label><input class="field" id={`pno-${p.id}`} name="notes" value={p.notes} /></div>
+                      <label class="flex items-center gap-2 text-white/65"><input type="checkbox" name="clawback" checked={p.clawback} class="size-4 accent-lk-blue" /> <span data-hint="An invoice voided or credited after its run was approved: the commission paid on it is taken back in the next run.">Clawback</span></label>
+                      <label class="flex items-center gap-2 text-white/65"><input type="checkbox" name="active" checked={p.active} class="size-4 accent-lk-blue" /> Active (offered for new runs)</label>
+                      <div class="sm:col-span-2"><button class="btn-ghost" name="intent" value="plan-save">Save the plan</button></div>
+                    </form>
+                  )}
+                </details>
+              </li>
+            ))}
+          </ul>
+        ) : <p class="px-5 pt-2 text-sm text-white/55">No plans yet.</p>}
+        {mayDo && (
+          <details class="border-t border-white/5 p-5 text-sm" data-tour="com-new-plan">
+            <summary class="cursor-pointer font-medium text-white">New plan</summary>
+            <form method="post" class="mt-3 grid gap-3 sm:grid-cols-2">
+              <div><label class="label" for="pn-new">Name</label><input class="field" id="pn-new" name="name" placeholder="e.g. Sales FY27" required /></div>
+              <div><label class="label" for="pc-new">Cap per run (A$)</label><input class="field" id="pc-new" name="cap" inputmode="decimal" placeholder="No cap" /></div>
+              <fieldset class="grid gap-2 sm:col-span-2"><legend class="label">Tiers</legend>{tierRows(DEFAULT_TIERS).map((t, i) => (
+                <div class="flex flex-wrap items-center gap-2 text-white/65"><input class="field !w-20" name={`rate_${i}`} value={t.rate ?? ''} inputmode="decimal" aria-label={`Tier ${i + 1} rate %`} placeholder="Rate" />% on revenue up to <input class="field !w-20" name={`upto_${i}`} value={t.upTo ?? ''} inputmode="decimal" aria-label={`Tier ${i + 1} up to % of target`} placeholder="—" />% of target</div>
+              ))}</fieldset>
+              <div class="sm:col-span-2"><label class="label" for="pno-new">Notes</label><input class="field" id="pno-new" name="notes" /></div>
+              <label class="flex items-center gap-2 text-white/65 sm:col-span-2"><input type="checkbox" name="clawback" checked class="size-4 accent-lk-blue" /> Clawback when an invoice is later voided or credited</label>
+              <div class="sm:col-span-2"><button class="btn-primary" name="intent" value="plan-save">Add the plan</button></div>
+            </form>
+          </details>
+        )}
+      </section>
+
+      <section class="card mb-6 overflow-x-auto p-0" data-tour="com-assign">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Who’s on a plan</h2>
+        <p class="px-5 text-xs text-white/45">Their target is for each run’s period (A$, excluding GST): a quarterly run needs a quarter’s target. One plan at a time per person.</p>
+        {assignments.length ? (
+          <table class="mt-2 w-full text-left text-sm">
+            <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Person</th><th class="px-3 py-3">Plan</th><th class="px-3 py-3">Target</th><th class="px-3 py-3">From</th><th class="px-3 py-3">To</th><th class="px-5 py-3"></th></tr></thead>
+            <tbody class="divide-y divide-white/5">
+              {assignments.map((a) => (
+                <tr>
+                  <td class="px-5 py-2.5 text-white">{personName.get(a.person_id) ?? 'Someone'}</td>
+                  <td class="px-3 py-2.5 text-white/70">{planName.get(a.plan_id)}</td>
+                  {mayDo ? (
+                    <>
+                      <td class="px-3 py-2.5"><input class="field !w-32" form={`as-${a.id}`} name="target" value={Number(a.target)} inputmode="decimal" aria-label="Target" /></td>
+                      <td class="px-3 py-2.5"><input class="field" type="date" form={`as-${a.id}`} name="starts_on" value={a.starts_on} aria-label="From" /></td>
+                      <td class="px-3 py-2.5"><input class="field" type="date" form={`as-${a.id}`} name="ends_on" value={a.ends_on ?? ''} aria-label="To" /></td>
+                      <td class="px-5 py-2.5"><form method="post" id={`as-${a.id}`} class="flex gap-2"><input type="hidden" name="id" value={a.id} /><button class="btn-ghost !px-2 !py-1 text-xs" name="intent" value="assign-save">Save</button><button class="btn-ghost !px-2 !py-1 text-xs text-lk-red" name="intent" value="assign-delete" data-confirm="Take them off the plan? To stop from a date, set “To” instead.">Remove</button></form></td>
+                    </>
+                  ) : <><td class="px-3 py-2.5 tabular-nums">{money(a.target)}</td><td class="px-3 py-2.5">{day(a.starts_on)}</td><td class="px-3 py-2.5">{day(a.ends_on)}</td><td></td></>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">Nobody yet.</p>}
+        {mayDo && setup.plans.some((p) => p.active) && (
+          <form method="post" class="grid gap-3 border-t border-white/5 p-5 text-sm sm:grid-cols-5">
+            <div><label class="label" for="a-person">Person</label><select class="field" id="a-person" name="person_id" required><option value="">Choose…</option>{current.map((p) => <option value={p.id}>{p.full_name}</option>)}</select></div>
+            <div><label class="label" for="a-plan">Plan</label><select class="field" id="a-plan" name="plan_id" required>{setup.plans.filter((p) => p.active).map((p) => <option value={p.id}>{p.name}</option>)}</select></div>
+            <div><label class="label" for="a-target">Target (A$)</label><input class="field" id="a-target" name="target" inputmode="decimal" placeholder="e.g. 150000" required /></div>
+            <div><label class="label" for="a-from">From</label><input class="field" type="date" id="a-from" name="starts_on" value={lq.start} required /></div>
+            <div><label class="label" for="a-to">To (optional)</label><input class="field" type="date" id="a-to" name="ends_on" /></div>
+            <div class="sm:col-span-5"><button class="btn-ghost" name="intent" value="assign-save">Put them on the plan</button>{!current.length && <span class="ml-3 text-xs text-white/45">Add people in People first.</span>}</div>
+          </form>
+        )}
+      </section>
+
+      <section class="card mb-6 p-0" data-tour="com-attrib">
+        <h2 class="px-5 pt-5 font-display text-lg font-bold">Who sold to whom</h2>
+        <p class="px-5 text-xs text-white/45">Each client is credited to one person, or split (the shares make 100%), from a date. Invoices for clients nobody is credited with show on the run, to assign there.</p>
+        {groups.length ? (
+          <ul class="mt-2 divide-y divide-white/5 text-sm">
+            {groups.map((g) => (
+              <li class="flex flex-wrap items-center justify-between gap-3 px-5 py-2.5">
+                <span><span class="font-medium text-white">{g[0].contact_name}</span>{g[0].xero_contact_id && <span class="ml-2 text-xs text-white/40">Xero</span>}<span class="block text-xs text-white/55">{g.map((a) => `${personName.get(a.person_id) ?? 'Someone'} ${Number(a.share)}%`).join(' · ')} · from {day(g[0].starts_on)}{g[0].ends_on ? ` to ${day(g[0].ends_on)}` : ''}</span></span>
+                {mayDo && (
+                  <form method="post" class="flex flex-wrap items-center gap-2"><input type="hidden" name="key" value={clientKey(g[0])} /><input type="hidden" name="from" value={g[0].starts_on} />
+                    <input class="field !w-auto !py-1 text-xs" type="date" name="ends_on" value={g[0].ends_on ?? ''} min={g[0].starts_on} aria-label="Ends on" /><button class="btn-ghost !px-2 !py-1 text-xs" name="intent" value="attribution-end">End</button>
+                    <button class="btn-ghost !px-2 !py-1 text-xs text-lk-red" name="intent" value="attribution-delete" formnovalidate data-confirm="Delete this attribution? Approved runs keep their lines.">Delete</button></form>
+                )}
+              </li>
+            ))}
+          </ul>
+        ) : <p class="px-5 pt-2 text-sm text-white/55">No clients credited yet.</p>}
+        {mayDo && (
+          <div class="grid gap-3 border-t border-white/5 p-5 text-sm" data-tour="com-attribute">
+            <p class="font-medium text-white">Credit a client</p>
+            {xero && (
+              <form method="get" class="flex flex-wrap gap-2"><input type="hidden" name="company" value={company.code} /><input class="field !w-64" name="q" value={term} placeholder="Search Xero contacts" aria-label="Search Xero contacts" /><button class="btn-ghost !py-1.5">Search</button></form>
+            )}
+            <form method="post" class="grid gap-3 sm:grid-cols-4">
+              {contacts.length > 0 && <div class="sm:col-span-2"><label class="label" for="t-contact">Xero contact</label><select class="field" id="t-contact" name="contact">{contacts.map((ct) => <option value={`${ct.id}|${ct.name}`}>{ct.name}</option>)}</select></div>}
+              {xero && term.length >= 2 && !contacts.length && <p class="text-white/55 sm:col-span-4">No Xero contacts match “{term}”.</p>}
+              <div class="sm:col-span-2"><label class="label" for="t-name">{contacts.length ? 'Or type the name' : 'Client (as on the invoices)'}</label><input class="field" id="t-name" name="contact_name" required={!contacts.length} placeholder="e.g. Acme Pty Ltd" /></div>
+              {[0, 1, 2].map((i) => (
+                <div class="flex gap-2 sm:col-span-2"><select class="field" name={`person_${i}`} aria-label={`Person ${i + 1}`} required={i === 0}><option value="">{i === 0 ? 'Credited to…' : 'And (optional)…'}</option>{current.map((p) => <option value={p.id}>{p.full_name}</option>)}</select><input class="field !w-24" name={`share_${i}`} inputmode="decimal" placeholder={i === 0 ? '100' : '%'} aria-label={`Share ${i + 1} %`} /></div>
+              ))}
+              <div><label class="label" for="t-from">From</label><input class="field" type="date" id="t-from" name="starts_on" value={lq.start} required /></div>
+              <div><label class="label" for="t-to">To (optional)</label><input class="field" type="date" id="t-to" name="ends_on" /></div>
+              <div class="self-end sm:col-span-2"><button class="btn-primary" name="intent" value="attribute">Save</button></div>
+              <p class="text-xs text-white/40 sm:col-span-4">One person: leave the share empty (100%). It replaces what the client had for those days.</p>
+            </form>
+          </div>
+        )}
+      </section>
+    </>
+  )}
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+</script>

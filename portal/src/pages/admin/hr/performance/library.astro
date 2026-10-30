@@ -1,0 +1,188 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Alert from '../../../../components/Alert.astro';
+import Empty from '../../../../components/Empty.astro';
+import HrNav from '../../../../components/HrNav.astro';
+import Fields from '../../../../components/KpiFields.astro';
+import Weights from '../../../../components/KpiWeights.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { hrCompanies } from '../../../../lib/hr';
+import { AGGREGATIONS, DIRECTIONS, FAMILIES, SOURCES, UNITS, libraryFor, readNumber } from '../../../../lib/kpis';
+import { DAILY_SOURCES } from '../../../../lib/kpi-sources';
+
+// Admin → People → Performance → KPI library: what a KPI measures (group-wide ones are offered to every
+// company; a company can add its own) and role sets, bundles of KPIs with usual weights for giving
+// scorecards in one go. Definitions are archived rather than deleted, as scorecards keep using them.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await hrCompanies(svc, access);
+const q = Astro.url.searchParams;
+const pick = companies.find((c) => c.code === q.get('company')?.toUpperCase()) ?? null;
+const groupDo = access.can('hr.do', null);
+const doCompanies = companies.filter((c) => access.can('hr.do', c.id));
+// Where new items can go: the whole group (for group HR), or one of the companies this person works on.
+const owners = [...(groupDo ? [{ id: '', label: 'Every company (group-wide)' }] : []), ...doCompanies.map((c) => ({ id: c.id, label: c.display_name }))];
+const mayChange = (entityId: string | null) => (entityId ? access.can('hr.do', entityId) : groupDo);
+const showArchived = q.get('archived') === '1';
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const owner = (v: string) => (v ? (doCompanies.find((c) => c.id === v)?.id ?? undefined) : groupDo ? null : undefined);
+  const log = (action: string, entityId: string | null, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: entityId, ...detail } });
+  try {
+    const now = new Date().toISOString();
+    if (intent === 'def-save') {
+      const { data: old } = field(form, 'id') ? await svc.from('kpi_definitions').select('id, entity_id').eq('id', field(form, 'id')).maybeSingle() : { data: null };
+      if (field(form, 'id') && (!old || !mayChange(old.entity_id))) throw new Error('You can’t change that KPI.');
+      const entityId = old ? old.entity_id : owner(field(form, 'entity_id'));
+      if (entityId === undefined) throw new Error('Choose who it’s for.');
+      const name = field(form, 'name').slice(0, 200);
+      if (name.length < 2) throw new Error('Name the KPI.');
+      const row = {
+        name, description: field(form, 'description').slice(0, 1000),
+        unit: field(form, 'unit') in UNITS ? field(form, 'unit') : 'count', direction: field(form, 'direction') in DIRECTIONS ? field(form, 'direction') : 'higher',
+        aggregation: field(form, 'aggregation') in AGGREGATIONS ? field(form, 'aggregation') : 'sum', family: field(form, 'family') in FAMILIES ? field(form, 'family') : 'other',
+        source: field(form, 'source') in SOURCES ? field(form, 'source') : 'manual', updated_at: now,
+      };
+      // The morning sources are a share as it stands today: a percentage, its latest value (adding them up would count the same state each day).
+      const daily = DAILY_SOURCES.includes(row.source) && (row.unit !== 'percent' || row.aggregation !== 'last');
+      if (daily) Object.assign(row, { unit: 'percent', aggregation: 'last' });
+      if (old) await svc.from('kpi_definitions').update(row).eq('id', old.id).throwOnError();
+      else await svc.from('kpi_definitions').insert({ ...row, entity_id: entityId, created_by: Astro.locals.user!.id }).throwOnError();
+      await log(old ? 'admin_saved_kpi_definition' : 'admin_added_kpi_definition', entityId, { name });
+      ok = `${old ? 'Saved.' : 'Added to the library.'}${daily ? ' Its source is a share as it stands each morning, so it’s set to % and Latest.' : ''}`;
+    } else if (intent === 'def-archive' || intent === 'set-archive') {
+      const table = intent === 'def-archive' ? 'kpi_definitions' : 'kpi_role_sets';
+      const { data: row } = await svc.from(table).select('id, entity_id, archived_at').eq('id', field(form, 'id')).maybeSingle();
+      if (!row || !mayChange(row.entity_id)) throw new Error('You can’t change that.');
+      await svc.from(table).update({ archived_at: row.archived_at ? null : now, updated_at: now }).eq('id', row.id).throwOnError();
+      await log(intent === 'def-archive' ? 'admin_archived_kpi_definition' : 'admin_archived_kpi_role_set', row.entity_id, { id: row.id, archived: !row.archived_at });
+      ok = row.archived_at ? 'Back in the library.' : 'Archived: it’s no longer offered for new scorecards. Scorecards that use it keep it.';
+    } else if (intent === 'set-save') {
+      const { data: old } = field(form, 'id') ? await svc.from('kpi_role_sets').select('id, entity_id').eq('id', field(form, 'id')).maybeSingle() : { data: null };
+      if (field(form, 'id') && (!old || !mayChange(old.entity_id))) throw new Error('You can’t change that role set.');
+      const entityId = old ? old.entity_id : owner(field(form, 'entity_id'));
+      if (entityId === undefined) throw new Error('Choose who it’s for.');
+      const name = field(form, 'name').slice(0, 200);
+      if (name.length < 2) throw new Error('Name the role set.');
+      // KPIs it may use: the group's, and its own company's.
+      const lib = await libraryFor(svc, entityId ? [entityId] : []);
+      const items = lib.definitions.filter((d) => !d.entity_id || d.entity_id === entityId).map((d) => ({ definition_id: d.id, weight: readNumber(field(form, `w_${d.id}`)) ?? 0 })).filter((i) => i.weight > 0);
+      if (!items.length) throw new Error('Give at least one KPI a weight.');
+      if (items.some((i) => i.weight > 100)) throw new Error('A weight is at most 100.');
+      const total = items.reduce((s, i) => s + i.weight, 0);
+      if (Math.abs(total - 100) > 0.001) throw new Error(`The weights add up to ${total}; make them 100.`);
+      let id = old?.id as string | undefined;
+      if (old) await svc.from('kpi_role_sets').update({ name, description: field(form, 'description').slice(0, 1000), updated_at: now }).eq('id', old.id).throwOnError();
+      else id = (await svc.from('kpi_role_sets').insert({ name, description: field(form, 'description').slice(0, 1000), entity_id: entityId, created_by: Astro.locals.user!.id }).select('id').single().throwOnError()).data!.id;
+      await svc.from('kpi_role_set_items').delete().eq('role_set_id', id!).throwOnError();
+      await svc.from('kpi_role_set_items').insert(items.map((i, n) => ({ ...i, role_set_id: id!, sort: n }))).throwOnError();
+      await log(old ? 'admin_saved_kpi_role_set' : 'admin_added_kpi_role_set', entityId, { name });
+      ok = old ? 'Saved.' : 'Role set added.';
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const lib = await libraryFor(svc, pick ? [pick.id] : companies.map((c) => c.id), { archived: showArchived });
+const defs = lib.definitions.filter((d) => showArchived || !d.archived_at);
+const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+const whose = (entityId: string | null) => (entityId ? nameOf.get(entityId) ?? '' : 'Group-wide');
+const defName = new Map(lib.definitions.map((d) => [d.id, d.name]));
+// KPIs a role set may use: the group's, and its own company's.
+const offered = (entityId: string | null) => lib.definitions.filter((d) => !d.archived_at && (!d.entity_id || d.entity_id === entityId));
+const href = (extra: Record<string, string>) => `?${new URLSearchParams({ ...(pick ? { company: pick.code } : {}), ...extra })}`;
+---
+
+<Admin title="HR · KPI library">
+  <HrNav />
+  <PageHeader eyebrow="Performance" title="KPI library" subtitle="What each KPI measures, and role sets that give someone sensible KPIs in one go. Group-wide ones are offered to every company.">
+    <div class="flex flex-wrap gap-2"><a class="btn-ghost" href={`/admin/hr/performance${href({})}`}>Scorecards</a><a class="btn-ghost" href={href(showArchived ? {} : { archived: '1' })}>{showArchived ? 'Hide archived' : 'Show archived'}</a></div>
+  </PageHeader>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+  {companies.length > 1 && (
+    <form method="get" class="mb-4 flex items-center gap-2 text-sm">{showArchived && <input type="hidden" name="archived" value="1" />}<select class="field !w-auto" name="company" aria-label="Company"><option value="">All companies</option>{companies.map((c) => <option value={c.code} selected={c.id === pick?.id}>{c.display_name}</option>)}</select><button class="btn-ghost !py-1.5">Show</button></form>
+  )}
+
+  <section class="card mb-6 p-0" data-tour="lib-defs">
+    <h2 class="px-5 pt-5 font-display text-lg font-bold">KPIs</h2>
+    {defs.length ? (
+      <ul class="mt-2 divide-y divide-white/5 text-sm">
+        {defs.map((d) => (
+          <li class="px-5 py-3">
+            <details>
+              <summary class="flex cursor-pointer flex-wrap items-baseline justify-between gap-2">
+                <span><span class:list={['font-medium', d.archived_at ? 'text-white/45 line-through' : 'text-white']}>{d.name}</span><span class="block text-xs text-white/45">{FAMILIES[d.family]} · {UNITS[d.unit]} · {DIRECTIONS[d.direction].toLowerCase()} · {AGGREGATIONS[d.aggregation].toLowerCase()} · {SOURCES[d.source] ?? d.source}</span></span>
+                <span class="text-xs text-white/45">{whose(d.entity_id)}</span>
+              </summary>
+              {d.description && <p class="mt-2 text-white/65">{d.description}</p>}
+              {mayChange(d.entity_id) && (
+                <form method="post" class="mt-3 grid gap-3 sm:grid-cols-2">
+                  <input type="hidden" name="id" value={d.id} />
+                  <Fields d={d} />
+                  <div class="flex flex-wrap gap-2 sm:col-span-2"><button class="btn-ghost" name="intent" value="def-save">Save</button><button class="btn-ghost" name="intent" value="def-archive">{d.archived_at ? 'Bring back' : 'Archive'}</button></div>
+                </form>
+              )}
+            </details>
+          </li>
+        ))}
+      </ul>
+    ) : <div class="p-5"><Empty title="No KPIs yet">Add the first one below.</Empty></div>}
+  </section>
+
+  <section class="card mb-6 p-0" data-tour="lib-sets">
+    <h2 class="px-5 pt-5 font-display text-lg font-bold">Role sets</h2>
+    {lib.roleSets.length ? (
+      <ul class="mt-2 divide-y divide-white/5 text-sm">
+        {lib.roleSets.map((s) => (
+          <li class="px-5 py-3">
+            <details>
+              <summary class="flex cursor-pointer flex-wrap items-baseline justify-between gap-2">
+                <span><span class:list={['font-medium', s.archived_at ? 'text-white/45 line-through' : 'text-white']}>{s.name}</span><span class="block text-xs text-white/45">{s.items.map((i) => `${defName.get(i.definition_id) ?? 'KPI'} ${Number(i.weight)}%`).join(' · ')}</span></span>
+                <span class="text-xs text-white/45">{whose(s.entity_id)}</span>
+              </summary>
+              {s.description && <p class="mt-2 text-white/65">{s.description}</p>}
+              {mayChange(s.entity_id) && (
+                <form method="post" class="mt-3 grid gap-3">
+                  <input type="hidden" name="id" value={s.id} />
+                  <div class="grid gap-3 sm:grid-cols-2"><div><label class="label" for={`sn-${s.id}`}>Name</label><input class="field" id={`sn-${s.id}`} name="name" value={s.name} required /></div><div><label class="label" for={`sd-${s.id}`}>About</label><input class="field" id={`sd-${s.id}`} name="description" value={s.description} /></div></div>
+                  <Weights list={offered(s.entity_id)} weights={new Map(s.items.map((i) => [i.definition_id, Number(i.weight)]))} prefix={s.id} />
+                  <div class="flex flex-wrap gap-2"><button class="btn-ghost" name="intent" value="set-save">Save</button><button class="btn-ghost" name="intent" value="set-archive">{s.archived_at ? 'Bring back' : 'Archive'}</button></div>
+                </form>
+              )}
+            </details>
+          </li>
+        ))}
+      </ul>
+    ) : <div class="p-5"><Empty title="No role sets yet">Add one below.</Empty></div>}
+  </section>
+
+  {owners.length > 0 && (
+    <div class="grid gap-6 lg:grid-cols-2">
+      <details class="card content-start" data-tour="lib-add-def">
+        <summary class="cursor-pointer font-display text-lg font-bold">New KPI</summary>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+          <div class="sm:col-span-2"><label class="label" for="d-owner">For</label><select class="field" id="d-owner" name="entity_id">{owners.map((o) => <option value={o.id} selected={o.id === (pick?.id ?? owners[0].id)}>{o.label}</option>)}</select></div>
+          <Fields />
+          <div class="sm:col-span-2"><button class="btn-primary" name="intent" value="def-save">Add the KPI</button></div>
+        </form>
+      </details>
+      <details class="card content-start" data-tour="lib-add-set">
+        <summary class="cursor-pointer font-display text-lg font-bold">New role set</summary>
+        <form method="post" class="mt-4 grid gap-3">
+          <div><label class="label" for="s-owner">For</label><select class="field" id="s-owner" name="entity_id">{owners.map((o) => <option value={o.id} selected={o.id === (pick?.id ?? owners[0].id)}>{o.label}</option>)}</select></div>
+          <div class="grid gap-3 sm:grid-cols-2"><div><label class="label" for="s-name">Name</label><input class="field" id="s-name" name="name" placeholder="e.g. Sales rep" required /></div><div><label class="label" for="s-about">About</label><input class="field" id="s-about" name="description" /></div></div>
+          <Weights list={lib.definitions.filter((d) => !d.archived_at)} weights={new Map()} prefix="new" />
+          <p class="text-xs text-white/40">Give each KPI it uses a weight; together they make 100. A company’s own KPIs only fit role sets for that company.</p>
+          <div><button class="btn-primary" name="intent" value="set-save">Add the role set</button></div>
+        </form>
+      </details>
+    </div>
+  )}
+</Admin>

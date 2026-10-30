@@ -1,0 +1,135 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import Alert from '../../components/Alert.astro';
+import Empty from '../../components/Empty.astro';
+import KpiItems from '../../components/KpiItems.astro';
+import KpiCheckins from '../../components/KpiCheckins.astro';
+import { serviceClient } from '../../lib/admin';
+import { field } from '../../lib/forms';
+import { dateTime, shortDate } from '../../lib/format';
+import { notifyMembers } from '../../lib/notify';
+import { hrTeam, myRecords } from '../../lib/hr';
+import { CARD_STATES, RATINGS, loadScorecard, namesOf, ratingLabel, showPercent, showValue, updatedFrom } from '../../lib/kpis';
+
+// My HR → My performance: the person's own scorecards (once HR makes them active): KPIs, confirmed results
+// and the score, check-ins (not private ones) with their own comments, their self-assessment at review time,
+// and acknowledging a signed-off review, with a comment if they like.
+const svc = serviceClient();
+const userId = Astro.locals.user!.id;
+const records = (await myRecords(svc, userId)).filter((r) => r.status !== 'left');
+if (!records.length) return Astro.redirect('/');
+const { data: cardRows } = await svc.from('kpi_scorecards').select('id, status, entity_id, period_id, kpi_periods(label, starts_on)').in('person_id', records.map((r) => r.id)).neq('status', 'draft');
+const cards = ((cardRows ?? []) as unknown as { id: string; status: keyof typeof CARD_STATES; entity_id: string; kpi_periods: { label: string; starts_on: string } | null }[])
+  .sort((a, b) => (b.kpi_periods?.starts_on ?? '').localeCompare(a.kpi_periods?.starts_on ?? ''));
+const chosen = cards.find((c) => c.id === Astro.url.searchParams.get('card')) ?? cards.find((c) => c.status === 'in_review') ?? cards.find((c) => c.status === 'active') ?? cards[0] ?? null;
+let card = chosen ? await loadScorecard(svc, chosen.id) : null;
+let error = '', ok = '';
+
+if (Astro.request.method === 'POST' && card) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const now = new Date().toISOString();
+  const c = card;
+  const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: c.entity_id, scorecard_id: c.id, ...detail } });
+  try {
+    if (intent === 'checkin') {
+      const body = field(form, 'body').slice(0, 4000);
+      if (!body) throw new Error('Write your comment.');
+      await svc.from('kpi_checkins').insert({ scorecard_id: c.id, author_id: userId, author_role: 'employee', body }).throwOnError();
+      await log('added_kpi_checkin'); ok = 'Added. HR and your manager can see it.';
+    } else if (intent === 'self') {
+      if (c.status !== 'in_review') throw new Error('Your self-assessment opens when the review starts.');
+      const rating = Number(field(form, 'self_rating'));
+      if (!(rating in RATINGS)) throw new Error('Choose your rating.');
+      await svc.from('kpi_reviews').update({ self_text: field(form, 'self_text').slice(0, 8000), self_rating: rating, self_by: userId, self_at: now, updated_at: now }).eq('scorecard_id', c.id).throwOnError();
+      await log('submitted_kpi_self_review', { rating }); ok = 'Saved. You can change it until HR signs the review off.';
+    } else if (intent === 'acknowledge') {
+      if (c.status !== 'signed_off' || !c.review || c.review.acknowledged_at) throw new Error('There’s nothing to acknowledge.');
+      const comment = field(form, 'employee_comment').slice(0, 4000);
+      await svc.from('kpi_reviews').update({ acknowledged_at: now, employee_comment: comment, updated_at: now }).eq('scorecard_id', c.id).throwOnError();
+      await notifyMembers({ kind: 'hr', userIds: await hrTeam(svc, c.entity_id), origin: Astro.url.origin, link: `/admin/hr/performance/${c.id}`, title: `${c.person.full_name} acknowledged their review`, body: `${c.person.full_name} acknowledged their review for ${c.period.label}${comment ? ' and added a comment' : ''}.` }).catch(() => 0);
+      await log('acknowledged_kpi_review', { comment: Boolean(comment) }); ok = 'Acknowledged. HR has been told.';
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  card = await loadScorecard(svc, c.id);
+}
+
+const names = card ? await namesOf(svc, [...card.checkins.map((x) => x.author_id), card.review?.manager_by ?? null]) : new Map<string, string>();
+const confirmed = card ? card.items.map((i) => ({ ...i, results: i.results.filter((r) => r.status === 'confirmed') })) : [];
+const results = confirmed.flatMap((i) => i.results.map((r) => ({ ...r, item: i }))).sort((a, b) => b.as_of.localeCompare(a.as_of));
+const day = (s: string | null | undefined) => (s ? shortDate.format(new Date(`${s.slice(0, 10)}T12:00:00+10:00`)) : '—');
+const r = card?.review ?? null;
+---
+
+<Portal title="My performance">
+  <div class="mb-6">
+    <p class="text-sm text-white/45"><a href="/my-hr" class="hover:text-white">My HR</a></p>
+    <h1 class="mt-2 font-display text-3xl font-bold">My performance</h1>
+    <p class="mt-1 max-w-2xl text-sm text-white/55">Your KPIs for each period: their targets and how much each counts, your results so far, comments with HR and your manager, and your review.</p>
+  </div>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  {!card ? <Empty title="No scorecard yet">When HR sets up your KPIs for a period, they show here.</Empty> : (
+    <>
+      {cards.length > 1 && <nav class="mb-4 flex flex-wrap gap-2 text-sm" aria-label="Periods">{cards.map((x) => <a href={`?card=${x.id}`} aria-current={x.id === card!.id ? 'page' : undefined} class:list={['rounded-full px-3 py-1', x.id === card!.id ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{x.kpi_periods?.label} · {CARD_STATES[x.status]}</a>)}</nav>}
+      <section class="card mb-6 overflow-x-auto p-0" data-tour="myperf-items">
+        <div class="flex flex-wrap items-baseline justify-between gap-3 px-5 pt-5">
+          <h2 class="font-display text-lg font-bold">{card.period.label} <span class="text-sm font-normal text-white/45">{day(card.period.starts_on)} to {day(card.period.ends_on)} · {CARD_STATES[card.status]}</span></h2>
+          <p class="text-sm text-white/65">Score so far: <span class="font-semibold text-white">{showPercent(card.score)}</span></p>
+        </div>
+        <div class="mt-2"><KpiItems items={card.items} /></div>
+        <p class="border-t border-white/5 px-5 py-3 text-xs text-white/45">Attainment is your actual against the target (the other way round when lower is better), up to 150%. The score is the weighted average of the KPIs with results.</p>
+      </section>
+
+      <div class="grid gap-6 lg:grid-cols-2">
+        <section class="card p-0" data-tour="myperf-results">
+          <h2 class="px-5 pt-5 font-display text-lg font-bold">Results</h2>
+          {results.length ? <ul class="mt-2 divide-y divide-white/5 text-sm">{results.map((x) => <li class="flex justify-between gap-3 px-5 py-2.5"><span class="text-white/85">{x.item.definition.name}{x.note && <span class="block text-xs text-white/45">{x.note}</span>}{updatedFrom(x) && <span class="block text-xs text-white/45">{updatedFrom(x)}</span>}</span><span class="text-right tabular-nums text-white">{showValue(x.value, x.item.definition.unit)}<span class="block text-xs text-white/45">{day(x.as_of)}</span></span></li>)}</ul> : <p class="px-5 pb-5 pt-2 text-sm text-white/55">None yet: HR adds them during the period, and some fill in by themselves.</p>}
+        </section>
+
+        <section class="card grid content-start gap-4" data-tour="myperf-checkins">
+          <h2 class="font-display text-lg font-bold">Check-ins</h2>
+          <KpiCheckins checkins={card.checkins} names={names} />
+          <form method="post" class="grid gap-2 text-sm">
+            <label class="label !mb-0" for="body">Add a comment</label>
+            <textarea class="field min-h-20" id="body" name="body" required placeholder="How it’s going, anything getting in the way"></textarea>
+            <div><button class="btn-ghost" name="intent" value="checkin">Add</button></div>
+          </form>
+        </section>
+
+        <section class="card grid content-start gap-4 text-sm lg:col-span-2" data-tour="myperf-review">
+          <h2 class="font-display text-lg font-bold">Review</h2>
+          {card.status === 'active' && <p class="text-white/55">Your review starts at the end of {card.period.label}. You’ll be asked for your own assessment and rating; your manager adds theirs, then HR signs it off.</p>}
+          {card.status === 'in_review' && (
+            <form method="post" class="grid gap-3">
+              <p class="text-white/65">How did {card.period.label} go? What went well, what was hard, what you’d like to work on next. Your manager and HR see it.</p>
+              <textarea class="field min-h-32" name="self_text" aria-label="Your assessment">{r?.self_text ?? ''}</textarea>
+              <div><label class="label" for="self_rating">Your rating</label><select class="field sm:!w-72" id="self_rating" name="self_rating" required><option value="">Choose…</option>{Object.entries(RATINGS).map(([k, l]) => <option value={k} selected={Number(k) === r?.self_rating}>{k} · {l}</option>)}</select></div>
+              <div><button class="btn-primary" name="intent" value="self">{r?.self_at ? 'Save changes' : 'Send my self-assessment'}</button>{r?.self_at && <span class="ml-3 text-xs text-white/45">Sent {dateTime.format(new Date(r.self_at))}</span>}</div>
+            </form>
+          )}
+          {card.status === 'signed_off' && r && (
+            <div class="grid gap-4">
+              <p class="text-white/85">Agreed rating: <span class="font-semibold text-white">{ratingLabel(r.agreed_rating)}</span><span class="block text-xs text-white/45">Signed off {r.signed_off_at && dateTime.format(new Date(r.signed_off_at))}</span></p>
+              {(r.manager_text || r.manager_rating) && <div><p class="label !mb-1">Your manager’s assessment{r.manager_by && names.get(r.manager_by) && ` (${names.get(r.manager_by)})`}</p><p class="text-white/85">{ratingLabel(r.manager_rating)}</p>{r.manager_text && <p class="mt-1 whitespace-pre-line text-white/70">{r.manager_text}</p>}</div>}
+              {r.self_at && <div><p class="label !mb-1">Your self-assessment</p><p class="text-white/85">{ratingLabel(r.self_rating)}</p>{r.self_text && <p class="mt-1 whitespace-pre-line text-white/70">{r.self_text}</p>}</div>}
+              {r.acknowledged_at ? (
+                <p class="text-lk-green">You acknowledged it {dateTime.format(new Date(r.acknowledged_at))}.{r.employee_comment && <span class="mt-1 block whitespace-pre-line text-white/70">{r.employee_comment}</span>}</p>
+              ) : (
+                <form method="post" class="grid gap-2" data-tour="myperf-ack">
+                  <label class="label !mb-0" for="employee_comment">Your comment (optional)</label>
+                  <textarea class="field min-h-20" id="employee_comment" name="employee_comment" placeholder="Anything you’d like on record about the review"></textarea>
+                  <div><button class="btn-primary" name="intent" value="acknowledge">I’ve read it</button></div>
+                  <p class="text-xs text-white/45">Acknowledging says you’ve read the review, not that you agree with it; use the comment if you don’t.</p>
+                </form>
+              )}
+            </div>
+          )}
+        </section>
+      </div>
+    </>
+  )}
+</Portal>

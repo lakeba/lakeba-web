@@ -32,6 +32,24 @@ const LABELS: Record<string, string> = {
   admin_recorded_meeting_consent: 'Recorded everyone’s agreement to record a meeting', admin_started_meeting_recording: 'Started recording a meeting', admin_finished_meeting_recording: 'Finished recording a meeting',
   admin_transcribed_meeting_recording: 'Transcribed a meeting’s recording again', admin_chose_meeting_transcript: 'Chose the transcript for a meeting', admin_named_meeting_speakers: 'Named the speakers in a meeting’s transcript',
   admin_saved_board_ask_test: 'Saved a Board Ask test', admin_deleted_board_ask_test: 'Deleted a Board Ask test', admin_ran_board_ask_tests: 'Ran the Board Ask tests',
+  // Performance (KPIs and reviews)
+  admin_added_kpi_period: 'Added a performance period', admin_changed_kpi_period: 'Opened, closed or reopened a performance period', admin_gave_kpi_scorecards: 'Gave people scorecards',
+  admin_added_kpi_definition: 'Added a KPI to the library', admin_saved_kpi_definition: 'Changed a KPI in the library', admin_archived_kpi_definition: 'Archived or brought back a KPI',
+  admin_added_kpi_role_set: 'Added a KPI role set', admin_saved_kpi_role_set: 'Changed a KPI role set', admin_archived_kpi_role_set: 'Archived or brought back a KPI role set',
+  admin_added_kpi_goal: 'Added a goal', admin_saved_kpi_goal: 'Changed a goal', admin_deleted_kpi_goal: 'Deleted a goal',
+  admin_saved_kpi_items: 'Changed a scorecard’s targets and weights', admin_added_kpi_item: 'Added a KPI to a scorecard', admin_removed_kpi_item: 'Removed a KPI from a scorecard',
+  admin_activated_kpi_scorecard: 'Made a scorecard active', admin_returned_kpi_scorecard_to_draft: 'Put a scorecard back to draft', admin_started_kpi_review: 'Started a performance review',
+  admin_added_kpi_result: 'Added a KPI result', admin_proposed_kpi_result: 'Proposed a KPI result (Finance)', admin_confirmed_kpi_result: 'Confirmed a proposed KPI result', admin_rejected_kpi_result: 'Rejected a proposed KPI result', admin_deleted_kpi_result: 'Deleted a KPI result',
+  admin_added_kpi_checkin: 'Added a check-in to a scorecard', admin_saved_kpi_manager_review: 'Saved the manager’s part of a review', admin_signed_off_kpi_review: 'Signed off a performance review',
+  added_kpi_checkin: 'Commented on their scorecard', submitted_kpi_self_review: 'Sent their self-assessment', acknowledged_kpi_review: 'Acknowledged their review',
+  manager_added_kpi_checkin: 'Added a check-in for someone in their team', manager_saved_kpi_review: 'Saved their part of a team member’s review',
+  admin_refreshed_kpi_results: 'Refreshed the KPIs that fill themselves in', kpi_daily_refresh: 'Morning KPI refresh: automatic results updated, off-track KPIs alerted',
+  // Commissions
+  admin_added_commission_plan: 'Added a commission plan', admin_saved_commission_plan: 'Changed a commission plan',
+  admin_added_commission_assignment: 'Put someone on a commission plan', admin_saved_commission_assignment: 'Changed someone’s commission target or dates', admin_removed_commission_assignment: 'Took someone off a commission plan',
+  admin_saved_commission_attribution: 'Credited a client to a sales rep', admin_ended_commission_attribution: 'Ended a client’s sales credit', admin_deleted_commission_attribution: 'Deleted a client’s sales credit',
+  admin_built_commission_run: 'Built a commission run', admin_rebuilt_commission_run: 'Built a commission run again', admin_submitted_commission_run: 'Sent a commission run for approval', admin_withdrew_commission_run: 'Took a commission run back from approval',
+  admin_approved_commission_run: 'Approved a commission run', admin_marked_commission_run_paid: 'Marked a commission run paid', admin_deleted_commission_run: 'Deleted a draft commission run', admin_exported_commission_run: 'Downloaded a commission run’s lines',
 };
 const WORDS: Record<string, string> = { mfa: 'two-step sign-in', qa: 'Q&A', ai: 'AI', kb: 'Ask knowledge', agm: 'meeting', pdf: 'PDF', csv: 'CSV', nda: 'terms', ask: 'Ask', linkedin: 'LinkedIn' };
 

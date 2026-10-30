@@ -1,0 +1,15 @@
+---
+import { FAMILIES, type Definition } from '../lib/kpis';
+// The KPIs of a role set and their weights (Admin → People → Performance → KPI library): empty or 0 leaves one out.
+interface Props { list: Definition[]; weights: Map<string, number>; prefix: string }
+const { list, weights, prefix } = Astro.props;
+---
+<fieldset class="grid gap-1.5 rounded-xl bg-white/[0.03] p-3 text-sm sm:grid-cols-2">
+  <legend class="label">KPIs and weights (%)</legend>
+  {list.map((d) => (
+    <label class="flex items-center justify-between gap-3 text-white/80" for={`w-${prefix}-${d.id}`}>
+      <span>{d.name}<span class="text-white/40"> · {FAMILIES[d.family]}</span></span>
+      <input class="field !w-20 text-right" id={`w-${prefix}-${d.id}`} name={`w_${d.id}`} inputmode="decimal" value={weights.get(d.id) ?? ''} placeholder="0" />
+    </label>
+  ))}
+</fieldset>

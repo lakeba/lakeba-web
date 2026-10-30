@@ -1,0 +1,170 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Empty from '../../../../components/Empty.astro';
+import HrNav from '../../../../components/HrNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { hrCompanies, todayIn } from '../../../../lib/hr';
+import {
+  PERIOD_COLUMNS, PERIOD_STATES, RATINGS, SCORECARD_COLUMNS, ATTAINMENT_CAP, TRACK, scoreOf, scoredItemsFor, showPercent, showValue, suggestedRating,
+  type Period, type Rating, type Scorecard,
+} from '../../../../lib/kpis';
+
+// Admin → People → Performance → Insights: for a company and period, how scores and agreed ratings spread,
+// averages by team and by manager (calibration: each manager's agreed ratings against the company's), what is
+// off track, and how many current people have a scorecard; with the trend over the company's last periods.
+// HR only (hr.view), per company.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const companies = await hrCompanies(svc, access);
+const q = Astro.url.searchParams;
+const company = companies.find((c) => c.code === q.get('company')?.toUpperCase()) ?? companies[0] ?? null;
+const NONE = '00000000-0000-0000-0000-000000000000';
+const { data: periodRows } = await svc.from('kpi_periods').select(PERIOD_COLUMNS).eq('entity_id', company?.id ?? NONE).order('starts_on', { ascending: false });
+const periods = (periodRows ?? []) as Period[];
+const today = todayIn();
+const period = periods.find((p) => p.id === q.get('period')) ?? periods.find((p) => p.status === 'open' && p.starts_on <= today && p.ends_on >= today) ?? periods.find((p) => p.status === 'open') ?? periods[0] ?? null;
+// The trend: this period and up to five before it, oldest first.
+const trendPeriods = period ? periods.filter((p) => p.starts_on <= period.starts_on).slice(0, 6).reverse() : [];
+
+type Card = Scorecard & { people: { full_name: string; team: string; manager_id: string | null; status: string } | null; kpi_reviews: { agreed_rating: number | null } | null };
+const { data: cardRows } = await svc.from('kpi_scorecards').select(`${SCORECARD_COLUMNS}, people(full_name, team, manager_id, status), kpi_reviews(agreed_rating)`)
+  .in('period_id', trendPeriods.length ? trendPeriods.map((p) => p.id) : [NONE]).neq('status', 'draft');
+const allCards = (cardRows ?? []) as unknown as Card[];
+const scored = await scoredItemsFor(svc, allCards, trendPeriods, today);
+const scoreOfCard = new Map(allCards.map((c) => [c.id, scoreOf(scored.get(c.id) ?? []).score]));
+const cards = allCards.filter((c) => c.period_id === period?.id).sort((a, b) => (a.people?.full_name ?? '').localeCompare(b.people?.full_name ?? ''));
+
+const [{ count: current }, { count: drafts }] = await Promise.all([
+  svc.from('people').select('id', { count: 'exact', head: true }).eq('entity_id', company?.id ?? NONE).neq('status', 'left'),
+  svc.from('kpi_scorecards').select('id', { count: 'exact', head: true }).eq('period_id', period?.id ?? NONE).eq('status', 'draft'),
+]);
+const managerIds = [...new Set(cards.map((c) => c.people?.manager_id).filter((m): m is string => Boolean(m)))];
+const { data: managerRows } = await svc.from('people').select('id, full_name').in('id', managerIds.length ? managerIds : [NONE]);
+const managerName = new Map((managerRows ?? []).map((m) => [m.id as string, m.full_name as string]));
+
+const avg = (list: number[]) => (list.length ? list.reduce((s, v) => s + v, 0) / list.length : null);
+const scoresIn = (list: Card[]) => list.map((c) => scoreOfCard.get(c.id)).filter((s): s is number => s != null);
+const ratingsIn = (list: Card[]) => list.map((c) => c.kpi_reviews?.agreed_rating).filter((r): r is number => r != null);
+const avgScore = avg(scoresIn(cards));
+const avgRating = avg(ratingsIn(cards));
+const oneDp = (v: number | null) => (v == null ? '—' : v.toFixed(1));
+
+// Score bands: the ones that suggest each rating.
+const bands: { label: string; rating: Rating | null }[] = [
+  { label: 'Under 70%', rating: 1 }, { label: '70–89%', rating: 2 }, { label: '90–109%', rating: 3 }, { label: '110–129%', rating: 4 }, { label: '130% and up', rating: 5 }, { label: 'No results yet', rating: null },
+];
+const scoreSpread = bands.map((b) => ({ ...b, n: cards.filter((c) => suggestedRating(scoreOfCard.get(c.id) ?? null) === b.rating).length }));
+const ratingSpread = ([1, 2, 3, 4, 5] as Rating[]).map((r) => ({ rating: r, n: cards.filter((c) => c.kpi_reviews?.agreed_rating === r).length }));
+const agreed = ratingSpread.reduce((s, r) => s + r.n, 0);
+const most = (list: { n: number }[]) => Math.max(1, ...list.map((x) => x.n));
+
+const groupBy = (key: (c: Card) => string) => {
+  const m = new Map<string, Card[]>();
+  for (const c of cards) m.set(key(c), [...(m.get(key(c)) ?? []), c]);
+  return [...m.entries()].map(([k, list]) => ({ key: k, n: list.length, score: avg(scoresIn(list)), rating: avg(ratingsIn(list)), rated: ratingsIn(list).length }));
+};
+const byTeam = groupBy((c) => c.people?.team?.trim() || '').sort((a, b) => (a.key || '~').localeCompare(b.key || '~'));
+const byManager = groupBy((c) => c.people?.manager_id ?? '').map((g) => ({ ...g, name: g.key ? managerName.get(g.key) ?? 'Someone not shown' : 'No manager' })).sort((a, b) => a.name.localeCompare(b.name));
+
+const offTrack = cards.filter((c) => c.status !== 'signed_off').flatMap((c) => (scored.get(c.id) ?? []).filter((i) => i.track === 'off').map((i) => ({ card: c, item: i })));
+const trend = trendPeriods.map((p) => { const list = allCards.filter((c) => c.period_id === p.id); return { period: p, n: list.length, score: avg(scoresIn(list)), rating: avg(ratingsIn(list)), rated: ratingsIn(list).length }; });
+
+const bar = (v: number | null, max: number) => `width:${v == null ? 0 : Math.max(2, Math.min(100, (v / max) * 100))}%`;
+const href = (extra: Record<string, string>) => `?${new URLSearchParams({ ...(company ? { company: company.code } : {}), ...extra })}`;
+const coverage = current ? cards.length / current : null;
+---
+
+<Admin title="HR · Performance insights">
+  <HrNav />
+  <PageHeader title="Performance insights" subtitle="How scores and ratings spread, by team and by manager, what’s off track and who has a scorecard.">
+    {company && <a class="btn-ghost" href={`/admin/hr/performance${href(period ? { period: period.id } : {})}`}>Scorecards</a>}
+  </PageHeader>
+
+  {!company ? <Empty title="No companies">Your roles don’t cover any company’s people.</Empty> : !period ? <Empty title="No periods yet">HR hasn’t set up any performance periods for this company.</Empty> : (
+    <>
+      <form method="get" class="mb-6 flex flex-wrap items-center gap-2 text-sm" data-tour="ins-pick">
+        {companies.length > 1 && <select class="field !w-auto" name="company" aria-label="Company">{companies.map((c) => <option value={c.code} selected={c.id === company.id}>{c.display_name}</option>)}</select>}
+        <select class="field !w-auto" name="period" aria-label="Period">{periods.map((p) => <option value={p.id} selected={p.id === period.id}>{p.label} · {PERIOD_STATES[p.status]}</option>)}</select>
+        <button class="btn-ghost !py-1.5">Show</button>
+      </form>
+
+      <div class="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" data-tour="ins-coverage">
+        <div class="card !p-5"><p class="text-xs uppercase tracking-widest text-white/40">Coverage</p><p class="mt-2 font-display text-3xl font-bold">{cards.length} <span class="text-base font-normal text-white/45">of {current ?? 0}</span></p><p class="text-xs text-white/45">current people with a running or finished scorecard{coverage != null && ` (${showPercent(coverage)})`}{(drafts ?? 0) > 0 && `; ${drafts} more in draft`}</p></div>
+        <div class="card !p-5"><p class="text-xs uppercase tracking-widest text-white/40">Average score</p><p class="mt-2 font-display text-3xl font-bold">{showPercent(avgScore)}</p><p class="text-xs text-white/45">over {scoresIn(cards).length} scorecard{scoresIn(cards).length === 1 ? '' : 's'} with results</p></div>
+        <div class="card !p-5"><p class="text-xs uppercase tracking-widest text-white/40">Average agreed rating</p><p class="mt-2 font-display text-3xl font-bold">{oneDp(avgRating)}</p><p class="text-xs text-white/45">{agreed} review{agreed === 1 ? '' : 's'} signed off</p></div>
+        <div class="card !p-5"><p class="text-xs uppercase tracking-widest text-white/40">Off track</p><p class:list={['mt-2 font-display text-3xl font-bold', offTrack.length ? 'text-lk-red' : 'text-white']}>{offTrack.length}</p><p class="text-xs text-white/45">KPIs on {new Set(offTrack.map((o) => o.card.id)).size} scorecard{new Set(offTrack.map((o) => o.card.id)).size === 1 ? '' : 's'} not yet signed off</p></div>
+      </div>
+
+      {!cards.length ? <div class="mb-6"><Empty title="No scorecards running">Nobody has an active, in-review or signed-off scorecard for {period.label} yet.</Empty></div> : (
+        <>
+          <div class="mb-6 grid gap-6 lg:grid-cols-2">
+            <section class="card" data-tour="ins-scores">
+              <h2 class="font-display text-lg font-bold">Scores</h2>
+              <p class="text-xs text-white/45">How many scorecards fall in each band (the band suggests the rating beside it).</p>
+              <ul class="mt-4 grid gap-2 text-sm">{scoreSpread.map((b) => (
+                <li class="grid grid-cols-[8rem_1fr_2rem] items-center gap-3"><span class="text-white/70">{b.label}<span class="block text-xs text-white/40">{b.rating ? `${b.rating} · ${RATINGS[b.rating]}` : ' '}</span></span><span class="h-2 rounded-full bg-white/10"><span class:list={['block h-2 rounded-full', b.rating ? 'bg-lk-blue' : 'bg-white/25']} style={bar(b.n, most(scoreSpread))}></span></span><span class="text-right tabular-nums text-white/80">{b.n}</span></li>
+              ))}</ul>
+            </section>
+            <section class="card" data-tour="ins-ratings">
+              <h2 class="font-display text-lg font-bold">Agreed ratings</h2>
+              <p class="text-xs text-white/45">Reviews signed off for {period.label}{cards.length - agreed > 0 && ` (${cards.length - agreed} not yet)`}.</p>
+              <ul class="mt-4 grid gap-2 text-sm">{ratingSpread.map((r) => (
+                <li class="grid grid-cols-[8rem_1fr_2rem] items-center gap-3"><span class="text-white/70">{r.rating} · {RATINGS[r.rating]}</span><span class="h-2 rounded-full bg-white/10"><span class="block h-2 rounded-full bg-lk-green" style={bar(r.n, most(ratingSpread))}></span></span><span class="text-right tabular-nums text-white/80">{r.n}</span></li>
+              ))}</ul>
+            </section>
+          </div>
+
+          <div class="mb-6 grid gap-6 lg:grid-cols-2">
+            <section class="card overflow-x-auto p-0" data-tour="ins-teams">
+              <h2 class="px-5 pt-5 font-display text-lg font-bold">By team</h2>
+              <table class="mt-2 w-full text-left text-sm">
+                <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Team</th><th class="px-5 py-3 text-right">People</th><th class="px-5 py-3">Average score</th><th class="px-5 py-3 text-right">Rating</th></tr></thead>
+                <tbody class="divide-y divide-white/5">{byTeam.map((g) => (
+                  <tr><td class="px-5 py-2.5 text-white/85">{g.key || <span class="text-white/45">No team</span>}</td><td class="px-5 py-2.5 text-right tabular-nums">{g.n}</td>
+                    <td class="px-5 py-2.5"><div class="flex items-center gap-2"><span class="h-1.5 flex-1 rounded-full bg-white/10"><span class="block h-1.5 rounded-full bg-lk-blue" style={bar(g.score, ATTAINMENT_CAP)}></span></span><span class="w-12 text-right text-xs tabular-nums text-white/70">{showPercent(g.score)}</span></div></td>
+                    <td class="px-5 py-2.5 text-right tabular-nums text-white/70">{oneDp(g.rating)}</td></tr>
+                ))}</tbody>
+              </table>
+            </section>
+            <section class="card overflow-x-auto p-0" data-tour="ins-calibration">
+              <h2 class="px-5 pt-5 font-display text-lg font-bold">By manager</h2>
+              <p class="px-5 text-xs text-white/45">Calibration: each manager’s average agreed rating against the company’s ({oneDp(avgRating)}). A gap of half a point or more is worth a conversation; few reviews say little.</p>
+              <table class="mt-2 w-full text-left text-sm">
+                <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Manager</th><th class="px-5 py-3 text-right">People</th><th class="px-5 py-3 text-right">Score</th><th class="px-5 py-3 text-right">Rating</th><th class="px-5 py-3 text-right">Against the company</th></tr></thead>
+                <tbody class="divide-y divide-white/5">{byManager.map((g) => { const gap = g.rating != null && avgRating != null ? g.rating - avgRating : null; return (
+                  <tr><td class="px-5 py-2.5 text-white/85">{g.name}</td><td class="px-5 py-2.5 text-right tabular-nums">{g.n}</td><td class="px-5 py-2.5 text-right tabular-nums text-white/70">{showPercent(g.score)}</td>
+                    <td class="px-5 py-2.5 text-right tabular-nums text-white/70">{oneDp(g.rating)}<span class="block text-xs text-white/40">{g.rated} signed off</span></td>
+                    <td class:list={['px-5 py-2.5 text-right tabular-nums', gap == null ? 'text-white/40' : Math.abs(gap) >= 0.5 ? 'text-lk-orange' : 'text-white/70']}>{gap == null ? '—' : `${gap > 0 ? '+' : ''}${gap.toFixed(1)}`}</td></tr>
+                ); })}</tbody>
+              </table>
+            </section>
+          </div>
+
+          <section class="card mb-6 overflow-x-auto p-0" data-tour="ins-off">
+            <h2 class="px-5 pt-5 font-display text-lg font-bold">Off track</h2>
+            {offTrack.length ? (
+              <table class="mt-2 w-full text-left text-sm">
+                <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Person</th><th class="px-5 py-3">KPI</th><th class="px-5 py-3 text-right">Actual</th><th class="px-5 py-3 text-right">Target</th><th class="px-5 py-3 text-right">Attainment</th></tr></thead>
+                <tbody class="divide-y divide-white/5">{offTrack.map(({ card: c, item: i }) => (
+                  <tr><td class="px-5 py-2.5"><a class="font-medium text-white hover:text-lk-blue" href={`/admin/hr/performance/${c.id}`}>{c.people?.full_name}</a></td><td class="px-5 py-2.5 text-white/80">{i.definition.name}</td>
+                    <td class="px-5 py-2.5 text-right tabular-nums text-lk-red">{showValue(i.actual, i.definition.unit)}</td><td class="px-5 py-2.5 text-right tabular-nums">{showValue(i.target, i.definition.unit)}</td><td class="px-5 py-2.5 text-right tabular-nums text-white/70">{showPercent(i.attainment)}</td></tr>
+                ))}</tbody>
+              </table>
+            ) : <p class="px-5 pb-5 pt-2 text-sm text-white/55">Nothing is {TRACK.off.toLowerCase()} on the running scorecards.</p>}
+          </section>
+        </>
+      )}
+
+      <section class="card" data-tour="ins-trend">
+        <h2 class="font-display text-lg font-bold">Period by period</h2>
+        <p class="text-xs text-white/45">{company.display_name}’s last {trend.length} period{trend.length === 1 ? '' : 's'} up to {period.label}: the average score (bar) and average agreed rating.</p>
+        <ul class="mt-4 grid gap-2 text-sm">{trend.map((t) => (
+          <li class="grid grid-cols-[9rem_1fr_7rem] items-center gap-3"><a class:list={['hover:text-white', t.period.id === period.id ? 'font-medium text-white' : 'text-white/65']} href={href({ period: t.period.id })}>{t.period.label}<span class="block text-xs font-normal text-white/40">{t.n} scorecard{t.n === 1 ? '' : 's'}</span></a>
+            <span class="h-2 rounded-full bg-white/10"><span class="block h-2 rounded-full bg-lk-blue" style={bar(t.score, ATTAINMENT_CAP)}></span></span>
+            <span class="text-right tabular-nums text-white/80">{showPercent(t.score)}<span class="block text-xs text-white/45">rating {oneDp(t.rating)}{t.rated > 0 && ` (${t.rated})`}</span></span></li>
+        ))}</ul>
+      </section>
+    </>
+  )}
+</Admin>

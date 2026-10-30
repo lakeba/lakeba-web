@@ -1,0 +1,25 @@
+---
+import { TRACK, UNITS, showPercent, showValue, updatedFrom, type ScoredItem, type Track } from '../lib/kpis';
+// A scorecard's KPIs (Admin → People → Performance, My HR): target, weight, thresholds, the period's actual
+// from confirmed results, attainment and where each stands.
+interface Props { items: ScoredItem[]; goals?: Map<string, string> }
+const { items, goals } = Astro.props;
+// The latest automatic result, for "Updated … from …" under the actual.
+const auto = (i: ScoredItem) => { const r = i.results.filter((x) => x.status === 'confirmed' && x.source !== 'manual').at(-1); return r ? updatedFrom(r) : null; };
+const tone: Record<Track, string> = { none: 'text-white/40', off: 'text-lk-red', on: 'text-white/70', met: 'text-lk-green', stretch: 'text-lk-blue' };
+---
+<table class="w-full text-left text-sm">
+  <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">KPI</th><th class="px-5 py-3 text-right">Target</th><th class="px-5 py-3 text-right">Weight</th><th class="px-5 py-3 text-right">Actual</th><th class="px-5 py-3 text-right">Attainment</th><th class="px-5 py-3">State</th></tr></thead>
+  <tbody class="divide-y divide-white/5">
+    {items.map((i) => (
+      <tr>
+        <td class="px-5 py-3"><span class="font-medium text-white">{i.definition.name}</span><span class="block text-xs text-white/45">{UNITS[i.definition.unit]}{i.definition.direction === 'lower' && ' · lower is better'}{i.below != null && ` · off track ${i.definition.direction === 'lower' ? 'over' : 'under'} ${showValue(i.below, i.definition.unit)}`}{i.stretch != null && ` · stretch ${showValue(i.stretch, i.definition.unit)}`}{i.goal_id && goals?.get(i.goal_id) && ` · for “${goals.get(i.goal_id)}”`}</span>{i.note && <span class="block text-xs text-white/55">{i.note}</span>}</td>
+        <td class="px-5 py-3 text-right tabular-nums">{showValue(i.target, i.definition.unit)}</td>
+        <td class="px-5 py-3 text-right tabular-nums">{Number(i.weight)}%</td>
+        <td class="px-5 py-3 text-right tabular-nums">{showValue(i.actual, i.definition.unit)}{auto(i) && <span class="block text-xs font-normal text-white/40">{auto(i)}</span>}</td>
+        <td class="px-5 py-3 text-right tabular-nums">{showPercent(i.attainment)}</td>
+        <td class:list={['px-5 py-3', tone[i.track]]}>{TRACK[i.track]}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>

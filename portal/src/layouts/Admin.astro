@@ -58,6 +58,7 @@ const groups: { label: string; items: Item[] }[] = [
     { href: access.can('accounting.view', null) ? '/admin/accounting/packs' : '/admin/reporting', label: 'Reporting packs', also: ['/admin/accounting/packs', '/admin/reporting'] },
     { href: '/admin/accounting/board', label: 'Board summary' },
     { href: '/admin/accounting/year-end', label: 'Year-end' },
+    { href: '/admin/accounting/commissions', label: 'Commissions' },
     { href: '/admin/ventures', label: 'Ventures & prices' },
     { href: '/admin/trading', label: 'Secondary trading' },
   ] },
@@ -65,6 +66,7 @@ const groups: { label: string; items: Item[] }[] = [
     { href: '/admin/hr', label: 'People', exact: true, also: ['/admin/hr/people'] },
     { href: '/admin/hr/equity', label: 'Equity plans' },
     { href: '/admin/hr/policies', label: 'Policies' },
+    { href: '/admin/hr/performance', label: 'Performance' },
   ] },
   { label: 'Companies', items: [
     { href: '/admin/companies', label: 'Companies' },

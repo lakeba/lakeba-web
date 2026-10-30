@@ -1,0 +1,204 @@
+---
+import Admin from '../../../../layouts/Admin.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Alert from '../../../../components/Alert.astro';
+import Empty from '../../../../components/Empty.astro';
+import HrNav from '../../../../components/HrNav.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { shortDate } from '../../../../lib/format';
+import { addDays, addMonths, todayIn } from '../../../../lib/hr';
+import {
+  CARD_STATES, PERIOD_COLUMNS, PERIOD_KINDS, PERIOD_STATES, SCORECARD_COLUMNS, libraryFor, performanceCompanies, ratingLabel, refreshAutoResults, scoresFor, showPercent, startReview,
+  type Period, type Scorecard,
+} from '../../../../lib/kpis';
+
+// Admin → People → Performance: a company's periods and their scorecards (score, suggested and agreed
+// rating, where each stands), new periods, and giving people scorecards from a role set. Finance sees the
+// scorecards that are running, to propose results. Automatic results refresh each morning; HR can refresh now.
+const svc = serviceClient();
+const access = Astro.locals.access;
+const userId = Astro.locals.user!.id;
+const { companies, finance } = await performanceCompanies(svc, access);
+const q = Astro.url.searchParams;
+const company = companies.find((c) => c.code === q.get('company')?.toUpperCase()) ?? companies[0] ?? null;
+const asFinance = company ? finance.has(company.id) : false;
+const mayDo = company ? access.can('hr.do', company.id) : false;
+let error = '', ok = '';
+
+const loadPeriods = async () => (company ? ((await svc.from('kpi_periods').select(PERIOD_COLUMNS).eq('entity_id', company.id).order('starts_on', { ascending: false })).data ?? []) as Period[] : []);
+let periods = await loadPeriods();
+const today = todayIn();
+const pickPeriod = (id: string | null) => periods.find((p) => p.id === id) ?? periods.find((p) => p.status === 'open' && p.starts_on <= today && p.ends_on >= today) ?? periods.find((p) => p.status === 'open') ?? periods[0] ?? null;
+let period = pickPeriod(q.get('period'));
+
+if (Astro.request.method === 'POST' && company && mayDo) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  const d = (n: string) => (/^\d{4}-\d{2}-\d{2}$/.test(field(form, n)) ? field(form, n) : null);
+  const log = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, ...detail } });
+  try {
+    if (intent === 'period-new') {
+      const kind = field(form, 'kind') in PERIOD_KINDS ? field(form, 'kind') as Period['kind'] : 'quarter';
+      const starts = d('starts_on');
+      if (!starts) throw new Error('Choose the day it starts.');
+      const ends = d('ends_on') ?? addDays(addMonths(starts, kind === 'month' ? 1 : kind === 'quarter' ? 3 : 12), -1);
+      if (ends < starts) throw new Error('It ends before it starts.');
+      const label = field(form, 'label').slice(0, 100);
+      if (label.length < 2) throw new Error('Name the period, e.g. Q1 FY27.');
+      const { data: p, error: e } = await svc.from('kpi_periods').insert({ entity_id: company.id, label, kind, starts_on: starts, ends_on: ends, status: 'planning', created_by: userId }).select('id').single();
+      if (e) throw new Error(e.code === '23505' ? 'There’s already a period with that name.' : 'The period could not be added.');
+      await log('admin_added_kpi_period', { period_id: p!.id });
+      return Astro.redirect(`/admin/hr/performance?company=${company.code}&period=${p!.id}`);
+    } else if (intent === 'period-status' && period) {
+      const to = field(form, 'to');
+      if (!(to in PERIOD_STATES) || to === period.status) throw new Error('Choose what to do with the period.');
+      await svc.from('kpi_periods').update({ status: to }).eq('id', period.id).throwOnError();
+      if (to === 'closed') {
+        // Closing a period sends its running scorecards to review.
+        const { data: running } = await svc.from('kpi_scorecards').select('id, entity_id, person_id').eq('period_id', period.id).eq('status', 'active');
+        await startReview(svc, running ?? [], period.label, Astro.url.origin);
+        ok = `Closed. ${(running ?? []).length} scorecard${(running ?? []).length === 1 ? '' : 's'} moved to review; their people were asked for their self-assessment.`;
+      } else ok = to === 'open' ? 'Open: scorecards can be made active.' : 'Back to planning.';
+      await log('admin_changed_kpi_period', { period_id: period.id, status: to });
+    } else if (intent === 'refresh') {
+      const { written, cleared } = await refreshAutoResults(svc, { entityId: company.id });
+      await log('admin_refreshed_kpi_results', { results: written, cleared });
+      ok = written || cleared ? `Refreshed: ${written} automatic result${written === 1 ? '' : 's'} updated${cleared ? `, ${cleared} cleared (nothing to measure)` : ''}.` : 'Nothing to refresh: no running scorecard in an open period has a KPI that fills itself in.';
+    } else if (intent === 'give' && period) {
+      if (period.status === 'closed') throw new Error('The period is closed.');
+      const chosen = form.getAll('person_id').map(String);
+      if (!chosen.length) throw new Error('Choose the people.');
+      const { data: people } = await svc.from('people').select('id').eq('entity_id', company.id).neq('status', 'left').in('id', chosen);
+      const { data: have } = await svc.from('kpi_scorecards').select('person_id').eq('period_id', period.id);
+      const fresh = (people ?? []).map((p) => p.id as string).filter((id) => !(have ?? []).some((h) => h.person_id === id));
+      if (!fresh.length) throw new Error('They all have a scorecard for this period already.');
+      const lib = await libraryFor(svc, [company.id]);
+      const set = field(form, 'role_set_id') ? lib.roleSets.find((s) => s.id === field(form, 'role_set_id')) : null;
+      if (field(form, 'role_set_id') && !set) throw new Error('Choose a role set from the list.');
+      const { data: cards } = await svc.from('kpi_scorecards').insert(fresh.map((person_id) => ({ entity_id: company.id, period_id: period!.id, person_id, role_set_id: set?.id ?? null, created_by: userId }))).select('id').throwOnError();
+      const items = set ? set.items.filter((i) => lib.definitions.some((x) => x.id === i.definition_id)) : [];
+      if (items.length) await svc.from('kpi_scorecard_items').insert((cards ?? []).flatMap((c) => items.map((i, n) => ({ scorecard_id: c.id, definition_id: i.definition_id, weight: i.weight, sort: n })))).throwOnError();
+      await log('admin_gave_kpi_scorecards', { period_id: period.id, count: fresh.length, role_set_id: set?.id ?? null });
+      ok = `${fresh.length} draft scorecard${fresh.length === 1 ? '' : 's'} made${set ? ` from ${set.name}` : ''}. Open each to set its targets, then make it active.`;
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+  periods = await loadPeriods();
+  period = pickPeriod(period?.id ?? null);
+}
+
+let cardsQuery = svc.from('kpi_scorecards').select(`${SCORECARD_COLUMNS}, people(full_name, job_title, status), kpi_reviews(agreed_rating, acknowledged_at)`).eq('period_id', period?.id ?? '00000000-0000-0000-0000-000000000000');
+if (asFinance) cardsQuery = cardsQuery.in('status', ['active', 'in_review']);
+const { data: cardRows } = await cardsQuery;
+const cards = ((cardRows ?? []) as unknown as (Scorecard & { people: { full_name: string; job_title: string; status: string } | null; kpi_reviews: { agreed_rating: number | null; acknowledged_at: string | null } | null })[])
+  .sort((a, b) => (a.people?.full_name ?? '').localeCompare(b.people?.full_name ?? ''));
+const scores = await scoresFor(svc, cards, periods);
+const giving = Boolean(mayDo && period && period.status !== 'closed');
+const [{ data: staff }, lib] = await Promise.all([
+  svc.from('people').select('id, full_name, job_title, team').eq('entity_id', giving ? company!.id : '00000000-0000-0000-0000-000000000000').neq('status', 'left').order('full_name'),
+  libraryFor(svc, giving ? [company!.id] : []),
+]);
+const without = (staff ?? []).filter((p) => !cards.some((c) => c.person_id === p.id));
+const day = (s: string) => shortDate.format(new Date(`${s}T12:00:00+10:00`));
+const href = (extra: Record<string, string>) => `?${new URLSearchParams({ ...(company ? { company: company.code } : {}), ...extra })}`;
+// A label for a new period, from the next one after the latest.
+const nextStart = periods[0] ? addDays(periods[0].ends_on, 1) : `${today.slice(0, 7)}-01`;
+---
+
+<Admin title="HR · Performance">
+  <HrNav />
+  <PageHeader title="Performance" subtitle={asFinance ? 'Scorecards that are running: propose a result and HR confirms it. Only confirmed results count.' : 'KPIs for each person and period: targets and weights, results, check-ins and the end-of-period review.'}>
+    {!asFinance && company && <div class="flex flex-wrap gap-2"><a class="btn-ghost" href={`/admin/hr/performance/insights${href(period ? { period: period.id } : {})}`} data-tour="perf-insights">Insights</a><a class="btn-ghost" href={`/admin/hr/performance/goals${href(period ? { period: period.id } : {})}`}>Goals</a><a class="btn-ghost" href={`/admin/hr/performance/library${href({})}`}>KPI library</a>
+      {mayDo && <form method="post" action={href(period ? { period: period.id } : {})}><button class="btn-ghost" name="intent" value="refresh" data-tour="perf-refresh" title="KPIs that fill themselves in are refreshed each morning from 7am; this does it now for this company’s running scorecards.">Refresh now</button></form>}</div>}
+  </PageHeader>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
+
+  {!company ? <Empty title="No companies">Your roles don’t cover any company’s people.</Empty> : (
+    <>
+      <form method="get" class="mb-4 flex flex-wrap items-center gap-2 text-sm" data-tour="perf-pick">
+        {companies.length > 1 && <select class="field !w-auto" name="company" aria-label="Company">{companies.map((c) => <option value={c.code} selected={c.id === company.id}>{c.display_name}</option>)}</select>}
+        {periods.length > 0 && <select class="field !w-auto" name="period" aria-label="Period">{periods.map((p) => <option value={p.id} selected={p.id === period?.id}>{p.label} · {PERIOD_STATES[p.status]}</option>)}</select>}
+        <button class="btn-ghost !py-1.5">Show</button>
+      </form>
+
+      {period && (
+        <section class="card mb-6 flex flex-wrap items-center justify-between gap-3 !p-5" data-tour="perf-period">
+          <div>
+            <p class="font-display text-lg font-bold">{period.label} <span class:list={['ml-1 text-sm font-normal', period.status === 'open' ? 'text-lk-green' : 'text-white/50']}>{PERIOD_STATES[period.status]}</span></p>
+            <p class="text-sm text-white/55">{PERIOD_KINDS[period.kind]} · {day(period.starts_on)} to {day(period.ends_on)}{period.status === 'open' && period.ends_on < today && <span class="text-lk-orange"> · ended: close it to start the reviews</span>}</p>
+          </div>
+          {mayDo && (
+            <form method="post" class="flex flex-wrap gap-2">
+              <input type="hidden" name="intent" value="period-status" />
+              {period.status === 'planning' && <button class="btn-primary" name="to" value="open">Open the period</button>}
+              {period.status === 'open' && <button class="btn-ghost" name="to" value="planning">Back to planning</button>}
+              {period.status === 'open' && <button class="btn-ghost" name="to" value="closed" data-confirm="Close the period? Its active scorecards move to review and their people are asked for a self-assessment.">Close and start reviews</button>}
+              {period.status === 'closed' && <button class="btn-ghost" name="to" value="open">Reopen</button>}
+            </form>
+          )}
+        </section>
+      )}
+
+      {period ? (cards.length ? (
+        <section class="card mb-6 overflow-x-auto p-0" data-tour="perf-list">
+          <table class="w-full text-left text-sm">
+            <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Person</th><th class="px-5 py-3 text-right">KPIs</th>{!asFinance && <><th class="px-5 py-3 text-right">Score</th><th class="px-5 py-3">Suggested</th><th class="px-5 py-3">Agreed</th></>}<th class="px-5 py-3">State</th></tr></thead>
+            <tbody class="divide-y divide-white/5">
+              {cards.map((c) => { const s = scores.get(c.id)!; return (
+                <tr>
+                  <td class="px-5 py-3"><a class="font-medium text-white hover:text-lk-blue" href={`/admin/hr/performance/${c.id}`}>{c.people?.full_name}</a><span class="block text-xs text-white/45">{c.people?.job_title || '—'}{c.people?.status === 'left' && ' · left'}{s.proposed > 0 && <span class="text-lk-orange"> · {s.proposed} result{s.proposed === 1 ? '' : 's'} to confirm</span>}</span></td>
+                  <td class="px-5 py-3 text-right tabular-nums">{s.items}</td>
+                  {!asFinance && <>
+                    <td class="px-5 py-3 text-right tabular-nums">{showPercent(s.score)}{s.score != null && s.coverage < 1 && <span class="block text-xs text-white/40">{showPercent(s.coverage)} of the weight in</span>}</td>
+                    <td class="px-5 py-3 text-white/65">{ratingLabel(s.suggested)}</td>
+                    <td class="px-5 py-3 text-white/85">{ratingLabel(c.kpi_reviews?.agreed_rating)}</td>
+                  </>}
+                  <td class="px-5 py-3"><span class:list={[c.status === 'draft' ? 'text-lk-orange' : c.status === 'signed_off' ? 'text-lk-green' : 'text-white/70']}>{CARD_STATES[c.status]}</span>{s.off > 0 && c.status !== 'draft' && <span class="block text-xs text-lk-red">{s.off} off track</span>}{c.status === 'signed_off' && <span class="block text-xs text-white/45">{c.kpi_reviews?.acknowledged_at ? 'acknowledged' : 'not acknowledged yet'}</span>}</td>
+                </tr>
+              ); })}
+            </tbody>
+          </table>
+        </section>
+      ) : <div class="mb-6"><Empty title="No scorecards yet">{mayDo ? 'Give people scorecards below.' : asFinance ? 'Nothing is running in this period.' : 'HR hasn’t given anyone a scorecard for this period.'}</Empty></div>)
+        : <div class="mb-6"><Empty title="No periods yet">{mayDo ? 'Add the first period below: a month, quarter or year.' : 'HR hasn’t set up any periods for this company.'}</Empty></div>}
+
+      {mayDo && (
+        <div class="grid gap-6 lg:grid-cols-2">
+          {period && period.status !== 'closed' && (
+            <details class="card content-start" open={!cards.length} data-tour="perf-give">
+              <summary class="cursor-pointer font-display text-lg font-bold">Give scorecards</summary>
+              {without.length ? (
+                <form method="post" class="mt-4 grid gap-3">
+                  <div><label class="label" for="role_set_id"><span data-hint="The role set’s KPIs and their usual weights go on each scorecard. Targets are left for you to set on each one.">Role set</span></label>
+                    <select class="field" id="role_set_id" name="role_set_id"><option value="">None: an empty scorecard</option>{lib.roleSets.map((s) => <option value={s.id}>{s.name} · {s.items.length} KPI{s.items.length === 1 ? '' : 's'}{s.entity_id ? '' : ' · group'}</option>)}</select></div>
+                  <fieldset class="grid max-h-72 gap-1.5 overflow-y-auto rounded-xl bg-white/[0.03] p-3 text-sm">
+                    <legend class="label">People without one for {period.label}</legend>
+                    {without.map((p) => <label class="flex items-center gap-2 text-white/80"><input type="checkbox" name="person_id" value={p.id} class="size-4 accent-lk-blue" /> {p.full_name}{(p.job_title || p.team) && <span class="text-white/45"> · {[p.job_title, p.team].filter(Boolean).join(', ')}</span>}</label>)}
+                  </fieldset>
+                  <div><button class="btn-primary" name="intent" value="give">Make draft scorecards</button></div>
+                </form>
+              ) : <p class="mt-3 text-sm text-white/55">Everyone current has a scorecard for {period.label}.</p>}
+            </details>
+          )}
+          <details class="card content-start" open={!periods.length} data-tour="perf-new-period">
+            <summary class="cursor-pointer font-display text-lg font-bold">New period</summary>
+            <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+              <div><label class="label" for="label">Name</label><input class="field" id="label" name="label" placeholder="e.g. Q1 FY27" required /></div>
+              <div><label class="label" for="kind">Kind</label><select class="field" id="kind" name="kind">{Object.entries(PERIOD_KINDS).map(([k, l]) => <option value={k} selected={k === 'quarter'}>{l}</option>)}</select></div>
+              <div><label class="label" for="starts_on">Starts</label><input class="field" type="date" id="starts_on" name="starts_on" value={nextStart} required /></div>
+              <div><label class="label" for="ends_on">Ends</label><input class="field" type="date" id="ends_on" name="ends_on" /><p class="mt-1 text-xs text-white/40">Empty: a month, quarter or year after it starts.</p></div>
+              <div class="sm:col-span-2"><button class="btn-ghost" name="intent" value="period-new">Add the period</button><p class="mt-1 text-xs text-white/40">It starts in planning: set up the scorecards, then open it.</p></div>
+            </form>
+          </details>
+        </div>
+      )}
+    </>
+  )}
+</Admin>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('button[data-confirm]').forEach((b) => b.addEventListener('click', (e) => { if (!confirm(b.dataset.confirm!)) e.preventDefault(); }));
+</script>

@@ -9,10 +9,13 @@ import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { monthEnd, periodLabel, todayIn } from '../../../lib/reporting';
 import { boardSummaryPdf, draftCommentary, groupItems } from '../../../lib/reporting-group';
+import { boardPeople, showPercent } from '../../../lib/kpis';
+import { aud } from '../../../lib/format';
 
 // Admin → Accounting → Board summary: one page with every venture's results
 // for a month and Lakeba's commentary (Lakeba AI can draft it), as a PDF or
-// filed in Documents for the board.
+// filed in Documents for the board. Below it, a short People line per company (performance and commission,
+// as counts and averages, never names).
 const svc = serviceClient();
 const mayDo = Astro.locals.access.can('accounting.do', null);
 const { data: periodRows } = await svc.from('reporting_packs').select('period_end').in('status', ['submitted', 'accepted']).order('period_end', { ascending: false });
@@ -52,6 +55,8 @@ if (Astro.request.method === 'POST' && mayDo) {
     error = (e as Error).message;
   }
 }
+const people = periods.length ? (await boardPeople(svc, period)).filter((p) => p.people || p.commission) : [];
+const quarterOf = (d: string) => { const m = Number(d.slice(5, 7)); return `${['Jan–Mar', 'Apr–Jun', 'Jul–Sep', 'Oct–Dec'][Math.floor((m - 1) / 3)]} ${d.slice(0, 4)}`; };
 ---
 
 <Admin title="Accounting · Board summary">
@@ -80,6 +85,21 @@ if (Astro.request.method === 'POST' && mayDo) {
         {documentId && <p class="text-xs text-white/45">A copy is filed in Documents (board only). Filing again adds a new copy.</p>}
         <p class="text-xs text-white/40">Drafting costs a cent or two; save your commentary before previewing.</p>
       </form>
+      {people.length > 0 && (
+        <section class="card p-0" data-tour="board-people">
+          <h2 class="px-5 pt-5 font-display text-lg font-bold">People</h2>
+          <p class="px-5 text-xs text-white/45">Each company’s latest performance period: people with a scorecard, their average score and the agreed ratings (1 to 5); commission in approved runs for {quarterOf(period)}. Counts only, no names.</p>
+          <ul class="mt-2 divide-y divide-white/5 text-sm">{people.map((p) => (
+            <li class="grid gap-1 px-5 py-3 sm:grid-cols-[10rem_1fr]">
+              <span class="font-medium text-white">{p.company}</span>
+              <span class="text-white/70">
+                {p.period ? <>{p.period.label}{p.period.status === 'open' && ' (running)'}: {p.people} {p.people === 1 ? 'person' : 'people'}, average score {showPercent(p.score)}{Object.values(p.ratings).some(Boolean) ? <>; agreed ratings: {Object.entries(p.ratings).filter(([, n]) => n).map(([r, n]) => `${n} rated ${r}`).join(', ')}</> : ', no ratings yet'}.</> : 'No performance period yet.'}
+                {p.commission && <span class="block text-xs text-white/50">Commission {aud.format(p.commission.approved)} in {p.commission.runs} run{p.commission.runs === 1 ? '' : 's'}{p.commission.paid ? `, ${aud.format(p.commission.paid)} paid` : ', not paid yet'}.</span>}
+              </span>
+            </li>
+          ))}</ul>
+        </section>
+      )}
     </div>
   ) : <Empty title="No packs yet">The board summary appears once the ventures have sent reporting packs.</Empty>}
 </Admin>

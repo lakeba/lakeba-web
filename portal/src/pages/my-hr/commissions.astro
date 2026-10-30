@@ -1,0 +1,74 @@
+---
+import Portal from '../../layouts/Portal.astro';
+import PageHeader from '../../components/PageHeader.astro';
+import Empty from '../../components/Empty.astro';
+import { serviceClient } from '../../lib/admin';
+import { shortDate } from '../../lib/format';
+import { myRecords } from '../../lib/hr';
+import { showPercent } from '../../lib/kpis';
+import { ASSIGNMENT_COLUMNS, allRows, LINE_COLUMNS, RUN_STATES, money, periodText, rateText, repTotals, type Assignment, type Line, type RunStatus } from '../../lib/commissions';
+
+// My HR → My commissions: the person's statements from approved (and paid) commission runs, invoice by
+// invoice: client, date, credited amount, rate and commission, with their totals. Draft runs never show.
+const svc = serviceClient();
+const records = (await myRecords(svc, Astro.locals.user!.id)).filter((r) => r.status !== 'left');
+if (!records.length) return Astro.redirect('/');
+const mine = records.map((r) => r.id);
+type R = { id: string; entity_id: string; plan_id: string | null; period_start: string; period_end: string; status: RunStatus; approved_at: string | null; paid_at: string | null };
+const lineRows = await allRows<Line & { commission_runs: R }>(() => svc.from('commission_run_lines').select(`${LINE_COLUMNS}, commission_runs!inner(id, entity_id, plan_id, period_start, period_end, status, approved_at, paid_at)`).in('person_id', mine).in('commission_runs.status', ['approved', 'paid']).order('run_id').order('sort'));
+const lines = lineRows.map((l) => ({ ...l, amount: Number(l.amount), credited: Number(l.credited), rate: Number(l.rate), commission: Number(l.commission), share: Number(l.share) }));
+const runs = [...new Map(lines.map((l) => [l.commission_runs.id, l.commission_runs])).values()].sort((a, b) => b.period_start.localeCompare(a.period_start));
+const { data: assignRows } = await svc.from('commission_assignments').select(ASSIGNMENT_COLUMNS).in('person_id', mine);
+const assignments = (assignRows ?? []) as Assignment[];
+const companyName = new Map(records.map((r) => [r.entity_id, r.entities?.display_name ?? '']));
+const chosen = runs.find((r) => r.id === Astro.url.searchParams.get('run')) ?? runs[0] ?? null;
+const shown = chosen ? lines.filter((l) => l.commission_runs.id === chosen.id) : [];
+const totals = chosen ? repTotals(shown, assignments, chosen).filter((t) => mine.includes(t.person_id) && t.lines > 0) : [];
+const t = totals.reduce((s, x) => ({ credited: s.credited + x.credited, earned: s.earned + x.earned, clawback: s.clawback + x.clawback, commission: s.commission + x.commission, target: x.target ?? s.target }), { credited: 0, earned: 0, clawback: 0, commission: 0, target: null as number | null });
+const day = (s: string) => shortDate.format(new Date(`${s.slice(0, 10)}T12:00:00+10:00`));
+const runTotal = (id: string) => lines.filter((l) => l.commission_runs.id === id).reduce((s, l) => s + l.commission, 0);
+---
+
+<Portal title="My commissions">
+  <PageHeader eyebrow="My HR" title="My commissions" subtitle="Your commission statements, once Finance approves each period’s run: every invoice credited to you, its rate and commission.">
+    <a class="btn-ghost" href="/my-hr">My HR</a>
+  </PageHeader>
+  {!chosen ? <Empty title="No statements yet">When Finance approves a commission run with sales credited to you, your statement shows here.</Empty> : (
+    <div class="grid gap-6 lg:grid-cols-[14rem_1fr]">
+      <nav class="grid content-start gap-1 text-sm" aria-label="Statements" data-tour="mycom-runs">
+        {runs.map((r) => (
+          <a href={`?run=${r.id}`} aria-current={r.id === chosen.id ? 'page' : undefined} class:list={['rounded-lg px-3 py-2', r.id === chosen.id ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>
+            {periodText(r.period_start, r.period_end)}<span class="block text-xs text-white/45">{records.length > 1 ? `${companyName.get(r.entity_id)} · ` : ''}{money(runTotal(r.id))} · {RUN_STATES[r.status].toLowerCase()}</span>
+          </a>
+        ))}
+      </nav>
+      <div class="grid content-start gap-6">
+        <section class="card grid gap-4 sm:grid-cols-4" data-tour="mycom-totals">
+          <div><p class="label !mb-1">Credited to you</p><p class="font-display text-2xl font-bold tabular-nums">{money(t.credited)}</p></div>
+          <div><p class="label !mb-1">Of your target</p><p class="font-display text-2xl font-bold tabular-nums">{t.target ? showPercent(t.credited / t.target) : '—'}</p>{t.target && <p class="text-xs text-white/45">target {money(t.target)}</p>}</div>
+          <div><p class="label !mb-1">Earned</p><p class="font-display text-2xl font-bold tabular-nums">{money(t.earned)}</p>{t.clawback < 0 && <p class="text-xs text-lk-red">clawback {money(t.clawback)}</p>}</div>
+          <div><p class="label !mb-1">Commission</p><p class="font-display text-2xl font-bold tabular-nums text-lk-green">{money(t.commission)}</p><p class="text-xs text-white/45">{chosen.status === 'paid' ? `paid ${day(chosen.paid_at!)}` : `approved ${day(chosen.approved_at!)}`}</p></div>
+        </section>
+        <section class="card overflow-x-auto p-0" data-tour="mycom-lines">
+          <h2 class="px-5 pt-5 font-display text-lg font-bold">{companyName.get(chosen.entity_id)}, {periodText(chosen.period_start, chosen.period_end)}</h2>
+          <table class="mt-2 w-full text-left text-sm">
+            <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Invoice</th><th class="px-3 py-3">Client</th><th class="px-3 py-3">Date</th><th class="px-3 py-3 text-right">Credited</th><th class="px-3 py-3 text-right">Rate</th><th class="px-5 py-3 text-right">Commission</th></tr></thead>
+            <tbody class="divide-y divide-white/5">
+              {shown.map((l) => (
+                <tr class:list={[l.kind === 'clawback' && 'bg-lk-red/5']}>
+                  <td class="px-5 py-2 text-white">{l.invoice_number || '—'}{l.kind === 'clawback' && <span class="block text-xs text-lk-red">taken back</span>}</td>
+                  <td class="px-3 py-2 text-white/70">{l.contact_name}{l.share < 100 && <span class="block text-xs text-white/45">your share {l.share}% of {money(l.amount)}</span>}{l.kind === 'clawback' && l.note && <span class="block text-xs text-white/45">{l.note}</span>}</td>
+                  <td class="px-3 py-2 text-white/55">{day(l.invoice_date)}</td>
+                  <td class="px-3 py-2 text-right tabular-nums">{money(l.credited)}</td>
+                  <td class="px-3 py-2 text-right tabular-nums text-white/55">{rateText(l.rate)}</td>
+                  <td class="px-5 py-2 text-right tabular-nums text-white">{money(l.commission)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+          <p class="border-t border-white/5 px-5 py-3 text-xs text-white/45">Amounts exclude GST. Rates are marginal: the part of your sales above a tier of your target earns that tier’s rate, so an invoice that crosses a tier shows a blended rate. Questions: ask Finance.</p>
+        </section>
+      </div>
+    </div>
+  )}
+</Portal>

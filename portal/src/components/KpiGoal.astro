@@ -1,0 +1,24 @@
+---
+import { UNITS, showValue, type Goal } from '../lib/kpis';
+// A goal on Admin → People → Performance → Goals: what it is, its target, how many KPIs serve it, and editing it.
+interface Props { goal: Goal; served: number; mayDo: boolean }
+const { goal: g, served, mayDo } = Astro.props;
+---
+<details>
+  <summary class="flex cursor-pointer flex-wrap items-baseline justify-between gap-2">
+    <span><span class:list={['font-medium text-white', !g.parent_id && 'font-display text-lg font-bold']}>{g.title}</span>{g.team && <span class="text-sm text-white/45"> · {g.team}</span>}</span>
+    <span class="text-xs text-white/45">{g.target != null && `Target ${g.unit ? showValue(g.target, g.unit) : Number(g.target)} · `}{served} KPI{served === 1 ? '' : 's'} serve it</span>
+  </summary>
+  {g.description && <p class="mt-2 whitespace-pre-line text-sm text-white/65">{g.description}</p>}
+  {mayDo && (
+    <form method="post" class="mt-3 grid gap-3 text-sm sm:grid-cols-2">
+      <input type="hidden" name="id" value={g.id} />
+      <div class="sm:col-span-2"><label class="label" for={`gt-${g.id}`}>Goal</label><input class="field" id={`gt-${g.id}`} name="title" value={g.title} required /></div>
+      <div><label class="label" for={`gm-${g.id}`}>Team</label><input class="field" id={`gm-${g.id}`} name="team" value={g.team} /></div>
+      <div class="grid grid-cols-2 gap-3"><div><label class="label" for={`gv-${g.id}`}>Target</label><input class="field" id={`gv-${g.id}`} name="target" inputmode="decimal" value={g.target ?? ''} /></div><div><label class="label" for={`gu-${g.id}`}>Unit</label><select class="field" id={`gu-${g.id}`} name="unit"><option value="">—</option>{Object.entries(UNITS).map(([k, l]) => <option value={k} selected={k === g.unit}>{l}</option>)}</select></div></div>
+      <div class="sm:col-span-2"><label class="label" for={`gd-${g.id}`}>More about it</label><textarea class="field min-h-16" id={`gd-${g.id}`} name="description">{g.description}</textarea></div>
+      {g.parent_id && <input type="hidden" name="parent_id" value={g.parent_id} />}
+      <div class="flex flex-wrap gap-2 sm:col-span-2"><button class="btn-ghost" name="intent" value="goal-save">Save</button><button class="btn-ghost text-lk-red" name="intent" value="goal-delete" data-confirm={g.parent_id ? 'Delete this team goal?' : 'Delete this goal and its team goals?'}>Delete</button></div>
+    </form>
+  )}
+</details>

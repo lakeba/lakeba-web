@@ -177,3 +177,64 @@ export async function xeroPackFigures(svc: Svc, c: Connection, company: Ctx['com
   const named = groupLines(balanceRows, (group ?? []).map((g) => ({ id: g.id as string, names: [g.display_name, g.legal_name].filter(Boolean) as string[] })));
   return { figures: figuresFromXero(periodRows, ytd ? ytd.Reports?.[0]?.Rows ?? [] : periodRows, balanceRows), named };
 }
+
+// ---------------------------------------------------------------------------
+// Commissions (Finance → Commissions): sales invoices and contacts, read only
+// ---------------------------------------------------------------------------
+type XeroInvoice = {
+  InvoiceID: string; InvoiceNumber?: string; Type: string; Status: string; DateString?: string; Date?: string;
+  Contact?: { ContactID: string; Name: string }; SubTotal?: number; Total?: number; AmountCredited?: number; CurrencyCode?: string; CurrencyRate?: number;
+};
+/** A sales invoice as commissions use it: the amount excluding GST, net of credit notes on it, in the organisation's currency. */
+export type SalesInvoice = { id: string; number: string; contact_id: string | null; contact_name: string; date: string; amount: number; status: string; note: string };
+
+const xeroDate = (v: XeroInvoice) => {
+  if (v.DateString) return v.DateString.slice(0, 10);
+  const ms = Number(/\/Date\((-?\d+)/.exec(v.Date ?? '')?.[1]);
+  return Number.isFinite(ms) ? new Date(ms).toISOString().slice(0, 10) : '';
+};
+const cents = (n: number) => Math.round(n * 100) / 100;
+function salesInvoice(v: XeroInvoice): SalesInvoice {
+  const sub = Number(v.SubTotal ?? 0), total = Number(v.Total ?? 0), credited = Number(v.AmountCredited ?? 0);
+  // Credit notes allocated to it take their share off (AmountCredited includes GST, like Total).
+  const net = total > 0 ? sub * Math.max(0, 1 - credited / total) : sub;
+  // Another currency: Xero's rate is that currency per unit of the organisation's.
+  const rate = Number(v.CurrencyRate ?? 1);
+  const amount = cents(rate && rate !== 1 ? net / rate : net);
+  const notes = [credited > 0 ? `credited ${cents(credited)} incl. GST` : '', rate && rate !== 1 ? `${v.CurrencyCode} ${cents(net)} at ${rate}` : ''].filter(Boolean);
+  return { id: v.InvoiceID, number: v.InvoiceNumber ?? '', contact_id: v.Contact?.ContactID ?? null, contact_name: v.Contact?.Name ?? '', date: xeroDate(v), amount, status: v.Status, note: notes.join('; ') };
+}
+const ymd = (d: string) => `DateTime(${Number(d.slice(0, 4))},${Number(d.slice(5, 7))},${Number(d.slice(8, 10))})`;
+
+/** The period's sales invoices (ACCREC, AUTHORISED or PAID) by invoice date, every page. */
+export async function xeroSalesInvoices(svc: Svc, c: Connection, company: Ctx['company'], central: string, p: { start: string; end: string }) {
+  const x = await ctxOf(svc, c, company, central);
+  const where = encodeURIComponent(`Type=="ACCREC" AND Date>=${ymd(p.start)} AND Date<=${ymd(p.end)}`);
+  const out: SalesInvoice[] = [];
+  for (let page = 1; page <= 200; page++) {
+    const res = await xr<{ Invoices?: XeroInvoice[] }>(x, 'GET', `/Invoices?where=${where}&Statuses=AUTHORISED,PAID&order=Date&page=${page}&pageSize=100&summaryOnly=true`);
+    const list = res.Invoices ?? [];
+    out.push(...list.filter((v) => v.Type === 'ACCREC' && ['AUTHORISED', 'PAID'].includes(v.Status)).map(salesInvoice));
+    if (list.length < 100) break;
+  }
+  return out;
+}
+
+/** Earlier invoices as they are now (for clawback: VOIDED or DELETED, or credited since). */
+export async function xeroInvoicesById(svc: Svc, c: Connection, company: Ctx['company'], central: string, ids: string[]) {
+  if (!ids.length) return [];
+  const x = await ctxOf(svc, c, company, central);
+  const out: SalesInvoice[] = [];
+  for (let i = 0; i < ids.length; i += 40) {
+    const res = await xr<{ Invoices?: XeroInvoice[] }>(x, 'GET', `/Invoices?IDs=${ids.slice(i, i + 40).join(',')}&summaryOnly=true`);
+    out.push(...(res.Invoices ?? []).map(salesInvoice));
+  }
+  return out;
+}
+
+/** Contacts whose name matches (to attribute a client to a rep). */
+export async function xeroContactSearch(svc: Svc, c: Connection, company: Ctx['company'], central: string, term: string) {
+  const x = await ctxOf(svc, c, company, central);
+  const res = await xr<{ Contacts?: { ContactID: string; Name: string; ContactStatus?: string }[] }>(x, 'GET', `/Contacts?searchTerm=${encodeURIComponent(term)}&summaryOnly=true&page=1`);
+  return (res.Contacts ?? []).filter((ct) => ct.ContactStatus !== 'ARCHIVED').slice(0, 25).map((ct) => ({ id: ct.ContactID, name: ct.Name }));
+}

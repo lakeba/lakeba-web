@@ -5,18 +5,23 @@ import Empty from '../../components/Empty.astro';
 import { serviceClient } from '../../lib/admin';
 import { fileSize, shortDate } from '../../lib/format';
 import { EMPLOYMENT, GRANT_COLUMNS, myRecords, policiesFor, position, type Grant } from '../../lib/hr';
+import { reportsOf } from '../../lib/kpis';
 
 // My HR: an employee's own space: the policies to read and accept, their
-// option grants, the documents HR shared with them, and HR Ask.
+// option grants, the documents HR shared with them, HR Ask, and (when they
+// have them) their performance scorecards, their team's and their commission statements.
 const svc = serviceClient();
 const records = (await myRecords(svc, Astro.locals.user!.id)).filter((r) => r.status !== 'left');
 if (!records.length) return Astro.redirect('/');
 const ids = records.map((r) => r.id);
-const [policyLists, { data: acks }, { data: grantRows }, { data: docs }] = await Promise.all([
+const [policyLists, { data: acks }, { data: grantRows }, { data: docs }, { count: scorecards }, reports, { count: statements }] = await Promise.all([
   Promise.all(records.map((r) => policiesFor(svc, r.entity_id))),
   svc.from('policy_acks').select('policy_id, version, person_id').in('person_id', ids),
   svc.from('equity_grants').select(`${GRANT_COLUMNS}, equity_plans(name, kind), equity_exercises(number, status)`).in('person_id', ids).in('status', ['granted', 'lapsed']).order('grant_date'),
   svc.from('person_documents').select('id, title, kind, file_path, size_bytes, created_at').in('person_id', ids).eq('visible_to_employee', true).order('created_at', { ascending: false }),
+  svc.from('kpi_scorecards').select('id', { count: 'exact', head: true }).in('person_id', ids).neq('status', 'draft'),
+  reportsOf(svc, ids),
+  svc.from('commission_run_lines').select('id, commission_runs!inner(status)', { count: 'exact', head: true }).in('person_id', ids).in('commission_runs.status', ['approved', 'paid']),
 ]);
 const policies = policyLists.flat().filter((p, i, all) => all.findIndex((x) => x.id === p.id) === i);
 const accepted = (id: string, v: number) => (acks ?? []).some((a) => a.policy_id === id && a.version === v);
@@ -28,7 +33,12 @@ const day = (s: string) => shortDate.format(new Date(s.length === 10 ? `${s}T12:
 
 <Portal title="My HR">
   <PageHeader title="My HR" subtitle={records.map((r) => `${r.job_title || EMPLOYMENT[r.employment_type]} at ${r.entities?.display_name}`).join(' · ')}>
-    <a class="btn-ghost" href="/my-hr/ask" data-tour="myhr-ask">Ask about a policy</a>
+    <div class="flex flex-wrap gap-2">
+      {(scorecards ?? 0) > 0 && <a class="btn-ghost" href="/my-hr/performance" data-tour="myhr-performance">My performance</a>}
+      {reports.length > 0 && <a class="btn-ghost" href="/my-hr/team" data-tour="myhr-team">My team</a>}
+      {(statements ?? 0) > 0 && <a class="btn-ghost" href="/my-hr/commissions" data-tour="myhr-commissions">My commissions</a>}
+      <a class="btn-ghost" href="/my-hr/ask" data-tour="myhr-ask">Ask about a policy</a>
+    </div>
   </PageHeader>
   {toAccept.length > 0 && (
     <section class="card mb-6 p-0" data-tour="myhr-accept">

@@ -1,0 +1,16 @@
+---
+import { AGGREGATIONS, DIRECTIONS, FAMILIES, SOURCES, UNITS, type Definition } from '../lib/kpis';
+import { AUTO_SOURCES } from '../lib/kpi-sources';
+// A KPI definition's fields (Admin → People → Performance → KPI library), for adding and editing.
+interface Props { d?: Definition }
+const { d } = Astro.props;
+const id = (n: string) => `${n}-${d?.id ?? 'new'}`;
+const sourceHint = ['Entered by hand: HR enters results (or Finance proposes them).', ...Object.values(AUTO_SOURCES).map((s) => s.hint), 'Automatic results are confirmed and show where they came from.'].join(' ');
+---
+<div><label class="label" for={id('name')}>Name</label><input class="field" id={id('name')} name="name" value={d?.name ?? ''} placeholder="e.g. New revenue" required /></div>
+<div><label class="label" for={id('family')}>Family</label><select class="field" id={id('family')} name="family">{Object.entries(FAMILIES).map(([k, l]) => <option value={k} selected={k === (d?.family ?? 'other')}>{l}</option>)}</select></div>
+<div><label class="label" for={id('unit')}>Unit</label><select class="field" id={id('unit')} name="unit">{Object.entries(UNITS).map(([k, l]) => <option value={k} selected={k === (d?.unit ?? 'count')}>{l}</option>)}</select></div>
+<div><label class="label" for={id('direction')}>Better when</label><select class="field" id={id('direction')} name="direction">{Object.entries(DIRECTIONS).map(([k, l]) => <option value={k} selected={k === (d?.direction ?? 'higher')}>{l}</option>)}</select></div>
+<div><label class="label" for={id('aggregation')}><span data-hint="How a period’s results make its actual. Add them up: each result is part of the total (revenue in a week). Average: each is a reading (response time). Latest: each replaces the one before (a share done so far).">Results over the period</span></label><select class="field" id={id('aggregation')} name="aggregation">{Object.entries(AGGREGATIONS).map(([k, l]) => <option value={k} selected={k === (d?.aggregation ?? 'sum')}>{l}</option>)}</select></div>
+<div class="sm:col-span-2"><label class="label" for={id('source')}><span data-hint={sourceHint}>Results come from</span></label><select class="field" id={id('source')} name="source">{Object.entries(SOURCES).map(([k, l]) => <option value={k} selected={k === (d?.source ?? 'manual')}>{l}</option>)}</select></div>
+<div class="sm:col-span-2"><label class="label" for={id('description')}>What it measures</label><textarea class="field min-h-16" id={id('description')} name="description">{d?.description ?? ''}</textarea></div>

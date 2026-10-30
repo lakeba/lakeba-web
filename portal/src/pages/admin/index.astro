@@ -37,6 +37,7 @@ const access = Astro.locals.access;
 const ids = scope.ids.length ? scope.ids : ['00000000-0000-0000-0000-000000000000'];
 const soon = new Date(Date.now() + 7 * 86_400_000).toISOString();
 const count = async (q: PromiseLike<{ count: number | null }>) => (await q).count ?? 0;
+const hrIds = (level: 'do' | 'approve') => { const c = access.companies(`hr.${level}`); return c === 'all' ? scope.ids : scope.ids.filter((id) => c.includes(id)); };
 const todo = (await Promise.all([
   (async () => ({ n: (await waitingFor(svc, access, Astro.locals.user!.id)).length, label: 'approvals waiting for you', href: '/admin/approvals' }))(),
   access.canAny('inbox.view') ? (async () => ({ n: await count(svc.from('shareholder_emails').select('id', { count: 'exact', head: true }).in('status', ['needs_person', 'draft_ready', 'error']).in('entity_id', ids)), label: 'shareholder emails need a person or have a reply ready', href: '/admin/emails' }))() : null,
@@ -45,6 +46,9 @@ const todo = (await Promise.all([
   access.can('press.view', null) ? (async () => ({ n: await count(svc.from('press_coverage').select('id', { count: 'exact', head: true }).eq('status', 'new')), label: 'new press coverage to review', href: '/admin/press/coverage' }))() : null,
   access.canAny('capital.do') ? (async () => ({ n: await count(svc.from('trade_interests').select('id', { count: 'exact', head: true }).eq('status', 'open').in('entity_id', ids)), label: 'open trading interests to pair', href: '/admin/trading' }))() : null,
   access.canAny('meetings.view') ? (async () => ({ n: await count(svc.from('meetings').select('id', { count: 'exact', head: true }).in('status', ['upcoming', 'open']).gt('proxy_deadline', now).lt('proxy_deadline', soon).in('entity_id', ids)), label: 'meetings whose proxy voting closes this week', href: '/admin/agm' }))() : null,
+  // Performance: reviews ready for HR's sign-off (hr.approve), results Finance proposed for HR to confirm (hr.do).
+  hrIds('approve').length ? (async () => ({ n: await count(svc.from('kpi_scorecards').select('id', { count: 'exact', head: true }).eq('status', 'in_review').in('entity_id', hrIds('approve'))), label: 'performance reviews waiting for sign-off', href: '/admin/hr/performance' }))() : null,
+  hrIds('do').length ? (async () => ({ n: await count(svc.from('kpi_results').select('id, kpi_scorecard_items!inner(kpi_scorecards!inner(entity_id))', { count: 'exact', head: true }).eq('status', 'proposed').in('kpi_scorecard_items.kpi_scorecards.entity_id', hrIds('do'))), label: 'KPI results proposed by Finance to confirm', href: '/admin/hr/performance' }))() : null,
 ])).filter((x): x is { n: number; label: string; href: string; alert?: boolean } => Boolean(x && x.n > 0));
 
 // Getting started: what's left to run each venture (group Admins: every venture), unless hidden for now.

@@ -16,6 +16,7 @@ import { processInbound } from './integrations/inbound';
 import { legalReminders } from './legal';
 import { reportingReminders } from './reporting';
 import { hrJobs } from './hr';
+import { kpiJobs } from './kpis';
 import { deleteSignedAudio } from './observer';
 
 // The notification worker inside the portal process: sends queued pushes and
@@ -182,7 +183,7 @@ export function startNotificationWorker() {
       await sendQueuedPitches(serviceClient(), lastOrigin); // press pitches to journalists, a few at a time
       await deliverWebhooks(lastOrigin); // integrations: outgoing webhooks that are due
       await processInbound(lastOrigin); // integrations: incoming webhooks just received
-      if (ticks++ % 40 === 0) { await proxyReminders(); await votesSummary(); await weeklyDigest(); await legalReminders(serviceClient(), lastOrigin); await reportingReminders(serviceClient(), lastOrigin); await hrJobs(serviceClient(), lastOrigin); await deleteSignedAudio(serviceClient()).catch((e) => console.error('observer audio', e)); await cleanup(); }
+      if (ticks++ % 40 === 0) { await proxyReminders(); await votesSummary(); await weeklyDigest(); await legalReminders(serviceClient(), lastOrigin); await reportingReminders(serviceClient(), lastOrigin); await hrJobs(serviceClient(), lastOrigin); await kpiJobs(serviceClient(), lastOrigin).catch((e) => console.error('kpi jobs', e)); await deleteSignedAudio(serviceClient()).catch((e) => console.error('observer audio', e)); await cleanup(); }
     } catch (e) {
       console.error('notification worker', (e as Error).message);
     }

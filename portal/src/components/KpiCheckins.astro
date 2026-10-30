@@ -1,0 +1,18 @@
+---
+import { dateTime } from '../lib/format';
+import type { Checkin } from '../lib/kpis';
+// The check-ins on a scorecard, oldest first. Private ones (for HR and managers) are marked.
+interface Props { checkins: Checkin[]; names: Map<string, string> }
+const { checkins, names } = Astro.props;
+const who = { hr: 'HR', manager: 'Manager', employee: 'Employee' } as const;
+---
+{checkins.length ? (
+  <ul class="grid gap-3">
+    {checkins.map((c) => (
+      <li class:list={['rounded-xl p-3 text-sm', c.private ? 'border border-lk-orange/30 bg-lk-orange/[0.06]' : 'bg-white/[0.04]']}>
+        <p class="text-xs text-white/45">{c.author_id && names.get(c.author_id) ? `${names.get(c.author_id)} · ` : ''}{who[c.author_role]} · {dateTime.format(new Date(c.created_at))}{c.private && <span class="text-lk-orange"> · private</span>}</p>
+        <p class="mt-1 whitespace-pre-line text-white/85">{c.body}</p>
+      </li>
+    ))}
+  </ul>
+) : <p class="text-sm text-white/55">No check-ins yet.</p>}
