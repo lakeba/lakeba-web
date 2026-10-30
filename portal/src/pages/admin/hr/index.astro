@@ -7,7 +7,7 @@ import HrNav from '../../../components/HrNav.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { shortDate } from '../../../lib/format';
-import { EMPLOYMENT, PERSON_STATES, addChecklist, hrCompanies, type Person } from '../../../lib/hr';
+import { EMPLOYMENT, PERSON_STATES, addChecklist, hrChoices, hrCompanies, type Person } from '../../../lib/hr';
 
 // Admin → HR: the people of the companies this person looks after, and adding
 // someone who is starting (their onboarding checklist comes with them).
@@ -19,6 +19,8 @@ const q = Astro.url.searchParams;
 const pick = companies.find((c) => c.code === q.get('company')?.toUpperCase()) ?? null;
 const show = ['current', 'left', 'all'].includes(q.get('show') ?? '') ? q.get('show')! : 'current';
 let error = '';
+// Managers and the roles, teams and locations already used (suggested in the form, learned as people are added).
+const choices = await hrChoices(svc, companies.map((c) => c.id));
 
 if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
@@ -28,9 +30,12 @@ if (Astro.request.method === 'POST') {
     const name = field(form, 'full_name');
     if (name.length < 2) throw new Error('Give their full name.');
     const d = (n: string) => (/^\d{4}-\d{2}-\d{2}$/.test(field(form, n)) ? field(form, n) : null);
+    const manager = field(form, 'manager_id') ? choices.managers.find((m) => m.id === field(form, 'manager_id')) : null;
+    if (field(form, 'manager_id') && !manager) throw new Error('Choose their manager from the list.');
     const { data: p } = await svc.from('people').insert({
       entity_id: company.id, full_name: name.slice(0, 200), email: field(form, 'email').toLowerCase() || null, job_title: field(form, 'job_title').slice(0, 200),
       team: field(form, 'team').slice(0, 100), employment_type: field(form, 'employment_type') in EMPLOYMENT ? field(form, 'employment_type') : 'full_time',
+      manager_id: manager?.id ?? null, location: field(form, 'location').slice(0, 200),
       start_date: d('start_date'), status: 'onboarding', created_by: Astro.locals.user!.id,
     }).select('id, start_date, end_date').single().throwOnError();
     await addChecklist(svc, p!, 'onboarding');
@@ -85,12 +90,21 @@ const link = (k: string, v: string) => { const p = new URLSearchParams(q); p.set
         <div><label class="label" for="entity_id">Company</label><select class="field" id="entity_id" name="entity_id" required>{doCompanies.length > 1 && <option value="">Choose…</option>}{doCompanies.map((c) => <option value={c.id} selected={c.id === pick?.id}>{c.display_name}</option>)}</select></div>
         <div><label class="label" for="full_name">Full name</label><input class="field" id="full_name" name="full_name" required /></div>
         <div><label class="label" for="email">Work email</label><input class="field" type="email" id="email" name="email" /></div>
-        <div><label class="label" for="job_title">Role</label><input class="field" id="job_title" name="job_title" /></div>
-        <div><label class="label" for="team">Team</label><input class="field" id="team" name="team" /></div>
+        <div><label class="label" for="job_title">Role</label><input class="field" id="job_title" name="job_title" list="hr-roles" autocomplete="off" /></div>
+        <div><label class="label" for="team">Team</label><input class="field" id="team" name="team" list="hr-teams" autocomplete="off" /></div>
+        <div><label class="label" for="manager_id">Manager</label><select class="field" id="manager_id" name="manager_id">
+          <option value="">No manager (they lead the company)</option>
+          {companies.map((c) => { const list = choices.managers.filter((m) => m.entity_id === c.id); return list.length > 0 && <optgroup label={c.display_name}>{list.map((m) => <option value={m.id}>{m.full_name}{m.job_title && ` · ${m.job_title}`}</option>)}</optgroup>; })}
+        </select></div>
+        <div><label class="label" for="location">Location</label><input class="field" id="location" name="location" list="hr-locations" autocomplete="off" placeholder="City or office, e.g. Sydney" /></div>
         <div><label class="label" for="employment_type">Employment</label><select class="field" id="employment_type" name="employment_type">{Object.entries(EMPLOYMENT).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
         <div><label class="label" for="start_date">Starts</label><input class="field" type="date" id="start_date" name="start_date" /></div>
         <div class="self-end"><button class="btn-primary">Add, with the onboarding checklist</button></div>
+        <p class="text-xs text-white/40 sm:col-span-2">Role, team and location suggest what’s already been used; type a new one to add it.</p>
       </form>
+      <datalist id="hr-roles">{choices.roles.map((v) => <option value={v} />)}</datalist>
+      <datalist id="hr-teams">{choices.teams.map((v) => <option value={v} />)}</datalist>
+      <datalist id="hr-locations">{choices.locations.map((v) => <option value={v} />)}</datalist>
     </details>
   )}
 </Admin>

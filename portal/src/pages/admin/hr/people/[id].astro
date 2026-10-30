@@ -8,7 +8,7 @@ import { field } from '../../../../lib/forms';
 import { fileSize, shortDate } from '../../../../lib/format';
 import { privateReady } from '../../../../lib/legal';
 import {
-  DOC_KINDS, EMPLOYMENT, GRANT_COLUMNS, PERSON_COLUMNS, PERSON_STATES, WHO, addChecklist, hrCompanies, invitePerson, markLeft, openPerson, policiesFor, position, sealPerson, todayIn,
+  DOC_KINDS, EMPLOYMENT, GRANT_COLUMNS, PERSON_COLUMNS, PERSON_STATES, WHO, addChecklist, hrChoices, hrCompanies, invitePerson, markLeft, openPerson, policiesFor, position, sealPerson, todayIn,
   type Grant, type Person, type PersonPrivate,
 } from '../../../../lib/hr';
 
@@ -18,6 +18,8 @@ import {
 const svc = serviceClient();
 const access = Astro.locals.access;
 const companies = await hrCompanies(svc, access);
+// Managers (across the companies this admin looks after) and the roles, teams and locations already used.
+const choices = await hrChoices(svc, companies.map((c) => c.id));
 const { data: row } = await svc.from('people').select(PERSON_COLUMNS).eq('id', Astro.params.id ?? '').maybeSingle();
 let p = row as Person | null;
 const company = p ? companies.find((c) => c.id === p!.entity_id) : null;
@@ -35,9 +37,11 @@ if (Astro.request.method === 'POST' && mayDo) {
   try {
     const now = new Date().toISOString();
     if (intent === 'save') {
+      const manager = field(form, 'manager_id') ? choices.managers.find((m) => m.id === field(form, 'manager_id') && m.id !== p.id) : null;
+      if (field(form, 'manager_id') && !manager) throw new Error('Choose their manager from the list.');
       await svc.from('people').update({
         full_name: field(form, 'full_name').slice(0, 200) || p.full_name, email: field(form, 'email').toLowerCase() || null, job_title: field(form, 'job_title').slice(0, 200), team: field(form, 'team').slice(0, 100),
-        employment_type: field(form, 'employment_type') in EMPLOYMENT ? field(form, 'employment_type') : p.employment_type, manager_id: field(form, 'manager_id') || null,
+        employment_type: field(form, 'employment_type') in EMPLOYMENT ? field(form, 'employment_type') : p.employment_type, manager_id: manager?.id ?? null,
         location: field(form, 'location').slice(0, 200), start_date: d('start_date'), notes: field(form, 'notes').slice(0, 4000), updated_at: now,
       }).eq('id', p.id).throwOnError();
       await log('admin_saved_person'); ok = 'Saved.';
@@ -85,11 +89,10 @@ if (Astro.request.method === 'POST' && mayDo) {
   p = (await svc.from('people').select(PERSON_COLUMNS).eq('id', p.id).single()).data as Person;
 }
 
-const [{ data: tasks }, { data: docs }, { data: grantRows }, { data: colleagues }, policies, { data: acks }] = await Promise.all([
+const [{ data: tasks }, { data: docs }, { data: grantRows }, policies, { data: acks }] = await Promise.all([
   svc.from('person_tasks').select('id, kind, title, who, due_on, done_at').eq('person_id', p.id).order('kind').order('sort'),
   svc.from('person_documents').select('id, title, kind, file_path, file_name, size_bytes, visible_to_employee, created_at').eq('person_id', p.id).order('created_at', { ascending: false }),
   svc.from('equity_grants').select(`${GRANT_COLUMNS}, equity_plans(name), equity_exercises(number, status)`).eq('person_id', p.id).order('grant_date'),
-  svc.from('people').select('id, full_name').eq('entity_id', company.id).neq('id', p.id).neq('status', 'left').order('full_name'),
   policiesFor(svc, company.id),
   svc.from('policy_acks').select('policy_id, version, acked_at').eq('person_id', p.id),
 ]);
@@ -135,11 +138,14 @@ const checklist = (kind: 'onboarding' | 'offboarding') => (tasks ?? []).filter((
           <h2 class="font-display text-lg font-bold sm:col-span-2">Details</h2>
           <div><label class="label" for="full_name">Full name</label><input class="field" id="full_name" name="full_name" value={p.full_name} /></div>
           <div><label class="label" for="email">Work email</label><input class="field" type="email" id="email" name="email" value={p.email ?? ''} /></div>
-          <div><label class="label" for="job_title">Role</label><input class="field" id="job_title" name="job_title" value={p.job_title} /></div>
-          <div><label class="label" for="team">Team</label><input class="field" id="team" name="team" value={p.team} /></div>
+          <div><label class="label" for="job_title">Role</label><input class="field" id="job_title" name="job_title" value={p.job_title} list="hr-roles" autocomplete="off" /></div>
+          <div><label class="label" for="team">Team</label><input class="field" id="team" name="team" value={p.team} list="hr-teams" autocomplete="off" /></div>
           <div><label class="label" for="employment_type">Employment</label><select class="field" id="employment_type" name="employment_type">{Object.entries(EMPLOYMENT).map(([k, l]) => <option value={k} selected={k === p!.employment_type}>{l}</option>)}</select></div>
-          <div><label class="label" for="manager_id">Manager</label><select class="field" id="manager_id" name="manager_id"><option value="">—</option>{(colleagues ?? []).map((c) => <option value={c.id} selected={c.id === p!.manager_id}>{c.full_name}</option>)}</select></div>
-          <div><label class="label" for="location">Location</label><input class="field" id="location" name="location" value={p.location} /></div>
+          <div><label class="label" for="manager_id">Manager</label><select class="field" id="manager_id" name="manager_id"><option value="">No manager (they lead the company)</option>{companies.map((c) => { const list = choices.managers.filter((x) => x.entity_id === c.id && x.id !== p!.id); return list.length > 0 && <optgroup label={c.display_name}>{list.map((x) => <option value={x.id} selected={x.id === p!.manager_id}>{x.full_name}{x.job_title && ` · ${x.job_title}`}</option>)}</optgroup>; })}</select></div>
+          <div><label class="label" for="location">Location</label><input class="field" id="location" name="location" value={p.location} list="hr-locations" autocomplete="off" /></div>
+          <datalist id="hr-roles">{choices.roles.map((v) => <option value={v} />)}</datalist>
+          <datalist id="hr-teams">{choices.teams.map((v) => <option value={v} />)}</datalist>
+          <datalist id="hr-locations">{choices.locations.map((v) => <option value={v} />)}</datalist>
           <div><label class="label" for="start_date">Started</label><input class="field" type="date" id="start_date" name="start_date" value={p.start_date ?? ''} /></div>
           <div class="sm:col-span-2"><label class="label" for="notes">Notes</label><textarea class="field min-h-16" id="notes" name="notes">{p.notes}</textarea></div>
           {mayDo && <div class="sm:col-span-2"><button class="btn-ghost" name="intent" value="save">Save</button></div>}

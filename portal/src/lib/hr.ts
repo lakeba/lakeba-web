@@ -55,6 +55,19 @@ export function monthsBetween(a: string, b: string) {
 }
 
 /** Companies whose HR this person may see (or change, with "do"). */
+/**
+ * For the add and edit forms (Admin → HR): who can be someone's manager (current people in the companies this
+ * admin looks after, across companies, so a group executive can manage a venture's staff), and the roles,
+ * teams and locations already used, offered as suggestions so the list grows as people are added.
+ */
+export async function hrChoices(svc: Svc, companyIds: string[]) {
+  const { data } = await svc.from('people').select('id, entity_id, full_name, job_title, team, location, status')
+    .in('entity_id', companyIds.length ? companyIds : ['00000000-0000-0000-0000-000000000000']).order('full_name');
+  const rows = (data ?? []) as { id: string; entity_id: string; full_name: string; job_title: string | null; team: string | null; location: string | null; status: string }[];
+  const used = (k: 'job_title' | 'team' | 'location') => [...new Set(rows.map((r) => r[k]?.trim()).filter((v): v is string => Boolean(v)))].sort((a, b) => a.localeCompare(b));
+  return { managers: rows.filter((r) => r.status !== 'left'), roles: used('job_title'), teams: used('team'), locations: used('location') };
+}
+
 export async function hrCompanies(svc: Svc, access: Access, level: 'view' | 'do' = 'view') {
   const ids = access.companies(`hr.${level}`);
   let q = svc.from('entities').select('id, code, display_name, legal_name').order('sort');
