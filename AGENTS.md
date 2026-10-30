@@ -37,6 +37,8 @@ changes or removes something people use, go through this list in the same change
    `src/lib/permissions.ts` (and any exception in `src/lib/access.ts`), the built-in roles' defaults,
    and `src/lib/admin-paths.ts` if its address differs from its file.
 5. **Translations**: every investor-facing `t('…')` text in `src/i18n/` in Spanish, Italian and Chinese.
+   No text written straight into a shareholder page or component. The admin, and notifications, emails and
+   phone alerts, stay in English.
 6. **What's new** (`src/lib/whats-new.ts`): one line for changes people would notice.
 7. **Guided tours** (`src/lib/tours.ts`): if the change moves or removes something a tour points at
    (`data-tour="…"`), update the tour; a feature people should be shown can get a short tour and a

@@ -123,6 +123,31 @@ for (const [file, src] of text) {
 }
 for (const [what, file] of missing) errors.push(`Translations: no ${what.slice(0, 2) === 'es' ? 'Spanish' : what.slice(0, 2) === 'it' ? 'Italian' : 'Chinese'} for "${what.slice(4)}" (${file}).`);
 
+// Text written straight into a shareholder page or component (not through t()) stays in English for everyone.
+// Components count when a shareholder page, layout or another such component uses them.
+const shown = (file) => /\.astro$/.test(file) && /^src\/(pages|layouts|components)\//.test(file) && !ENGLISH_ONLY.some((re) => re.test(file));
+const investorFiles = new Set([...text.keys()].filter((f) => shown(f) && !f.startsWith('src/components/')));
+for (let grew = true; grew;) {
+  grew = false;
+  for (const f of [...investorFiles]) for (const m of text.get(f).matchAll(/components\/((?:[\w-]+\/)*[\w-]+\.astro)/g)) {
+    const c = `src/components/${m[1]}`;
+    if (text.has(c) && shown(c) && !investorFiles.has(c)) { investorFiles.add(c); grew = true; }
+  }
+}
+// Names and words that are the same in every language.
+const SAME_EVERYWHERE = /^(LinkedIn|Lakeba|Microsoft 365|Mac:|Windows:|Linux:|Android:|iPhone|iPad|Email|Password|Passkey|FY\d*|PDF|CSV|AI|[\w.+-]+@[\w.-]+|[\W\d_]*)$/;
+for (const f of investorFiles) {
+  const src = text.get(f).replace(/^---[\s\S]*?\n---/, '').replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>|<!--[\s\S]*?-->/g, '');
+  let depth = 0;
+  let flat = '';
+  for (const ch of src) { if (ch === '{') depth++; else if (ch === '}') depth = Math.max(0, depth - 1); flat += depth ? ' ' : ch; }
+  const found = new Set([
+    ...[...flat.matchAll(/>([^<>]*[A-Za-z]{2,}[^<>]*)</g)].map((m) => m[1].trim().replace(/\s+/g, ' ')),
+    ...[...flat.matchAll(/\s(?:placeholder|aria-label|title|alt)="([^"]*[A-Za-z]{2,}[^"]*)"/g)].map((m) => m[1].trim()),
+  ].filter((x) => x && !SAME_EVERYWHERE.test(x)));
+  for (const x of found) errors.push(`Translations: "${x.slice(0, 80)}" is written straight into ${f}, so it shows in English for everyone. Use t('…').`);
+}
+
 // ── 5b. Guided tours ───────────────────────────────────────────────────────────────────────────────
 // Every step points at an element that exists (data-tour="…"; nav-… are the portal's menu links), shareholder
 // tours are translated, and What's new only offers tours that exist.

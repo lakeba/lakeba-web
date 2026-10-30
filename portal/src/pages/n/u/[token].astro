@@ -7,6 +7,7 @@ import { recipientByToken, unsubscribe } from '../../../lib/newsletter';
 // Unsubscribe from newsletters. Opening the page doesn't unsubscribe (mail
 // scanners open links); the button does, and so does a mail app's built-in
 // "Unsubscribe" (a one-click POST, RFC 8058).
+const { t } = Astro.locals;
 const svc = serviceClient();
 const r = await recipientByToken(svc, Astro.params.token ?? '');
 let done = Boolean(r?.unsubscribed_at);
@@ -18,14 +19,14 @@ if (r && Astro.request.method === 'POST') {
 Astro.response.headers.set('Cache-Control', 'no-store');
 ---
 
-<Auth title="Newsletter emails">
-  {!r ? <Alert tone="error">This link is not valid.</Alert> : done ? (
-    <div class="space-y-4"><Alert tone="success">Done: {r.email} won't receive our newsletters any more.</Alert>
-      <p class="text-sm text-white/55">{r.user_id ? 'Formal notices, such as notices of meetings, are still sent to you. You can turn newsletters back on in the investor portal under Profile → Notifications.' : 'You can subscribe again on our website at any time.'}</p></div>
+<Auth title={t('Newsletter emails')}>
+  {!r ? <Alert tone="error">{t('This link is not valid.')}</Alert> : done ? (
+    <div class="space-y-4"><Alert tone="success">{t('Done: {email} won’t receive our newsletters any more.', { email: r.email })}</Alert>
+      <p class="text-sm text-white/55">{r.user_id ? t('Formal notices, such as notices of meetings, are still sent to you. You can turn newsletters back on in the investor portal under Profile → Notifications.') : t('You can subscribe again on our website at any time.')}</p></div>
   ) : (
     <form method="post" class="space-y-4">
-      <p class="text-sm text-white/65">Stop newsletter emails to <strong class="text-white">{r.email}</strong>?</p>
-      <button class="btn-primary w-full">Unsubscribe</button>
+      <p class="text-sm text-white/65">{t('Stop newsletter emails to {email}?', { email: r.email })}</p>
+      <button class="btn-primary w-full">{t('Unsubscribe')}</button>
     </form>
   )}
 </Auth>
