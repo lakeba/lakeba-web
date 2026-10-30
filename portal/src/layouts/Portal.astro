@@ -9,6 +9,7 @@ import { accentOf, brandOf } from '../lib/brand';
 import NoteBanner from '../components/NoteBanner.astro';
 import { HTML_LANG } from '../lib/i18n';
 import { ADMIN_KINDS, workHome } from '../lib/view-mode';
+import Tour from '../components/Tour.astro';
 import type { AdminScope } from '../lib/admin-company';
 interface Props {
   title: string;
@@ -48,6 +49,11 @@ const nav: { href: string; label: string; tag?: string }[] = adminMode ? workNav
   ...(view.on ? [] : workNav),
 ];
 const home = adminMode ? workHome(work) : '/';
+// Guided tours (lib/tours.ts): elements are marked data-tour; "Take the tour" replays the one for this view.
+const tourOf = (href: string) => `nav-${href === '/' ? 'home' : href.slice(1).replace(/\//g, '-')}`;
+const tourHref = adminMode || (view.offered && view.mode === 'all' && !view.investor)
+  ? (work.admin ? '/admin?tour=staff' : work.toSign ? '/sign?tour=director' : null)
+  : '/?tour=investor';
 // Phones: four main sections in the bottom bar; everything else under More.
 const PRIMARY = adminMode ? workNav.map((n) => n.href) : ['/', '/documents', '/agm', '/news'];
 const primary = nav.filter((n) => PRIMARY.includes(n.href));
@@ -117,7 +123,7 @@ const here = `${path}${Astro.url.search}`;
         )}
         {onAdmin ? (adminFilter && (adminFilter.scope.companies.length > 1 ? (
           <details data-menu class="relative mr-auto">
-            <summary class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label="Company">
+            <summary data-tour="admin-company" class="flex cursor-pointer list-none items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/85 hover:bg-white/5" aria-label="Company">
               {filterActive ? <><span class="size-2.5 rounded-full" style={`background:${filterActive.brand_color ?? '#2563EB'}`}></span><span class="max-w-[10rem] truncate font-medium">{filterActive.display_name}</span></> : <span class="font-medium">All companies</span>}
               <svg viewBox="0 0 20 20" class="size-4 text-white/45" fill="currentColor" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
             </summary>
@@ -137,7 +143,7 @@ const here = `${path}${Astro.url.search}`;
             </div>
           </details>
         ) : adminFilter.scope.companies[0] && (
-          <span class="mr-auto flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm font-medium text-white/85">
+          <span data-tour="admin-company" class="mr-auto flex items-center gap-2 rounded-full border border-white/10 px-3 py-1.5 text-sm font-medium text-white/85">
             <span class="size-2.5 rounded-full" style={`background:${adminFilter.scope.companies[0].brand_color ?? '#2563EB'}`}></span>{adminFilter.scope.companies[0].display_name}
           </span>
         ))) : company && (companies.length > 1 ? (
@@ -165,18 +171,19 @@ const here = `${path}${Astro.url.search}`;
         ))}
         <div class="flex items-center gap-2">
           <ThemeToggle />
-          <a href="/inbox" class="relative grid size-9 place-items-center rounded-full text-white/60 transition hover:bg-white/5 hover:text-white" aria-label={unread ? t('Inbox, {n} unread', { n: unread }) : t('Inbox')}>
+          <a href="/inbox" data-tour="inbox" class="relative grid size-9 place-items-center rounded-full text-white/60 transition hover:bg-white/5 hover:text-white" aria-label={unread ? t('Inbox, {n} unread', { n: unread }) : t('Inbox')}>
             <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 1112 0c0 7 3 9 3 9H3s3-2 3-9M10.3 21a1.94 1.94 0 003.4 0" /></svg>
             {unread ? <span class="absolute -top-0.5 -right-0.5 grid min-w-4 place-items-center rounded-full bg-lk-orange px-1 text-[10px] font-bold text-ink">{unread > 9 ? '9+' : unread}</span> : null}
           </a>
           <details data-menu class="relative">
-            <summary class="grid size-9 cursor-pointer list-none place-items-center overflow-hidden rounded-full bg-gradient-to-br from-lk-blue to-lk-green font-display text-sm font-bold text-white" title={profile?.email}>{profile?.avatar_path ? <img src={`/avatar/${profile.avatar_path}`} alt="" class="size-full object-cover" /> : initials}</summary>
+            <summary data-tour="account-menu" class="grid size-9 cursor-pointer list-none place-items-center overflow-hidden rounded-full bg-gradient-to-br from-lk-blue to-lk-green font-display text-sm font-bold text-white" title={profile?.email}>{profile?.avatar_path ? <img src={`/avatar/${profile.avatar_path}`} alt="" class="size-full object-cover" /> : initials}</summary>
             <div class="absolute border border-white/10 bg-ink right-0 mt-2 w-56 rounded-2xl p-2 text-sm shadow-2xl shadow-black/50">
               <p class="truncate px-3 py-2 text-xs text-white/45">{profile?.email}</p>
               <a href="/profile" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Profile')}</a>
               <a href="/account/security" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Security')}</a>
               <a href="/account/notifications" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Notifications')}</a>
               <a href="/inbox" class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Inbox')}</a>
+              {tourHref && <a href={tourHref} class="block rounded-lg px-3 py-2 hover:bg-white/5">{t('Take the tour')}</a>}
               {view.offered && (
                 <form method="post" action="/account/view" class="border-t border-white/5 mt-1 pt-1">
                   <input type="hidden" name="next" value={here} />
@@ -193,7 +200,7 @@ const here = `${path}${Astro.url.search}`;
       </div>
       <nav class="container-portal -mb-px hidden gap-1 overflow-x-auto pb-px text-sm [scrollbar-width:none] sm:flex" aria-label={t('Portal')}>
         {nav.map((n) => (
-          <a href={n.href} aria-current={isActive(n.href) ? 'page' : undefined}
+          <a href={n.href} data-tour={tourOf(n.href)} aria-current={isActive(n.href) ? 'page' : undefined}
             class:list={['shrink-0 border-b-2 px-3 py-3 transition', isActive(n.href) ? 'border-lk-blue text-white' : 'border-transparent text-white/55 hover:text-white']}>{n.label}{n.tag && <span class="ml-1.5 rounded bg-lk-blue/15 px-1 py-px text-[10px] font-semibold text-lk-blue">{n.tag}</span>}</a>
         ))}
       </nav>
@@ -202,7 +209,7 @@ const here = `${path}${Astro.url.search}`;
     <nav class="fixed inset-x-0 bottom-0 z-40 border-t border-white/10 bg-ink/95 pb-[env(safe-area-inset-bottom)] backdrop-blur sm:hidden" aria-label={t('Portal')} data-bottom-nav>
       <div class="grid grid-cols-5 text-[11px]">
         {primary.map((n) => (
-          <a href={n.href} aria-current={isActive(n.href) ? 'page' : undefined} class:list={['flex flex-col items-center gap-1 px-1 py-2.5', isActive(n.href) ? 'text-lk-blue' : 'text-white/55']}>
+          <a href={n.href} data-tour={tourOf(n.href)} aria-current={isActive(n.href) ? 'page' : undefined} class:list={['flex flex-col items-center gap-1 px-1 py-2.5', isActive(n.href) ? 'text-lk-blue' : 'text-white/55']}>
             <svg viewBox="0 0 24 24" class="size-5" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d={ICONS[n.href] ?? ICONS.more} /></svg>
             <span class="truncate">{n.label}</span>
           </a>
@@ -223,6 +230,7 @@ const here = `${path}${Astro.url.search}`;
       <NoteBanner />
       <slot />
     </main>
+    <Tour />
     <footer class="container-portal flex flex-col justify-between gap-2 border-t border-white/5 py-8 pb-28 text-xs text-white/35 sm:flex-row sm:pb-8">
       <p>{isGroup || !company ? `© ${new Date().getFullYear()} Lakeba Group Limited` : t('{company} Investor Portal, powered by Lakeba', { company: company.display_name })}</p>
       <p>{t('Questions:')} {features.boardQa && !adminMode && <><a href="/board" class="hover:text-white">{t('Board Q&A')}</a> · </>}<a href={`mailto:${contact}`} class="hover:text-white">{contact}</a> · <a href="/go/linkedin?src=footer" target="_blank" rel="noopener" class="inline-flex items-center gap-1 hover:text-white"><LinkedInIcon class="size-3.5" /> LinkedIn</a></p>

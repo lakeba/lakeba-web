@@ -104,12 +104,12 @@ const current = visible.flatMap((g) => g.items).find((i) => active(i.href, i))?.
         <div class="mt-2" data-admin-menu-slot></div>
       </details>
       <p class="eyebrow hidden lg:block" data-admin-eyebrow>Admin</p>
-      <nav class="mt-2 hidden text-sm lg:mt-4 lg:block" aria-label="Admin" data-admin-nav>
+      <nav class="mt-2 hidden text-sm lg:mt-4 lg:block" aria-label="Admin" data-admin-nav data-tour="admin-menu">
         {mayOpenItem(access, '/admin') && <a href="/admin" aria-current={active('/admin') ? 'page' : undefined}
           class:list={['block rounded-lg px-3 py-2 transition', active('/admin') ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>Overview</a>}
-        {approvalsOpen && <a href="/admin/approvals" aria-current={active('/admin/approvals') ? 'page' : undefined}
+        {approvalsOpen && <a href="/admin/approvals" data-tour="admin-approvals" aria-current={active('/admin/approvals') ? 'page' : undefined}
           class:list={['flex items-center justify-between rounded-lg px-3 py-2 transition', active('/admin/approvals') ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>Approvals{waitingCount > 0 && <span class="rounded-full bg-lk-orange/20 px-2 text-xs text-lk-orange" aria-label={`${waitingCount} waiting`}>{waitingCount}</span>}</a>}
-        <a href="/admin/whats-new" aria-current={active('/admin/whats-new') ? 'page' : undefined}
+        <a href="/admin/whats-new" data-tour="admin-whats-new" aria-current={active('/admin/whats-new') ? 'page' : undefined}
           class:list={['flex items-center justify-between rounded-lg px-3 py-2 transition', active('/admin/whats-new') ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>What's new{recentNews && <span class="rounded bg-lk-blue/15 px-1.5 text-[10px] font-semibold text-lk-blue">NEW</span>}</a>
         {visible.map((g) => {
           const open = g.items.some((i) => active(i.href, i));

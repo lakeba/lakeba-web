@@ -116,7 +116,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
     if (!connected(t) || t.meeting_id !== tabletPath[1]) {
       return locals.writing ? new Response('This tablet isn’t connected to this meeting.', { status: 403 }) : redirect('/tablet');
     }
-    const { data: person } = await svc.from('profiles').select('email, first_name, last_name, role, locale, avatar_path').eq('id', t.paired_by).maybeSingle();
+    const { data: person } = await svc.from('profiles').select('email, first_name, last_name, role, locale, avatar_path, tours_seen').eq('id', t.paired_by).maybeSingle();
     if (!person) return locals.writing ? new Response('Forbidden', { status: 403 }) : redirect('/tablet');
     locals.user = { id: t.paired_by, email: person.email ?? '', aal: 'aal2', strongBy: 'tablet', codeVerified: false };
     locals.tablet = { id: t.id, meetingId: t.meeting_id, kind: t.kind };
@@ -144,7 +144,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   const { data: profile } = await locals.supabase
     .from('profiles')
-    .select('email, first_name, last_name, role, locale, avatar_path')
+    .select('email, first_name, last_name, role, locale, avatar_path, tours_seen')
     .eq('id', locals.user.id)
     .single();
   locals.profile = profile;

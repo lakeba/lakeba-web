@@ -38,9 +38,12 @@ changes or removes something people use, go through this list in the same change
    and `src/lib/admin-paths.ts` if its address differs from its file.
 5. **Translations**: every investor-facing `t('…')` text in `src/i18n/` in Spanish, Italian and Chinese.
 6. **What's new** (`src/lib/whats-new.ts`): one line for changes people would notice.
-7. **Docs**: `portal/docs/` (deploy, integrations, online meetings…) and the Android app (`android/`)
+7. **Guided tours** (`src/lib/tours.ts`): if the change moves or removes something a tour points at
+   (`data-tour="…"`), update the tour; a feature people should be shown can get a short tour and a
+   `tour:` on its What's new line ("Show me"). Shareholder tours need translations too.
+8. **Docs**: `portal/docs/` (deploy, integrations, online meetings…) and the Android app (`android/`)
    when the change touches them.
 
-`npm run check:portal` (in `portal/`) checks 1–5 and reminds about 6. It runs before every deploy and
+`npm run check:portal` (in `portal/`) checks 1–5 and 7 and reminds about 6. It runs before every deploy and
 monthly (`.github/workflows/portal-checks.yml`). It can't judge whether something *should* notify
 people or appear in What's new: that part is this list.

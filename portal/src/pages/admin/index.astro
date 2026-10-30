@@ -64,7 +64,7 @@ const stats = [
   <PageHeader title="Portal administration" subtitle={scope.isGroupAdmin ? 'Investors, holdings, documents and shareholder questions.' : `Administration for ${scope.companies.map((c) => c.display_name).join(', ')}.`} />
   <GettingStarted cards={gsCards} ventures={gsVentures} />
 
-  <section class="card mb-4" aria-labelledby="todo-title">
+  <section class="card mb-4" aria-labelledby="todo-title" data-tour="admin-todo">
     <h2 id="todo-title" class="font-display text-lg font-bold">To do</h2>
     {todo.length ? (
       <ul class="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">

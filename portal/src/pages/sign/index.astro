@@ -18,10 +18,10 @@ const when = (iso: string | null) => (iso ? new Intl.DateTimeFormat('en-AU', { d
 <Portal title="To sign">
   <PageHeader title="To sign" subtitle="Directors’ resolutions and minutes sent to you to sign." />
   {waiting.length ? (
-    <section class="card mb-6 p-0"><ul class="divide-y divide-white/5">
+    <section class="card mb-6 p-0" data-tour="sign-list"><ul class="divide-y divide-white/5">
       {waiting.map((r) => <li><a class="flex flex-wrap items-baseline justify-between gap-2 px-5 py-4 hover:bg-white/[0.04]" href={`/sign/${r.board_papers.id}`}><span><span class="font-medium text-white">{r.board_papers.title}</span><span class="block text-xs text-white/45">{r.board_papers.entities?.display_name} · {r.board_papers.kind === 'minutes' ? 'Minutes' : 'Resolution'} · sent {when(r.board_papers.sent_at)}</span></span><span class="text-sm text-lk-orange">Waiting for you</span></a></li>)}
     </ul></section>
-  ) : <div class="mb-6"><Empty title="Nothing to sign">When a resolution or minutes are sent to you, they appear here and you get an email.</Empty></div>}
+  ) : <div class="mb-6" data-tour="sign-list"><Empty title="Nothing to sign">When a resolution or minutes are sent to you, they appear here and you get an email.</Empty></div>}
   {done.length > 0 && (
     <section class="card p-0">
       <h2 class="px-5 pt-5 font-display text-lg font-bold">Earlier</h2>

@@ -58,14 +58,14 @@ const { data: people } = await svc.from('profiles').select('email').order('email
 <Admin title="Audit log">
   <SystemNav />
   <PageHeader title="Audit log" subtitle="Sign-ins, document opens and every admin change." >
-    <a href={csvHref} class="btn-ghost">Export CSV</a>
+    <a href={csvHref} class="btn-ghost" data-tour="audit-export">Export CSV</a>
   </PageHeader>
 
   {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
   <form method="get" class="card mb-6" data-audit-filters>
     <p class="label">Show events where</p>
-    <div class="mt-2 space-y-2" data-rules>
+    <div class="mt-2 space-y-2" data-rules data-tour="audit-rules">
       {ruleRows.map((r) => (
         <div class="flex flex-wrap items-center gap-2" data-rule>
           <select class="field w-32" name="f" aria-label="Field" data-rule-field>
@@ -89,7 +89,7 @@ const { data: people } = await svc.from('profiles').select('email').order('email
     <datalist id="audit-people">{(people ?? []).map((p) => <option value={p.email} />)}</datalist>
     <datalist id="audit-actions">{KNOWN_ACTIONS.map((a) => <option value={a}>{actionLabel(a)}</option>)}</datalist>
     <div class="mt-4 flex flex-wrap items-center gap-3">
-      <button type="button" class="btn-ghost" data-rule-add>+ Add condition</button>
+      <button type="button" class="btn-ghost" data-rule-add data-tour="audit-add">+ Add condition</button>
       <button class="btn-primary">Filter</button>
       <a href="/admin/audit" class="btn text-white/50 hover:text-white">Clear</a>
       {filters.rules.length > 0 && <span class="text-xs text-white/40">All conditions must match.</span>}

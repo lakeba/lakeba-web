@@ -4,6 +4,7 @@ import PageHeader from '../../components/PageHeader.astro';
 import { WHATS_NEW } from '../../lib/whats-new';
 import { mayOpenItem } from '../../lib/access';
 import { toPage } from '../../lib/admin-paths';
+import { tourByKey } from '../../lib/tours';
 
 // Admin → What's new: the changes people would notice, newest first (lib/whats-new.ts). Each person sees the
 // entries for the areas they can open.
@@ -24,7 +25,10 @@ const days = [...Map.groupBy(entries, (e) => e.date)];
             <li class="card">
               <p class="font-semibold text-white">{e.title}</p>
               <p class="mt-1 text-sm text-white/60">{e.body}</p>
-              {e.link && (!e.link.startsWith('/admin') || mayOpenItem(access, toPage(e.link))) && <a href={e.link} class="mt-2 inline-block text-sm text-lk-blue hover:underline">Open →</a>}
+              <p class="mt-2 flex flex-wrap gap-4 text-sm">
+                {e.link && (!e.link.startsWith('/admin') || mayOpenItem(access, toPage(e.link))) && <a href={e.link} class="text-lk-blue hover:underline">Open →</a>}
+                {(() => { const tour = tourByKey(e.tour); return tour && (!tour.start.startsWith('/admin') || mayOpenItem(access, toPage(tour.start))) && <a href={`${tour.start}?tour=${tour.key}`} class="text-lk-blue hover:underline">Show me ▸</a>; })()}
+              </p>
             </li>
           ))}
         </ul>

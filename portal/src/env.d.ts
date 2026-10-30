@@ -20,6 +20,8 @@ declare namespace App {
       locale: import('./lib/i18n').Locale | null;
       /** Their profile photo in the "avatars" bucket (served at /avatar/<file>), if any. */
       avatar_path: string | null;
+      /** Guided tours they've finished or closed (lib/tours.ts). */
+      tours_seen: string[];
     } | null;
     /** Whether the user has a verified MFA factor. */
     mfaEnrolled: boolean;

@@ -16,6 +16,7 @@ import { execFileSync } from 'node:child_process';
 import { CATEGORIES } from '../src/lib/notification-events.ts';
 import { AREAS } from '../src/lib/permissions.ts';
 import { toShown } from '../src/lib/admin-paths.ts';
+import { TOURS, TOUR_BUTTONS } from '../src/lib/tours.ts';
 
 const root = new URL('..', import.meta.url).pathname;
 const errors = [];
@@ -121,6 +122,26 @@ for (const [file, src] of text) {
   }
 }
 for (const [what, file] of missing) errors.push(`Translations: no ${what.slice(0, 2) === 'es' ? 'Spanish' : what.slice(0, 2) === 'it' ? 'Italian' : 'Chinese'} for "${what.slice(4)}" (${file}).`);
+
+// ── 5b. Guided tours ───────────────────────────────────────────────────────────────────────────────
+// Every step points at an element that exists (data-tour="…"; nav-… are the portal's menu links), shareholder
+// tours are translated, and What's new only offers tours that exist.
+const portalLayout = read('src/layouts/Portal.astro');
+for (const tour of TOURS) {
+  for (const step of tour.steps) {
+    const nav = step.el.startsWith('nav-') && [`'/${step.el.slice(4)}'`, `'/${step.el.slice(4).replace(/-/g, '/')}'`].some((h) => portalLayout.includes(`href: ${h}`));
+    if (!nav && !everything.includes(`data-tour="${step.el}"`)) errors.push(`Tours: "${tour.key}" points at data-tour="${step.el}", which no page has.`);
+  }
+  if (tour.translate) {
+    for (const key of [...tour.steps.flatMap((s) => [s.title, s.body]), ...TOUR_BUTTONS]) {
+      for (const lang of ['es', 'it', 'zh']) if (!has(lang, key)) missing.set(`${lang}: ${key}`, 'src/lib/tours.ts');
+    }
+  }
+}
+for (const tour of read('src/lib/whats-new.ts').matchAll(/tour: '([^']+)'/g)) {
+  if (!TOURS.some((t) => t.key === tour[1])) errors.push(`What's new: an entry offers the tour "${tour[1]}", which lib/tours.ts doesn't have.`);
+}
+for (const [what, file] of missing) if (file === 'src/lib/tours.ts') errors.push(`Translations: no ${what.slice(0, 2) === 'es' ? 'Spanish' : what.slice(0, 2) === 'it' ? 'Italian' : 'Chinese'} for "${what.slice(4)}" (${file}).`);
 
 // ── 6. What's new ───────────────────────────────────────────────────────────────────────────────────
 try {

@@ -127,7 +127,7 @@ const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder
   <AccountNav title={t('Profile')} />
   {!owned.length && shareError && <div class="mb-4 max-w-4xl"><Alert tone="error">{shareError}</Alert></div>}
   <div class="grid max-w-4xl gap-4 lg:grid-cols-2">
-    <section class="card lg:col-span-2" id="photo">
+    <section class="card lg:col-span-2" id="photo" data-tour="profile-photo">
       <h2 class="text-lg font-bold">{t('Profile photo')}</h2>
       <p class="mt-1 text-sm text-white/55">{t('Shown in the portal next to your name.')}</p>
       {photoNotice && <div class="mt-4"><Alert tone="success">{photoNotice}</Alert></div>}
@@ -190,7 +190,7 @@ const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder
         })}
       </ul>
     </section>
-    <form method="post" class="card h-fit lg:col-span-2" id="language">
+    <form method="post" class="card h-fit lg:col-span-2" id="language" data-tour="profile-language">
       <input type="hidden" name="intent" value="language" />
       <h2 class="text-lg font-bold">{t('Language')}</h2>
       <p class="mt-1 text-sm text-white/55">{t('The language of the portal’s menus, pages and buttons. Documents and news stay in the language they were written in.')}</p>

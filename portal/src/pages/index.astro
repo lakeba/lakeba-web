@@ -18,8 +18,6 @@ const { company, companies, t, fmt } = Astro.locals;
 const { aud, audPrecise, longDate, percent, shares, shortDate } = fmt;
 // Sent here from a venture's own domain (or a company switch) this person doesn't belong to.
 const unavailable = Astro.url.searchParams.has('unavailable');
-// "Ask Lakeba", "Ask Ezifin", or the company's own name for it.
-const askLabel = company?.ask_name?.trim() || t('Ask {brand}', { brand: brandName(company) });
 const isGroup = company?.relationship === 'group';
 const entityId = company?.id ?? '00000000-0000-0000-0000-000000000000';
 const [allPositions, holderIds, onBoard, allPrices] = await Promise.all([
@@ -75,9 +73,6 @@ const liquidity = settings?.value as { title: string; body: string; url: string;
 const priceWide = positions.length > 0 && positions.length % 2 === 0;
 const meeting = meetings?.[0];
 const firstName = Astro.locals.profile?.first_name;
-// A short welcome for new investors: their first 30 days, until they close it (remembered on this device).
-const { data: me } = await supabase.from('profiles').select('first_signed_in_at').eq('id', userId).maybeSingle();
-const showWelcome = !Astro.locals.access.staff && !Astro.cookies.get('welcome_done') && Boolean(me?.first_signed_in_at) && Date.now() - new Date(me!.first_signed_in_at!).getTime() < 30 * 86_400_000;
 const toneStyles = { info: 'border-lk-blue/30 bg-lk-blue/10', success: 'border-lk-green/30 bg-lk-green/10', warning: 'border-lk-orange/40 bg-lk-orange/10' };
 const lastClosedFy = fyOf(new Date().toISOString().slice(0, 10)) - 1;
 const fyShort = String(lastClosedFy).slice(2);
@@ -103,22 +98,6 @@ const [noHoldingsBefore, noHoldingsAfter] = t('If you are a shareholder, ask a q
     </div>
   ))}
 
-  {showWelcome && (
-    <section class="card mt-6 bg-gradient-to-br from-lk-blue/15 to-transparent" data-welcome>
-      <div class="flex items-start justify-between gap-4">
-        <div><h2 class="font-display text-xl font-bold">{t('Welcome to the {brand} investor portal', { brand: company && company.relationship !== 'group' ? company.display_name : 'Lakeba' })}</h2>
-          <p class="mt-1 text-sm text-white/60">{t('Everything about your shareholding in one place. A quick guide:')}</p></div>
-        <button type="button" class="text-sm text-white/50 hover:text-white" data-welcome-close aria-label={t('Close the guide')}>{t('Close')} ✕</button>
-      </div>
-      <ul class="mt-5 grid gap-3 text-sm sm:grid-cols-2 lg:grid-cols-4">
-        <li class="rounded-xl border border-white/10 p-4"><p class="font-semibold text-white">{t('Your holdings')}</p><p class="mt-1 text-white/60">{t('Below: your shares, their indicative value, your holding statement and tax-time pack.')}</p></li>
-        <li class="rounded-xl border border-white/10 p-4"><a href="/documents" class="font-semibold text-white hover:underline">{t('Documents')} →</a><p class="mt-1 text-white/60">{t('Annual reports, shareholder updates and meeting papers.')}</p></li>
-        <li class="rounded-xl border border-white/10 p-4"><a href="/agm" class="font-semibold text-white hover:underline">{t('Meetings')} →</a><p class="mt-1 text-white/60">{t('Notices of meeting, proxy voting online and results.')}</p></li>
-        {(Astro.locals.features.boardQa || (Astro.locals.features.ask && company)) && <li class="rounded-xl border border-white/10 p-4"><a href={Astro.locals.features.ask && company ? '/ask' : '/board'} class="font-semibold text-white hover:underline">{t('Questions')} →</a><p class="mt-1 text-white/60">{Astro.locals.features.ask && company && Astro.locals.features.boardQa ? t('{ask} (AI) answers from the documents; Board Q&A reaches the board.', { ask: askLabel }) : Astro.locals.features.boardQa ? t('Board Q&A reaches the board.') : t('{ask} (AI) answers from the documents.', { ask: askLabel })}</p></li>}
-      </ul>
-      <p class="mt-4 text-sm text-white/55">{t('Tip: add a passkey for a quicker, safer sign-in')} · <a href="/account/security" class="text-lk-blue hover:underline">{t('Security')}</a></p>
-    </section>
-  )}
   <div class="mt-6 flex flex-wrap items-end justify-between gap-6">
     <div>
       <p class="text-sm text-white/45">{t('Investor portal')}</p>
@@ -155,7 +134,7 @@ const [noHoldingsBefore, noHoldingsAfter] = t('If you are a shareholder, ask a q
        so a single holding sits next to the price chart. -->
   <div class="mt-10 grid gap-4 lg:grid-cols-2">
     {positions.length ? positions.map((p) => (
-      <article class="card scroll-mt-36" id={holdingAnchor(p.holder.id, p.row.share_class_id)} aria-label={t('Holding: {name}', { name: p.holder.name })}>
+      <article class="card scroll-mt-36" data-tour="holding" id={holdingAnchor(p.holder.id, p.row.share_class_id)} aria-label={t('Holding: {name}', { name: p.holder.name })}>
         <div class="flex items-start justify-between gap-4">
           <div>
             <h2 class="text-lg font-bold">{p.holder.name}</h2>
@@ -321,9 +300,4 @@ const [noHoldingsBefore, noHoldingsAfter] = t('If you are a shareholder, ask a q
 </script>
 
 <script>
-  // Closing the welcome guide: remembered for a year on this device.
-  document.querySelector('[data-welcome-close]')?.addEventListener('click', () => {
-    document.cookie = 'welcome_done=1; max-age=31536000; path=/; samesite=lax';
-    document.querySelector('[data-welcome]')?.remove();
-  });
 </script>
