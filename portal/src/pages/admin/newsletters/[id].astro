@@ -206,7 +206,7 @@ const issueApproval = issue ? await getApproval(svc, 'newsletter', issue.id) : n
     <>
       <p class="mt-6 text-white/65">Start from a template, or let Lakeba AI draft it. Everything stays editable, and news and documents published since the last issue are ticked for you.</p>
       <div class="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-        <form method="post" class="card flex flex-col border border-lk-blue/40 bg-gradient-to-br from-lk-blue/15 to-transparent md:col-span-2 xl:col-span-3">
+        <form method="post" class="card flex flex-col border border-lk-blue/40 bg-gradient-to-br from-lk-blue/15 to-transparent md:col-span-2 xl:col-span-3" data-tour="nl-start">
           <input type="hidden" name="intent" value="from-template" /><input type="hidden" name="template_id" value="blank" />
           <p class="text-xs uppercase tracking-widest text-lk-blue">✨ Build with AI</p>
           <h2 class="mt-2 font-display text-lg font-bold">Start from what you want to say</h2>
@@ -266,7 +266,7 @@ const issueApproval = issue ? await getApproval(svc, 'newsletter', issue.id) : n
   ) : (
     <div class="mt-6">
       <NewsletterEditor kind="issue" record={issue!} scope={scope} postOptions={postOptions ?? []} docOptions={docOptions ?? []} previewUrl={`/admin/newsletters/${issue!.id}/preview`} brand={brand} designErrors={designErrors}>
-        <section slot="side" class="card space-y-4">
+        <section slot="side" class="card space-y-4" data-tour="nl-audience">
           <h2 class="font-display text-lg font-bold">Audience and sending</h2>
           {audience === 'shareholders' ? (
             <>
@@ -281,11 +281,11 @@ const issueApproval = issue ? await getApproval(svc, 'newsletter', issue.id) : n
           ) : <p class="text-sm text-white/65">Public newsletter: goes to people who subscribed on the website.</p>}
           <p class="text-sm text-white/70">Goes to <strong class="text-white">{readers.length}</strong> {readers.length === 1 ? 'person' : 'people'}{audience === 'shareholders' && `, ${readers.filter((r) => r.neverSignedIn).length} of them not yet signed in to the portal (they get a button that signs them in)`}. People who unsubscribed are left out.</p>
           {unreachable.length > 0 && <p class="text-xs text-lk-orange">No email address for {unreachable.length} holder{unreachable.length === 1 ? '' : 's'} ({unreachable.slice(0, 4).join(', ')}{unreachable.length > 4 ? '…' : ''}): link them to a person in Admin → Investors to include them.</p>}
-          <div class="flex flex-wrap gap-2 border-t border-white/5 pt-3">
+          <div class="flex flex-wrap gap-2 border-t border-white/5 pt-3" data-tour="nl-test">
             <button name="intent" value="save" class="btn-ghost">Save</button>
             <button name="intent" value="test" class="btn-ghost">Send me a test</button>
           </div>
-          <div><label class="label" for="scheduled_at">Schedule for (your time)</label>
+          <div data-tour="nl-send"><label class="label" for="scheduled_at">Schedule for (your time)</label>
             <div class="flex flex-wrap gap-2"><input id="scheduled_at" name="scheduled_at" type="datetime-local" value={localDate(issue!.scheduled_at)} class="field min-w-0 flex-1 basis-48" /><button name="intent" value="schedule" class="btn-ghost shrink-0">Schedule</button></div></div>
           {issue!.status === 'scheduled' && <button name="intent" value="cancel-schedule" class="btn-ghost w-full text-sm">Cancel the schedule</button>}
           <input type="hidden" name="expected" value={readers.length} />

@@ -31,7 +31,7 @@ const tab = (m: string) => ['rounded-full border px-4 py-1.5 text-sm', mode === 
 <form method="post" id="nl-form" data-issue={kind === 'issue' ? record.id : ''} data-preview-url={previewUrl} class="nl-editor">
   <input type="hidden" name="mode" value={mode} />
   <div class="mb-4 flex flex-wrap items-center gap-2" data-nl-toolbar>
-    <div class="flex flex-wrap items-center gap-2" role="tablist" aria-label="How to write it">
+    <div class="flex flex-wrap items-center gap-2" role="tablist" aria-label="How to write it" data-tour="nl-modes">
       <button name="intent" value="to-compose" role="tab" aria-selected={mode === 'compose'} class:list={tab('compose')} disabled={mode === 'compose'}>Compose</button>
       <button name="intent" value="to-design" role="tab" aria-selected={mode === 'design'} class:list={tab('design')} disabled={mode === 'design'}>Designer</button>
       <button name="intent" value="to-html" role="tab" aria-selected={mode === 'html'} class:list={tab('html')} disabled={mode === 'html'}>HTML</button>
@@ -178,7 +178,7 @@ const tab = (m: string) => ['rounded-full border px-4 py-1.5 text-sm', mode === 
         </>
       )}
 
-      <div class="grid gap-5 xl:grid-cols-2">
+      <div class="grid gap-5 xl:grid-cols-2" data-tour="nl-content">
         <section class="card">
           <h2 class="font-display text-lg font-bold">{mode === 'compose' ? 'News' : 'News for the news list'}</h2>
           {kind === 'template' ? <p class="mt-1 text-sm text-white/55">Issues pick the news published since their last issue. The preview shows recent news as an example.</p> : (

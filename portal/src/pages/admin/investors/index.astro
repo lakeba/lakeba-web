@@ -193,7 +193,7 @@ import ShareLink from '../../../components/ShareLink.astro';
   {shareLink && <ShareLink url={shareLink} label="Invitation link" />}
 
   {welcomeCompany ? (
-    <details class="card mb-6" open={notYet.length > 0}>
+    <details class="card mb-6" open={notYet.length > 0} data-tour="inv-welcome">
       <summary class="cursor-pointer font-display text-lg font-bold text-white">Welcome {welcomeCompany.display_name} shareholders <span class="ml-2 text-sm font-normal text-white/50">{notYet.length} not yet invited · {candidates.length - notYet.length} invited, not signed in</span></summary>
       <p class="mt-3 text-sm text-white/55">People with a {welcomeCompany.display_name} holding who have never signed in. Each gets an email{welcomeCompany.relationship !== 'group' && ` in ${welcomeCompany.display_name}’s name`} with a link to choose a password (valid for 1 hour; after that, “Forgot password” on the sign-in page). Up to {BATCH} per send; start with a few friendly shareholders.</p>
       {candidates.length ? (
@@ -218,22 +218,22 @@ import ShareLink from '../../../components/ShareLink.astro';
   ) : scope.companies.length > 1 && <p class="mb-6 text-sm text-white/50">Pick a company above to send welcome emails to its shareholders.</p>}
 
   <details class="card mb-6" open={Boolean(error)}>
-    <summary class="cursor-pointer font-display text-lg font-bold text-white">Add an investor</summary>
+    <summary class="cursor-pointer font-display text-lg font-bold text-white" data-tour="inv-add">Add an investor</summary>
     <p class="mt-2 text-sm text-white/55">Adding staff (Admin, Board, Marketing, Legal, Compliance…)? Use <a href="/admin/system/users/new" class="text-lk-blue hover:underline">System → Users → Add person</a>.</p>
     <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
       <div class="sm:col-span-2"><label class="label" for="email">Email</label><input class="field" id="email" name="email" type="email" required /></div>
       <div><label class="label" for="first_name">First name</label><input class="field" id="first_name" name="first_name" /></div>
       <div><label class="label" for="last_name">Last name</label><input class="field" id="last_name" name="last_name" /></div>
-      <div><label class="label" for="holder_id">Holder they invest through</label>
+      <div data-tour="inv-holder"><label class="label" for="holder_id">Holder they invest through</label>
         <select class="field" id="holder_id" name="holder_id" required><option value="">Choose…</option>{(holders ?? []).map((h) => <option value={h.id}>{h.name}</option>)}</select></div>
-      <div><label class="label" for="access">Access</label>
+      <div><label class="label" for="access"><span data-hint="Owner can vote, sell and share the holding. Viewer can only see it: holdings, statements and documents." data-hint-title="Access">Access</span></label>
         <select class="field" id="access" name="access"><option value="owner">Owner (can vote)</option><option value="viewer">Viewer (read only)</option></select></div>
-      <div class="flex flex-wrap items-center gap-3 sm:col-span-2"><button class="btn-primary">Add and send invitation</button><button name="send" value="later" class="btn-ghost">Add without inviting</button>
+      <div class="flex flex-wrap items-center gap-3 sm:col-span-2" data-tour="inv-invite"><button class="btn-primary">Add and send invitation</button><button name="send" value="later" class="btn-ghost">Add without inviting</button>
         <span class="text-xs text-white/45">Without inviting, no email is sent: invite them later from their page or with the welcome emails.</span></div>
     </form>
   </details>
 
-  <form method="get" action="/admin/investors" class="card mb-4 grid gap-3 !p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8" role="search" aria-label="Filter people">
+  <form method="get" action="/admin/investors" class="card mb-4 grid gap-3 !p-4 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-8" role="search" aria-label="Filter people" data-tour="inv-filters">
     {scope.selected && scope.companies.length > 1 && <input type="hidden" name="company" value={scope.selected.code} />}
     {sort !== 'name' && <input type="hidden" name="sort" value={sort} />}
     {dir === -1 && <input type="hidden" name="dir" value="desc" />}
@@ -251,7 +251,7 @@ import ShareLink from '../../../components/ShareLink.astro';
     </div>
   </form>
 
-  <div class="card overflow-x-auto !p-0">
+  <div class="card overflow-x-auto !p-0" data-tour="inv-table">
     <table class="w-full text-left text-sm">
       <thead class="border-b border-white/5 text-xs uppercase tracking-widest text-white/40">
         <tr><th class="px-5 py-3 font-medium" aria-sort={ariaSort('name')}><a href={sortHref('name')} class="inline-flex items-center gap-1 hover:text-white">Name<span class="text-[10px]">{sortMark('name')}</span></a></th><th class="px-5 py-3 font-medium" aria-sort={ariaSort('role')}><a href={sortHref('role')} class="inline-flex items-center gap-1 hover:text-white">Role<span class="text-[10px]">{sortMark('role')}</span></a></th><th class="px-5 py-3 font-medium">Holdings</th><th class="px-5 py-3 font-medium text-right" aria-sort={ariaSort('shares')}><a href={sortHref('shares')} class="inline-flex items-center gap-1 hover:text-white">Shares<span class="text-[10px]">{sortMark('shares')}</span></a></th><th class="px-5 py-3 font-medium text-right" aria-sort={ariaSort('value')}><a href={sortHref('value')} class="inline-flex items-center gap-1 hover:text-white">Indicative value<span class="text-[10px]">{sortMark('value')}</span></a></th><th class="px-5 py-3 font-medium" aria-sort={ariaSort('mfa')}><a href={sortHref('mfa')} class="inline-flex items-center gap-1 hover:text-white">Two-step<span class="text-[10px]">{sortMark('mfa')}</span></a></th><th class="px-5 py-3 font-medium" aria-sort={ariaSort('signin')}><a href={sortHref('signin')} class="inline-flex items-center gap-1 hover:text-white">Last sign-in<span class="text-[10px]">{sortMark('signin')}</span></a></th></tr>

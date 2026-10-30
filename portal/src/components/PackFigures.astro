@@ -51,7 +51,7 @@ const input = 'field !rounded-lg !px-2 text-right tabular-nums';
   </div>
 </div>
 {icRows.length > 0 && (
-  <details class="mt-6" open={!editable || (figures.ic ?? []).length > 0}>
+  <details class="mt-6" open={!editable || (figures.ic ?? []).length > 0} data-tour="rep-group">
     <summary class="cursor-pointer text-sm font-medium text-white">With other Lakeba group companies{!editable && ` (${icRows.length})`}</summary>
     <p class="mt-1 text-xs text-white/40">What is owed between this company and the others in the group at period end, and management fees or recharges in the period. Lakeba removes these when it adds the group up. Leave blank where there is nothing.</p>
     <div class="mt-3 overflow-x-auto">

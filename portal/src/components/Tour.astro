@@ -22,6 +22,14 @@ const fits = (tour: Tour) => {
   if (tour.who === 'documents') return access.mayOpen('/admin/documents');
   if (tour.who === 'register') return access.mayOpen('/admin/import/register');
   if (tour.who === 'papers') return access.mayOpen('/admin/legal/papers');
+  if (tour.who === 'investors') return access.mayOpen('/admin/investors');
+  if (tour.who === 'news') return access.mayOpen('/admin/news');
+  if (tour.who === 'newsletters') return access.mayOpen('/admin/newsletters');
+  if (tour.who === 'data-rooms') return access.mayOpen('/admin/data-rooms');
+  if (tour.who === 'announcements') return access.mayOpen('/admin/content');
+  if (tour.who === 'roles') return access.mayOpen('/admin/system/roles');
+  if (tour.who === 'equity') return access.mayOpen('/admin/hr/equity');
+  if (tour.who === 'reporting') return access.mayOpen('/admin/reporting');
   return true;
 };
 const asked = tourByKey(Astro.url.searchParams.get('tour'));

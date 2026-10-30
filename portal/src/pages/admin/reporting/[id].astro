@@ -121,7 +121,7 @@ const lastQuestion = p.status === 'returned' ? (msgRows ?? []).at(-1) : null;
   {lastQuestion && <div class="mb-6"><Alert tone="info">Lakeba asks: {lastQuestion.body}</Alert></div>}
 
   {editable && (
-    <form method="post" enctype="multipart/form-data" class="card mb-6 grid gap-3" data-busy>
+    <form method="post" enctype="multipart/form-data" class="card mb-6 grid gap-3" data-busy data-tour="rep-source">
       <h2 class="font-display text-lg font-bold">1. {xero ? 'The figures from Xero' : 'Upload the management accounts'}</h2>
       {xero && <div class="flex flex-wrap items-center gap-3 text-sm"><span class="text-white/55">Xero is connected: the figures are fetched for {label}.{p.source === 'xero' && ' Fetched.'}</span><button class="btn-ghost !py-1.5" name="intent" value="xero" formnovalidate data-busy-label="Fetching…">Fetch again from Xero</button></div>}
       {xero && <p class="text-sm text-white/45">Or upload the accounts instead:</p>}
@@ -136,17 +136,17 @@ const lastQuestion = p.status === 'returned' ? (msgRows ?? []).at(-1) : null;
     ))}</ul>
   )}
 
-  <form method="post" class="card mb-6 grid gap-5">
+  <form method="post" class="card mb-6 grid gap-5" data-tour="rep-figures">
     <h2 class="font-display text-lg font-bold">{editable ? '2. Check the figures' : 'Figures'}</h2>
     {p.ai_notes.length > 0 && editable && <Alert tone="info">To check: {p.ai_notes.join(' · ')}</Alert>}
     {flags.length > 0 && <ul class="grid gap-1 text-sm text-lk-orange">{flags.map((f) => <li>• {f}</li>)}</ul>}
     <PackFigures figures={p.figures} editable={editable} currency={currency} previous={previous} others={others} />
-    <div><label class="label" for="note">{editable ? '3. A short note on the period' : 'Note'}</label>
+    <div data-tour="rep-note"><label class="label" for="note">{editable ? '3. A short note on the period' : 'Note'}</label>
       {editable ? <textarea class="field min-h-24" id="note" name="note" placeholder="What happened this period: big wins, one-offs, anything Lakeba should know.">{p.note}</textarea> : <p class="whitespace-pre-line text-sm text-white/75">{p.note || '—'}</p>}</div>
-    {editable && <div class="flex flex-wrap gap-3"><button class="btn-ghost" name="intent" value="save">Save</button><button class="btn-primary" name="intent" value="send">Send to Lakeba</button></div>}
+    {editable && <div class="flex flex-wrap gap-3" data-tour="rep-send"><button class="btn-ghost" name="intent" value="save">Save</button><button class="btn-primary" name="intent" value="send">Send to Lakeba</button></div>}
   </form>
 
-  <section class="card grid max-w-3xl gap-3">
+  <section class="card grid max-w-3xl gap-3" data-tour="rep-messages">
     <h2 class="font-display text-lg font-bold">Messages with Lakeba</h2>
     {(msgRows ?? []).map((m) => <article class="rounded-2xl bg-white/[0.04] p-4"><p class="text-xs text-white/45">{nameOf(m.author_id)} · {dateTime.format(new Date(m.created_at))}</p><p class="mt-1 whitespace-pre-line text-sm text-white/85">{m.body}</p></article>)}
     {mayDo && <form method="post" class="grid gap-2"><textarea class="field min-h-20" name="body" aria-label="Message" placeholder="A question or an answer for Lakeba"></textarea><div><button class="btn-ghost" name="intent" value="message">Send message</button></div></form>}

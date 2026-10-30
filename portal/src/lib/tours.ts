@@ -8,7 +8,8 @@
 // npm run check:portal checks that every step's element exists and that shareholder tours are translated.
 // No imports: the check script loads this file directly.
 
-export type Who = 'investor' | 'staff' | 'director' | 'audit' | 'anyone' | 'documents' | 'register' | 'papers';
+export type Who = 'investor' | 'staff' | 'director' | 'audit' | 'anyone' | 'documents' | 'register' | 'papers'
+  | 'investors' | 'news' | 'newsletters' | 'data-rooms' | 'announcements' | 'roles' | 'equity' | 'reporting';
 /** `when`: shown only to people who can switch views (`switch`), or who have Ask (`ask`). */
 export type TourStep = { el: string; title: string; body: string; when?: 'switch' | 'ask'; advanceOn?: 'click' | 'change' };
 export type Tour = {
@@ -130,6 +131,119 @@ export const TOURS: Tour[] = [
       { el: 'paper-signers', title: 'Who signs', body: 'A circular resolution is signed by every director in office; minutes by the chair. People marked “not invited” need a portal account first.' },
       { el: 'paper-send', title: 'Send for signing', body: 'Each signer gets an email and signs in the portal. The text is locked once someone signs; you can remind or take it back.' },
       { el: 'paper-signatures', title: 'Signatures', body: 'Who has signed, and when. When everyone has, the signed PDF goes to the minute book.' },
+    ],
+  },
+  {
+    key: 'guide-board', start: '/board', who: 'investor', auto: false, translate: true, guide: true,
+    steps: [
+      { el: 'board-form', title: 'Your question', body: 'Give it a short subject, then write your question. Keep it to the company’s operations, performance or governance.' },
+      { el: 'board-terms', title: 'The terms', body: 'Tick to agree to the terms for shareholder queries. Open them to read what the board will and won’t answer.' },
+      { el: 'board-send', title: 'Send it to the board', body: 'The board aims to reply within 7 working days. The answer appears on the question’s page and in your inbox.' },
+      { el: 'board-list', title: 'Your questions', body: 'Each one shows whether it’s awaiting a reply or answered. Open it to read the answer or reply.' },
+    ],
+  },
+  {
+    key: 'guide-trade', start: '/trading', who: 'investor', auto: false, translate: true, guide: true,
+    steps: [
+      { el: 'trade-window', title: 'The trading window', body: 'Interests can only be registered while the window is open. Its dates are shown here.' },
+      { el: 'trade-form', title: 'Register an interest', body: 'Choose to buy or sell, the holding and the share class, then how many shares and the price per share. It’s an interest, not a binding offer.' },
+      { el: 'trade-ack', title: 'Confirm and register', body: 'Tick that you understand, then press Register interest. The company is told straight away.' },
+      { el: 'trade-book', title: 'The order book', body: 'Other shareholders’ open interests, without names, if the company shows them. Prices are what they proposed, not a valuation.' },
+      { el: 'trade-mine', title: 'What happens next', body: 'Your interests and where they stand. When the company pairs yours with another shareholder’s, it contacts you to arrange the signed transfer.' },
+      { el: 'trade-withdraw', title: 'Changed your mind?', body: 'Withdraw takes back an open interest. Once part of it is paired, contact the company instead.' },
+    ],
+  },
+  {
+    key: 'guide-ask', start: '/ask', who: 'anyone', auto: false, translate: true, guide: true,
+    steps: [
+      { el: 'ask-examples', title: 'Not sure where to start?', body: 'Pick one of these to see how {ask} answers.' },
+      { el: 'ask-input', title: 'Ask in your own words', body: 'Type your question and press Enter or the arrow. Ask follow-up questions in the same conversation.' },
+      { el: 'ask-sources', title: 'Check the sources', body: 'Under each answer are the documents it used. Open one to read it in full; answers aren’t financial advice.' },
+      { el: 'ask-rate', title: 'Was it useful?', body: '👍 or 👎 tells the company how the answer did. After 👎 you can say what was wrong.' },
+      { el: 'ask-new', title: 'A new topic', body: 'New conversation starts afresh. The one you were in is kept.' },
+      { el: 'ask-history', title: 'Your conversations', body: 'Kept for 12 months, and only you can see them. Open one to read it again or carry on, or search them by a word.' },
+    ],
+  },
+  {
+    key: 'guide-investors', start: '/admin/investors', who: 'investors', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'inv-filters', title: 'Find people', body: 'Search by name, email or holder, and narrow by role, status, two-step, Ask or Board Q&A. The filters stay in the address, so you can share the view.' },
+      { el: 'inv-table', title: 'The list', body: 'Click a column heading to sort, and again to reverse. A holder’s name opens its holdings.' },
+      { el: 'inv-add', title: 'Add an investor', body: 'Open the form to add a shareholder. Click it now.', advanceOn: 'click' },
+      { el: 'inv-holder', title: 'Who they invest through', body: 'Every investor is linked to a holder: themselves, their company or their trust. Staff are added in System → Users instead.' },
+      { el: 'inv-invite', title: 'Invite now or later', body: 'Add and send invitation emails them a link to choose a password. Add without inviting sends nothing until you’re ready.' },
+      { el: 'inv-welcome', title: 'Welcome emails', body: 'With a company picked, invite its shareholders who have never signed in, up to 50 at a time. Start with a few friendly ones.' },
+    ],
+  },
+  {
+    key: 'guide-news', start: '/admin/news/*', who: 'news', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'news-text', title: 'Write the story', body: 'The toolbar adds headings, links, images, videos and tables. Paste from Word or Google Docs, or drag images in.' },
+      { el: 'news-audience', title: 'Who sees it', body: 'Shareholders of the company see it in the portal only. Public puts it on the websites too, for every investor and visitor.' },
+      { el: 'news-where', title: 'Where it appears', body: 'Public news goes on the company’s own website, and on lakeba.com when a Lakeba group editor adds it.' },
+      { el: 'news-status', title: 'When it goes live', body: 'Draft keeps it hidden. Publish now puts it live when you save; Schedule at the date and time you choose.' },
+      { el: 'news-notify', title: 'Tell shareholders', body: 'Tick this to notify the company’s shareholders when it goes live. They’re only told once.' },
+      { el: 'news-actions', title: 'Check, then save', body: 'Preview opens it as readers will see it; Full screen puts a live preview beside the editor. Save keeps a version you can go back to.' },
+    ],
+  },
+  {
+    key: 'guide-newsletter', start: '/admin/newsletters/*', who: 'newsletters', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'nl-start', title: 'Start an issue', body: 'Write rough notes and Lakeba AI drafts the issue, or pick a template below. Everything stays editable before it goes out.' },
+      { el: 'nl-modes', title: 'Compose, Designer or HTML', body: 'Three ways to write it. Switching keeps each version saved; the tab that’s active is the one sent.' },
+      { el: 'nl-content', title: 'What goes in', body: 'Tick the news and documents to include. For shareholders you can add upcoming meetings, and in Compose each reader’s holding.' },
+      { el: 'nl-audience', title: 'Who gets it', body: 'Pick the company and which shareholders. The count shows how many it goes to; people who unsubscribed are left out.' },
+      { el: 'nl-test', title: 'Send yourself a test', body: 'Save, then send a test to your own inbox and check it there, on your phone too.' },
+      { el: 'nl-send', title: 'Schedule or send', body: 'Schedule it for a date and time, or press Send now below. Sending can’t be undone; afterwards this page shows opens and clicks.' },
+    ],
+  },
+  {
+    key: 'guide-data-room', start: '/admin/data-rooms', who: 'data-rooms', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'dr-new', title: 'Create a room', body: 'One room per raise or deal, for one company. Give it a name and, if you like, a note for guests.' },
+      { el: 'dr-terms', title: 'Confidentiality terms', body: 'Guests agree to these before they see anything. It’s a plain-English starting point: have your lawyer check it.' },
+      { el: 'dr-documents', title: 'Choose the documents', body: 'Tick the company’s PDFs to share, then Save documents. They don’t need to be published to investors.' },
+      { el: 'dr-test', title: 'Check it as a guest', body: 'Open TEST link shows the room as a guest sees it, in your name. No email is sent.' },
+      { el: 'dr-invite', title: 'Invite a guest', body: 'Their name, email and how many days their link works. They get a personal link by email; every page shows their name.' },
+      { el: 'dr-guests', title: 'Who has seen what', body: 'Each guest’s status, when they agreed to the terms and what they viewed. New link replaces their link; Revoke stops it.' },
+    ],
+  },
+  {
+    key: 'guide-announcement', start: '/admin/content', who: 'announcements', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'ann-text', title: 'The banner', body: 'A title and a line of text, at the top of the dashboard (shareholders) or the admin Overview (staff). The link is optional.' },
+      { el: 'ann-audience', title: 'Who it’s for', body: 'Shareholders, staff or both. For staff you can narrow it to people with access to one section.' },
+      { el: 'ann-popup', title: 'Show as a pop-up once', body: 'Each person it’s for also sees it as a pop-up, once, while it’s live. Point at makes the pop-up point at a place on the page.' },
+      { el: 'ann-languages', title: 'Other languages', body: 'Spanish, Italian and Chinese, for shareholders using the portal in those languages. Anything left empty shows in English.' },
+      { el: 'ann-list', title: 'Live and past announcements', body: 'Showing, scheduled or ended, and how many have seen each pop-up. Preview pop-up shows it to you without counting it.' },
+    ],
+  },
+  {
+    key: 'guide-role', start: '/admin/system/roles/*', who: 'roles', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'role-perms', title: 'See, Do, Approve', body: 'For each area: See opens its pages, Do lets people add and change things, and Approve lets them sign off where something asks for it. Do and Approve include See.' },
+      { el: 'role-about', title: 'What it’s for, and Save', body: 'A line on when to give this role. Save applies the changes to everyone who has it, straight away.' },
+      { el: 'role-holders', title: 'Who has it', body: 'A role is given for the whole group or for one company, sometimes until a date. Give it or take it away on a person’s page in Users.' },
+    ],
+  },
+  {
+    key: 'guide-grant', start: '/admin/hr/equity/*', who: 'equity', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'eq-position', title: 'Where it stands', body: 'How many have vested, how many haven’t yet, how many were exercised, and how many can be exercised now.' },
+      { el: 'eq-actions', title: 'Grant it', body: 'Grant it makes the letter and asks the holder to accept it in My HR. Prepare the board resolution opens a paper in Legal, filled in from the grant.' },
+      { el: 'eq-vesting', title: 'Vesting', body: 'The schedule from the grant’s terms: how many have vested by each date. Dates already passed are brighter.' },
+      { el: 'eq-exercises', title: 'Exercises', body: 'Record a request, then approve it once it’s paid: issuing the shares and telling ASIC goes on the Legal calendar. Mark the shares issued when done.' },
+    ],
+  },
+  {
+    key: 'guide-pack', start: '/admin/reporting/*', who: 'reporting', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'rep-source', title: '1. The figures', body: 'With Xero connected, the figures are fetched for the period. Otherwise upload the profit and loss and balance sheet (Excel, CSV or PDF) and Lakeba AI reads them in.' },
+      { el: 'rep-figures', title: '2. Check the figures', body: 'Check each line against your accounts and correct anything. Notes in orange point at what looks unusual next to the last pack.' },
+      { el: 'rep-group', title: 'Other group companies', body: 'What’s owed between this company and the others in the group, and fees or recharges. Lakeba removes these when it adds the group up.' },
+      { el: 'rep-note', title: '3. A note on the period', body: 'Big wins, one-offs, anything Lakeba should know when it reviews the figures.' },
+      { el: 'rep-send', title: 'Send to Lakeba', body: 'Save keeps your changes. Send to Lakeba hands the pack to the finance team; if they have questions, it comes back to you.' },
+      { el: 'rep-messages', title: 'Messages with Lakeba', body: 'Questions and answers about this pack. Once it’s sent, tell Lakeba about any change here.' },
     ],
   },
 ];

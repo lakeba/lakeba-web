@@ -47,9 +47,9 @@ const locked = role.key === 'admin';
   <p class="mt-1 text-sm text-white/50">{role.builtin ? 'Built-in role' : 'Custom role'}{locked && ': Admin always has every permission'}</p>
   <div class="mt-5 space-y-3">{notice && <Alert tone="success">{notice}</Alert>}{error && <Alert tone="error">{error}</Alert>}</div>
   <form method="post" class="mt-6 grid gap-6 xl:grid-cols-[minmax(0,1fr)_22rem]">
-    <section class="card overflow-x-auto p-0">
+    <section class="card overflow-x-auto p-0" data-tour="role-perms">
       <table class="w-full text-left text-sm">
-        <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Area</th>{(['view', 'do', 'approve'] as const).map((l) => <th class="px-5 py-3 text-center">{LEVEL_LABEL[l]}</th>)}</tr></thead>
+        <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3"><span data-hint="Some areas say “Group-wide roles only”: they work only when the role is given for the whole group, not for one company. You can only add permissions you have yourself." data-hint-title="Group-wide areas">Area</span></th>{(['view', 'do', 'approve'] as const).map((l) => <th class="px-5 py-3 text-center">{LEVEL_LABEL[l]}</th>)}</tr></thead>
         <tbody class="divide-y divide-white/5">
           {AREAS.map((a) => (
             <tr><td class="px-5 py-2.5"><span class="text-white/85">{a.label}</span><span class="block text-xs text-white/40">{a.description}{a.groupOnly && ' Group-wide roles only.'}</span></td>
@@ -60,13 +60,13 @@ const locked = role.key === 'admin';
       <p class="px-5 py-3 text-xs text-white/40">“Do” and “Approve” include “See”. You can only add permissions you have yourself.</p>
     </section>
     <aside class="space-y-4">
-      <section class="card space-y-3">
+      <section class="card space-y-3" data-tour="role-about">
         {!role.builtin && <div><label class="label" for="name">Name</label><input id="name" name="name" value={role.name} class="field" disabled={!mayChange} /></div>}
         <div><label class="label" for="description">What it’s for</label><textarea id="description" name="description" rows="3" class="field" disabled={!mayChange}>{role.description}</textarea></div>
         {mayChange && !locked && <button name="intent" value="save" class="btn-primary w-full">Save</button>}
         {mayChange && !role.builtin && <button name="intent" value="delete" class="w-full text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Delete this role?')">Delete role</button>}
       </section>
-      <section class="card">
+      <section class="card" data-tour="role-holders">
         <h2 class="font-display text-lg font-bold">Who has it</h2>
         <ul class="mt-2 divide-y divide-white/5 text-sm">
           {(holders ?? []).map((h) => { const p = h.profiles as unknown as { email: string; first_name: string | null; last_name: string | null } | null; return (

@@ -106,7 +106,7 @@ const windowText = state === 'open'
 
   <div class="grid gap-4 lg:grid-cols-[1.1fr_1fr]">
     <section class="card">
-      <div class="flex items-center justify-between gap-3">
+      <div class="flex items-center justify-between gap-3" data-tour="trade-window">
         <h2 class="text-lg font-bold">{t('Register an interest')}</h2>
         <span class:list={['rounded-full px-2.5 py-0.5 text-xs', state === 'open' ? 'bg-lk-green/15 text-lk-green' : 'bg-white/10 text-white/60']}>{state === 'open' ? t('Window open') : t('Window closed')}</span>
       </div>
@@ -114,7 +114,7 @@ const windowText = state === 'open'
       {state !== 'open' ? null : !owned.length ? (
         <p class="mt-4 text-sm text-white/55">{t('Only the owner of a holding can register an interest. If you manage a holding as view-only, ask its owner.')}</p>
       ) : (
-        <form method="post" class="mt-5 grid gap-4 sm:grid-cols-2">
+        <form method="post" class="mt-5 grid gap-4 sm:grid-cols-2" data-tour="trade-form">
           <input type="hidden" name="intent" value="register" />
           <fieldset class="sm:col-span-2"><legend class="label">{t('I’d like to')}</legend>
             <div class="flex gap-3">
@@ -124,10 +124,10 @@ const windowText = state === 'open'
           </fieldset>
           <div><label class="label" for="holder_id">{t('Holding')}</label><select id="holder_id" name="holder_id" class="field">{owned.map((h) => <option value={h.id}>{h.name}</option>)}</select></div>
           <div><label class="label" for="share_class_id">{t('Share class')}</label><select id="share_class_id" name="share_class_id" class="field">{classes.map((c) => <option value={c.id}>{c.name}</option>)}</select></div>
-          <div><label class="label" for="shares">{t('Number of shares')}</label><input id="shares" name="shares" inputmode="numeric" required class="field" /></div>
-          <div><label class="label" for="price">{t('Price per share (AUD)')}</label><input id="price" name="price" inputmode="decimal" required class="field" placeholder="0.00" /></div>
+          <div><label class="label" for="shares"><span data-hint={t('When selling, up to what the holding has in this class, less what you’ve already offered.')} data-hint-title={t('Number of shares')}>{t('Number of shares')}</span></label><input id="shares" name="shares" inputmode="numeric" required class="field" /></div>
+          <div><label class="label" for="price"><span data-hint={t('What you’d accept for each share if you’re selling, or pay if you’re buying, in Australian dollars. Other shareholders may see it in the order book, without your name.')} data-hint-title={t('Price per share')}>{t('Price per share (AUD)')}</span></label><input id="price" name="price" inputmode="decimal" required class="field" placeholder="0.00" /></div>
           <div class="sm:col-span-2"><label class="label" for="note">{t('Note for the company (optional)')}</label><textarea id="note" name="note" rows="2" maxlength="500" class="field"></textarea></div>
-          <label class="flex items-start gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="ack" required class="mt-0.5 size-4 accent-lk-blue" /> {t('I understand this is an expression of interest, not a binding offer. Any sale needs a signed transfer and may be subject to pre-emptive rights and board approval under the constitution.')}</label>
+          <label class="flex items-start gap-3 text-sm text-white/70 sm:col-span-2" data-tour="trade-ack"><input type="checkbox" name="ack" required class="mt-0.5 size-4 accent-lk-blue" /> {t('I understand this is an expression of interest, not a binding offer. Any sale needs a signed transfer and may be subject to pre-emptive rights and board approval under the constitution.')}</label>
           <div class="sm:col-span-2"><button class="btn-primary">{t('Register interest')}</button></div>
         </form>
       )}
@@ -139,7 +139,7 @@ const windowText = state === 'open'
       )}
     </section>
 
-    <section class="card">
+    <section class="card" data-tour="trade-book">
       <h2 class="text-lg font-bold">{t('Order book')}</h2>
       {!settings.show_book ? <p class="mt-2 text-sm text-white/55">{t('{company} doesn’t show interests from other shareholders.', { company: company.display_name })}</p> : !books.length ? <p class="mt-2 text-sm text-white/55">{t('No open interests at the moment.')}</p> : books.map(({ c, book }) => (
         <div class="mt-4">
@@ -164,7 +164,7 @@ const windowText = state === 'open'
     </section>
   </div>
 
-  <section class="card mt-4 overflow-hidden p-0">
+  <section class="card mt-4 overflow-hidden p-0" data-tour="trade-mine">
     <h2 class="px-5 py-4 text-lg font-bold">{t('Your interests')}</h2>
     <div class="overflow-x-auto">
       <table class="w-full text-left text-sm">
@@ -182,7 +182,7 @@ const windowText = state === 'open'
                 <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums text-white/80">{fmt.audPrecise.format(Number(i.price))}</td>
                 <td class="px-5 py-3 text-white/60">{statusLabel[i.status] ?? i.status}{i.status === 'matched' && <span class="block text-xs text-white/40">{t('We’ll contact you about the transfer.')}</span>}</td>
                 <td class="px-5 py-3 text-right">{i.status === 'open' && p === 0 && owned.some((h) => h.id === i.holder_id) && (
-                  <form method="post" onsubmit={`return confirm(${JSON.stringify(t('Withdraw this interest?'))})`}><input type="hidden" name="intent" value="withdraw" /><input type="hidden" name="interest_id" value={i.id} /><button class="btn-ghost px-3 py-1.5 text-xs">{t('Withdraw')}</button></form>
+                  <form method="post" data-tour="trade-withdraw" onsubmit={`return confirm(${JSON.stringify(t('Withdraw this interest?'))})`}><input type="hidden" name="intent" value="withdraw" /><input type="hidden" name="interest_id" value={i.id} /><button class="btn-ghost px-3 py-1.5 text-xs">{t('Withdraw')}</button></form>
                 )}</td>
               </tr>
             );

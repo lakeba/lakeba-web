@@ -50,7 +50,7 @@ const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 
   </PageHeader>
 
   <div class="grid gap-8 lg:grid-cols-[1fr_24rem]">
-    <section>
+    <section data-tour="board-list">
       <h2 class="mb-4 text-lg font-bold">{t('Your questions')}</h2>
       {queries?.length ? (
         <ul class="grid gap-3">
@@ -72,16 +72,16 @@ const statusLabel: Record<string, string> = { open: 'Awaiting reply', answered: 
       <h2 class="mb-4 text-lg font-bold">{t('New question')}</h2>
       <div class="card h-fit">
       {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
-      <form method="post" class="space-y-4">
+      <form method="post" class="space-y-4" data-tour="board-form">
         <div><label for="subject" class="label">{t('Subject')}</label><input id="subject" name="subject" maxlength="200" required class="field" /></div>
         <div><label for="body" class="label">{t('Your question')}</label><textarea id="body" name="body" rows="6" maxlength="10000" required class="field"></textarea></div>
-        <label class="flex gap-3 text-sm text-white/60">
+        <label class="flex gap-3 text-sm text-white/60" data-tour="board-terms">
           <input type="checkbox" name="terms" required class="mt-1 accent-lk-blue" />
           <span>{t('I agree to the')} <details class="inline"><summary class="inline cursor-pointer text-lk-blue">{t('terms for responding to shareholder queries')}</summary>
             <span class="mt-2 block text-xs text-white/50">{t('Queries should relate to the company’s operations, financial performance or governance. The company will acknowledge receipt and aims to respond within 7 working days, and may decline queries that are irrelevant, inappropriate or unlawful. Responses are general information, not financial advice.')}</span>
           </details></span>
         </label>
-        <button class="btn-primary w-full">{ownBoard ? t('Send to the {company} board', { company: company.display_name }) : t('Send to the board')}</button>
+        <button class="btn-primary w-full" data-tour="board-send">{ownBoard ? t('Send to the {company} board', { company: company.display_name }) : t('Send to the board')}</button>
       </form>
       </div>
     </section>

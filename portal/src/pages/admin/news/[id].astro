@@ -165,7 +165,7 @@ const postApproval = post ? await getApproval(svc, 'post', post.id) : null;
     <input type="hidden" name="intent" value="save" />
     <fieldset class="min-w-0 space-y-4" disabled={locked}>
       <div><label class="label" for="title">Title</label><input id="title" name="title" required value={post?.title} class="field !h-auto text-lg font-semibold" /></div>
-      <div>
+      <div data-tour="news-text">
         <label class="label">Text</label>
         <div class="rounded-2xl border border-white/10 bg-white/[0.02]">
           <div class="sticky top-16 z-10 flex flex-wrap gap-1 border-b border-white/10 bg-ink/95 p-2 backdrop-blur" data-toolbar>
@@ -188,7 +188,7 @@ const postApproval = post ? await getApproval(svc, 'post', post.id) : null;
         <p class="mt-2 flex justify-between text-xs text-white/40"><span>Paste from Word or Google Docs, or drag images in. </span><span data-status></span></p>
       </div>
       <div>
-        <div class="flex items-end justify-between gap-3"><label class="label" for="excerpt">Excerpt (on the news card)</label>
+        <div class="flex items-end justify-between gap-3"><label class="label" for="excerpt"><span data-hint="About 40 words, shown on the news card and in the email that tells shareholders. ✨ Suggest drafts it from the text." data-hint-title="Excerpt">Excerpt (on the news card)</span></label>
           <button type="button" class="mb-1.5 rounded-lg border border-lk-blue/40 px-2.5 py-1 text-xs text-lk-blue hover:bg-lk-blue/10" data-suggest>✨ Suggest excerpt and description</button></div>
         <textarea id="excerpt" name="excerpt" rows="2" maxlength="600" class="field">{post?.excerpt}</textarea>
         <p class="mt-1 text-xs text-white/40" data-suggest-status>About 40 words. Lakeba AI can suggest it from the text; check it before saving.</p>
@@ -199,29 +199,29 @@ const postApproval = post ? await getApproval(svc, 'post', post.id) : null;
       <section class="card space-y-4">
         <h2 class="font-display text-lg font-bold">Publishing</h2>
         <fieldset class="space-y-4" disabled={locked}>
-          <div><label class="label" for="visibility">Who sees it</label>
+          <div data-tour="news-audience"><label class="label" for="visibility">Who sees it</label>
             <select id="visibility" name="visibility" class="field">
               <option value="shareholders" selected={post?.visibility !== 'public'}>Shareholders of the company</option>
               <option value="public" selected={post?.visibility === 'public'}>Public: websites and all investors</option>
             </select></div>
           <CompanySelect scope={scope} id="entity_id" value={defaultCompany} />
-          <div data-public-only class="space-y-2 text-sm">
+          <div data-public-only class="space-y-2 text-sm" data-tour="news-where">
             <span class="label">Where it appears</span>
             <label class="flex items-center gap-3"><input type="checkbox" name="on_venture_site" checked={post ? post.on_venture_site : true} class="size-4 accent-lk-blue" /> On the company’s own website (news feed and component)</label>
             {editor.group
               ? <label class="flex items-center gap-3"><input type="checkbox" name="on_lakeba_site" checked={post ? post.on_lakeba_site : true} class="size-4 accent-lk-blue" /> On lakeba.com (always for Lakeba Group’s own news)</label>
               : <p class="text-xs text-white/45">{post?.on_lakeba_site ? 'Also on lakeba.com.' : 'On lakeba.com only if a Lakeba group editor adds it.'}</p>}
           </div>
-          <div data-public-only><label class="label" for="venture">Label on the website</label><input id="venture" name="venture" value={post?.venture} placeholder="e.g. Lakeba Group, Bricklet" class="field" /></div>
-          <div><label class="label" for="when">Status</label>
+          <div data-public-only><label class="label" for="venture"><span data-hint="The name on the website’s news card, such as Lakeba Group or Bricklet. Left empty, it’s the company’s name." data-hint-title="Label on the website">Label on the website</span></label><input id="venture" name="venture" value={post?.venture} placeholder="e.g. Lakeba Group, Bricklet" class="field" /></div>
+          <div data-tour="news-status"><label class="label" for="when">Status</label>
             <select id="when" name="when" class="field">
               <option value="draft" selected={state === 'draft'}>Draft (not visible)</option>
               <option value="now" selected={state === 'live'}>{state === 'live' ? 'Published' : 'Publish now'}</option>
               <option value="schedule" selected={state === 'scheduled'}>Schedule</option>
             </select></div>
           <div data-schedule><label class="label" for="publish_at">Publish on (your time)</label><input id="publish_at" name="publish_at" type="datetime-local" value={state === 'scheduled' ? localDate(post?.published_at) : ''} class="field" /></div>
-          <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="notify" class="mt-1 accent-lk-blue" checked={post?.notify_on_publish} disabled={Boolean(post?.notified_at)} /> {post?.notified_at ? 'Shareholders were notified' : 'Notify shareholders when it goes live'}</label>
-          <div class="flex flex-wrap gap-2">
+          <label class="flex items-start gap-2 text-sm text-white/70" data-tour="news-notify"><input type="checkbox" name="notify" class="mt-1 accent-lk-blue" checked={post?.notify_on_publish} disabled={Boolean(post?.notified_at)} /> {post?.notified_at ? 'Shareholders were notified' : 'Notify shareholders when it goes live'}</label>
+          <div class="flex flex-wrap gap-2" data-tour="news-actions">
             <button class="btn-primary">Save</button>
             <button type="submit" formaction="/admin/news/preview" formtarget="_blank" class="btn-ghost" data-preview>Preview</button>
             <button type="button" class="btn-ghost" data-fullscreen title="Full screen with a live preview (Esc to leave)">⤢ Full screen</button>

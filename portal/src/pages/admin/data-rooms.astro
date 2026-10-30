@@ -171,14 +171,14 @@ const status = (g: (typeof guests)[number]) => g.is_test ? (g.nda_accepted_at ? 
           </tbody>
         </table>
       </section>
-      <details class="card mt-6" open={!rooms?.length || Boolean(error)}>
+      <details class="card mt-6" open={!rooms?.length || Boolean(error)} data-tour="dr-new">
         <summary class="cursor-pointer font-display text-lg font-bold text-white">New data room</summary>
         <form method="post" class="mt-6 grid gap-4 sm:grid-cols-2">
           <input type="hidden" name="intent" value="create" />
           <div><label class="label" for="entity_id">Company</label><select id="entity_id" name="entity_id" class="field">{scope.companies.map((c) => <option value={c.id} selected={c.id === scope.defaultCompany?.id}>{c.display_name}</option>)}</select></div>
           <div><label class="label" for="name">Name</label><input id="name" name="name" required class="field" placeholder="Series A – 2026" /></div>
           <div class="sm:col-span-2"><label class="label" for="description">Note for guests (optional)</label><textarea id="description" name="description" rows="2" class="field"></textarea></div>
-          <div class="sm:col-span-2"><label class="label" for="nda_text">Confidentiality terms</label><textarea id="nda_text" name="nda_text" rows="8" class="field">{DEFAULT_NDA}</textarea><p class="mt-1 text-xs text-white/40">A plain-English starting point: have your lawyer check it before you use it.</p></div>
+          <div class="sm:col-span-2" data-tour="dr-terms"><label class="label" for="nda_text">Confidentiality terms</label><textarea id="nda_text" name="nda_text" rows="8" class="field">{DEFAULT_NDA}</textarea><p class="mt-1 text-xs text-white/40">A plain-English starting point: have your lawyer check it before you use it.</p></div>
           <div class="sm:col-span-2"><button class="btn-primary">Create room</button></div>
         </form>
       </details>
@@ -189,7 +189,7 @@ const status = (g: (typeof guests)[number]) => g.is_test ? (g.nda_accepted_at ? 
       <div class="mb-6 flex flex-wrap items-center justify-between gap-3">
         <h2 class="font-display text-2xl font-bold">{current.name} <span class="text-base font-normal text-white/45">· {companyOf(current.entity_id)?.display_name}</span></h2>
         <div class="flex flex-wrap gap-2">
-          {!current.closed_at && <form method="post" target="_blank"><input type="hidden" name="room_id" value={current.id} /><button name="intent" value="test" class="btn-ghost px-3 py-2 text-xs" title="Opens the room as a guest sees it, in your name. No email is sent.">Open TEST link</button></form>}
+          {!current.closed_at && <form method="post" target="_blank" data-tour="dr-test"><input type="hidden" name="room_id" value={current.id} /><button name="intent" value="test" class="btn-ghost px-3 py-2 text-xs" title="Opens the room as a guest sees it, in your name. No email is sent.">Open TEST link</button></form>}
           <form method="post"><input type="hidden" name="room_id" value={current.id} /><button name="intent" value={current.closed_at ? 'reopen' : 'close'} class="btn-ghost px-3 py-2 text-xs">{current.closed_at ? 'Reopen room' : 'Close room'}</button></form>
           {current.closed_at && isAdminFor(current.entity_id) && <form method="post" onsubmit="return confirm('Delete this data room, its guest list and its record of views? The documents themselves stay in Documents. This can’t be undone.')"><input type="hidden" name="room_id" value={current.id} /><button name="intent" value="delete" class="btn-ghost px-3 py-2 text-xs text-lk-red">Delete room</button></form>}
         </div>
@@ -199,15 +199,15 @@ const status = (g: (typeof guests)[number]) => g.is_test ? (g.nda_accepted_at ? 
       <div class="grid gap-6 xl:grid-cols-2">
         <section class="card">
           <h3 class="text-lg font-bold">Guests</h3>
-          <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2">
+          <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2" data-tour="dr-invite">
             <input type="hidden" name="intent" value="invite" /><input type="hidden" name="room_id" value={current.id} />
             <div><label class="label" for="g_name">Name</label><input id="g_name" name="name" required class="field" /></div>
             <div><label class="label" for="g_email">Email</label><input id="g_email" name="email" type="email" required class="field" /></div>
             <div><label class="label" for="g_org">Organisation (optional)</label><input id="g_org" name="organisation" class="field" /></div>
-            <div><label class="label" for="g_days">Access for (days)</label><input id="g_days" name="days" type="number" min="1" max="180" value="30" class="field" /></div>
+            <div><label class="label" for="g_days"><span data-hint="How long their personal link works, from today, up to 180 days. After that it stops; New link sends them a fresh one for 30 days." data-hint-title="Access for (days)">Access for (days)</span></label><input id="g_days" name="days" type="number" min="1" max="180" value="30" class="field" /></div>
             <div class="sm:col-span-2"><button class="btn-primary">Invite guest</button></div>
           </form>
-          <ul class="mt-6 divide-y divide-white/5">
+          <ul class="mt-6 divide-y divide-white/5" data-tour="dr-guests">
             {guests.map((g) => {
               const vs = viewsBy.get(g.id) ?? [];
               const st = status(g);
@@ -239,7 +239,7 @@ const status = (g: (typeof guests)[number]) => g.is_test ? (g.nda_accepted_at ? 
           </ul>
         </section>
 
-        <section class="card">
+        <section class="card" data-tour="dr-documents">
           <h3 class="text-lg font-bold">Documents</h3>
           <p class="mt-1 text-sm text-white/55">PDFs of {companyOf(current.entity_id)?.display_name} (not personal ones). Upload new ones in <a class="text-lk-blue hover:underline" href={withCompany(scope, '/admin/documents')}>Documents</a>; they don't need to be published to investors.</p>
           <form method="post" class="mt-4">

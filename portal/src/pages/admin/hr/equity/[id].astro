@@ -99,13 +99,13 @@ const legalHref = `/admin/legal/papers/new?${new URLSearchParams({ company: comp
   {ok && <div class="mb-6"><Alert tone="success">{ok}</Alert></div>}
   {g.vesting_stopped_on && <div class="mb-6"><Alert tone="info">Left on {day(g.vesting_stopped_on)}: vesting stopped, {n(pos.forfeited)} lapsed; vested ones may be exercised until {day(g.exercise_by)}.</Alert></div>}
 
-  <div class="mb-6 grid gap-4 sm:grid-cols-4">
+  <div class="mb-6 grid gap-4 sm:grid-cols-4" data-tour="eq-position">
     {[['Vested', pos.vested], ['Not vested yet', pos.unvested], ['Exercised', pos.exercised], ['Can exercise now', pos.exercisable]].map(([l, v]) => <div class="card !p-5"><p class="text-sm text-white/55">{l}</p><p class="mt-1 font-display text-2xl font-bold tabular-nums text-white">{n(v as number)}</p></div>)}
   </div>
 
   <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
     <div class="grid content-start gap-6">
-      <section class="card overflow-x-auto p-0">
+      <section class="card overflow-x-auto p-0" data-tour="eq-vesting">
         <h2 class="px-5 pt-5 font-display text-lg font-bold">Vesting</h2>
         <p class="px-5 pt-1 text-sm text-white/55">From {day(g.vesting_start)} over {g.vesting_months} months, {FREQUENCY[g.frequency].toLowerCase()}{g.cliff_months ? `, after a ${g.cliff_months}-month cliff` : ''}; exercise price A${Number(g.exercise_price)}; expires {day(g.expiry_date)}.</p>
         <table class="mt-3 w-full text-sm">
@@ -113,7 +113,7 @@ const legalHref = `/admin/legal/papers/new?${new URLSearchParams({ company: comp
           <tbody class="divide-y divide-white/5">{steps.map((s) => <tr class:list={[s.on <= today ? 'text-white' : 'text-white/45']}><td class="px-5 py-1.5">{day(s.on)}</td><td class="px-5 py-1.5 text-right tabular-nums">{n(s.total)}</td></tr>)}</tbody>
         </table>
       </section>
-      <section class="card grid gap-3">
+      <section class="card grid gap-3" data-tour="eq-exercises">
         <h2 class="font-display text-lg font-bold">Exercises</h2>
         {exercises.length ? exercises.map((e) => (
           <div class="rounded-2xl bg-white/[0.04] p-4 text-sm">
@@ -126,7 +126,7 @@ const legalHref = `/admin/legal/papers/new?${new URLSearchParams({ company: comp
         )) : <p class="text-sm text-white/55">None yet.</p>}
         {mayDo && pos.exercisable > 0 && (
           <form method="post" class="flex flex-wrap items-end gap-2 text-sm">
-            <div><label class="label" for="ex-n">Record a request to exercise</label><input class="field" id="ex-n" name="number" inputmode="numeric" placeholder={`up to ${n(pos.exercisable)}`} /></div>
+            <div><label class="label" for="ex-n"><span data-hint="The number the holder asked to exercise. Recording it doesn’t issue anything: approve it above once they’ve paid." data-hint-title="Exercising">Record a request to exercise</span></label><input class="field" id="ex-n" name="number" inputmode="numeric" placeholder={`up to ${n(pos.exercisable)}`} /></div>
             <input class="field !w-auto grow" name="note" placeholder="Note" aria-label="Note" />
             <button class="btn-ghost" name="intent" value="exercise">Record</button>
           </form>
@@ -134,7 +134,7 @@ const legalHref = `/admin/legal/papers/new?${new URLSearchParams({ company: comp
       </section>
     </div>
     <aside class="grid content-start gap-6">
-      <section class="card grid gap-3 text-sm">
+      <section class="card grid gap-3 text-sm" data-tour="eq-actions">
         {g.status === 'draft' && mayDo && <form method="post"><button class="btn-primary w-full" name="intent" value="grant" data-confirm="Grant it? The letter is made and the holder is asked to accept it.">Grant it</button></form>}
         {access.can('legal.do', company.id) && (g.status === 'draft' || g.status === 'granted') && (g.board_paper_id ? <a class="btn-ghost" href={`/admin/board/papers/${g.board_paper_id}`}>The board resolution</a> : <a class="btn-ghost" href={legalHref}>Prepare the board resolution</a>)}
         {g.letter_path && <a class="btn-ghost" href={`/admin/hr/file?path=${encodeURIComponent(g.letter_path)}`}>Open the grant letter</a>}
