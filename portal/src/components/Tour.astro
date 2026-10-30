@@ -1,5 +1,5 @@
 ---
-import { TOURS, tourByKey, type Tour } from '../lib/tours';
+import { TOURS, onPage, tourByKey, type Tour } from '../lib/tours';
 import { AREAS } from '../lib/permissions';
 import { brandName } from '../lib/companies';
 import { serviceClient } from '../lib/admin';
@@ -7,17 +7,21 @@ import { COLUMNS, localised, popupFor, type Announcement } from '../lib/announce
 
 // The guided tour for this page (lib/tours.ts): the one asked for (?tour=key, from "Take the tour" or What's
 // new's "Show me"), else one meant for this person that they haven't seen, started by itself only on a plain
-// visit to its page (not an emailed link or a filtered list). The overlay itself is Driver.js, loaded only
-// when there's a tour.
+// visit to its page (not an emailed link or a filtered list). A page with a guide (a tour for its task) shows a
+// "Guide me" button instead; guides never start by themselves. Fields marked data-hint get a small beacon
+// that explains them. The overlay itself is Driver.js, loaded only when there's something to show.
 const { t, user, tablet, profile, access, features, company } = Astro.locals;
 const view = Astro.locals.viewMode;
 const path = Astro.url.pathname;
 const fits = (tour: Tour) => {
-  if (tour.start !== path) return false;
+  if (!onPage(tour.start, path)) return false;
   if (tour.who === 'investor') return view.mode !== 'admin' && (!view.offered || view.investor);
   if (tour.who === 'staff') return view.work.admin && view.mode !== 'investor';
   if (tour.who === 'director') return view.work.toSign > 0 && view.mode !== 'investor';
   if (tour.who === 'audit') return access.mayOpen('/admin/audit');
+  if (tour.who === 'documents') return access.mayOpen('/admin/documents');
+  if (tour.who === 'register') return access.mayOpen('/admin/import/register');
+  if (tour.who === 'papers') return access.mayOpen('/admin/legal/papers');
   return true;
 };
 const asked = tourByKey(Astro.url.searchParams.get('tour'));
@@ -26,21 +30,33 @@ const tour = !user || tablet ? null
   : asked && fits(asked) ? asked
   : !Astro.url.search ? TOURS.find((x) => x.auto && !seen.has(x.key) && fits(x)) ?? null
   : null;
+const guides = !user || tablet ? [] : TOURS.filter((x) => x.guide && fits(x));
 
 const escape = (s: string) => s.replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]!);
 const english = (s: string, vars: Record<string, string> = {}) => s.replace(/\{(\w+)\}/g, (m, k) => vars[k] ?? m);
-const say = (s: string, vars?: Record<string, string>) => escape(tour?.translate ? t(s, vars) : english(s, vars));
+const sayFor = (x: Tour | null) => (s: string, vars?: Record<string, string>) => escape(x?.translate ? t(s, vars) : english(s, vars));
+const say = sayFor(tour);
 const vars = {
   ask: company?.ask_name?.trim() || t('Ask {brand}', { brand: brandName(company) }),
   sections: access.groupAdmin ? 'every section' : AREAS.filter((a) => access.canAny(`${a.key}.view`)).map((a) => a.label).join(', ') || 'the pages your roles give',
 };
-const data = tour && {
-  key: tour.key,
-  steps: tour.steps
-    .filter((s) => (s.when === 'switch' ? view.offered : s.when === 'ask' ? features.ask && Boolean(company) : true))
-    .map((s) => ({ el: s.el, title: say(s.title), body: say(s.body, vars) })),
-  buttons: { next: say('Next'), back: say('Back'), done: say('Done') },
+const dataOf = (x: Tour) => {
+  const sayX = sayFor(x);
+  return {
+    key: x.key,
+    // Only tours that start by themselves are remembered; a guide or a replay can run again.
+    remember: x.auto,
+    steps: x.steps
+      .filter((s) => (s.when === 'switch' ? view.offered : s.when === 'ask' ? features.ask && Boolean(company) : true))
+      .map((s) => ({ el: s.el, title: sayX(s.title), body: sayX(s.body, vars), advanceOn: s.advanceOn ?? null })),
+    buttons: { next: sayX('Next'), back: sayX('Back'), done: sayX('Done') },
+  };
 };
+const data = tour && dataOf(tour);
+const guideData = guides.map(dataOf);
+const guideLabel = guides[0]?.translate ? t('Guide me') : 'Guide me';
+// The field hints' button: in the person's language on shareholder pages, English in the admin.
+const hintDone = path.startsWith('/admin') ? 'Got it' : t('Got it');
 
 // No tour: an announcement's pop-up waiting for this person on this page (lib/announcements.ts), seen once.
 // "Preview pop-up" (Admin → Announcements) shows any announcement the admin can see, without counting it.
@@ -73,42 +89,86 @@ const announcement = pop && text && {
 ---
 
 {data && <script type="application/json" id="tour-data" set:html={JSON.stringify(data).replace(/</g, '\\u003c')} />}
+{user && <span hidden data-hint-done={hintDone}></span>}
+{guideData.length > 0 && <script type="application/json" id="guide-data" set:html={JSON.stringify(guideData).replace(/</g, '\\u003c')} />}
+{guideData.length > 0 && (
+  <button type="button" hidden data-guide-button class="fixed bottom-24 right-4 z-40 inline-flex items-center gap-2 rounded-full border border-white/10 bg-ink px-4 py-2 text-sm font-semibold text-white shadow-xl shadow-black/30 transition hover:border-lk-blue/60 sm:bottom-6">
+    <span class="grid size-5 place-items-center rounded-full bg-lk-blue text-xs text-[#fff]" aria-hidden="true">?</span>{guideLabel}
+  </button>
+)}
 {announcement && <script type="application/json" id="announcement-data" set:html={JSON.stringify(announcement).replace(/</g, '\\u003c')} />}
 
 <script>
-  // Runs the tour: only the steps whose element is on the page and visible (a feature the person lacks, or the
-  // phone layout, skips its step). Finishing or closing it is remembered, so it doesn't start by itself again.
-  type Data = { key: string; steps: { el: string; title: string; body: string }[]; buttons: { next: string; back: string; done: string } };
+  // Tours and guides: only the steps whose element is on the page (a feature the person lacks, or the phone
+  // layout, skips its step). An element inside a closed fold-out counts: the step opens it. A step with
+  // advanceOn moves on by itself when the person does it (clicks, or changes the field).
+  type Step = { el: string; title: string; body: string; advanceOn: 'click' | 'change' | null };
+  type Data = { key: string; remember: boolean; steps: Step[]; buttons: { next: string; back: string; done: string } };
+  const shown = (n: HTMLElement) => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden';
+  const find = (el: string) => {
+    const all = [...document.querySelectorAll<HTMLElement>(`[data-tour="${CSS.escape(el)}"]`)];
+    return all.find(shown) ?? all.find((n) => n.closest('details:not([open])'));
+  };
+  const reveal = (el: string) => {
+    const node = find(el);
+    const fold = node?.closest('details:not([open])');
+    if (fold instanceof HTMLDetailsElement && !fold.querySelector(':scope > summary')?.contains(node!)) fold.open = true;
+    return node;
+  };
+  const usable = (data: Data) => data.steps.filter((s) => find(s.el));
+  async function run(data: Data) {
+    const steps = usable(data);
+    if (!steps.length) return;
+    const { driver } = await import('driver.js');
+    const tour = driver({
+      steps: steps.map((s) => ({
+        element: () => reveal(s.el)!,
+        popover: { title: s.title, description: s.body },
+        onHighlighted: s.advanceOn ? (node) => node?.addEventListener(s.advanceOn!, () => setTimeout(() => tour.moveNext(), 200), { once: true }) : undefined,
+      })),
+      showProgress: steps.length > 1,
+      progressText: '{{current}} / {{total}}',
+      nextBtnText: `${data.buttons.next} →`,
+      prevBtnText: `← ${data.buttons.back}`,
+      doneBtnText: data.buttons.done,
+      popoverClass: 'lk-tour',
+      animate: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
+      smoothScroll: true,
+      stagePadding: 6,
+      stageRadius: 12,
+      overlayOpacity: 0.6,
+      onDestroyed: () => {
+        if (data.remember) void fetch('/api/tours', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: data.key }) }).catch(() => {});
+        // Drop ?tour= so a reload doesn't run it again.
+        const url = new URL(location.href);
+        if (url.searchParams.has('tour')) { url.searchParams.delete('tour'); history.replaceState(history.state, '', url); }
+      },
+    });
+    tour.drive();
+  }
   const raw = document.getElementById('tour-data')?.textContent;
-  if (raw) void (async () => {
-    const data = JSON.parse(raw) as Data;
-    const visible = (el: string) => [...document.querySelectorAll<HTMLElement>(`[data-tour="${CSS.escape(el)}"]`)].find((n) => n.getClientRects().length > 0 && getComputedStyle(n).visibility !== 'hidden');
-    const steps = data.steps.map((s) => ({ s, node: visible(s.el) })).filter((x) => x.node);
-    if (steps.length) {
-      const { driver } = await import('driver.js');
-      const remember = () => fetch('/api/tours', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ key: data.key }) }).catch(() => {});
-      const tour = driver({
-        steps: steps.map(({ s, node }) => ({ element: node, popover: { title: s.title, description: s.body } })),
-        showProgress: steps.length > 1,
-        progressText: '{{current}} / {{total}}',
-        nextBtnText: `${data.buttons.next} →`,
-        prevBtnText: `← ${data.buttons.back}`,
-        doneBtnText: data.buttons.done,
-        popoverClass: 'lk-tour',
-        animate: !window.matchMedia('(prefers-reduced-motion: reduce)').matches,
-        smoothScroll: true,
-        stagePadding: 6,
-        stageRadius: 12,
-        overlayOpacity: 0.6,
-        onDestroyed: () => {
-          void remember();
-          // Drop ?tour= so a reload doesn't run it again.
-          const url = new URL(location.href);
-          if (url.searchParams.has('tour')) { url.searchParams.delete('tour'); history.replaceState(history.state, '', url); }
-        },
-      });
-      tour.drive();
+  if (raw) void run(JSON.parse(raw) as Data);
+
+  // "Guide me": shown when this page's guide has something to point at.
+  const guideRaw = document.getElementById('guide-data')?.textContent;
+  const guideButton = document.querySelector<HTMLButtonElement>('[data-guide-button]');
+  if (guideRaw && guideButton) {
+    const guide = (JSON.parse(guideRaw) as Data[]).find((g) => usable(g).length);
+    if (guide) {
+      guideButton.hidden = false;
+      guideButton.addEventListener('click', () => void run(guide));
     }
+  }
+
+  // Field hints: a small beacon next to fields marked data-hint (and data-hint-title), opening a short note.
+  const hinted = [...document.querySelectorAll<HTMLElement>('[data-hint]')].filter(shown);
+  if (hinted.length) void (async () => {
+    const { hints } = await import('driver.js/hints');
+    hints({
+      popoverClass: 'lk-tour lk-hint',
+      buttonText: document.querySelector<HTMLElement>('[data-hint-done]')?.dataset.hintDone ?? 'Got it',
+      hints: hinted.map((n) => ({ element: n, popover: { title: n.dataset.hintTitle ?? '', description: n.dataset.hint ?? '' }, beacon: { side: 'right', align: 'center' } })),
+    }).show();
   })();
 
   // An announcement's pop-up: a card in the middle, or pointing at a place on the page if it's there. Closing it,

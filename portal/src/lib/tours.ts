@@ -2,12 +2,15 @@
 // Each step points at an element marked data-tour="…"; a step whose element isn't on the page (a feature
 // the person doesn't have, the phone layout) is skipped. A tour starts by itself once, on its start page, for
 // the people it's meant for; "Take the tour" in the profile menu and What's new's "Show me" replay them.
+// Guides (`guide: true`) are tours for one page's task: they never start by themselves; the page shows a
+// "Guide me" button. A step can wait for the person to act (`advanceOn`), and a step whose element is inside
+// a closed fold-out opens it. `start` may end in /* for pages with an id (/agm/*).
 // npm run check:portal checks that every step's element exists and that shareholder tours are translated.
 // No imports: the check script loads this file directly.
 
-export type Who = 'investor' | 'staff' | 'director' | 'audit' | 'anyone';
+export type Who = 'investor' | 'staff' | 'director' | 'audit' | 'anyone' | 'documents' | 'register' | 'papers';
 /** `when`: shown only to people who can switch views (`switch`), or who have Ask (`ask`). */
-export type TourStep = { el: string; title: string; body: string; when?: 'switch' | 'ask' };
+export type TourStep = { el: string; title: string; body: string; when?: 'switch' | 'ask'; advanceOn?: 'click' | 'change' };
 export type Tour = {
   key: string;
   /** The page it runs on. */
@@ -17,6 +20,8 @@ export type Tour = {
   auto: boolean;
   /** Shareholder tours are in every language (src/i18n); staff tours are in English, like the admin. */
   translate: boolean;
+  /** A page's guide, started from its "Guide me" button. */
+  guide?: boolean;
   steps: TourStep[];
 };
 
@@ -68,9 +73,70 @@ export const TOURS: Tour[] = [
       { el: 'profile-language', title: 'Language', body: 'The portal’s menus and pages in English, Spanish, Italian or Chinese.' },
     ],
   },
+
+  // ── Guides: one page's task, from its "Guide me" button ────────────────────────────────────────────
+  {
+    key: 'guide-proxy', start: '/agm/*', who: 'investor', auto: false, translate: true, guide: true,
+    steps: [
+      { el: 'agm-papers', title: 'Read the papers first', body: 'The notice of meeting explains each resolution and how the board recommends you vote.' },
+      { el: 'agm-resolution', title: 'Choose for each resolution', body: 'Pick For, Against or Abstain for each of your holdings. Try it now: choose one.', advanceOn: 'change' },
+      { el: 'agm-lodge', title: 'Lodge your proxy', body: 'Lodge proxy sends your choices to the chair. You can change them and lodge again until the deadline shown here.' },
+      { el: 'agm-question', title: 'Questions before the meeting', body: 'Send the board a question in advance. The answer appears here and in your inbox.' },
+    ],
+  },
+  {
+    key: 'guide-passkey', start: '/account/security', who: 'anyone', auto: false, translate: true, guide: true,
+    steps: [
+      { el: 'security-passkeys', title: 'Passkeys', body: 'A passkey signs you in with Face ID, Touch ID, Windows Hello or your phone, instead of your password. Nobody can phish or guess it.' },
+      { el: 'passkey-add', title: 'Add one on this device', body: 'Press Add a passkey and follow your device’s prompt. Give it a name you’ll recognise, such as “My iPhone”. Add one on each device you use.' },
+      { el: 'security-two-step', title: 'Two-step verification', body: 'An extra code from an authenticator app when you sign in with your password. A passkey counts as two-step on its own.' },
+    ],
+  },
+  {
+    key: 'guide-share', start: '/profile', who: 'anyone', auto: false, translate: true, guide: true,
+    steps: [
+      { el: 'share-section', title: 'Share with your accountant', body: 'Give someone view-only access to a holding you own: its holdings, statements and tax-time packs. They can’t vote, sell or change anything.' },
+      { el: 'share-form', title: 'Who to share with', body: 'Choose the holding, then their name and email. If they don’t have an account, they get an invitation.' },
+      { el: 'share-list', title: 'Who can see your holdings', body: 'Everyone with access is listed here. Remove them at any time.' },
+    ],
+  },
+  {
+    key: 'guide-documents', start: '/admin/documents', who: 'documents', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'doc-upload', title: 'Upload a document', body: 'Open the form to add a document. Click it now.', advanceOn: 'click' },
+      { el: 'doc-file', title: 'The file and its title', body: 'Choose the PDF, then give it the title shareholders will see. The summary shows in the list and in the notification.' },
+      { el: 'doc-audience', title: 'Who can see it', body: 'All shareholders of the company, the board only, or one holder (for example a statement for that holder only).' },
+      { el: 'doc-publish', title: 'When it goes out', body: 'Publish now tells shareholders straight away. Schedule publishes and tells them at the time you set. A draft stays with admins.' },
+      { el: 'doc-approval', title: 'A second pair of eyes', body: 'Tick this to have someone approve it first. It stays a draft until they do.' },
+      { el: 'doc-submit', title: 'Upload', body: 'It appears in the list below, where you can publish, unpublish or share it with the group later.' },
+    ],
+  },
+  {
+    key: 'guide-register', start: '/admin/import/register', who: 'register', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'reg-company', title: 'Pick the company', body: 'The register you’re importing belongs to one company.' },
+      { el: 'reg-check', title: '1. Check the register', body: 'Choose the company secretary’s “register of members” PDF and press Check. Nothing changes yet: the portal reads it and checks every balance adds up.' },
+      { el: 'reg-summary', title: 'What the register says', body: 'The holders, classes and balances the portal read from the PDF, as at its date. If something looks wrong, stop here.' },
+      { el: 'reg-match', title: '2. Match the holders', body: 'Each register holder is matched to a holder in the portal, or added as new. Fix any wrong match, then update the preview. Matches are remembered next time.' },
+      { el: 'reg-preview', title: '3. Preview', body: 'Every change to holdings, old to new. Still nothing has changed.' },
+      { el: 'reg-confirm', title: '4. Confirm', body: 'Tick that you’ve reviewed it and import. Holdings take the register’s figures, with their history; afterwards you can tell shareholders their statements are ready.' },
+    ],
+  },
+  {
+    key: 'guide-paper', start: '/admin/legal/papers/*', who: 'papers', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'paper-text', title: 'The text', body: 'Write the resolution or minutes here. “## ” starts a heading and “1. ” a numbered resolution; the company’s name, ACN and signature lines are added to the PDF.' },
+      { el: 'paper-preview', title: 'Check the PDF', body: 'Save the draft, then preview the PDF exactly as directors will sign it.' },
+      { el: 'paper-signers', title: 'Who signs', body: 'A circular resolution is signed by every director in office; minutes by the chair. People marked “not invited” need a portal account first.' },
+      { el: 'paper-send', title: 'Send for signing', body: 'Each signer gets an email and signs in the portal. The text is locked once someone signs; you can remind or take it back.' },
+      { el: 'paper-signatures', title: 'Signatures', body: 'Who has signed, and when. When everyone has, the signed PDF goes to the minute book.' },
+    ],
+  },
 ];
 
 export const tourByKey = (key: string | null | undefined) => TOURS.find((t) => t.key === key) ?? null;
+/** Whether a tour's page is this one (`/agm/*`: any one page under /agm/). */
+export const onPage = (start: string, path: string) => (start.endsWith('/*') ? path.startsWith(start.slice(0, -1)) && !path.slice(start.length - 1).includes('/') && path.length > start.length - 1 : start === path);
 
 /** Texts of the buttons, translated with the shareholder tours. */
 export const TOUR_BUTTONS = ['Next', 'Back', 'Done', 'Take the tour'];

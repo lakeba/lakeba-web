@@ -205,12 +205,12 @@ const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder
       </div>
     </form>
     {owned.length > 0 && (
-      <section class="card lg:col-span-2" id="share">
+      <section class="card lg:col-span-2" id="share" data-tour="share-section">
         <h2 class="text-lg font-bold">{t('Share with my accountant')}</h2>
         <p class="mt-1 text-sm text-white/55">{t('Give someone view-only access to a holding you own: they can see its holdings, statements and tax-time packs, and documents sent to all investors. They can’t vote, sell or change anything. You can remove them at any time.')}</p>
         {shareNotice && <div class="mt-4"><Alert tone="success">{shareNotice}</Alert></div>}
         {shareError && <div class="mt-4"><Alert tone="error">{shareError}</Alert></div>}
-        <form method="post" class="mt-5 grid gap-3 sm:grid-cols-[1.4fr_1fr_1fr_1.6fr_auto] sm:items-end">
+        <form method="post" class="mt-5 grid gap-3 sm:grid-cols-[1.4fr_1fr_1fr_1.6fr_auto] sm:items-end" data-tour="share-form">
           <input type="hidden" name="intent" value="share" />
           <div><label class="label" for="share_holder">{t('Holding')}</label>
             <select id="share_holder" name="holder_id" class="field">{(links ?? []).filter((l) => l.access === 'owner').map((l) => <option value={l.holder_id}>{(l.holders as unknown as { name: string }).name}</option>)}</select></div>
@@ -219,7 +219,7 @@ const years = new Map(await Promise.all((links ?? []).map(async (l) => [l.holder
           <div><label class="label" for="share_email">{t('Email')}</label><input id="share_email" name="email" type="email" required class="field" /></div>
           <button class="btn-primary">{t('Share')}</button>
         </form>
-        <ul class="mt-5 divide-y divide-white/5">
+        <ul class="mt-5 divide-y divide-white/5" data-tour="share-list">
           {owned.flatMap((hid) => othersOf(hid).map((o) => (
             <li class="flex items-center justify-between gap-4 py-3 text-sm">
               <div><p class="text-white">{[o.profiles?.first_name, o.profiles?.last_name].filter(Boolean).join(' ') || o.profiles?.email}</p><p class="text-xs text-white/40">{o.profiles?.email} · {((links ?? []).find((l) => l.holder_id === hid)?.holders as unknown as { name: string })?.name} · {o.access === 'owner' ? t('Owner') : t('View only')}</p></div>

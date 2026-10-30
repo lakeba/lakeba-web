@@ -96,12 +96,12 @@ const states = { draft: 'Draft', signing: 'Waiting for signatures', signed: 'Sig
       <div class="card grid content-start gap-4">
         <fieldset disabled={!mayDo} class="contents">
           <div><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={paper.title} required /></div>
-          <div><label class="label" for="body">Text</label><textarea class="field min-h-[28rem] font-mono leading-relaxed" id="body" name="body">{paper.body}</textarea>
+          <div data-tour="paper-text"><label class="label" for="body">Text</label><textarea class="field min-h-[28rem] font-mono leading-relaxed" id="body" name="body">{paper.body}</textarea>
             <p class="mt-1 text-xs text-white/40">“## ” starts a heading, “1. ” a numbered resolution, a blank line a new paragraph. The company's name, ACN and the signature lines are added to the PDF.</p></div>
-          {mayDo && <div class="flex flex-wrap gap-3"><button class="btn-ghost" name="intent" value="save">Save the draft</button><a class="btn-ghost" href={`/admin/board/papers/${paper.id}/pdf`} target="_blank">Preview the PDF</a></div>}
+          {mayDo && <div class="flex flex-wrap gap-3"><button class="btn-ghost" name="intent" value="save">Save the draft</button><a class="btn-ghost" href={`/admin/board/papers/${paper.id}/pdf`} target="_blank" data-tour="paper-preview">Preview the PDF</a></div>}
         </fieldset>
       </div>
-      <aside class="card grid content-start gap-3">
+      <aside class="card grid content-start gap-3" data-tour="paper-signers">
         <h2 class="font-display text-lg font-bold">Who signs</h2>
         {candidates.length ? candidates.map((o) => (
           <label class="flex items-start gap-3 text-sm">
@@ -111,13 +111,13 @@ const states = { draft: 'Draft', signing: 'Waiting for signatures', signed: 'Sig
           </label>
         )) : <p class="text-sm text-white/55">No directors are recorded. Add them on the company's Officers tab.</p>}
         <p class="text-xs text-white/40">{paper.kind === 'resolution' ? 'A circular resolution is signed by every director in office.' : 'Minutes are signed by the chair of the meeting (set on the meeting page).'}</p>
-        {mayDo && <button class="btn-primary" name="intent" value="send" data-confirm="Send it for signing? The text can't change once someone signs, without sending it again.">Send for signing</button>}
+        {mayDo && <button class="btn-primary" data-tour="paper-send" name="intent" value="send" data-confirm="Send it for signing? The text can't change once someone signs, without sending it again.">Send for signing</button>}
         {mayDo && <button class="btn-ghost text-lk-red" name="intent" value="withdraw" formnovalidate data-confirm="Withdraw this draft?">Withdraw</button>}
       </aside>
     </form>
   ) : (
     <div class="grid gap-6 xl:grid-cols-[1fr_22rem]">
-      <section class="card">
+      <section class="card" data-tour="paper-signatures">
         <h2 class="font-display text-lg font-bold">Signatures</h2>
         <ul class="mt-3 divide-y divide-white/5 text-sm">
           {signatures.map((s) => (

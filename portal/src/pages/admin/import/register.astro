@@ -178,7 +178,7 @@ const keepLater = r?.choices.later === 'keep';
   <PageHeader title={company ? `Register of members: ${company.display_name}` : 'Register of members'} subtitle="Import the company secretary’s register of members (the PDF report). The portal reads it, checks it adds up, and updates this company’s holdings to the register’s figures at its date. People, access, boards and prices don’t change." />
   <p class="-mt-4 mb-6 text-sm"><a href={`/admin/import${q}`} class="text-lk-blue hover:underline">← Import data</a></p>
   {companies.length > 1 && (
-    <form method="get" class="mb-6 flex flex-wrap items-end gap-2 text-sm">
+    <form method="get" class="mb-6 flex flex-wrap items-end gap-2 text-sm" data-tour="reg-company">
       <div><label class="label" for="company">Company</label><select id="company" name="company" class="field">
         {!company && <option value="" selected>Choose…</option>}
         {companies.map((c) => <option value={c.code} selected={company?.code === c.code}>{c.display_name}</option>)}
@@ -218,7 +218,7 @@ const keepLater = r?.choices.later === 'keep';
   )}
 
   {scope && !applied && (
-    <section class="card mb-6">
+    <section class="card mb-6" data-tour="reg-check">
       <h2 class="text-lg font-bold">1. Check a register</h2>
       <p class="mt-1 text-sm text-white/55">Nothing changes at this step. The portal reads the PDF, checks every holding adds up to the register’s balances, and shows how it matches {company!.display_name}’s holders.</p>
       <form method="post" enctype="multipart/form-data" class="mt-4 flex flex-wrap items-end gap-3">
@@ -230,7 +230,7 @@ const keepLater = r?.choices.later === 'keep';
   )}
 
   {rd && (
-    <section class="card mb-6 space-y-4">
+    <section class="card mb-6 space-y-4" data-tour="reg-summary">
       <div class="flex flex-wrap items-baseline justify-between gap-2">
         <h2 class="text-lg font-bold">What the register says{fileName && <span class="font-normal text-white/50"> · {fileName}</span>}</h2>
         {rd.asAt && <p class="text-sm text-white/60">As at <span class="text-white">{day(rd.asAt)}</span></p>}
@@ -265,7 +265,7 @@ const keepLater = r?.choices.later === 'keep';
       {r.problems.length > 0 && <div class="mb-6"><Alert tone="error"><strong>{r.problems.length} problem{r.problems.length === 1 ? '' : 's'} to sort out before importing.</strong><ul class="mt-2 list-disc pl-5 text-sm">{r.problems.map((p) => <li>{p}</li>)}</ul></Alert></div>}
       {r.warnings.length > 0 && <div class="mb-6"><Alert tone="info"><ul class="list-disc pl-5 text-sm">{r.warnings.map((w) => <li>{w}</li>)}</ul></Alert></div>}
 
-      <form method="post" class="card mb-6 space-y-6" id="matching">
+      <form method="post" class="card mb-6 space-y-6" id="matching" data-tour="reg-match">
         <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} /><input type="hidden" name="received" value={received} />
         <div class="flex flex-wrap items-baseline justify-between gap-2">
           <h2 class="text-lg font-bold">2. Match the register to the portal</h2>
@@ -314,7 +314,7 @@ const keepLater = r?.choices.later === 'keep';
         {r.candidates.some((c) => !c.here) && <optgroup label="Other holders in the portal">{r.candidates.filter((c) => !c.here).map((c) => <option value={c.id}>{c.name}{c.ref ? ` (${c.ref})` : ''}</option>)}</optgroup>}
       </select>
 
-      <section class="card mb-6 space-y-5">
+      <section class="card mb-6 space-y-5" data-tour="reg-preview">
         <div class="flex flex-wrap items-baseline justify-between gap-2">
           <h2 class="text-lg font-bold">3. Preview of the changes</h2>
           <p class="text-sm text-white/50">Nothing has changed yet.</p>
@@ -353,12 +353,12 @@ const keepLater = r?.choices.later === 'keep';
         })}
 
         {!r.problems.length && uploadId && (
-          <form method="post" class="space-y-4 rounded-2xl border border-lk-green/30 bg-lk-green/[0.06] p-5" onsubmit="return confirm('Import this register? Holdings change to its figures.')">
+          <form method="post" class="space-y-4 rounded-2xl border border-lk-green/30 bg-lk-green/[0.06] p-5" data-tour="reg-confirm" onsubmit="return confirm('Import this register? Holdings change to its figures.')">
             <p class="font-semibold text-white">4. Confirm</p>
             <input type="hidden" name="upload_id" value={uploadId} /><input type="hidden" name="file_name" value={fileName} /><input type="hidden" name="received" value={received} /><input type="hidden" name="fingerprint" value={fingerprint} />
             <input type="hidden" name="choices" value={JSON.stringify(r.choices)} />
             <p class="text-sm text-white/60">{company!.display_name}’s holdings take the register’s figures as at {day(r.asAt)}, with their history ({r.datedRows} dated balances from {rd?.facts.movements ?? 0} movements){later.length > 0 && !keepLater ? `, and ${later.length} figure${later.length === 1 ? ' the register doesn’t support is' : 's the register doesn’t support are'} removed` : ''}. If you changed a match above, press “Update the preview” first.</p>
-            {!fromRegister && <label class="flex items-start gap-3 text-sm text-white/80"><input type="checkbox" name="from_register" checked class="mt-0.5 size-4 accent-lk-blue" /><span>From now on, {company!.display_name}’s holdings come from its register of members<span class="block text-xs text-white/50">The workbook import will only check them, and changing them on screen will ask why.</span></span></label>}
+            {!fromRegister && <label class="flex items-start gap-3 text-sm text-white/80"><input type="checkbox" name="from_register" checked class="mt-0.5 size-4 accent-lk-blue" /><span data-hint="The register becomes the source for this company’s holdings: the workbook import and the holder screens stop changing them, so the next register lines up exactly." data-hint-title="From now on">From now on, {company!.display_name}’s holdings come from its register of members<span class="block text-xs text-white/50">The workbook import will only check them, and changing them on screen will ask why.</span></span></label>}
             <label class="flex items-center gap-3 text-sm text-white/80"><input type="checkbox" name="reviewed" required class="size-4 accent-lk-blue" /> I’ve reviewed the matches and the changes above.</label>
             <button name="intent" value="apply" class="btn-primary">Import the register</button>
           </form>

@@ -173,23 +173,23 @@ const docApprovals = await approvalsFor(serviceClient(), 'document', (docs ?? []
   {notice && <div class="mb-6"><Alert tone="success">{notice}</Alert></div>}
 
   <details class="card mb-6" open={Boolean(error)}>
-    <summary class="cursor-pointer font-display text-lg font-bold text-white">Upload a document</summary>
+    <summary class="cursor-pointer font-display text-lg font-bold text-white" data-tour="doc-upload">Upload a document</summary>
     <form method="post" enctype="multipart/form-data" class="mt-6 grid gap-4 sm:grid-cols-2">
       <div class="sm:col-span-2"><CompanySelect scope={scope} /></div>
-      <div class="sm:col-span-2"><input type="file" name="file" required class="block text-sm text-white/70 file:mr-4 file:rounded-lg file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-white" /></div>
+      <div class="sm:col-span-2" data-tour="doc-file"><input type="file" name="file" required class="block text-sm text-white/70 file:mr-4 file:rounded-lg file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-white" /></div>
       <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" required /></div>
       <div class="sm:col-span-2"><label class="label" for="summary">Summary (shown in the list and the notification)</label><textarea class="field" id="summary" name="summary" rows="2"></textarea></div>
       <div><label class="label" for="category">Category</label><select class="field" id="category" name="category">{categories.map((c) => <option value={c}>{categoryLabels[c]}</option>)}</select></div>
-      <div><label class="label" for="audience">Who can see it</label><select class="field" id="audience" name="audience">{Object.entries(audiences).map(([v, l]) => <option value={v}>{l}</option>)}</select></div>
+      <div data-tour="doc-audience"><label class="label" for="audience"><span data-hint="All shareholders of the company; the board only; or one holder, such as a statement for that holder alone (choose the holder next to it)." data-hint-title="Who can see it">Who can see it</span></label><select class="field" id="audience" name="audience">{Object.entries(audiences).map(([v, l]) => <option value={v}>{l}</option>)}</select></div>
       <div><label class="label" for="holder_id">Holder (for “One holder”)</label><select class="field" id="holder_id" name="holder_id"><option value="">—</option>{(holders ?? []).map((h) => <option value={h.id}>{h.name}</option>)}</select></div>
-      <div><label class="label" for="publish">Publishing</label>
+      <div data-tour="doc-publish"><label class="label" for="publish"><span data-hint="Publish now tells shareholders straight away. Schedule publishes and tells them at the time you set. A draft stays with admins until you publish it." data-hint-title="Publishing">Publishing</span></label>
         <select class="field" id="publish" name="publish"><option value="now">Publish now and notify</option><option value="schedule">Schedule</option><option value="draft">Save as draft</option></select></div>
       <div><label class="label" for="publish_at">Scheduled time</label><input class="field" id="publish_at" name="publish_at" type="datetime-local" /></div>
       <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="in_knowledge_base" checked class="size-4 accent-lk-blue" /> Use in Ask (ignored for registers, which are never used)</label>
       {groupCompany && scope.companies.length > 1 && <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="shared_with_group" class="size-4 accent-lk-blue" /> Also share with Lakeba Group shareholders (venture documents only, e.g. a venture’s annual report)</label>}
-      <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="needs_approval" class="size-4 accent-lk-blue" /> Ask for approval before it’s published (optional; it stays a draft until approved)</label>
+      <label class="flex items-center gap-3 text-sm text-white/70 sm:col-span-2" data-tour="doc-approval"><input type="checkbox" name="needs_approval" class="size-4 accent-lk-blue" /> Ask for approval before it’s published (optional; it stays a draft until approved)</label>
       <div class="sm:col-span-2"><label class="label" for="approval_note">Note for the approver (optional)</label><input class="field" id="approval_note" name="approval_note" maxlength="1000" /></div>
-      <div class="sm:col-span-2"><button name="intent" value="upload" class="btn-primary">Upload</button></div>
+      <div class="sm:col-span-2" data-tour="doc-submit"><button name="intent" value="upload" class="btn-primary">Upload</button></div>
     </form>
   </details>
 

@@ -2,6 +2,7 @@
 @import "../../../src/styles/brand.css";
 /* Guided tours (Driver.js): its base styles; the portal's look for them is at the end of this file. */
 @import "driver.js/dist/driver.css";
+@import "driver.js/dist/hints.css";
 
 @layer base {
   html { color-scheme: dark; }

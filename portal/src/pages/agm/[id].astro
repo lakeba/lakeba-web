@@ -69,12 +69,12 @@ const choices = [['for', 'For'], ['against', 'Against'], ['abstain', 'Abstain']]
       {notice && <div class="mt-6"><Alert tone={notice.tone}>{notice.text}</Alert></div>}
 
       <section class="mt-10">
-        <h2 class="text-xl font-bold">{t('Resolutions')}</h2>
+        <h2 class="text-xl font-bold"><span data-hint={t('For or Against tells the chair how to vote your shares. Abstain means they aren’t counted for that resolution. You can change your choices until the deadline.')} data-hint-title={t('How proxy voting works')}>{t('Resolutions')}</span></h2>
         {votingOpen && owned?.length ? (
           <form method="post" class="mt-5 space-y-4">
             <input type="hidden" name="intent" value="proxy" />
             {(resolutions ?? []).map((r) => (
-              <fieldset class="card p-5">
+              <fieldset class="card p-5" data-tour="agm-resolution">
                 <legend class="sr-only">{t('Resolution {n}', { n: r.number })}</legend>
                 <p class="text-xs uppercase tracking-widest text-white/40">{t('Resolution {n}', { n: r.number })} · {r.kind === 'special' ? t('Special') : t('Ordinary')}</p>
                 <p class="mt-1 font-semibold text-white">{r.title}</p>
@@ -94,7 +94,7 @@ const choices = [['for', 'For'], ['against', 'Against'], ['abstain', 'Abstain']]
                 ))}
               </fieldset>
             ))}
-            <div class="flex flex-wrap items-center justify-between gap-4">
+            <div class="flex flex-wrap items-center justify-between gap-4" data-tour="agm-lodge">
               <p class="text-sm text-white/50">{t('Your proxy directs the chair to vote as shown. Deadline: {date}.', { date: fmt.dateTime.format(new Date(meeting.proxy_deadline)) })}</p>
               <button class="btn-primary">{t('Lodge proxy')}</button>
             </div>
@@ -118,7 +118,7 @@ const choices = [['for', 'For'], ['against', 'Against'], ['abstain', 'Abstain']]
     </div>
 
     <aside class="space-y-4">
-      <section class="card">
+      <section class="card" data-tour="agm-papers">
         <h2 class="text-lg font-bold">{t('Papers')}</h2>
         <ul class="mt-4 space-y-2 text-sm">
           {meeting.notice_document_id && <li><a href={`/documents/${meeting.notice_document_id}`} class="text-lk-blue hover:underline">{t('Notice of meeting')} ↗</a></li>}
@@ -127,7 +127,7 @@ const choices = [['for', 'For'], ['against', 'Against'], ['abstain', 'Abstain']]
           {!meeting.notice_document_id && !meeting.minutes_document_id && !meeting.livestream_url && <li class="text-white/45">{t('Papers will be published here.')}</li>}
         </ul>
       </section>
-      <section class="card">
+      <section class="card" data-tour="agm-question">
         <h2 class="text-lg font-bold">{t('Ask before the meeting')}</h2>
         <form method="post" class="mt-4 space-y-3">
           <input type="hidden" name="intent" value="question" />

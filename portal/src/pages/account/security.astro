@@ -75,7 +75,7 @@ const passkeyStrings = clientStrings(t, [
   )}
 
   <div class="mt-8 grid max-w-2xl gap-4">
-    <section class="card" id="passkeys">
+    <section class="card" id="passkeys" data-tour="security-passkeys">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 class="text-lg font-bold">{t('Passkeys')}</h2>
@@ -109,7 +109,7 @@ const passkeyStrings = clientStrings(t, [
           ))}
         </ul>
       )}
-      {!needsCode && <div id="passkey-add" class="mt-5" data-ask-password={askPassword ? '1' : ''} data-strings={passkeyStrings}>
+      {!needsCode && <div id="passkey-add" data-tour="passkey-add" class="mt-5" data-ask-password={askPassword ? '1' : ''} data-strings={passkeyStrings}>
         {askPassword && (
           <div class="mb-3 max-w-sm">
             <label class="label" for="passkey-password">{t('Confirm your password')}</label>
@@ -122,7 +122,7 @@ const passkeyStrings = clientStrings(t, [
         <p id="passkey-add-error" class="mt-3 hidden text-sm text-lk-red" role="alert"></p>
       </div>}
     </section>
-    <section class="card">
+    <section class="card" data-tour="security-two-step">
       <div class="flex flex-wrap items-start justify-between gap-4">
         <div>
           <h2 class="text-lg font-bold">{t('Two-step verification')}</h2>
