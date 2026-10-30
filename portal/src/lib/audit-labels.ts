@@ -35,6 +35,9 @@ const LABELS: Record<string, string> = {
 };
 const WORDS: Record<string, string> = { mfa: 'two-step sign-in', qa: 'Q&A', ai: 'AI', kb: 'Ask knowledge', agm: 'meeting', pdf: 'PDF', csv: 'CSV', nda: 'terms', ask: 'Ask', linkedin: 'LinkedIn' };
 
+/** The actions with a wording of their own, for suggestions in the audit log's filters. */
+export const KNOWN_ACTIONS = Object.keys(LABELS);
+
 export function actionLabel(code: string) {
   if (LABELS[code]) return LABELS[code];
   let words = code.split('_');

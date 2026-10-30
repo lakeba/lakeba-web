@@ -148,7 +148,7 @@ const record = { id: t.id, audience, entity_id: t.entity_id, subject: t.subject,
         <section class="card space-y-3">
           <h2 class="font-display text-lg font-bold">Template</h2>
           <div><label class="label" for="template_name">Name</label><input id="template_name" name="template_name" value={t.name} class="field" /></div>
-          <div><label class="label" for="template_description">What it's for</label><textarea id="template_description" name="template_description" rows="2" class="field text-sm">{t.description}</textarea></div>
+          <div><label class="label" for="template_description">What it's for</label><textarea id="template_description" name="template_description" rows="2" class="field">{t.description}</textarea></div>
           {editor.group && audience === 'shareholders' && (
             <div><label class="label" for="template_scope">Available to</label>
               <select id="template_scope" name="template_scope" class="field"><option value="all" selected={!t.entity_id}>All companies</option><option value="company" selected={Boolean(t.entity_id)}>One company</option></select>
@@ -172,7 +172,7 @@ const record = { id: t.id, audience, entity_id: t.entity_id, subject: t.subject,
               <div class="mt-3 space-y-3">
                 <p class="text-xs text-white/50">Rebuilds the design from the original. The current version is kept in “Earlier versions”.</p>
                 <label class="flex gap-2 text-sm text-white/75"><input type="checkbox" name="import_personalise" checked class="accent-lk-blue" /> Personalise for us</label>
-                <textarea name="import_instructions" rows="2" maxlength="1500" class="field text-sm" placeholder="Anything else for Lakeba AI (optional)"></textarea>
+                <textarea name="import_instructions" rows="2" maxlength="1500" class="field" placeholder="Anything else for Lakeba AI (optional)"></textarea>
                 <button name="intent" value="ai-convert" class="btn-ghost w-full text-sm" disabled={converting} onclick="return confirm('Rebuild this template from the original with Lakeba AI? The current version is kept in Earlier versions.')">Convert again</button>
               </div>
             </details>

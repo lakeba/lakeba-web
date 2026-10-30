@@ -61,7 +61,7 @@ const closed = rows.filter((r) => ['done', 'cancelled'].includes(r.status));
         <div class="sm:col-span-2"><label class="label" for="title">In a few words</label><input class="field" id="title" name="title" required value={kept.title ?? ''} placeholder="e.g. NDA from Acme before Thursday's meeting" /></div>
         <div class="sm:col-span-2"><label class="label" for="body">Details</label><textarea class="field min-h-32" id="body" name="body" required placeholder="What it's about, who the other party is, what worries you, any deadline.">{kept.body ?? ''}</textarea></div>
         <div><label class="label" for="needed_by">Needed by (optional)</label><input class="field" type="date" id="needed_by" name="needed_by" value={kept.needed_by ?? ''} /></div>
-        <div><label class="label" for="files">Files (optional)</label><input class="field !py-1.5 text-sm" type="file" id="files" name="files" multiple /></div>
+        <div><label class="label" for="files">Files (optional)</label><input class="field" type="file" id="files" name="files" multiple /></div>
         <div class="sm:col-span-2"><button class="btn-primary" data-busy-label="Sending…">Send to Lakeba Legal</button></div>
       </form>
     </details>

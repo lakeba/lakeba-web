@@ -81,9 +81,9 @@ const tab = (m: string) => ['rounded-full border px-4 py-1.5 text-sm', mode === 
         <section class="card overflow-hidden p-0" data-designer-card>
           <div class="space-y-2 border-b border-white/10 px-4 py-3" data-dai>
             <div class="flex flex-wrap items-center gap-2">
-              <input class="field min-w-[16rem] flex-1 py-2" maxlength="1000" data-dai-input aria-label="Ask AI to change the design" placeholder="✨ Ask AI to change the design, e.g. “add the logo top right”" />
+              <input class="field min-w-[16rem] flex-1" maxlength="1000" data-dai-input aria-label="Ask AI to change the design" placeholder="✨ Ask AI to change the design, e.g. “add the logo top right”" />
               <button type="button" class="btn-primary py-2" data-dai-ask>Ask AI</button>
-              <select class="field hidden w-auto py-2 text-sm" aria-label="Quick actions on the selected element" data-dai-quick>
+              <select class="field hidden w-auto" aria-label="Quick actions on the selected element" data-dai-quick>
                 <option value="">Quick actions…</option>
                 <optgroup label="Text">
                   <option value="Improve the wording of this text: clearer and more engaging, same meaning and length.">Improve the wording</option>
@@ -117,7 +117,7 @@ const tab = (m: string) => ['rounded-full border px-4 py-1.5 text-sm', mode === 
         <section class="card space-y-3">
           <div class="flex flex-wrap items-center justify-between gap-2">
             <h2 class="font-display text-lg font-bold">HTML</h2>
-            <select class="field w-auto py-1.5 text-xs" aria-label="Insert" data-insert>
+            <select class="field w-auto" aria-label="Insert" data-insert>
               <option value="">Insert…</option>
               <optgroup label="From the portal">{PLACEHOLDERS.map((p) => <option value={`{{${p}}}`}>{`{{${p}}}`}</option>)}</optgroup>
               <optgroup label="Pieces">{SNIPPETS.map((s) => <option value={s.html}>{s.label}</option>)}</optgroup>
@@ -125,7 +125,7 @@ const tab = (m: string) => ['rounded-full border px-4 py-1.5 text-sm', mode === 
             </select>
             <input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-html-image />
           </div>
-          <textarea name="html_body" rows="34" spellcheck="false" class="field font-mono text-xs leading-relaxed" data-html>{record.html_body}</textarea>
+          <textarea name="html_body" rows="34" spellcheck="false" class="field font-mono leading-relaxed" data-html>{record.html_body}</textarea>
           <p class="text-xs text-white/40">The header, footer and unsubscribe link are added around this. Placeholders: <code>{'{{greeting}}'}</code>, <code>{'{{holding}}'}</code>, <code>{'{{news}}'}</code>, <code>{'{{documents}}'}</code>, <code>{'{{meetings}}'}</code>, <code>{'{{portal_button}}'}</code>. Scripts and forms are removed when saved.</p>
         </section>
       )}

@@ -224,9 +224,9 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
         <div class="sm:col-span-2"><label class="label" for="notes">Notes</label><textarea class="field min-h-48" id="notes" name="notes" placeholder="What was discussed and decided, in any form: Lakeba AI turns it into minutes.">{meeting.notes}</textarea></div>
         <div class="sm:col-span-2">
           <label class="label" for="transcript_file">Transcript (optional)</label>
-          <input class="field !py-1.5 text-sm" type="file" id="transcript_file" name="transcript_file" accept=".txt,.vtt,.srt,.md,text/plain,text/vtt" />
+          <input class="field" type="file" id="transcript_file" name="transcript_file" accept=".txt,.vtt,.srt,.md,text/plain,text/vtt" />
           <p class="mt-1 text-xs text-white/40">The transcript Teams, Zoom or Google Meet makes (.vtt or .txt). For a meeting in the room, record it with the Observer below.</p>
-          {meeting.transcript && <details class="mt-2"><summary class="cursor-pointer text-xs text-white/55">Transcript on file ({Math.round(meeting.transcript.length / 1000)}k characters) · show or change</summary><textarea class="field mt-2 min-h-40 text-xs" name="transcript">{meeting.transcript}</textarea></details>}
+          {meeting.transcript && <details class="mt-2"><summary class="cursor-pointer text-xs text-white/55">Transcript on file ({Math.round(meeting.transcript.length / 1000)}k characters) · show or change</summary><textarea class="field mt-2 min-h-40" name="transcript">{meeting.transcript}</textarea></details>}
           {!meeting.transcript && <input type="hidden" name="transcript" value="" />}
         </div>
       </div>
@@ -286,8 +286,8 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
         </form>
         <form method="post" enctype="multipart/form-data" class="grid content-start gap-2 rounded-xl bg-white/[0.03] p-4" data-busy>
           <p class="text-sm text-white">Present your own deck</p>
-          <input class="field !py-1.5 text-sm" name="title" placeholder="Title (optional)" maxlength="200" />
-          <div class="flex flex-wrap gap-2"><select class="field !w-auto !py-1.5 text-sm" name="role">{Object.entries(ROLES).map(([k, r]) => <option value={k}>{k === 'other' ? 'Another presenter' : `On behalf of the ${r.name}`}</option>)}</select><input class="field !py-1.5 text-sm" type="file" name="deck" accept=".pdf,application/pdf" required /></div>
+          <input class="field" name="title" placeholder="Title (optional)" maxlength="200" />
+          <div class="flex flex-wrap gap-2"><select class="field !w-auto" name="role">{Object.entries(ROLES).map(([k, r]) => <option value={k}>{k === 'other' ? 'Another presenter' : `On behalf of the ${r.name}`}</option>)}</select><input class="field" type="file" name="deck" accept=".pdf,application/pdf" required /></div>
           <p class="text-xs text-white/45">A PDF (export it from PowerPoint or Keynote). Lex writes what to say for each page; you check and approve it.</p>
           <div><button class="btn-ghost !py-2 text-sm" name="intent" value="upload-deck" data-busy-label="Uploading…">Upload</button></div>
         </form>
@@ -413,7 +413,7 @@ const roleWord = { director: 'Director', secretary: 'Company secretary', guest: 
               <div class="grid gap-1 sm:grid-cols-[10rem_1fr] sm:items-center">
                 <label class="text-sm text-white/70" for={`sp-${sp.label}`}>{sp.label} <span class="text-xs text-white/40">({sp.words} words)</span></label>
                 <div>
-                  <input class="field !py-1.5 text-sm" id={`sp-${sp.label}`} name={`speaker:${sp.label}`} list="people" value={names[sp.label] ?? ''} placeholder="Name" />
+                  <input class="field" id={`sp-${sp.label}`} name={`speaker:${sp.label}`} list="people" value={names[sp.label] ?? ''} placeholder="Name" />
                   {sp.sample && <p class="mt-1 text-xs text-white/40">“{sp.sample}…”</p>}
                 </div>
               </div>

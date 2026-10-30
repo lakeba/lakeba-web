@@ -95,7 +95,7 @@ if (Astro.request.method === 'POST') {
     <section class="card space-y-5">
       <h2 class="font-display text-lg font-bold">1. The template</h2>
       <div><label class="label" for="paste">Paste HTML or MJML</label>
-        <textarea id="paste" name="paste" rows="8" class="field font-mono text-xs" placeholder="<!doctype html>… or <mjml>…"></textarea>
+        <textarea id="paste" name="paste" rows="8" class="field font-mono" placeholder="<!doctype html>… or <mjml>…"></textarea>
         <p class="mt-1 text-xs text-white/40">In most email programs: open the newsletter, choose “View source” or “Show original”, and copy the HTML part.</p></div>
       <div class="grid gap-4 md:grid-cols-2">
         <div><label class="label" for="file">…or choose a file</label>
@@ -113,7 +113,7 @@ if (Astro.request.method === 'POST') {
       </div>
       <label class="flex gap-3 text-sm"><input type="checkbox" name="personalise" checked={v.personalise} class="mt-1 accent-lk-blue" /><span><strong class="text-white">Personalise for us</strong><span class="block text-white/55">With the designer: their logo and colours become the company's, their words become [prompts] to fill in, photos become placeholders, and the portal's blocks (greeting, holding, news, documents, meetings, sign-in) are added.</span></span></label>
       <div><label class="label" for="instructions">Anything else for Lakeba AI? (optional)</label>
-        <textarea id="instructions" name="instructions" rows="2" maxlength="1500" class="field text-sm" placeholder="e.g. keep their three-column product section for our ventures; make the header dark navy">{v.instructions}</textarea></div>
+        <textarea id="instructions" name="instructions" rows="2" maxlength="1500" class="field" placeholder="e.g. keep their three-column product section for our ventures; make the header dark navy">{v.instructions}</textarea></div>
     </section>
 
     <aside class="space-y-4">

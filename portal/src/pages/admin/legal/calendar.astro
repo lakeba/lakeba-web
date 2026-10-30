@@ -62,10 +62,10 @@ const groups = state === 'open'
   {result?.ok && <div class="mb-6"><Alert tone="success">{result.ok}</Alert></div>}
 
   <form method="get" class="mb-6 flex flex-wrap items-end gap-3 text-sm">
-    <div><label class="label" for="f-company">Company</label><select class="field !py-2" id="f-company" name="company"><option value="">All</option>{companies.map((c) => <option value={c.code} selected={c.id === pickCompany?.id}>{c.display_name}</option>)}</select></div>
-    <div><label class="label" for="f-kind">Kind</label><select class="field !py-2" id="f-kind" name="kind"><option value="">All</option>{Object.entries(KINDS).map(([k, l]) => <option value={k} selected={k === kind}>{l}</option>)}</select></div>
-    <div><label class="label" for="f-owner">Looked after by</label><select class="field !py-2" id="f-owner" name="owner"><option value="">Anyone</option><option value="none" selected={owner === 'none'}>Nobody yet</option>{people.map((p) => <option value={p.id} selected={p.id === owner}>{p.name}</option>)}</select></div>
-    <div><label class="label" for="f-state">Showing</label><select class="field !py-2" id="f-state" name="state"><option value="open">Open</option><option value="done" selected={state === 'done'}>Done</option><option value="all" selected={state === 'all'}>All</option></select></div>
+    <div><label class="label" for="f-company">Company</label><select class="field" id="f-company" name="company"><option value="">All</option>{companies.map((c) => <option value={c.code} selected={c.id === pickCompany?.id}>{c.display_name}</option>)}</select></div>
+    <div><label class="label" for="f-kind">Kind</label><select class="field" id="f-kind" name="kind"><option value="">All</option>{Object.entries(KINDS).map(([k, l]) => <option value={k} selected={k === kind}>{l}</option>)}</select></div>
+    <div><label class="label" for="f-owner">Looked after by</label><select class="field" id="f-owner" name="owner"><option value="">Anyone</option><option value="none" selected={owner === 'none'}>Nobody yet</option>{people.map((p) => <option value={p.id} selected={p.id === owner}>{p.name}</option>)}</select></div>
+    <div><label class="label" for="f-state">Showing</label><select class="field" id="f-state" name="state"><option value="open">Open</option><option value="done" selected={state === 'done'}>Done</option><option value="all" selected={state === 'all'}>All</option></select></div>
     <button class="btn-ghost !py-2">Show</button>
   </form>
 
@@ -95,7 +95,7 @@ const groups = state === 'open'
       <h2 class="font-display text-lg font-bold">In your own calendar</h2>
       <p class="text-white/55">A private address that Outlook or Google Calendar can subscribe to, with the open deadlines of the companies you look after. It shows titles and dates only; anyone with the address can see them, so keep it to yourself.</p>
       {feedUrl ? (
-        <div class="grid gap-2"><Alert tone="success">Copy this address now: it isn't shown again.</Alert><input class="field font-mono text-xs" readonly value={feedUrl} /></div>
+        <div class="grid gap-2"><Alert tone="success">Copy this address now: it isn't shown again.</Alert><input class="field font-mono" readonly value={feedUrl} /></div>
       ) : (
         <form method="post" class="flex flex-wrap gap-2">
           <button class="btn-ghost !py-2" name="intent" value="feed">{feed ? 'Make a new address (the old one stops)' : 'Make my calendar address'}</button>

@@ -190,16 +190,16 @@ const cost = items.reduce((n, it) => n + Number(it.cost_usd), 0);
                 <tr data-row data-entity={c.entity_id ?? ''} data-need={needsYou(it) ? '1' : ''} class:list={['border-b border-white/5 align-top', needsYou(it) && 'bg-lk-orange/[0.05]', !it.include && 'opacity-60']}>
                   <td class="py-2.5 pr-2"><input type="checkbox" name={`include_${it.id}`} checked={it.include} disabled={it.status === 'error'} class="mt-2 size-4 accent-lk-blue" aria-label={`Import ${c.title}`} /></td>
                   <td class="py-2.5 pr-2">
-                    <input class="field !py-1.5 !text-[13px]" name={`title_${it.id}`} value={c.title} maxlength="200" aria-label="Name" />
+                    <input class="field" name={`title_${it.id}`} value={c.title} maxlength="200" aria-label="Name" />
                     <p class="mt-1 break-all text-xs text-white/40">{it.folder ? `${it.folder}/` : ''}{it.file_name} · {fileSize(it.size_bytes)}{it.pages ? ` · ${it.pages} page${it.pages === 1 ? '' : 's'}` : ''}{it.text_source === 'ocr' ? ' · read from the scan' : ''}</p>
                     {c.summary && <p class="mt-1 text-xs text-white/55">{c.summary}</p>}
                     {it.status === 'error' && <p class="mt-1 text-xs text-lk-orange">Lakeba AI couldn’t read it: {it.error}</p>}
                     {it.notes.map((n) => <p class="mt-1 text-xs text-lk-orange">{n}</p>)}
                   </td>
-                  <td class="py-2.5 pr-2"><select class="field !py-1.5 !text-[13px]" name={`entity_${it.id}`} aria-label="Company"><option value="">Choose…</option>{companies.map((co) => <option value={co.id} selected={co.id === c.entity_id}>{co.display_name}</option>)}</select></td>
-                  <td class="py-2.5 pr-2"><select class="field !py-1.5 !text-[13px]" name={`category_${it.id}`} aria-label="Category">{IMPORT_CATEGORIES.map((k) => <option value={k} selected={k === c.category}>{categoryLabels[k]}</option>)}</select></td>
-                  <td class="py-2.5 pr-2"><input type="date" class="field !py-1.5 !text-[13px]" name={`date_${it.id}`} value={c.document_date ?? ''} aria-label="Date" /></td>
-                  <td class="py-2.5 pr-2"><select class="field !py-1.5 !text-[13px]" name={`audience_${it.id}`} aria-label="Who sees it" disabled={locked}><option value="all_investors" selected={c.audience === 'all_investors'}>All investors</option><option value="board" selected={c.audience === 'board'}>Board only</option></select>{locked && <input type="hidden" name={`audience_${it.id}`} value="board" />}</td>
+                  <td class="py-2.5 pr-2"><select class="field" name={`entity_${it.id}`} aria-label="Company"><option value="">Choose…</option>{companies.map((co) => <option value={co.id} selected={co.id === c.entity_id}>{co.display_name}</option>)}</select></td>
+                  <td class="py-2.5 pr-2"><select class="field" name={`category_${it.id}`} aria-label="Category">{IMPORT_CATEGORIES.map((k) => <option value={k} selected={k === c.category}>{categoryLabels[k]}</option>)}</select></td>
+                  <td class="py-2.5 pr-2"><input type="date" class="field" name={`date_${it.id}`} value={c.document_date ?? ''} aria-label="Date" /></td>
+                  <td class="py-2.5 pr-2"><select class="field" name={`audience_${it.id}`} aria-label="Who sees it" disabled={locked}><option value="all_investors" selected={c.audience === 'all_investors'}>All investors</option><option value="board" selected={c.audience === 'board'}>Board only</option></select>{locked && <input type="hidden" name={`audience_${it.id}`} value="board" />}</td>
                   <td class="py-2.5">{locked || it.text_source === 'none' ? <span class="mt-2 inline-block text-xs text-white/40">{locked ? 'Never' : 'Can’t read'}</span> : <input type="checkbox" name={`ask_${it.id}`} checked={c.ask} class="mt-2 size-4 accent-lk-blue" aria-label="Use for Lakeba AI" />}</td>
                 </tr>
               );

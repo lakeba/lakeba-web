@@ -11,7 +11,7 @@ const icRows = editable ? others : others.filter((o) => icOf(o.id));
 const money = (v: number | null | undefined) => (v == null ? '' : new Intl.NumberFormat('en-AU', { maximumFractionDigits: 0 }).format(v));
 const t = totals(figures);
 const cell = 'px-3 py-1.5 text-right tabular-nums';
-const input = 'field !rounded-lg !px-2 !py-1 text-right tabular-nums';
+const input = 'field !rounded-lg !px-2 text-right tabular-nums';
 ---
 <div class="grid gap-6 lg:grid-cols-2">
   <div class="overflow-x-auto">

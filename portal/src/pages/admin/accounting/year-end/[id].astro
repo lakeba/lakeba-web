@@ -77,7 +77,7 @@ const tone = { requested: 'text-white/50', provided: 'text-lk-blue', accepted: '
         {mayDo && it.status !== 'accepted' && (
           <form method="post" class="mt-3 flex flex-wrap items-end gap-2">
             <input type="hidden" name="item_id" value={it.id} />
-            <input class="field !w-auto grow !py-1.5 text-sm" name="review_note" placeholder="What is still needed (to ask again)" aria-label="What is still needed" />
+            <input class="field !w-auto grow" name="review_note" placeholder="What is still needed (to ask again)" aria-label="What is still needed" />
             {it.status === 'provided' && <button class="btn-primary !py-1.5 text-sm" name="intent" value="accept">Accept</button>}
             <button class="btn-ghost !py-1.5 text-sm" name="intent" value="again">Ask again</button>
             {it.status !== 'not_applicable' && <button class="btn-ghost !py-1.5 text-sm" name="intent" value="na">Not applicable</button>}

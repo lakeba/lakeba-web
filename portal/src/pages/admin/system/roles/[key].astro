@@ -62,7 +62,7 @@ const locked = role.key === 'admin';
     <aside class="space-y-4">
       <section class="card space-y-3">
         {!role.builtin && <div><label class="label" for="name">Name</label><input id="name" name="name" value={role.name} class="field" disabled={!mayChange} /></div>}
-        <div><label class="label" for="description">What it’s for</label><textarea id="description" name="description" rows="3" class="field text-sm" disabled={!mayChange}>{role.description}</textarea></div>
+        <div><label class="label" for="description">What it’s for</label><textarea id="description" name="description" rows="3" class="field" disabled={!mayChange}>{role.description}</textarea></div>
         {mayChange && !locked && <button name="intent" value="save" class="btn-primary w-full">Save</button>}
         {mayChange && !role.builtin && <button name="intent" value="delete" class="w-full text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Delete this role?')">Delete role</button>}
       </section>

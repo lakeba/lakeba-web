@@ -54,9 +54,9 @@ const shows: [string, string][] = [['active', 'In force'], ['ending', 'Ending in
   </nav>
   <form method="get" class="mb-6 flex flex-wrap items-end gap-3 text-sm">
     <input type="hidden" name="show" value={show} />
-    <div class="grow"><label class="label" for="f-q">Search</label><input class="field !py-2" id="f-q" name="q" value={words} placeholder="Title, other party, what it's about" /></div>
-    <div><label class="label" for="f-company">Company</label><select class="field !py-2" id="f-company" name="company"><option value="">All</option>{companies.map((c) => <option value={c.code} selected={c.id === pick?.id}>{c.display_name}</option>)}</select></div>
-    <div><label class="label" for="f-type">Kind</label><select class="field !py-2" id="f-type" name="type"><option value="">All</option>{Object.entries(CONTRACT_TYPES).map(([k, l]) => <option value={k} selected={k === type}>{l}</option>)}</select></div>
+    <div class="grow"><label class="label" for="f-q">Search</label><input class="field" id="f-q" name="q" value={words} placeholder="Title, other party, what it's about" /></div>
+    <div><label class="label" for="f-company">Company</label><select class="field" id="f-company" name="company"><option value="">All</option>{companies.map((c) => <option value={c.code} selected={c.id === pick?.id}>{c.display_name}</option>)}</select></div>
+    <div><label class="label" for="f-type">Kind</label><select class="field" id="f-type" name="type"><option value="">All</option>{Object.entries(CONTRACT_TYPES).map(([k, l]) => <option value={k} selected={k === type}>{l}</option>)}</select></div>
     <button class="btn-ghost !py-2">Show</button>
   </form>
 

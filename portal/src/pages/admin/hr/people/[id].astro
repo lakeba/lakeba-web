@@ -158,9 +158,9 @@ const checklist = (kind: 'onboarding' | 'offboarding') => (tasks ?? []).filter((
         ) : <p class="px-5 pt-2 text-sm text-white/55">None yet.</p>}
         {mayDo && (
           <form method="post" enctype="multipart/form-data" class="grid gap-2 border-t border-white/5 p-5 sm:grid-cols-[1fr_9rem]">
-            <input class="field !py-1.5 text-sm" type="file" name="file" required aria-label="File" />
-            <select class="field !py-1.5 text-sm" name="kind" aria-label="Kind">{Object.entries(DOC_KINDS).map(([k, l]) => <option value={k}>{l}</option>)}</select>
-            <input class="field !py-1.5 text-sm" name="title" placeholder="Title (optional)" aria-label="Title" />
+            <input class="field" type="file" name="file" required aria-label="File" />
+            <select class="field" name="kind" aria-label="Kind">{Object.entries(DOC_KINDS).map(([k, l]) => <option value={k}>{l}</option>)}</select>
+            <input class="field" name="title" placeholder="Title (optional)" aria-label="Title" />
             <label class="flex items-center gap-2 text-sm text-white/65"><input type="checkbox" name="visible" class="size-4 accent-lk-blue" /> They see it</label>
             <div><button class="btn-ghost !py-1.5 text-sm" name="intent" value="doc-add">File it</button></div>
           </form>

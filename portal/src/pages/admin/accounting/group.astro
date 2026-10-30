@@ -30,7 +30,7 @@ const sumOf = (fn: (i: (typeof inside)[number]) => number) => inside.reduce((t, 
   {periods.length ? (
     <>
       <form method="get" class="mb-4 flex flex-wrap items-end gap-3 text-sm">
-        <div><label class="label" for="period">Period</label><select class="field !py-2" id="period" name="period">{periods.map((p) => <option value={p} selected={p === period}>{periodLabel(p, 'monthly')}</option>)}</select></div>
+        <div><label class="label" for="period">Period</label><select class="field" id="period" name="period">{periods.map((p) => <option value={p} selected={p === period}>{periodLabel(p, 'monthly')}</option>)}</select></div>
         <button class="btn-ghost !py-2">Show</button>
         <a class="btn-ghost !py-2" href={`/admin/accounting/export?period=${period}`}>Download Excel</a>
       </form>

@@ -1,11 +1,11 @@
 ---
 import SystemNav from '../../components/SystemNav.astro';
-import { actionLabel, detailSummary } from '../../lib/audit-labels';
+import { KNOWN_ACTIONS, actionLabel, detailSummary } from '../../lib/audit-labels';
 import Admin from '../../layouts/Admin.astro';
 import PageHeader from '../../components/PageHeader.astro';
 import Empty from '../../components/Empty.astro';
 import Alert from '../../components/Alert.astro';
-import { PROTECTED_ACTION, auditQuery, deletableCount, deleteEvents, emailsFor, readFilters } from '../../lib/admin-audit';
+import { FIELDS, PROTECTED_ACTION, auditQuery, deletableCount, deleteEvents, describeFilters, emailsFor, filterParams, readFilters, type Rule } from '../../lib/admin-audit';
 import { serviceClient } from '../../lib/admin';
 import { notifyAdmins } from '../../lib/notify';
 import { field } from '../../lib/forms';
@@ -30,15 +30,15 @@ if (Astro.request.method === 'POST' && canDelete) {
   else {
     const deleted = await deleteEvents(svc, posted);
     const by = Astro.locals.profile?.email ?? 'an admin';
-    const scope = Object.entries(posted).filter(([, v]) => v).map(([k, v]) => `${k}: ${v}`).join(', ') || 'all events';
-    await svc.from('audit_log').insert({ user_id: Astro.locals.user!.id, action: PROTECTED_ACTION, detail: { deleted, filters: posted } }).throwOnError();
-    await notifyAdmins({ kind: 'admin_security', origin: Astro.url.origin, link: '/admin/audit?action=' + PROTECTED_ACTION, title: 'Audit log events deleted', body: `${by} deleted ${deleted} audit log event(s) (${scope}). A record of this stays in the audit log.`, pushDetail: `${deleted} audit log events deleted` });
+    const scope = describeFilters(posted) || 'all events';
+    await svc.from('audit_log').insert({ user_id: Astro.locals.user!.id, action: PROTECTED_ACTION, detail: { deleted, filters: scope } }).throwOnError();
+    await notifyAdmins({ kind: 'admin_security', origin: Astro.url.origin, link: `/admin/audit?${filterParams({ rules: [{ field: 'action', op: 'is', value: PROTECTED_ACTION }] })}`, title: 'Audit log events deleted', body: `${by} deleted ${deleted} audit log event(s) (${scope}). A record of this stays in the audit log.`, pushDetail: `${deleted} audit log events deleted` });
     notice = `Deleted ${deleted} event(s). A record of the deletion was added to the log and all admins were alerted.`;
   }
 }
 const toDelete = canDelete ? await deletableCount(svc, filters) : 0;
 const audit = await auditQuery(supabase, filters);
-const { data: rows, count } = audit ? await audit.query.range((page - 1) * PAGE, page * PAGE - 1) : { data: [], count: 0 };
+const { data: rows, count } = await audit.query.range((page - 1) * PAGE, page * PAGE - 1);
 const emails = await emailsFor(supabase, (rows ?? []).map((r) => r.user_id));
 const { data: companies } = await svc.from('entities').select('id, code, display_name').order('sort');
 const companyOf = new Map((companies ?? []).map((c) => [c.id, c.display_name as string]));
@@ -48,7 +48,11 @@ const withPage = (p: number) => {
   params.set('page', String(p));
   return `?${params}`;
 };
-const csvHref = `/admin/audit.csv?${new URLSearchParams(Object.entries(filters).filter(([, v]) => v))}`;
+const csvHref = `/admin/audit.csv?${filterParams(filters)}`;
+// The conditions, then an empty one to fill in. Suggestions for people and actions.
+const blank: Rule = { field: 'user', op: 'is', value: '' };
+const ruleRows = [...filters.rules, blank];
+const { data: people } = await svc.from('profiles').select('email').order('email').limit(2000);
 ---
 
 <Admin title="Audit log">
@@ -59,23 +63,47 @@ const csvHref = `/admin/audit.csv?${new URLSearchParams(Object.entries(filters).
 
   {notice && <div class="mb-4"><Alert tone="success">{notice}</Alert></div>}
   {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
-  <form method="get" class="card mb-6 grid gap-4 sm:grid-cols-6">
-    <div><label class="label" for="action">Action</label><input class="field" id="action" name="action" value={filters.action} placeholder="e.g. sign_in" /></div>
-    <div class="sm:col-span-2"><label class="label" for="email">User email</label><input class="field" id="email" name="email" value={filters.email} /></div>
-    <div><label class="label" for="from">From</label><input class="field" id="from" name="from" type="date" value={filters.from} /></div>
-    <div><label class="label" for="to">To</label><input class="field" id="to" name="to" type="date" value={filters.to} /></div>
-    <div><label class="label" for="company">Company</label><select class="field" id="company" name="company"><option value="">All</option>{(companies ?? []).map((c) => <option value={c.code} selected={filters.company === c.code}>{c.display_name}</option>)}</select></div>
-    <div class="flex gap-3 sm:col-span-6"><button class="btn-ghost">Filter</button><a href="/admin/audit" class="btn text-white/50 hover:text-white">Clear</a></div>
+  <form method="get" class="card mb-6" data-audit-filters>
+    <p class="label">Show events where</p>
+    <div class="mt-2 space-y-2" data-rules>
+      {ruleRows.map((r) => (
+        <div class="flex flex-wrap items-center gap-2" data-rule>
+          <select class="field w-32" name="f" aria-label="Field" data-rule-field>
+            {FIELDS.map((fd) => <option value={fd.key} selected={fd.key === r.field}>{fd.label}</option>)}
+          </select>
+          {FIELDS.map((fd) => (
+            <select class:list={['field w-44', fd.key !== r.field && 'hidden']} name={fd.key === r.field ? 'o' : undefined} aria-label="Rule" data-rule-op={fd.key}>
+              {fd.ops.map(([o, label]) => <option value={o} selected={fd.key === r.field && o === r.op}>{label}</option>)}
+            </select>
+          ))}
+          <input class:list={['field min-w-56 flex-1', (r.field !== 'user' || r.op === 'none') && 'hidden']} name={r.field === 'user' ? 'v' : undefined} value={r.field === 'user' ? r.value : ''} list="audit-people" placeholder="name@example.com" aria-label="Person" data-rule-value="user" />
+          <input class:list={['field min-w-56 flex-1 font-mono', r.field !== 'action' && 'hidden']} name={r.field === 'action' ? 'v' : undefined} value={r.field === 'action' ? r.value : ''} list="audit-actions" placeholder="sign_in" aria-label="Action" data-rule-value="action" />
+          <select class:list={['field min-w-56 flex-1', (r.field !== 'company' || r.op === 'none') && 'hidden']} name={r.field === 'company' ? 'v' : undefined} aria-label="Company" data-rule-value="company">
+            {(companies ?? []).map((c) => <option value={c.code} selected={r.field === 'company' && r.value === c.code}>{c.display_name}</option>)}
+          </select>
+          <input type="date" class:list={['field w-44', r.field !== 'date' && 'hidden']} name={r.field === 'date' ? 'v' : undefined} value={r.field === 'date' ? r.value : ''} aria-label="Date" data-rule-value="date" />
+          <button type="button" class="grid size-9 place-items-center rounded-lg text-white/40 hover:bg-white/5 hover:text-white" aria-label="Remove this condition" data-rule-remove>×</button>
+        </div>
+      ))}
+    </div>
+    <datalist id="audit-people">{(people ?? []).map((p) => <option value={p.email} />)}</datalist>
+    <datalist id="audit-actions">{KNOWN_ACTIONS.map((a) => <option value={a}>{actionLabel(a)}</option>)}</datalist>
+    <div class="mt-4 flex flex-wrap items-center gap-3">
+      <button type="button" class="btn-ghost" data-rule-add>+ Add condition</button>
+      <button class="btn-primary">Filter</button>
+      <a href="/admin/audit" class="btn text-white/50 hover:text-white">Clear</a>
+      {filters.rules.length > 0 && <span class="text-xs text-white/40">All conditions must match.</span>}
+    </div>
   </form>
 
   {canDelete && toDelete > 0 && (
     <details class="card mb-6 border border-lk-red/30" open={Boolean(error)}>
       <summary class="cursor-pointer font-semibold text-lk-red">Delete these events</summary>
       <form method="post" class="mt-4 space-y-3 text-sm">
-        {Object.entries(filters).map(([k, v]) => <input type="hidden" name={k} value={v} />)}
+        {filters.rules.map((r) => <><input type="hidden" name="f" value={r.field} /><input type="hidden" name="o" value={r.op} /><input type="hidden" name="v" value={r.value} /></>)}
         <p class="text-white/70">
           This permanently deletes <strong class="text-white">{toDelete} event(s)</strong> matching
-          {Object.values(filters).some(Boolean) ? ' the filters above' : <strong class="text-lk-red"> no filter, so the whole log</strong>}.
+          {filters.rules.length ? <> “{describeFilters(filters)}”</> : <strong class="text-lk-red"> no filter, so the whole log</strong>}.
           Records of earlier deletions are kept. A record of this deletion is added and every admin gets a security alert.
           Consider <a href={csvHref} class="text-lk-blue hover:underline">exporting a CSV</a> first.
         </p>
@@ -115,3 +143,44 @@ const csvHref = `/admin/audit.csv?${new URLSearchParams(Object.entries(filters).
     </>
   ) : <Empty title="No events">Nothing matches these filters.</Empty>}
 </Admin>
+
+<script>
+  // Audit filters: each condition shows the rules and the value box for its field; "is the system" and
+  // "is none" need no value. Only the visible controls are sent, so the f/o/v lists stay in step.
+  const list = document.querySelector<HTMLElement>('[data-rules]');
+  const sync = (row: HTMLElement) => {
+    const field = row.querySelector<HTMLSelectElement>('[data-rule-field]')!.value;
+    for (const op of row.querySelectorAll<HTMLSelectElement>('[data-rule-op]')) {
+      const on = op.dataset.ruleOp === field;
+      op.classList.toggle('hidden', !on);
+      if (on) op.name = 'o'; else op.removeAttribute('name');
+    }
+    const rule = row.querySelector<HTMLSelectElement>(`[data-rule-op="${field}"]`)!.value;
+    for (const v of row.querySelectorAll<HTMLInputElement | HTMLSelectElement>('[data-rule-value]')) {
+      const on = v.dataset.ruleValue === field;
+      v.classList.toggle('hidden', !on || rule === 'none');
+      if (on) v.setAttribute('name', 'v'); else v.removeAttribute('name');
+    }
+  };
+  const reset = (row: HTMLElement) => {
+    row.querySelector<HTMLSelectElement>('[data-rule-field]')!.selectedIndex = 0;
+    for (const op of row.querySelectorAll<HTMLSelectElement>('[data-rule-op]')) op.selectedIndex = 0;
+    for (const v of row.querySelectorAll<HTMLInputElement>('input[data-rule-value]')) v.value = '';
+    sync(row);
+  };
+  list?.addEventListener('change', (e) => { const row = (e.target as HTMLElement).closest<HTMLElement>('[data-rule]'); if (row) sync(row); });
+  list?.addEventListener('click', (e) => {
+    const remove = (e.target as HTMLElement).closest('[data-rule-remove]');
+    if (!remove) return;
+    const row = remove.closest<HTMLElement>('[data-rule]')!;
+    if (list.querySelectorAll('[data-rule]').length > 1) row.remove(); else reset(row);
+  });
+  document.querySelector('[data-rule-add]')?.addEventListener('click', () => {
+    const last = list?.querySelector<HTMLElement>('[data-rule]:last-child');
+    if (!list || !last) return;
+    const row = last.cloneNode(true) as HTMLElement;
+    list.append(row);
+    reset(row);
+    row.querySelector<HTMLInputElement>('input[name="v"]')?.focus();
+  });
+</script>

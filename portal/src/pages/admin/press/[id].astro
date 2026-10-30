@@ -257,10 +257,10 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
           <h2 class="font-display text-lg font-bold">Head points</h2>
           <span class="text-xs text-white/40">What to announce, in a few lines</span>
         </div>
-        <textarea name="head_points" rows="6" class="field text-sm" placeholder={"- What: Ezifin launches invoice finance for SMEs in Australia\n- When: from 3 November 2026\n- Why it matters: SMEs wait 60+ days to be paid; funding within 24 hours\n- Numbers: [pilot with 40 businesses, $2m funded]\n- Quote: [name], CEO of Lakeba Group, on the SME cash-flow gap\n- Partners: (only names we have permission to use)"}>{r.head_points}</textarea>
+        <textarea name="head_points" rows="6" class="field" placeholder={"- What: Ezifin launches invoice finance for SMEs in Australia\n- When: from 3 November 2026\n- Why it matters: SMEs wait 60+ days to be paid; funding within 24 hours\n- Numbers: [pilot with 40 businesses, $2m funded]\n- Quote: [name], CEO of Lakeba Group, on the SME cash-flow gap\n- Partners: (only names we have permission to use)"}>{r.head_points}</textarea>
         <div class="grid gap-3 sm:grid-cols-[1fr_10rem_auto] sm:items-end">
-          <div><label class="label" for="spokespeople">Who may be quoted (optional)</label><input id="spokespeople" name="spokespeople" class="field text-sm" placeholder="e.g. Jane Smith, CEO, Lakeba Group" /></div>
-          <div><label class="label" for="length">Length</label><select id="length" name="length" class="field text-sm"><option value="short">Short (~250 words)</option><option value="standard" selected>Standard (~450)</option><option value="long">Long (~700)</option></select></div>
+          <div><label class="label" for="spokespeople">Who may be quoted (optional)</label><input id="spokespeople" name="spokespeople" class="field" placeholder="e.g. Jane Smith, CEO, Lakeba Group" /></div>
+          <div><label class="label" for="length">Length</label><select id="length" name="length" class="field"><option value="short">Short (~250 words)</option><option value="standard" selected>Standard (~450)</option><option value="long">Long (~700)</option></select></div>
           <button name="intent" value="draft-ai" class="btn-primary" onclick={r.body_html.trim() ? "return confirm('Replace the headline, text, quotes and summary with a new draft? The current version is kept.')" : undefined} data-busy="Lakeba AI is writing…">✨ Draft with AI</button>
         </div>
       </section>
@@ -271,7 +271,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
             <select id="entity_id" name="entity_id" class="field">{companies.map((c) => <option value={c.id} selected={c.id === r!.entity_id}>{c.display_name}</option>)}</select></div>
           <div><label class="label" for="dateline_city">Dateline city</label><input id="dateline_city" name="dateline_city" value={r.dateline_city} class="field uppercase" /></div>
         </div>
-        <div><label class="label" for="headline">Headline</label><input id="headline" name="headline" value={r.headline} maxlength="200" class="field text-lg font-semibold" />
+        <div><label class="label" for="headline">Headline</label><input id="headline" name="headline" value={r.headline} maxlength="200" class="field !h-auto text-lg font-semibold" />
           {r.headline_options.length > 1 && (
             <div class="mt-2 flex flex-wrap gap-2 text-xs">{r.headline_options.map((h) => <button type="button" class="rounded-full border border-white/12 px-3 py-1 text-left text-white/70 hover:text-white" data-headline={h}>{h}</button>)}</div>
           )}
@@ -298,11 +298,11 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
               <div class="space-y-2 rounded-xl border border-white/10 p-4" data-quote>
                 <input type="hidden" name="quote_key" value={q.key} />
                 <div class="grid gap-2 sm:grid-cols-3">
-                  <input name="quote_name" value={q.name} placeholder="Name" class="field text-sm" />
-                  <input name="quote_title" value={q.title} placeholder="Title, company" class="field text-sm" />
-                  <input name="quote_email" type="email" value={q.email} placeholder="Email (for approval)" class="field text-sm" />
+                  <input name="quote_name" value={q.name} placeholder="Name" class="field" />
+                  <input name="quote_title" value={q.title} placeholder="Title, company" class="field" />
+                  <input name="quote_email" type="email" value={q.email} placeholder="Email (for approval)" class="field" />
                 </div>
-                <textarea name="quote_text" rows="3" class="field text-sm">{q.text}</textarea>
+                <textarea name="quote_text" rows="3" class="field">{q.text}</textarea>
                 <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
                   <span class={quoteTone[q.status]}>{quoteLabel[q.status]}{a?.responded_at && ` · ${dateTime.format(new Date(a.responded_at))}`}{a?.comment && ` · “${a.comment}”`}{misplaced.some((m) => m.key === q.key) && <strong class="ml-1 text-lk-red">Not in the text exactly</strong>}</span>
                   <span class="flex gap-2">
@@ -318,8 +318,8 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
         <template data-quote-template>
           <div class="space-y-2 rounded-xl border border-white/10 p-4" data-quote>
             <input type="hidden" name="quote_key" value="" />
-            <div class="grid gap-2 sm:grid-cols-3"><input name="quote_name" placeholder="Name" class="field text-sm" /><input name="quote_title" placeholder="Title, company" class="field text-sm" /><input name="quote_email" type="email" placeholder="Email (for approval)" class="field text-sm" /></div>
-            <textarea name="quote_text" rows="3" class="field text-sm" placeholder="The quote’s words, without quotation marks"></textarea>
+            <div class="grid gap-2 sm:grid-cols-3"><input name="quote_name" placeholder="Name" class="field" /><input name="quote_title" placeholder="Title, company" class="field" /><input name="quote_email" type="email" placeholder="Email (for approval)" class="field" /></div>
+            <textarea name="quote_text" rows="3" class="field" placeholder="The quote’s words, without quotation marks"></textarea>
             <p class="text-xs text-white/45">Save, then send it for approval. Remember to put it in the text too.</p>
           </div>
         </template>
@@ -327,10 +327,10 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
 
       <section class="card space-y-4">
         <h2 class="font-display text-lg font-bold">For newsrooms, search and social</h2>
-        <div><label class="label" for="summary">Summary (at most 60 words: newsrooms, wires and search engines)</label><textarea id="summary" name="summary" rows="3" maxlength="600" class="field text-sm">{r.summary}</textarea></div>
+        <div><label class="label" for="summary">Summary (at most 60 words: newsrooms, wires and search engines)</label><textarea id="summary" name="summary" rows="3" maxlength="600" class="field">{r.summary}</textarea></div>
         <div class="grid gap-4 md:grid-cols-2">
-          <div><label class="label" for="social_linkedin">LinkedIn post</label><textarea id="social_linkedin" name="social_linkedin" rows="5" class="field text-sm">{r.social.linkedin ?? ''}</textarea></div>
-          <div><label class="label" for="social_x">X / Bluesky post</label><textarea id="social_x" name="social_x" rows="5" maxlength="300" class="field text-sm">{r.social.x ?? ''}</textarea></div>
+          <div><label class="label" for="social_linkedin">LinkedIn post</label><textarea id="social_linkedin" name="social_linkedin" rows="5" class="field">{r.social.linkedin ?? ''}</textarea></div>
+          <div><label class="label" for="social_x">X / Bluesky post</label><textarea id="social_x" name="social_x" rows="5" maxlength="300" class="field">{r.social.x ?? ''}</textarea></div>
         </div>
       </section>
 
@@ -346,7 +346,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
           <div>
             <span class="label">Press kit (photos, logos, charts journalists may use)</span>
             <ul class="space-y-2" data-kit>
-              {r.kit.map((k) => <li class="flex items-center gap-2"><img src={k.url} alt="" class="size-10 rounded object-cover" /><input type="hidden" name="kit_url" value={k.url} /><input name="kit_label" value={k.label} placeholder="Caption / credit" class="field py-1.5 text-sm" /><button type="button" class="text-xs text-white/45 hover:text-lk-red" data-remove-kit>Remove</button></li>)}
+              {r.kit.map((k) => <li class="flex items-center gap-2"><img src={k.url} alt="" class="size-10 rounded object-cover" /><input type="hidden" name="kit_url" value={k.url} /><input name="kit_label" value={k.label} placeholder="Caption / credit" class="field" /><button type="button" class="text-xs text-white/45 hover:text-lk-red" data-remove-kit>Remove</button></li>)}
             </ul>
             <label class="btn-ghost mt-2 cursor-pointer text-xs">Add images<input type="file" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden data-upload="kit" /></label>
             <p class="mt-2 text-xs text-white/40">A PDF of the release is added to the press kit automatically.</p>
@@ -393,7 +393,7 @@ const websiteUrl = post?.slug ? `${PUBLIC_SITE_URL.replace(/\/$/, '')}/news/${po
           <button name="intent" value="approve" class="btn-primary w-full" onclick="return confirm('Approve this press release for publication on the newsroom?')">Approve</button>
           {r.status === 'in_review' && (
             <details class="border-t border-white/5 pt-3"><summary class="cursor-pointer text-sm text-lk-orange">Request changes</summary>
-              <textarea name="review_note" rows="3" class="field mt-2 text-sm" placeholder="What should change?"></textarea>
+              <textarea name="review_note" rows="3" class="field mt-2" placeholder="What should change?"></textarea>
               <button name="intent" value="request-changes" class="btn-ghost mt-2 w-full text-sm">Send back to the writer</button></details>
           )}
         </section>

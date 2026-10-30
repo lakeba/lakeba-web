@@ -108,21 +108,21 @@ const bskyDefault = r.social.bluesky || r.social.x || r.summary || r.headline;
   <form method="post" class="mt-6 grid gap-4 lg:grid-cols-3">
     <section class="card space-y-3">
       <h2 class="font-display text-lg font-bold">LinkedIn</h2>
-      <textarea name="linkedin" rows="8" maxlength="3000" class="field text-sm" data-copy-source="linkedin">{r.social.linkedin ?? ''}</textarea>
+      <textarea name="linkedin" rows="8" maxlength="3000" class="field" data-copy-source="linkedin">{r.social.linkedin ?? ''}</textarea>
       <p class="text-xs text-white/45">Posting to a company page through LinkedIn’s API needs LinkedIn’s approval, so a page admin shares it: copy the text, open LinkedIn (as the Lakeba page), paste, post, then record the post’s link below.</p>
       <div class="flex flex-wrap gap-2"><button type="button" class="btn-ghost text-sm" data-copy="linkedin">Copy text</button>
         {published ? <a href={linkedinShareUrl(link)} target="_blank" rel="noopener" class="btn-ghost text-sm">Open LinkedIn ↗</a> : <span class="text-xs text-white/40">LinkedIn opens once published.</span>}</div>
     </section>
     <section class="card space-y-3">
       <h2 class="font-display text-lg font-bold">Bluesky</h2>
-      <textarea name="bluesky" rows="5" maxlength="300" class="field text-sm">{bskyDefault}</textarea>
+      <textarea name="bluesky" rows="5" maxlength="300" class="field">{bskyDefault}</textarea>
       <p class="text-xs text-white/45">Posted with a link card (headline, summary, picture). Up to 300 characters including the link.</p>
       {!blueskyConfigured() ? <p class="text-xs text-lk-orange">Not set up: add the Lakeba Bluesky handle and an app password to the server.</p>
         : access.approver && <button name="intent" value="post-bluesky" class="btn-primary text-sm" disabled={!published} onclick={posted('bluesky') ? "return confirm('Already posted on Bluesky. Post again?')" : "return confirm('Post this on Lakeba’s Bluesky now?')"}>Post on Bluesky</button>}
     </section>
     <section class="card space-y-3">
       <h2 class="font-display text-lg font-bold">X</h2>
-      <textarea name="x" rows="5" maxlength="300" class="field text-sm">{r.social.x ?? ''}</textarea>
+      <textarea name="x" rows="5" maxlength="300" class="field">{r.social.x ?? ''}</textarea>
       <p class="text-xs text-white/45">Up to 280 characters; the link counts as 23. X charges per post (about US$0.20 with a link).</p>
       {!xConfigured() ? <p class="text-xs text-lk-orange">Not set up: add the X app’s keys and the account’s access token to the server.</p>
         : access.approver && <button name="intent" value="post-x" class="btn-primary text-sm" disabled={!published} onclick={posted('x') ? "return confirm('Already posted on X. Post again?')" : "return confirm('Post this on Lakeba’s X now? X charges for it.')"}>Post on X</button>}

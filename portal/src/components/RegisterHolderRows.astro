@@ -18,7 +18,7 @@ const KIND: Record<string, string> = { individual: 'individual', company: 'compa
           <td class="py-2 pr-4"><span class="text-white/85">{m.name}</span>{m.trust && <span class="block text-xs text-white/50">for {m.trust}</span>}{m.acn && <span class="block text-xs text-white/40">ACN {m.acn}</span>}</td>
           <td class="whitespace-nowrap px-3 py-2 text-right tabular-nums text-white/75">{m.classes.map((c) => <span class="block">{c.shares.toLocaleString('en-AU')} <span class="text-white/45">{c.code}</span></span>)}</td>
           <td class="py-2 pl-3">
-            <select name={`h:${m.key}`} data-holders class="field w-full max-w-md py-1 text-sm" aria-label={`Portal holder for ${m.register_name}`}>
+            <select name={`h:${m.key}`} data-holders class="field w-full max-w-md" aria-label={`Portal holder for ${m.register_name}`}>
               {m.holderId && <option value={m.holderId} selected>{m.holderName}</option>}
               <option value="new" selected={!m.holderId}>New holder: {m.newName} ({KIND[m.kind] ?? m.kind})</option>
             </select>

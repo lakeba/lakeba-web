@@ -100,7 +100,7 @@ const state = { id: m.id, tablet: onTablet, bot: onBot, voiceDelay: onBot ? Math
               <button class="btn-ghost !px-6 !py-4 text-lg" id="pause" hidden>Pause</button>
               <button class="btn-ghost !px-6 !py-4 text-lg" id="finish" hidden={!m.recording_takes.length}>Finish the meeting</button>
               {providers.length > 1 && (
-                <label class="ml-auto text-sm text-white/55">Live text by <select class="field !inline-block !w-auto !py-1.5" id="provider">{providers.map((p) => <option value={p}>{PROVIDERS[p].name}</option>)}</select></label>
+                <label class="ml-auto text-sm text-white/55">Live text by <select class="field !inline-block !w-auto" id="provider">{providers.map((p) => <option value={p}>{PROVIDERS[p].name}</option>)}</select></label>
               )}
             </div>
             <p class="text-sm text-white/50" id="status">{m.recording_takes.length ? 'Paused. Resume when the meeting continues.' : 'Place the tablet in the middle of the table. The live text is a guide; the full transcript is prepared from the whole recording after the meeting.'}</p>
@@ -129,17 +129,17 @@ const state = { id: m.id, tablet: onTablet, bot: onBot, voiceDelay: onBot ? Math
               <button type="button" class="btn-ghost !py-1.5 text-xs" id="stage-open">Full screen</button>
               {faces.length > 0 && (
                 <label class="flex items-center justify-center gap-2 text-xs text-white/45">Lex’s face while recording
-                  <select class="field !w-auto !py-1 text-xs" id="face-pick"><option value="">Orb</option>{faces.map((f) => <option value={f.id} selected={f.id === defaultFace}>{f.name}</option>)}</select>
+                  <select class="field !w-auto" id="face-pick"><option value="">Orb</option>{faces.map((f) => <option value={f.id} selected={f.id === defaultFace}>{f.name}</option>)}</select>
                 </label>
               )}
               <p id="lex-state" class="text-center text-sm text-white/55">Say “Lex, …” or tap Ask while recording.</p>
               <button class="btn-primary !py-3 text-base" id="lex-ask">Ask Lex</button>
-              <form class="flex gap-2" id="lex-type"><input class="field !py-2 text-sm" id="lex-q" maxlength="2000" placeholder="Or type a question" autocomplete="off" /><button class="btn-ghost !py-2 text-sm">Ask</button></form>
+              <form class="flex gap-2" id="lex-type"><input class="field" id="lex-q" maxlength="2000" placeholder="Or type a question" autocomplete="off" /><button class="btn-ghost !py-2 text-sm">Ask</button></form>
               {!state.voice && <p class="text-xs text-white/40">Lex answers on screen only: its voice needs an ElevenLabs key on the server.</p>}
               {decks.length > 0 && (
                 <div class="grid gap-2 rounded-xl bg-white/[0.04] p-3 text-sm" id="present">
                   <p class="text-white">Present a deck</p>
-                  <div class="flex gap-2"><select class="field !py-2 text-sm" id="deck-pick">{decks.map((d) => <option value={d.id}>{d.title}</option>)}</select><button class="btn-ghost !py-2 text-sm" id="deck-go">Present</button></div>
+                  <div class="flex gap-2"><select class="field" id="deck-pick">{decks.map((d) => <option value={d.id}>{d.title}</option>)}</select><button class="btn-ghost !py-2 text-sm" id="deck-go">Present</button></div>
                   <div class="hidden grid gap-2" id="deck-run">
                     <p class="text-xs text-white/55" id="deck-now"></p>
                     <div class="flex gap-2"><button class="btn-ghost flex-1 !py-2 text-sm" id="deck-prev">Back</button><button class="btn-ghost flex-1 !py-2 text-sm" id="deck-pause">Pause</button><button class="btn-ghost flex-1 !py-2 text-sm" id="deck-next">Next</button><button class="btn-ghost !py-2 text-sm text-lk-red" id="deck-stop">Stop</button></div>

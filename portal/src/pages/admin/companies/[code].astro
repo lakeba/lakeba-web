@@ -237,7 +237,7 @@ for (const h of holdings ?? []) { const k = `${h.holder_id}|${h.share_class_id}`
 const heldIn = (cid: string) => [...latest.values()].filter((x) => x.cls === cid).reduce((a, x) => a + x.shares, 0);
 const self = Astro.url.pathname;
 const askUsed = (await spendThisMonth(svc, c.id)).get(c.id) ?? { cost: 0, questions: 0 };
-const sel = 'field !py-1.5 text-sm';
+const sel = 'field';
 ---
 
 <Admin title={c.display_name}>
@@ -391,8 +391,8 @@ const sel = 'field !py-1.5 text-sm';
         <div><label class="label" for="reply_to">Replies go to</label><input id="reply_to" name="reply_to" type="email" value={c.reply_to ?? ''} placeholder="No reply-to address" class="field" disabled={!mayEdit} /></div>
         <div><label class="label" for="contact_email">Contact email</label><input id="contact_email" name="contact_email" type="email" value={c.contact_email ?? ''} placeholder={brandOf(null).contactEmail} class="field" disabled={!mayEdit} /><p class="mt-1 text-xs text-white/40">In the portal footer and on holding statements.</p></div>
         <div><label class="label" for="ask_name">Name of Ask</label><input id="ask_name" name="ask_name" value={c.ask_name ?? ''} maxlength="40" placeholder={`Ask ${brandOf(c).name}`} class="field" disabled={!mayEdit} /></div>
-        <div><label class="label" for="email_footer">Email footer</label><textarea id="email_footer" name="email_footer" rows="2" maxlength="500" placeholder={`You receive this as a ${brandOf(c).name} shareholder…`} class="field text-sm" disabled={!mayEdit}>{c.email_footer ?? ''}</textarea></div>
-        <div><label class="label" for="document_footer">Holding statement footer</label><textarea id="document_footer" name="document_footer" rows="2" maxlength="300" placeholder="Nothing extra" class="field text-sm" disabled={!mayEdit}>{c.document_footer ?? ''}</textarea></div>
+        <div><label class="label" for="email_footer">Email footer</label><textarea id="email_footer" name="email_footer" rows="2" maxlength="500" placeholder={`You receive this as a ${brandOf(c).name} shareholder…`} class="field" disabled={!mayEdit}>{c.email_footer ?? ''}</textarea></div>
+        <div><label class="label" for="document_footer">Holding statement footer</label><textarea id="document_footer" name="document_footer" rows="2" maxlength="300" placeholder="Nothing extra" class="field" disabled={!mayEdit}>{c.document_footer ?? ''}</textarea></div>
         <div><label class="label" for="ask_monthly_budget_usd">Ask budget a month (USD)</label><input id="ask_monthly_budget_usd" name="ask_monthly_budget_usd" inputmode="decimal" value={c.ask_monthly_budget_usd ?? ''} placeholder="No limit of its own" class="field" disabled={!mayEdit || !mayGroup} /><p class="mt-1 text-xs text-white/40">Used this month: USD {askUsed.cost.toFixed(2)} for {askUsed.questions} question{askUsed.questions === 1 ? '' : 's'}. When the budget is reached, Ask shows matching passages until the 1st.</p></div>
         <div class="space-y-2 text-sm">
           <label class="flex items-center gap-3"><input type="checkbox" name="ask_enabled" checked={c.ask_enabled} class="size-4 accent-lk-blue" disabled={!mayEdit} /> Ask is on for {c.display_name}’s investors</label>

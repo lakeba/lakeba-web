@@ -225,8 +225,8 @@ const expired = (d: string) => d < today;
     <details class="mt-3 text-sm">
       <summary class="cursor-pointer text-white/55">Pause an account by hand</summary>
       <form method="post" class="mt-2 flex flex-wrap gap-2">
-        <input name="email" type="email" placeholder="Email" class="field !w-auto !py-2" />
-        <input name="reason" placeholder="Reason (optional)" class="field !w-auto !py-2" />
+        <input name="email" type="email" placeholder="Email" class="field !w-auto" />
+        <input name="reason" placeholder="Reason (optional)" class="field !w-auto" />
         <button name="intent" value="pause" class="btn-ghost !py-2">Pause</button>
       </form>
     </details>
@@ -252,7 +252,7 @@ const expired = (d: string) => d < today;
     <h2 class="text-lg font-bold">House rules</h2>
     <p class="mt-1 text-sm text-white/55">Guidance in plain English, e.g. “Always mention that F class shares are non-voting.” They are added after the core rules, which always win.</p>
     <form method="post" class="mt-4 space-y-3">
-      <textarea name="house_rules" rows="6" maxlength={HOUSE_RULES_MAX} class="field font-mono text-sm" placeholder="- Use “Lakeba Group”, not “Lakeba”.&#10;- For questions about selling shares, mention the secondary trading windows.">{rules}</textarea>
+      <textarea name="house_rules" rows="6" maxlength={HOUSE_RULES_MAX} class="field font-mono" placeholder="- Use “Lakeba Group”, not “Lakeba”.&#10;- For questions about selling shares, mention the secondary trading windows.">{rules}</textarea>
       <div class="flex flex-wrap items-center justify-between gap-3">
         <details class="text-sm text-white/55">
           <summary class="cursor-pointer">Core rules (locked)</summary>
@@ -302,7 +302,7 @@ const expired = (d: string) => d < today;
                 <input name="question" value={a.question} maxlength="1000" class="field" />
                 <textarea name="answer" rows="5" maxlength="8000" class="field">{a.answer}</textarea>
                 <div class="flex flex-wrap items-end gap-3">
-                  <label><span class="label">Review by</span><input type="date" name="review_by" value={a.review_by} class="field !py-2" /></label>
+                  <label><span class="label">Review by</span><input type="date" name="review_by" value={a.review_by} class="field" /></label>
                   <button name="intent" value="save" class="btn-primary !py-2">Save</button>
                 </div>
               </form>

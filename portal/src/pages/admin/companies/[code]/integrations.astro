@@ -396,7 +396,7 @@ const deliveryClass = (s: string) => (s === 'delivered' ? 'bg-lk-green/15 text-l
           <div class="grid gap-4 sm:grid-cols-3">
             <div><label class="label" for="k_name">Name</label><input id="k_name" name="name" required class="field" placeholder="HubSpot sync" /></div>
             <div><label class="label" for="k_days">Expires</label><select id="k_days" name="expires_days" class="field"><option value="0">Never (revoke when done)</option><option value="30">In 30 days</option><option value="90">In 90 days</option><option value="365">In a year</option></select></div>
-            <div><label class="label" for="k_ips">Only from these IP addresses (optional)</label><textarea id="k_ips" name="ips" rows="1" class="field font-mono text-xs" placeholder="203.0.113.10"></textarea></div>
+            <div><label class="label" for="k_ips">Only from these IP addresses (optional)</label><textarea id="k_ips" name="ips" rows="1" class="field font-mono" placeholder="203.0.113.10"></textarea></div>
           </div>
           <fieldset><legend class="label">What the key may do (never more than you can)</legend>
             <div class="mt-2 grid gap-x-6 gap-y-1 sm:grid-cols-2">
@@ -620,7 +620,7 @@ const deliveryClass = (s: string) => (s === 'delivered' ? 'bg-lk-green/15 text-l
             <div><label class="label" for="i_cat">Category and audience (signed documents)</label><div class="flex gap-2"><select id="i_cat" name="category" class="field">{DOCUMENT_CATEGORIES.map((c) => <option value={c} selected={c === 'governance'}>{c}</option>)}</select><select name="audience" class="field" aria-label="Audience"><option value="board">Board only</option><option value="all_investors">All investors</option></select></div></div>
             <label class="flex items-end gap-2 pb-2 text-sm text-white/70"><input type="checkbox" name="invite" class="size-4 accent-lk-blue" /> New investors: invite them once approved</label>
           </div>
-          <div><label class="label" for="i_map">Where the fields are in what they send (optional; one per line)</label><textarea id="i_map" name="map" rows="3" class="field font-mono text-xs" placeholder={Object.entries(DEFAULT_MAP['newsletter.subscribe']).map(([k, v]) => `${k}=form_response.${v}`).join('\n')}></textarea><p class="mt-1 text-xs text-white/40">Defaults: {Object.entries(DEFAULT_MAP).map(([k, m]) => `${KINDS[k].label.toLowerCase()}: ${Object.keys(m).join(', ')}`).join(' · ')}. Use dots for nested fields, e.g. email=data.contact.email.</p></div>
+          <div><label class="label" for="i_map">Where the fields are in what they send (optional; one per line)</label><textarea id="i_map" name="map" rows="3" class="field font-mono" placeholder={Object.entries(DEFAULT_MAP['newsletter.subscribe']).map(([k, v]) => `${k}=form_response.${v}`).join('\n')}></textarea><p class="mt-1 text-xs text-white/40">Defaults: {Object.entries(DEFAULT_MAP).map(([k, m]) => `${KINDS[k].label.toLowerCase()}: ${Object.keys(m).join(', ')}`).join(' · ')}. Use dots for nested fields, e.g. email=data.contact.email.</p></div>
           <div><button name="intent" value="create-inbound" class="btn-primary">Create address</button></div>
         </form>
       </details>
@@ -691,7 +691,7 @@ const deliveryClass = (s: string) => (s === 'delivered' ? 'bg-lk-green/15 text-l
                 <div><label class="label" for="a_web">Website</label><input id="a_web" name="website" class="field" placeholder="https://zapier.com" /></div>
               </div>
               <div><label class="label" for="a_desc">What it does (optional)</label><input id="a_desc" name="description" class="field" maxlength="300" /></div>
-              <div><label class="label" for="a_uris">Return addresses (one per line)</label><textarea id="a_uris" name="redirect_uris" rows="2" required class="field font-mono text-xs" placeholder="https://zapier.com/dashboard/auth/oauth/return/App123CLIAPI/"></textarea></div>
+              <div><label class="label" for="a_uris">Return addresses (one per line)</label><textarea id="a_uris" name="redirect_uris" rows="2" required class="field font-mono" placeholder="https://zapier.com/dashboard/auth/oauth/return/App123CLIAPI/"></textarea></div>
               <fieldset><legend class="label">It may ask for</legend><div class="mt-1 grid gap-x-6 gap-y-1 sm:grid-cols-2">{API_SCOPES.map((sc) => <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="scope" value={sc.key} class="mt-0.5 size-4 accent-lk-blue" /><span>{sc.label} <span class="font-mono text-[11px] text-white/35">{sc.key}</span></span></label>)}</div></fieldset>
               <div><button name="intent" value="register-app" class="btn-primary">Register app</button></div>
             </form>

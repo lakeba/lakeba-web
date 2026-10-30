@@ -52,7 +52,7 @@ const when = (o: Obligation) => {
                   <p class="font-medium text-white">Done</p>
                   <div class="grid gap-2 sm:grid-cols-2">
                     <div><label class="label" for={`done-${o.id}`}>On</label><input class="field" type="date" id={`done-${o.id}`} name="done_on" value={today} /></div>
-                    <div><label class="label" for={`proof-${o.id}`}>Proof (ASIC receipt, signed resolution)</label><input class="field !py-1.5 text-xs" type="file" id={`proof-${o.id}`} name="proof" /></div>
+                    <div><label class="label" for={`proof-${o.id}`}>Proof (ASIC receipt, signed resolution)</label><input class="field" type="file" id={`proof-${o.id}`} name="proof" /></div>
                   </div>
                   <div><label class="label" for={`note-${o.id}`}>Note</label><input class="field" id={`note-${o.id}`} name="done_note" placeholder="Optional; required for “Not needed”" /></div>
                   <div class="flex flex-wrap gap-2"><button class="btn-primary !py-1.5 text-sm" name="intent" value="ob-done">Mark done</button><button class="btn-ghost !py-1.5 text-sm" name="intent" value="ob-not-needed">Not needed</button></div>

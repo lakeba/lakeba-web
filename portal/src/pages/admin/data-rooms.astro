@@ -178,7 +178,7 @@ const status = (g: (typeof guests)[number]) => g.is_test ? (g.nda_accepted_at ? 
           <div><label class="label" for="entity_id">Company</label><select id="entity_id" name="entity_id" class="field">{scope.companies.map((c) => <option value={c.id} selected={c.id === scope.defaultCompany?.id}>{c.display_name}</option>)}</select></div>
           <div><label class="label" for="name">Name</label><input id="name" name="name" required class="field" placeholder="Series A – 2026" /></div>
           <div class="sm:col-span-2"><label class="label" for="description">Note for guests (optional)</label><textarea id="description" name="description" rows="2" class="field"></textarea></div>
-          <div class="sm:col-span-2"><label class="label" for="nda_text">Confidentiality terms</label><textarea id="nda_text" name="nda_text" rows="8" class="field text-sm">{DEFAULT_NDA}</textarea><p class="mt-1 text-xs text-white/40">A plain-English starting point: have your lawyer check it before you use it.</p></div>
+          <div class="sm:col-span-2"><label class="label" for="nda_text">Confidentiality terms</label><textarea id="nda_text" name="nda_text" rows="8" class="field">{DEFAULT_NDA}</textarea><p class="mt-1 text-xs text-white/40">A plain-English starting point: have your lawyer check it before you use it.</p></div>
           <div class="sm:col-span-2"><button class="btn-primary">Create room</button></div>
         </form>
       </details>
@@ -261,7 +261,7 @@ const status = (g: (typeof guests)[number]) => g.is_test ? (g.nda_accepted_at ? 
           <input type="hidden" name="intent" value="save" /><input type="hidden" name="room_id" value={current.id} />
           <div><label class="label" for="r_name">Name</label><input id="r_name" name="name" value={current.name} class="field" /></div>
           <div><label class="label" for="r_desc">Note for guests</label><textarea id="r_desc" name="description" rows="2" class="field">{current.description}</textarea></div>
-          <div><label class="label" for="r_nda">Confidentiality terms</label><textarea id="r_nda" name="nda_text" rows="8" class="field text-sm">{current.nda_text}</textarea></div>
+          <div><label class="label" for="r_nda">Confidentiality terms</label><textarea id="r_nda" name="nda_text" rows="8" class="field">{current.nda_text}</textarea></div>
           <div><button class="btn-primary">Save</button></div>
         </form>
       </details>

@@ -132,7 +132,7 @@ const stale = d.status === 'preparing';
             <div><label class="label" for="tags">Tags (any of)</label><input id="tags" name="tags" value={(f.tags ?? []).join(', ')} class="field" /></div>
             <div><label class="label" for="q">Containing</label><input id="q" name="q" value={f.q ?? ''} placeholder="name, outlet or notes" class="field" /></div>
             <div><span class="label">Roles (any)</span><div class="flex flex-wrap gap-x-3 gap-y-1 text-sm">{ROLES.map((x) => <label class="flex items-center gap-1.5 text-white/70"><input type="checkbox" name="roles" value={x} checked={(f.roles ?? []).includes(x)} class="accent-lk-blue" />{x}</label>)}</div></div>
-            <div><label class="label" for="outlets">Outlets (any; none = all)</label><select id="outlets" name="outlets" multiple size="5" class="field text-sm">{(outlets ?? []).map((o) => <option value={o.id} selected={(f.outlets ?? []).includes(o.id)}>{o.name}</option>)}</select></div>
+            <div><label class="label" for="outlets">Outlets (any; none = all)</label><select id="outlets" name="outlets" multiple size="5" class="field">{(outlets ?? []).map((o) => <option value={o.id} selected={(f.outlets ?? []).includes(o.id)}>{o.name}</option>)}</select></div>
             <label class="flex items-center gap-2 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="tiplines" checked={Boolean(f.tiplines)} class="accent-lk-blue" /> Include matching outlets’ newsroom tip-lines</label>
             <p class="text-sm sm:col-span-2"><strong class="text-white">{count}</strong> <span class="text-white/55">people match (active, with an email address, not opted out). Anyone who already received this release is left out.</span></p>
           </section>
@@ -140,7 +140,7 @@ const stale = d.status === 'preparing';
         <section class="card space-y-4">
           <h2 class="font-display text-lg font-bold">The email</h2>
           <div><label class="label" for="subject">Subject (empty: the headline{embargo ? ', marked EMBARGOED' : ''})</label><input id="subject" name="subject" value={d.subject} class="field" /></div>
-          <div><label class="label" for="intro">Opening line{!d.follow_up_of && ' (used when there’s nothing to personalise from)'}</label><textarea id="intro" name="intro" rows="2" class="field text-sm">{d.intro}</textarea></div>
+          <div><label class="label" for="intro">Opening line{!d.follow_up_of && ' (used when there’s nothing to personalise from)'}</label><textarea id="intro" name="intro" rows="2" class="field">{d.intro}</textarea></div>
           {!d.follow_up_of && <label class="flex gap-2 text-sm text-white/70"><input type="checkbox" name="personalise" checked={d.personalise} class="mt-1 accent-lk-blue" /> Personalise the opening for each journalist with AI, from their beats and recent work (you review every one before sending)</label>}
           <div><label class="label" for="availability">Interviews or extras (optional)</label><input id="availability" name="availability" value={d.availability} placeholder="e.g. Our CEO is available for interviews this week." class="field" /></div>
           <div class="flex flex-wrap gap-2"><button name="intent" value="save" class="btn-ghost">Save and count</button><button name="intent" value="prepare" class="btn-primary" disabled={!releaseOk}>Prepare the pitches</button>
@@ -164,7 +164,7 @@ const stale = d.status === 'preparing';
               <div class="flex flex-wrap items-center justify-between gap-2 text-sm"><span><strong class="text-white">{p.name || p.email}</strong> <span class="text-white/50">· {p.outlet} · {p.email}</span></span>
                 <label class="flex items-center gap-1.5 text-xs text-white/50"><input type="checkbox" name="remove" value={p.id} class="accent-lk-red" /> leave out</label></div>
               <input type="hidden" name="pitch_id" value={p.id} />
-              <textarea name="pitch_intro" rows="2" class="field text-sm">{p.intro}</textarea>
+              <textarea name="pitch_intro" rows="2" class="field">{p.intro}</textarea>
             </li>
           ))}
         </ul>

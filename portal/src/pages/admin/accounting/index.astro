@@ -54,7 +54,7 @@ const stateOf = (r: (typeof rows)[number]) => !r.pack ? { t: 'No pack yet', c: '
   {companies.length ? (
     <>
       <form method="get" class="mb-4 flex flex-wrap items-end gap-3 text-sm">
-        <div><label class="label" for="period">Period</label><select class="field !py-2" id="period" name="period">{periods.map((p) => <option value={p} selected={p === period}>{periodLabel(p, 'monthly')}</option>)}</select></div>
+        <div><label class="label" for="period">Period</label><select class="field" id="period" name="period">{periods.map((p) => <option value={p} selected={p === period}>{periodLabel(p, 'monthly')}</option>)}</select></div>
         <button class="btn-ghost !py-2">Show</button>
       </form>
       <section class="card overflow-x-auto p-0">

@@ -214,7 +214,7 @@ const issueApproval = issue ? await getApproval(svc, 'newsletter', issue.id) : n
           <div class="mt-4 grid gap-3 lg:grid-cols-[2fr_1fr] lg:items-end">
             <textarea name="brief" rows="5" required minlength="15" class="field" placeholder={"- Signed three new bank partners this quarter\n- FY26 results are out: revenue up 40% (see the annual report)\n- AGM on 20 November, please vote online\n- Thank shareholders for their support"}></textarea>
             <div class="space-y-3">
-              <select name="audience" class="field text-sm" aria-label="Newsletter"><option value="shareholders">For shareholders</option><option value="public">Public newsletter (website subscribers)</option></select>
+              <select name="audience" class="field" aria-label="Newsletter"><option value="shareholders">For shareholders</option><option value="public">Public newsletter (website subscribers)</option></select>
               <CompanySelect scope={scope} id="c-ai" value={entityId} />
               <button class="btn-primary w-full">Continue</button>
             </div>
@@ -227,7 +227,7 @@ const issueApproval = issue ? await getApproval(svc, 'newsletter', issue.id) : n
             <h2 class="mt-2 font-display text-lg font-bold">{t.name}</h2>
             <p class="mt-1 flex-1 text-sm text-white/55">{t.description}</p>
             <div class="mt-4 space-y-3">
-              {t.audience === 'any' && <select name="audience" class="field text-sm" aria-label="Newsletter"><option value="shareholders">For shareholders</option><option value="public">Public newsletter (website subscribers)</option></select>}
+              {t.audience === 'any' && <select name="audience" class="field" aria-label="Newsletter"><option value="shareholders">For shareholders</option><option value="public">Public newsletter (website subscribers)</option></select>}
               <CompanySelect scope={scope} id={`c-${t.id}`} value={t.entity_id ?? entityId} />
               {t.audience === 'public' && <p class="text-xs text-white/45">For the company’s website subscribers.</p>}
               <div class="flex gap-2"><button class="btn-primary flex-1">Use this template</button>{t.id !== 'blank' && <a href={withCompany(scope, `/admin/newsletters/templates/${t.id}`)} class="btn-ghost">Edit</a>}</div>

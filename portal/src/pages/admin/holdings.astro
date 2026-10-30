@@ -121,7 +121,7 @@ const changeLabels = { 'new-holder': 'New holder', added: 'New class', changed: 
     <p class="mt-1 text-sm text-white/55">CSV columns: <code class="font-mono text-white/75">registry_ref, holder_name, kind, share_class_code, shares, as_at</code>. Rows add a dated holding; earlier history is kept.</p>
     <form method="post" enctype="multipart/form-data" class="mt-5 space-y-4">
       <input type="file" name="file" accept=".csv,text/csv" class="block text-sm text-white/70 file:mr-4 file:rounded-lg file:border-0 file:bg-white/10 file:px-4 file:py-2 file:text-white" />
-      <textarea name="csv" rows="5" class="field font-mono text-xs" placeholder="…or paste CSV here">{csvText}</textarea>
+      <textarea name="csv" rows="5" class="field font-mono" placeholder="…or paste CSV here">{csvText}</textarea>
       <button name="intent" value="preview" class="btn-ghost">Preview changes</button>
     </form>
 

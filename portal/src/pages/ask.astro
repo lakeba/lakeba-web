@@ -126,7 +126,7 @@ const isAdmin = Astro.locals.access.groupAdmin;
           <span class="ml-1 text-xs" data-rate-status></span>
         </div>
         <form class="mt-2 flex gap-2" data-rate-note hidden>
-          <input maxlength="1000" placeholder={t('What was wrong? (optional)')} aria-label={t('What was wrong?')} class="field !py-2 text-sm" />
+          <input maxlength="1000" placeholder={t('What was wrong? (optional)')} aria-label={t('What was wrong?')} class="field" />
           <button class="btn-ghost shrink-0 !px-3 !py-2 text-sm">{t('Send')}</button>
         </form>
       </div>

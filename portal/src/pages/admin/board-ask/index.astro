@@ -97,7 +97,7 @@ const sourceIcon: Record<string, string> = { law: '§', web: '↗', document: '�
               {m.status === 'done' && (
                 <form method="post" class="ml-auto flex flex-wrap items-center gap-2">
                   <input type="hidden" name="intent" value="rate" /><input type="hidden" name="id" value={m.id} />
-                  {m.rating === 'wrong' || m.feedback ? <input class="field !w-56 !py-1 text-xs" name="feedback" value={m.feedback} placeholder="What was wrong?" maxlength="2000" /> : null}
+                  {m.rating === 'wrong' || m.feedback ? <input class="field !w-56" name="feedback" value={m.feedback} placeholder="What was wrong?" maxlength="2000" /> : null}
                   <button class:list={['rounded-full px-2.5 py-1', m.rating === 'good' ? 'bg-lk-green/20 text-lk-green' : 'bg-white/5 hover:text-white']} name="rating" value={m.rating === 'good' ? '' : 'good'}>Helpful</button>
                   <button class:list={['rounded-full px-2.5 py-1', m.rating === 'wrong' ? 'bg-lk-orange/20 text-lk-orange' : 'bg-white/5 hover:text-white']} name="rating" value="wrong">{m.rating === 'wrong' ? 'Save note' : 'Something’s wrong'}</button>
                 </form>

@@ -278,7 +278,7 @@ const keepLater = r?.choices.later === 'keep';
             <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="py-2 pr-4">On the register</th><th class="px-3 py-2 text-right">On issue</th><th class="py-2 pl-3">In the portal</th></tr></thead>
             <tbody class="divide-y divide-white/5">{r.classes.map((c) => (
               <tr><td class="py-2 pr-4"><span class="font-mono text-white/85">{c.code}</span> <span class="text-white/55">{c.newName}</span></td><td class="px-3 py-2 text-right tabular-nums">{show(c.total)}</td>
-                <td class="py-2 pl-3"><select name={`c:${c.code}`} class="field py-1 text-sm">
+                <td class="py-2 pl-3"><select name={`c:${c.code}`} class="field">
                   {r.allClasses.map((p) => <option value={p.id} selected={c.id === p.id}>{p.code} · {p.name}</option>)}
                   <option value="new" selected={!c.id}>New class {c.newCode} · {c.newName}</option>
                 </select></td></tr>

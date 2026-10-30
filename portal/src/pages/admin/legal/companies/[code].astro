@@ -259,7 +259,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
           <form method="post" enctype="multipart/form-data" class="card grid gap-3" data-busy>
             <h2 class="font-display text-lg font-bold">Read an ASIC extract</h2>
             <p class="text-sm text-white/55">Upload a current company extract (PDF). Lakeba AI reads the details and officers; you check them before anything is saved. About 1 cent.</p>
-            <input class="field !py-1.5 text-sm" type="file" name="extract" accept="application/pdf,.pdf" required />
+            <input class="field" type="file" name="extract" accept="application/pdf,.pdf" required />
             <button class="btn-primary" name="intent" value="extract-read">Read it</button>
             {rec?.extract_dated && <p class="text-xs text-white/40">Last extract read: dated {day(rec.extract_dated)}{rec.extract_path && <> · <a class="text-lk-blue hover:underline" href={`/admin/legal/file?path=${encodeURIComponent(rec.extract_path)}`}>open</a></>}</p>}
           </form>
@@ -300,7 +300,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
                         <div><label class="label" for={`a-${o.id}`}>Appointed</label><input class="field" type="date" id={`a-${o.id}`} name="appointed_on" value={o.appointed_on ?? ''} /></div>
                         <div><label class="label" for={`c-${o.id}`}>Stopped (resigned, removed)</label><input class="field" type="date" id={`c-${o.id}`} name="ceased_on" value={o.ceased_on ?? ''} /></div>
                         <div><label class="label" for={`cs-${o.id}`}>Consent to act signed</label><input class="field" type="date" id={`cs-${o.id}`} name="consent_on" value={o.consent_on ?? ''} /></div>
-                        <div><label class="label" for={`cf-${o.id}`}>Consent document</label><input class="field !py-1.5 text-xs" type="file" id={`cf-${o.id}`} name="consent" />
+                        <div><label class="label" for={`cf-${o.id}`}>Consent document</label><input class="field" type="file" id={`cf-${o.id}`} name="consent" />
                           {o.consent_path && <a class="mt-1 block text-xs text-lk-blue hover:underline" href={`/admin/legal/file?path=${encodeURIComponent(o.consent_path)}`}>Open the filed consent</a>}</div>
                         <div class="sm:col-span-2"><label class="label" for={`no-${o.id}`}>Notes</label><input class="field" id={`no-${o.id}`} name="notes" value={o.notes} /></div>
                         {mayDo && <div class="flex flex-wrap gap-2 sm:col-span-2"><button class="btn-primary !py-2" name="intent" value="officer-save">Save</button>{!o.user_id && o.email && <button class="btn-ghost !py-2" name="intent" value="officer-invite" formnovalidate>Invite to sign in the portal</button>}<button class="btn-ghost !py-2 text-lk-red" name="intent" value="officer-remove" formnovalidate data-confirm={`Remove ${o.full_name} from the register altogether? Only for a mistake: for a resignation, set the date they stopped.`}>Remove (a mistake)</button></div>}
@@ -350,7 +350,7 @@ const kept = (name: string) => (error && posted && field(posted, 'intent') === '
             <div><label class="label" for="email">Email</label><input class="field" type="email" id="email" name="email" value={kept('email')} placeholder="To sign in the portal later" /></div>
             <div><label class="label" for="appointed_on">Appointed</label><input class="field" type="date" id="appointed_on" name="appointed_on" value={kept('appointed_on')} /></div>
             <div><label class="label" for="consent_on">Consent to act signed</label><input class="field" type="date" id="consent_on" name="consent_on" value={kept('consent_on')} /></div>
-            <div class="sm:col-span-2"><label class="label" for="consent">Consent document</label><input class="field !py-1.5 text-sm" type="file" id="consent" name="consent" /></div>
+            <div class="sm:col-span-2"><label class="label" for="consent">Consent document</label><input class="field" type="file" id="consent" name="consent" /></div>
             <div class="sm:col-span-2"><label class="label" for="notes-new">Notes</label><input class="field" id="notes-new" name="notes" value={kept('notes')} /></div>
             {privateReady() && (
               <fieldset class="grid gap-3 rounded-2xl border border-white/10 p-4 sm:col-span-2 sm:grid-cols-2">

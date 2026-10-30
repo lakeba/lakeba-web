@@ -38,8 +38,8 @@ const target = (external: boolean) => (external ? { target: '_blank', rel: 'noop
       </div>
       <div class="flex flex-wrap items-center gap-2">
         {f.from && <input type="hidden" name="from" value={f.from} />}
-        <select name="year" class="field !w-auto !py-1.5 text-sm" aria-label={t('Year')} onchange="this.form.submit()"><option value="">{t('Any year')}</option>{years.map((y) => <option value={y} selected={String(y) === f.year}>{y}</option>)}</select>
-        <input name="q" value={sp.get('q') ?? ''} placeholder={t('Search news')} class="field !w-64 !py-1.5 text-sm" />
+        <select name="year" class="field !w-auto" aria-label={t('Year')} onchange="this.form.submit()"><option value="">{t('Any year')}</option>{years.map((y) => <option value={y} selected={String(y) === f.year}>{y}</option>)}</select>
+        <input name="q" value={sp.get('q') ?? ''} placeholder={t('Search news')} class="field !w-64" />
         <button class="btn-ghost !py-1.5 text-sm">{t('Search')}</button>
         {filtered && <a href="/news" class="text-sm text-white/55 hover:text-white">{t('Clear')}</a>}
         <span class="ml-auto text-xs text-white/40">{news.length} / {all.length}</span>

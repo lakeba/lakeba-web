@@ -58,7 +58,7 @@ if (Astro.request.method === 'POST') {
     </div>
   )}
   <form method="post" class="space-y-4">
-    <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus aria-label={t('6-digit code')} class="field text-center font-mono text-2xl tracking-[0.5em]" />
+    <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6}" maxlength="6" required autofocus aria-label={t('6-digit code')} class="field !h-auto text-center font-mono text-2xl tracking-[0.5em]" />
     <button class="btn-primary w-full">{t('Verify')}</button>
   </form>
   <form method="post" action="/logout" class="mt-5 text-center">

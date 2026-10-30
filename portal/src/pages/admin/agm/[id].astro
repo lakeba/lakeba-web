@@ -142,7 +142,7 @@ const votedShares = (rid: string) => ['for', 'against'].reduce((a, v) => a + Num
               <div><p class="font-semibold text-white">{r.number}. {r.title} <span class="ml-1 text-xs font-normal capitalize text-white/40">{r.kind}</span></p><p class="mt-1 text-sm text-white/55">{r.description}</p></div>
               <form method="post" class="flex items-center gap-2 text-sm">
                 <input type="hidden" name="resolution_id" value={r.id} />
-                <select name="outcome" class="field !w-auto !py-1.5 text-sm">{Object.entries(outcomes).map(([v, l]) => <option value={v} selected={(r.outcome ?? '') === v}>{l}</option>)}</select>
+                <select name="outcome" class="field !w-auto">{Object.entries(outcomes).map(([v, l]) => <option value={v} selected={(r.outcome ?? '') === v}>{l}</option>)}</select>
                 <button name="intent" value="outcome" class="btn-ghost !px-3 !py-1.5 text-sm">Set</button>
                 <button name="intent" value="delete-resolution" class="text-xs text-white/40 hover:text-lk-red" onclick="return confirm('Delete this resolution and its votes?')">Delete</button>
               </form>

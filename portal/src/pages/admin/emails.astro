@@ -186,7 +186,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
             <input type="hidden" name="email_id" value={current.id} />
             <h3 class="font-display font-bold text-white">Reply</h3>
             <p class="mt-1 text-xs text-white/45">Goes to {trusted && person ? `${person.email} (their registered address)` : current.from_address}, in the same Outlook thread.</p>
-            <textarea name="body" rows="9" class="field mt-3 text-sm" required>{draft?.body ?? ''}</textarea>
+            <textarea name="body" rows="9" class="field mt-3" required>{draft?.body ?? ''}</textarea>
             {trusted ? (
               <div class="mt-4">
                 <p class="label">Portal links (the first becomes a one-time sign-in button)</p>
@@ -217,7 +217,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
         ))}
         <form class="ml-auto flex items-center gap-2">
           <input type="hidden" name="status" value={filterStatus} />
-          {(companies ?? []).length > 1 && <select name="company" class="field !w-auto !py-1.5 text-sm" onchange="this.form.submit()"><option value="">All companies</option>{(companies ?? []).map((c) => <option value={c.id} selected={c.id === filterCompany}>{c.display_name}</option>)}</select>}
+          {(companies ?? []).length > 1 && <select name="company" class="field !w-auto" onchange="this.form.submit()"><option value="">All companies</option>{(companies ?? []).map((c) => <option value={c.id} selected={c.id === filterCompany}>{c.display_name}</option>)}</select>}
         </form>
         {isGroupAdmin && <form method="post"><button name="intent" value="poll" class="btn-ghost !py-1.5 text-sm">Check mailboxes now</button></form>}
       </div>
@@ -287,7 +287,7 @@ const q = (o: Record<string, string>) => `?${new URLSearchParams({ status: filte
                   <div class="flex flex-wrap gap-x-5 gap-y-2 text-sm text-white/75">{SELF_SERVICE.map((cat) => <label class="flex items-center gap-2"><input type="checkbox" name="auto_category" value={cat} checked={(c.email_auto_categories ?? []).includes(cat)} class="size-4 accent-lk-blue" />{CATEGORIES[cat]}</label>)}</div>
                 </fieldset>
                 <div class="sm:col-span-4"><label class="label" for={`addr-${c.id}`}>Its own address on a shared mailbox (optional)</label><input class="field" id={`addr-${c.id}`} name="address" type="email" value={c.shareholder_address ?? ''} placeholder="e.g. mist.shareholders@lakeba.com" /><p class="mt-1 text-xs text-white/40">When several companies use the same mailbox, emails sent to this address are filed to {c.display_name}. In Exchange, add it as an extra address of that mailbox.</p></div>
-                <div class="sm:col-span-4"><label class="label" for={`sig-${c.id}`}>Signature (blank: “{c.display_name === 'Lakeba Group' ? 'Lakeba' : c.display_name} Investor Relations”)</label><textarea class="field text-sm" id={`sig-${c.id}`} name="signature" rows="2">{c.email_signature}</textarea></div>
+                <div class="sm:col-span-4"><label class="label" for={`sig-${c.id}`}>Signature (blank: “{c.display_name === 'Lakeba Group' ? 'Lakeba' : c.display_name} Investor Relations”)</label><textarea class="field" id={`sig-${c.id}`} name="signature" rows="2">{c.email_signature}</textarea></div>
               </form>
             );
           })}

@@ -126,7 +126,7 @@ const lastQuestion = p.status === 'returned' ? (msgRows ?? []).at(-1) : null;
       {xero && <div class="flex flex-wrap items-center gap-3 text-sm"><span class="text-white/55">Xero is connected: the figures are fetched for {label}.{p.source === 'xero' && ' Fetched.'}</span><button class="btn-ghost !py-1.5" name="intent" value="xero" formnovalidate data-busy-label="Fetching…">Fetch again from Xero</button></div>}
       {xero && <p class="text-sm text-white/45">Or upload the accounts instead:</p>}
       <p class="text-sm text-white/55">The profit and loss and balance sheet for {label}, as Excel, CSV or PDF (from Xero, MYOB or your accountant). Lakeba AI reads them into the lines below.</p>
-      <div class="flex flex-wrap items-center gap-3"><input class="field !w-auto !py-1.5 text-sm" type="file" name="files" multiple accept=".xlsx,.csv,.pdf" /><button class="btn-primary" name="intent" value="upload" data-busy-label="Reading…">Upload and read</button></div>
+      <div class="flex flex-wrap items-center gap-3"><input class="field !w-auto" type="file" name="files" multiple accept=".xlsx,.csv,.pdf" /><button class="btn-primary" name="intent" value="upload" data-busy-label="Reading…">Upload and read</button></div>
     </form>
   )}
   {p.files.length > 0 && (

@@ -13,7 +13,7 @@ const cell = (value: unknown) => {
 export const GET: APIRoute = async ({ url, locals }) => {
   const supabase = locals.supabase;
   const audit = await auditQuery(supabase, readFilters(url.searchParams));
-  const { data: rows } = audit ? await audit.query.range(0, MAX_ROWS - 1) : { data: [] };
+  const { data: rows } = await audit.query.range(0, MAX_ROWS - 1);
   const emails = await emailsFor(supabase, (rows ?? []).map((r) => r.user_id));
   const { data: companies } = await supabase.from('entities').select('id, code');
   const codeOf = new Map((companies ?? []).map((c) => [c.id, c.code as string]));

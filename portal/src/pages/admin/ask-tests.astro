@@ -229,11 +229,11 @@ const running = run?.status === 'running';
                 <input name="question" value={c.question} maxlength="1000" class="field" />
                 <textarea name="expected_answer" rows="4" maxlength="8000" class="field">{c.expected_answer ?? ''}</textarea>
                 <div class="grid gap-3 sm:grid-cols-2">
-                  <input name="must_include" value={c.must_include.join(', ')} placeholder="Must mention" class="field !py-2 text-sm" />
-                  <input name="must_not_include" value={c.must_not_include.join(', ')} placeholder="Must not mention" class="field !py-2 text-sm" />
+                  <input name="must_include" value={c.must_include.join(', ')} placeholder="Must mention" class="field" />
+                  <input name="must_not_include" value={c.must_not_include.join(', ')} placeholder="Must not mention" class="field" />
                 </div>
                 <label class="flex items-center gap-2 text-sm text-white/65"><input type="checkbox" name="expect_decline" checked={c.expect_decline} class="size-4 accent-lk-blue" /> Should be declined as off-topic</label>
-                <input name="notes" value={c.notes ?? ''} class="field !py-2 text-sm" />
+                <input name="notes" value={c.notes ?? ''} class="field" />
                 <button name="intent" value="save" class="btn-primary !py-2">Save</button>
               </form>
             </details>

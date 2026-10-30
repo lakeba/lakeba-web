@@ -290,7 +290,7 @@ const readOnly = !Astro.locals.access.groupAdmin;
                   <form method="post" class="flex min-w-56 flex-col gap-1.5">
                     <input type="hidden" name="holder_id" value={p.holder.id} /><input type="hidden" name="class_id" value={p.row.share_class_id} />
                     <label class="sr-only" for={`note-${p.holder.id}-${p.row.share_class_id}`}>Note for {p.holder.name}, {p.row.share_classes?.name}</label>
-                    <textarea id={`note-${p.holder.id}-${p.row.share_class_id}`} name="note" rows="2" maxlength="1000" placeholder="Add a note (shown to the shareholder)" class="field !py-1.5 text-xs">{p.note ?? ''}</textarea>
+                    <textarea id={`note-${p.holder.id}-${p.row.share_class_id}`} name="note" rows="2" maxlength="1000" placeholder="Add a note (shown to the shareholder)" class="field">{p.note ?? ''}</textarea>
                     <button name="intent" value="note" class="btn-ghost self-start !px-3 !py-1 text-xs">{p.note ? 'Save note' : 'Add note'}</button>
                   </form>
                 </td>

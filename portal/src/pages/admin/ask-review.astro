@@ -167,7 +167,7 @@ const statusStyle: Record<string, string> = { unreviewed: 'bg-white/10 text-whit
     {tabs.map((t) => <a href={link({ view: t.id, page: '1' })} class:list={['rounded-full border px-3 py-1.5 text-sm', view === t.id ? 'border-lk-blue bg-lk-blue/15 text-white' : 'border-white/10 text-white/60 hover:text-white']}>{t.label}</a>)}
     <form method="get" class="ml-auto flex gap-2">
       <input type="hidden" name="view" value={view} />
-      <input name="q" value={q} type="search" placeholder="Search questions and answers" class="field !py-2 text-sm" />
+      <input name="q" value={q} type="search" placeholder="Search questions and answers" class="field" />
     </form>
   </div>
 
@@ -220,7 +220,7 @@ const statusStyle: Record<string, string> = { unreviewed: 'bg-white/10 text-whit
               <summary class="cursor-pointer text-lk-blue">✏️ Write the correct answer</summary>
               <textarea name="corrected_answer" rows="4" class="field mt-2" placeholder="The answer Ask Lakeba should give (Markdown allowed)">{e.corrected_answer ?? ''}</textarea>
             </details>
-            <input name="review_note" value={e.review_note ?? ''} placeholder="Note for the team (optional), e.g. which document is missing" class="field !py-2 text-sm" />
+            <input name="review_note" value={e.review_note ?? ''} placeholder="Note for the team (optional), e.g. which document is missing" class="field" />
             <label class="flex items-center gap-2 text-sm text-white/65"><input type="checkbox" name="approve" checked={!approvedFor.has(e.id) || approvedFor.get(e.id)} class="size-4 accent-lk-blue" /> When marking ✅ Good or saving a correction, also add it to approved answers</label>
             <div class="flex flex-wrap gap-2 text-sm">
               <button name="intent" value="good" class="btn-ghost !px-3 !py-2">✅ Good</button>

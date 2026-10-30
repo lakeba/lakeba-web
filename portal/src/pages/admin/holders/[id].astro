@@ -246,10 +246,10 @@ const btn = 'text-xs text-white/55 hover:text-white';
               {[...list].reverse().map((r, i) => mayEditClass(cid) ? (
                 <form method="post" class="grid grid-cols-2 items-end gap-2 px-5 py-2.5 @3xl:grid-cols-[8.5rem_minmax(6.5rem,1fr)_6rem_8.5rem_6.5rem] @3xl:items-center">
                   <input type="hidden" name="intent" value="review" /><input type="hidden" name="row" value={r.id} />
-                  <label class="block"><span class="label @3xl:sr-only">As at</span><input type="date" name="as_at" value={r.as_at} class="field !py-1.5 text-sm" aria-label="As at" /></label>
-                  <label class="block"><span class="label @3xl:sr-only">Shares</span><input name="shares" value={Number(r.shares).toLocaleString('en-AU')} inputmode="numeric" class="field !py-1.5 text-right text-sm tabular-nums" aria-label="Shares" /></label>
-                  <label class="block"><span class="label @3xl:sr-only">Exercise price</span><input name="exercise_price" value={r.exercise_price ?? ''} inputmode="decimal" placeholder="—" class="field !py-1.5 text-right text-sm" aria-label="Exercise price" /></label>
-                  <label class="block"><span class="label @3xl:sr-only">Expires</span><input type="date" name="expires_on" value={r.expires_on ?? ''} class="field !py-1.5 text-sm" aria-label="Expires on" /></label>
+                  <label class="block"><span class="label @3xl:sr-only">As at</span><input type="date" name="as_at" value={r.as_at} class="field" aria-label="As at" /></label>
+                  <label class="block"><span class="label @3xl:sr-only">Shares</span><input name="shares" value={Number(r.shares).toLocaleString('en-AU')} inputmode="numeric" class="field text-right tabular-nums" aria-label="Shares" /></label>
+                  <label class="block"><span class="label @3xl:sr-only">Exercise price</span><input name="exercise_price" value={r.exercise_price ?? ''} inputmode="decimal" placeholder="—" class="field text-right" aria-label="Exercise price" /></label>
+                  <label class="block"><span class="label @3xl:sr-only">Expires</span><input type="date" name="expires_on" value={r.expires_on ?? ''} class="field" aria-label="Expires on" /></label>
                   <span class="flex items-center gap-3 whitespace-nowrap text-xs">{i === 0 && <span class="text-lk-green" title="The current balance">●</span>}<button name="op" value="edit-row" class={btn}>Save</button><button name="op" value="delete-row" class="text-white/40 hover:text-lk-red">Delete</button></span>
                 </form>
               ) : (
@@ -278,7 +278,7 @@ const btn = 'text-xs text-white/55 hover:text-white';
           {mayEditClass(cid) && (
             <form method="post" class="flex flex-wrap items-end gap-2 border-t border-white/5 px-5 py-3">
               <input type="hidden" name="op" value="note" /><input type="hidden" name="class_id" value={cid} />
-              <div class="grow"><label class="label" for={`note-${cid}`}>Note the holder sees next to these shares</label><input id={`note-${cid}`} name="note" value={noteOf.get(cid) ?? ''} maxlength="1000" placeholder="e.g. held in escrow until 30 June 2027" class="field !py-1.5 text-sm" /></div>
+              <div class="grow"><label class="label" for={`note-${cid}`}>Note the holder sees next to these shares</label><input id={`note-${cid}`} name="note" value={noteOf.get(cid) ?? ''} maxlength="1000" placeholder="e.g. held in escrow until 30 June 2027" class="field" /></div>
               <button name="intent" value="review" class="btn-ghost !py-1.5 text-sm">Save note</button>
             </form>
           )}
@@ -338,7 +338,7 @@ const btn = 'text-xs text-white/55 hover:text-white';
               {rights.group ? (
                 <form method="post" class="mt-1.5 flex items-center gap-2">
                   <input type="hidden" name="user_id" value={p.id} />
-                  <select name="access" class="field !w-auto !py-1 text-xs" aria-label="Access"><option value="owner" selected={m.access === 'owner'}>Owner (votes, asks)</option><option value="viewer" selected={m.access === 'viewer'}>Viewer (read only)</option></select>
+                  <select name="access" class="field !w-auto" aria-label="Access"><option value="owner" selected={m.access === 'owner'}>Owner (votes, asks)</option><option value="viewer" selected={m.access === 'viewer'}>Viewer (read only)</option></select>
                   <input type="hidden" name="intent" value="review" />
                   <button name="op" value="access-change" class={btn}>Save</button>
                   <button name="op" value="access-remove" class="text-xs text-white/40 hover:text-lk-red">Remove</button>

@@ -85,11 +85,11 @@ const screen = `/admin/legal/meetings/${deck.meeting_id}/screen?deck=${deck.id}`
             <input class="field font-semibold" name={`title-${i}`} value={s.title} maxlength="200" aria-label="Slide title" />
             {deck.source === 'drafted' && (
               <div class="grid gap-3 md:grid-cols-2">
-                <div><label class="label" for={`points-${i}`}>Points (one per line)</label><textarea class="field min-h-28 text-sm" id={`points-${i}`} name={`points-${i}`}>{s.points.join('\n')}</textarea></div>
-                <div><label class="label" for={`figures-${i}`}>Figures (label | value | note)</label><textarea class="field min-h-28 font-mono text-xs" id={`figures-${i}`} name={`figures-${i}`}>{s.figures.map((f) => `${f.label} | ${f.value} | ${f.note}`).join('\n')}</textarea></div>
+                <div><label class="label" for={`points-${i}`}>Points (one per line)</label><textarea class="field min-h-28" id={`points-${i}`} name={`points-${i}`}>{s.points.join('\n')}</textarea></div>
+                <div><label class="label" for={`figures-${i}`}>Figures (label | value | note)</label><textarea class="field min-h-28 font-mono" id={`figures-${i}`} name={`figures-${i}`}>{s.figures.map((f) => `${f.label} | ${f.value} | ${f.note}`).join('\n')}</textarea></div>
               </div>
             )}
-            <div><label class="label" for={`notes-${i}`}>What Lex says</label><textarea class="field min-h-24 text-sm" id={`notes-${i}`} name={`notes-${i}`}>{s.notes}</textarea></div>
+            <div><label class="label" for={`notes-${i}`}>What Lex says</label><textarea class="field min-h-24" id={`notes-${i}`} name={`notes-${i}`}>{s.notes}</textarea></div>
           </section>
         ))}
         {mayDo && (

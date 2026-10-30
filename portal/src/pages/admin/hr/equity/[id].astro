@@ -120,7 +120,7 @@ const legalHref = `/admin/legal/papers/new?${new URLSearchParams({ company: comp
             <p class="text-white">{n(e.number)} for A${e.amount_payable} · <span class="text-white/60">{e.status}</span></p>
             <p class="text-xs text-white/45">Asked {dateTime.format(new Date(e.requested_at))}{e.decided_at && ` · decided ${day(e.decided_at)}`}{e.issued_on && ` · issued ${day(e.issued_on)}`}</p>
             {e.note && <p class="mt-1 whitespace-pre-line text-white/60">{e.note}</p>}
-            {mayDo && e.status === 'requested' && <form method="post" class="mt-2 flex flex-wrap gap-2"><input type="hidden" name="exercise_id" value={e.id} /><input class="field !w-auto grow !py-1.5 text-sm" name="reason" placeholder="Reason (to reject)" aria-label="Reason" /><button class="btn-primary !py-1.5 text-sm" name="intent" value="approve">Approve (paid)</button><button class="btn-ghost !py-1.5 text-sm" name="intent" value="reject">Reject</button></form>}
+            {mayDo && e.status === 'requested' && <form method="post" class="mt-2 flex flex-wrap gap-2"><input type="hidden" name="exercise_id" value={e.id} /><input class="field !w-auto grow" name="reason" placeholder="Reason (to reject)" aria-label="Reason" /><button class="btn-primary !py-1.5 text-sm" name="intent" value="approve">Approve (paid)</button><button class="btn-ghost !py-1.5 text-sm" name="intent" value="reject">Reject</button></form>}
             {mayDo && e.status === 'approved' && <form method="post" class="mt-2"><input type="hidden" name="exercise_id" value={e.id} /><button class="btn-ghost !py-1.5 text-sm" name="intent" value="issued">The shares are issued</button></form>}
           </div>
         )) : <p class="text-sm text-white/55">None yet.</p>}

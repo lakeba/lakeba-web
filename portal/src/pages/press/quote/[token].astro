@@ -45,8 +45,8 @@ Astro.response.headers.set('Cache-Control', 'no-store');
       <button name="choice" value="approve" class="btn-primary w-full">Approve as written</button>
       <details class="rounded-xl border border-white/10 p-4">
         <summary class="cursor-pointer text-sm text-lk-blue">Change the wording</summary>
-        <textarea name="text" rows="5" class="field mt-3 text-sm">{a.original}</textarea>
-        <textarea name="comment" rows="2" class="field mt-2 text-sm" placeholder="A note for the press team (optional)"></textarea>
+        <textarea name="text" rows="5" class="field mt-3">{a.original}</textarea>
+        <textarea name="comment" rows="2" class="field mt-2" placeholder="A note for the press team (optional)"></textarea>
         <button name="choice" value="change" class="btn-ghost mt-3 w-full">Approve with my changes</button>
       </details>
     </form>

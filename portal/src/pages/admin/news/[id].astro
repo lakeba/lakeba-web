@@ -164,7 +164,7 @@ const postApproval = post ? await getApproval(svc, 'post', post.id) : null;
   <form method="post" class="grid gap-6 xl:grid-cols-[1fr_20rem]" id="news-form" data-post-id={post?.id ?? ''} data-autosave={hasAutosave ? JSON.stringify(post!.autosave) : ''} data-company-names={JSON.stringify(companyNames)}>
     <input type="hidden" name="intent" value="save" />
     <fieldset class="min-w-0 space-y-4" disabled={locked}>
-      <div><label class="label" for="title">Title</label><input id="title" name="title" required value={post?.title} class="field text-lg font-semibold" /></div>
+      <div><label class="label" for="title">Title</label><input id="title" name="title" required value={post?.title} class="field !h-auto text-lg font-semibold" /></div>
       <div>
         <label class="label">Text</label>
         <div class="rounded-2xl border border-white/10 bg-white/[0.02]">
@@ -244,10 +244,10 @@ const postApproval = post ? await getApproval(svc, 'post', post.id) : null;
       <section class="card space-y-4">
         <h2 class="font-display text-lg font-bold">Web address and search</h2>
         <fieldset class="space-y-4" disabled={locked}>
-          <div><label class="label" for="slug">Web address</label><div class="flex items-center gap-1 text-sm text-white/45">/news/<input id="slug" name="slug" value={post?.slug} class="field py-1.5" data-slug /></div></div>
-          <div><label class="label" for="seo_description">Search description</label><textarea id="seo_description" name="seo_description" rows="3" maxlength="300" class="field text-sm">{post?.seo_description}</textarea><p class="mt-1 text-xs text-white/40" data-seo-count></p></div>
-          <div data-public-only><label class="label" for="categories">Categories (comma separated)</label><input id="categories" name="categories" value={post?.categories?.join(', ')} class="field text-sm" /></div>
-          <div data-public-only><label class="label" for="share_image_url">Social share image (optional)</label><input id="share_image_url" name="share_image_url" value={post?.share_image_url ?? ''} placeholder="Uses the cover when empty" class="field text-sm" /></div>
+          <div><label class="label" for="slug">Web address</label><div class="flex items-center gap-1 text-sm text-white/45">/news/<input id="slug" name="slug" value={post?.slug} class="field" data-slug /></div></div>
+          <div><label class="label" for="seo_description">Search description</label><textarea id="seo_description" name="seo_description" rows="3" maxlength="300" class="field">{post?.seo_description}</textarea><p class="mt-1 text-xs text-white/40" data-seo-count></p></div>
+          <div data-public-only><label class="label" for="categories">Categories (comma separated)</label><input id="categories" name="categories" value={post?.categories?.join(', ')} class="field" /></div>
+          <div data-public-only><label class="label" for="share_image_url">Social share image (optional)</label><input id="share_image_url" name="share_image_url" value={post?.share_image_url ?? ''} placeholder="Uses the cover when empty" class="field" /></div>
         </fieldset>
       </section>
 
@@ -255,8 +255,8 @@ const postApproval = post ? await getApproval(svc, 'post', post.id) : null;
         <h2 class="font-display text-lg font-bold">Source</h2>
         <fieldset class="space-y-3" disabled={locked}>
           <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="external" checked={post?.external} class="mt-1 accent-lk-blue" /> Link only: the card opens the story elsewhere (press coverage)</label>
-          <div><label class="label" for="source_url">Story address</label><input id="source_url" name="source_url" value={post?.source_url ?? ''} placeholder="https://…" class="field text-sm" /></div>
-          <div><label class="label" for="source_name">Publication</label><input id="source_name" name="source_name" value={post?.source_name ?? ''} placeholder="e.g. Australian Financial Review" class="field text-sm" /></div>
+          <div><label class="label" for="source_url">Story address</label><input id="source_url" name="source_url" value={post?.source_url ?? ''} placeholder="https://…" class="field" /></div>
+          <div><label class="label" for="source_name">Publication</label><input id="source_name" name="source_name" value={post?.source_name ?? ''} placeholder="e.g. Australian Financial Review" class="field" /></div>
         </fieldset>
       </section>
     </aside>

@@ -102,9 +102,9 @@ const tone: Record<string, string> = { positive: 'text-lk-green', neutral: 'text
             {c.status !== 'new' && <button name="intent" value="reopen" class="text-xs text-white/45 hover:text-white">Back to review</button>}</form>
         </div>
         <form method="post" class="mt-3 grid gap-2 border-t border-white/5 pt-3 sm:grid-cols-[18rem_9rem_1fr_auto] sm:items-center"><input type="hidden" name="id" value={c.id} />
-          <select name="release_id" aria-label="About" class="field py-1.5 text-xs"><option value="">Not about a release</option>{(releases ?? []).map((r) => <option value={r.id} selected={r.id === c.release_id}>{r.headline}</option>)}</select>
-          <select name="sentiment" aria-label="Tone" class="field py-1.5 text-xs">{['positive', 'neutral', 'negative', 'mixed'].map((x) => <option value={x} selected={x === c.sentiment}>{x}</option>)}</select>
-          <input name="summary" value={c.summary} aria-label="Summary" class="field py-1.5 text-xs" />
+          <select name="release_id" aria-label="About" class="field"><option value="">Not about a release</option>{(releases ?? []).map((r) => <option value={r.id} selected={r.id === c.release_id}>{r.headline}</option>)}</select>
+          <select name="sentiment" aria-label="Tone" class="field">{['positive', 'neutral', 'negative', 'mixed'].map((x) => <option value={x} selected={x === c.sentiment}>{x}</option>)}</select>
+          <input name="summary" value={c.summary} aria-label="Summary" class="field" />
           <button name="intent" value="save" class="text-xs text-lk-blue">Save</button>
         </form>
       </li>

@@ -165,7 +165,7 @@ const statusTone: Record<string, string> = { open: 'bg-white/10 text-white/70', 
           <div><label class="label" for="window_opens">Window opens (optional)</label><input id="window_opens" name="window_opens" type="date" value={settings.window_opens ?? ''} class="field" /></div>
           <div><label class="label" for="window_closes">Window closes (optional)</label><input id="window_closes" name="window_closes" type="date" value={settings.window_closes ?? ''} class="field" /></div>
           <label class="flex items-center gap-3 text-sm sm:col-span-2"><input type="checkbox" name="show_book" checked={settings.show_book} class="size-4 accent-lk-blue" /> Show shareholders an anonymous order book (prices and share numbers, no names)</label>
-          <div class="sm:col-span-2"><label class="label" for="rules">How trading works (shown to shareholders)</label><textarea id="rules" name="rules" rows="6" class="field text-sm" placeholder="E.g. pre-emptive rights under clause X, board approval, transfer forms, fees, timing.">{settings.rules}</textarea>
+          <div class="sm:col-span-2"><label class="label" for="rules">How trading works (shown to shareholders)</label><textarea id="rules" name="rules" rows="6" class="field" placeholder="E.g. pre-emptive rights under clause X, board approval, transfer forms, fees, timing.">{settings.rules}</textarea>
             <p class="mt-1 text-xs text-white/40">Have this checked by your lawyer against the constitution and shareholders' agreement before switching the board on.</p></div>
           <div><button class="btn-primary">Save settings</button></div>
         </form>
@@ -204,12 +204,12 @@ const statusTone: Record<string, string> = { open: 'bg-white/10 text-white/70', 
                     <div class="flex flex-col items-end gap-2">
                       <form method="post" class="flex flex-wrap items-center justify-end gap-2" onsubmit="return confirm('Complete this transfer and update the register for both holders?')">
                         <input type="hidden" name="intent" value="complete" /><input type="hidden" name="match_id" value={m.id} />
-                        <input type="date" name="completed_on" value={today} max={today} aria-label="Transfer date" class="field w-auto py-1.5 text-xs" />
+                        <input type="date" name="completed_on" value={today} max={today} aria-label="Transfer date" class="field w-auto" />
                         <label class="flex items-center gap-1.5 text-xs text-white/60"><input type="checkbox" name="record_price" class="accent-lk-blue" /> Record as reference price</label>
                         <button class="btn-primary px-3 py-1.5 text-xs">Complete transfer</button>
                       </form>
                       {!tradeApprovals.get(m.id) && <a href={approvalHref('trade', m.id)} class="text-xs text-white/50 hover:text-white">Ask for approval (optional)</a>}
-                      <form method="post" class="flex items-center gap-2" onsubmit="return confirm('Cancel this pairing?')"><input type="hidden" name="intent" value="cancel-match" /><input type="hidden" name="match_id" value={m.id} /><input name="reason" placeholder="Reason (internal)" class="field w-40 py-1.5 text-xs" /><button class="btn-ghost px-3 py-1.5 text-xs">Cancel pairing</button></form>
+                      <form method="post" class="flex items-center gap-2" onsubmit="return confirm('Cancel this pairing?')"><input type="hidden" name="intent" value="cancel-match" /><input type="hidden" name="match_id" value={m.id} /><input name="reason" placeholder="Reason (internal)" class="field w-40" /><button class="btn-ghost px-3 py-1.5 text-xs">Cancel pairing</button></form>
                     </div>
                   )}</td>
                 </tr>
@@ -235,7 +235,7 @@ const statusTone: Record<string, string> = { open: 'bg-white/10 text-white/70', 
                   <td class="whitespace-nowrap px-5 py-3 text-right tabular-nums">{audPrecise.format(Number(i.price))}</td>
                   <td class="px-5 py-3"><span class:list={['rounded-full px-2 py-0.5 text-xs', statusTone[i.status]]}>{i.status === 'matched' ? 'paired' : i.status}</span></td>
                   <td class="px-5 py-3 text-right">{LIVE.includes(i.status) && available(i) === Number(i.shares) && (
-                    <form method="post" class="flex items-center justify-end gap-2" onsubmit="return confirm('Close this interest and tell the shareholder?')"><input type="hidden" name="intent" value="cancel-interest" /><input type="hidden" name="interest_id" value={i.id} /><input name="reason" placeholder="Reason (shown to them)" class="field w-44 py-1.5 text-xs" /><button class="btn-ghost px-3 py-1.5 text-xs">Close</button></form>
+                    <form method="post" class="flex items-center justify-end gap-2" onsubmit="return confirm('Close this interest and tell the shareholder?')"><input type="hidden" name="intent" value="cancel-interest" /><input type="hidden" name="interest_id" value={i.id} /><input name="reason" placeholder="Reason (shown to them)" class="field w-44" /><button class="btn-ghost px-3 py-1.5 text-xs">Close</button></form>
                   )}</td>
                 </tr>
               ))}

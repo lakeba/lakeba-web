@@ -24,7 +24,7 @@ for (const c of counts ?? []) people.set(c.outlet_id!, (people.get(c.outlet_id!)
       <p class="mt-1 text-sm text-white/55">{outlets.length} outlets. A newsroom tip-line address can receive releases too, when you choose “include newsroom tip-lines”.</p></div>
     <a href={`/admin/press/outlets/new${desk.q}`} class="btn-primary">Add an outlet</a>
   </div>
-  <form method="get" class="mt-6 flex gap-2">{desk.venture && <input type="hidden" name="desk" value={desk.venture.code} />}<input name="q" value={q} placeholder="Search name, beat, region" class="field max-w-sm py-2" /><button class="btn-ghost py-2">Search</button></form>
+  <form method="get" class="mt-6 flex gap-2">{desk.venture && <input type="hidden" name="desk" value={desk.venture.code} />}<input name="q" value={q} placeholder="Search name, beat, region" class="field max-w-sm" /><button class="btn-ghost py-2">Search</button></form>
   <section class="card mt-4 overflow-x-auto p-0">
     <table class="w-full text-left text-sm">
       <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Outlet</th><th class="px-5 py-3">Type</th><th class="px-5 py-3">Beats</th><th class="px-5 py-3">Tip-line</th><th class="px-5 py-3">Contacts</th></tr></thead>

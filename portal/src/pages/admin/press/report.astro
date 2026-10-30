@@ -48,8 +48,8 @@ const companyOf = (id: string | null) => (ents ?? []).find((e) => e.id === id)?.
     <p class="text-xs uppercase tracking-[0.2em] text-white/45">Lakeba Group · press office report</p>
     <h1 class="mt-1 font-display text-3xl font-bold">{new Date(fromIso).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' })} to {new Date(new Date(toIso).getTime() - 1).toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'Australia/Sydney' })}</h1>
     <form method="get" class="no-print mt-4 flex flex-wrap items-end gap-2">{desk.venture && <input type="hidden" name="desk" value={desk.venture.code} />}
-      <div><label class="label" for="from">From</label><input id="from" name="from" type="date" value={from} class="field py-2" /></div>
-      <div><label class="label" for="to">To</label><input id="to" name="to" type="date" value={to} class="field py-2" /></div>
+      <div><label class="label" for="from">From</label><input id="from" name="from" type="date" value={from} class="field" /></div>
+      <div><label class="label" for="to">To</label><input id="to" name="to" type="date" value={to} class="field" /></div>
       <button class="btn-ghost py-2">Show</button>
       <button type="button" class="btn-ghost py-2" onclick="window.print()">Print or save as PDF</button>
       <a href={`/admin/press/report?from=${from}&to=${to}&format=csv${desk.q.replace('?', '&')}`} class="btn-ghost py-2">Coverage as CSV</a>

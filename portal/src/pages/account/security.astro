@@ -96,7 +96,7 @@ const passkeyStrings = clientStrings(t, [
                   <summary class="cursor-pointer list-none text-white/50 hover:text-white">{t('Rename')}</summary>
                   <form method="post" class="mt-2 flex gap-2">
                     <input type="hidden" name="passkeyId" value={p.id} />
-                    <input class="field !py-1.5 text-xs" name="name" maxlength="120" value={p.friendly_name} aria-label={t('Passkey name')} required />
+                    <input class="field" name="name" maxlength="120" value={p.friendly_name} aria-label={t('Passkey name')} required />
                     <button name="intent" value="rename-passkey" class="btn-ghost !px-3 !py-1.5 text-xs">{t('Save')}</button>
                   </form>
                 </details>

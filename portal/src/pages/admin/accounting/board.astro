@@ -62,7 +62,7 @@ if (Astro.request.method === 'POST' && mayDo) {
   {periods.length ? (
     <div class="grid max-w-3xl gap-6">
       <form method="get" class="flex flex-wrap items-end gap-3 text-sm">
-        <div><label class="label" for="period">Period</label><select class="field !py-2" id="period" name="period">{periods.map((p) => <option value={p} selected={p === period}>{periodLabel(p, 'monthly')}</option>)}</select></div>
+        <div><label class="label" for="period">Period</label><select class="field" id="period" name="period">{periods.map((p) => <option value={p} selected={p === period}>{periodLabel(p, 'monthly')}</option>)}</select></div>
         <button class="btn-ghost !py-2">Show</button>
       </form>
       <form method="post" class="card grid gap-3" data-busy>

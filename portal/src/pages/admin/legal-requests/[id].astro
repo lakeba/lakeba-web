@@ -72,7 +72,7 @@ const closed = ['done', 'cancelled'].includes(r.status);
       <form method="post" enctype="multipart/form-data" class="card grid gap-3">
         <label class="label" for="body">Reply</label>
         <textarea class="field min-h-28" id="body" name="body"></textarea>
-        <input class="field !py-1.5 text-sm" type="file" name="files" multiple aria-label="Files" />
+        <input class="field" type="file" name="files" multiple aria-label="Files" />
         <div class="flex flex-wrap gap-3"><button class="btn-primary" name="intent" value="reply">Send</button><button class="btn-ghost text-lk-red" name="intent" value="cancel" formnovalidate>Cancel the request</button></div>
       </form>
     )}

@@ -97,9 +97,9 @@ const t = r.triage;
         <form method="post" enctype="multipart/form-data" class="card grid gap-3">
           <label class="label" for="body">Write</label>
           <textarea class="field min-h-32" id="body" name="body"></textarea>
-          <input class="field !py-1.5 text-sm" type="file" name="files" multiple aria-label="Files" />
+          <input class="field" type="file" name="files" multiple aria-label="Files" />
           <div class="flex flex-wrap items-end gap-3">
-            <div><label class="label" for="then">Then</label><select class="field !py-2" id="then" name="then"><option value="">Keep it {TEAM_STATES[r.status === 'new' ? 'in_progress' : r.status].toLowerCase()}</option><option value="waiting">Waiting for the venture</option><option value="done">Done</option></select></div>
+            <div><label class="label" for="then">Then</label><select class="field" id="then" name="then"><option value="">Keep it {TEAM_STATES[r.status === 'new' ? 'in_progress' : r.status].toLowerCase()}</option><option value="waiting">Waiting for the venture</option><option value="done">Done</option></select></div>
             <button class="btn-primary" name="intent" value="reply">Reply to the venture</button>
             <button class="btn-ghost" name="intent" value="note">Save as internal note</button>
           </div>

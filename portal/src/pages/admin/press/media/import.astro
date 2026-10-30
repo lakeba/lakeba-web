@@ -81,13 +81,13 @@ const encoded = table ? Buffer.from(JSON.stringify(table)).toString('base64') : 
         <table class="mt-3 w-full text-left text-xs">
           <thead><tr>{table.header.map((h, i) => (
             <th class="min-w-40 px-3 py-2 align-bottom"><span class="block font-semibold text-white/80">{h}</span>
-              <select name={`col_${i}`} class="field mt-1 py-1 text-xs"><option value="">Ignore</option>{Object.entries(FIELDS).map(([k, l]) => <option value={k} selected={guess[i] === k}>{l}</option>)}</select></th>
+              <select name={`col_${i}`} class="field mt-1"><option value="">Ignore</option>{Object.entries(FIELDS).map(([k, l]) => <option value={k} selected={guess[i] === k}>{l}</option>)}</select></th>
           ))}</tr></thead>
           <tbody class="divide-y divide-white/5">{table.rows.slice(0, 6).map((r) => <tr>{r.map((c) => <td class="max-w-56 truncate px-3 py-1.5 text-white/60">{c}</td>)}</tr>)}</tbody>
         </table>
       </section>
       <section class="card grid gap-4 sm:grid-cols-2">
-        <div><label class="label" for="consent">Why we may email these people</label><select id="consent" name="consent" class="field text-sm">{Object.entries(CONSENT).map(([k, l]) => <option value={k}>{l}</option>)}</select>
+        <div><label class="label" for="consent">Why we may email these people</label><select id="consent" name="consent" class="field">{Object.entries(CONSENT).map(([k, l]) => <option value={k}>{l}</option>)}</select>
           <p class="mt-1 text-xs text-white/40">Australia’s Spam Act allows emails to an address someone publishes for their work, about their work (and every email has an unsubscribe link).</p></div>
         <div><label class="label" for="tags">Tag everyone in this list (optional)</label><input id="tags" name="tags" placeholder="e.g. 2026 list, tier 1" class="field" /></div>
       </section>

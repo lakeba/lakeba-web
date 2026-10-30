@@ -56,7 +56,7 @@ export function initPressEditor() {
     for (const f of [...((e.target as HTMLInputElement).files ?? [])]) {
       const url = await upload(f); if (!url || !kit) continue;
       const li = document.createElement('li'); li.className = 'flex items-center gap-2';
-      li.innerHTML = '<img alt="" class="size-10 rounded object-cover"><input type="hidden" name="kit_url"><input name="kit_label" placeholder="Caption / credit" class="field py-1.5 text-sm"><button type="button" class="text-xs text-white/45 hover:text-lk-red" data-remove-kit>Remove</button>';
+      li.innerHTML = '<img alt="" class="size-10 rounded object-cover"><input type="hidden" name="kit_url"><input name="kit_label" placeholder="Caption / credit" class="field"><button type="button" class="text-xs text-white/45 hover:text-lk-red" data-remove-kit>Remove</button>';
       li.querySelector('img')!.src = url;
       li.querySelector<HTMLInputElement>('input[name="kit_url"]')!.value = url;
       li.querySelector<HTMLInputElement>('input[name="kit_label"]')!.value = f.name.replace(/\.[^.]+$/, '');
