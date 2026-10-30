@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, type PDFFont } from 'pdf-lib';
 import type { Access } from './access';
 import type { serviceClient } from './admin';
 import { notifyMembers } from './notify';
@@ -61,9 +61,9 @@ export function monthsBetween(a: string, b: string) {
  * teams and locations already used, offered as suggestions so the list grows as people are added.
  */
 export async function hrChoices(svc: Svc, companyIds: string[]) {
-  const { data } = await svc.from('people').select('id, entity_id, full_name, job_title, team, location, status')
+  const { data } = await svc.from('people').select('id, entity_id, full_name, job_title, team, location, manager_id, status')
     .in('entity_id', companyIds.length ? companyIds : ['00000000-0000-0000-0000-000000000000']).order('full_name');
-  const rows = (data ?? []) as { id: string; entity_id: string; full_name: string; job_title: string | null; team: string | null; location: string | null; status: string }[];
+  const rows = (data ?? []) as (OrgPerson & { status: string })[];
   const used = (k: 'job_title' | 'team' | 'location') => [...new Set(rows.map((r) => r[k]?.trim()).filter((v): v is string => Boolean(v)))].sort((a, b) => a.localeCompare(b));
   return { managers: rows.filter((r) => r.status !== 'left'), roles: used('job_title'), teams: used('team'), locations: used('location') };
 }
@@ -325,4 +325,79 @@ export async function askHr(svc: Svc, entityIds: string[], question: string) {
   const refs = policies.filter((p) => p.body.trim()).map((p, i) => ({ ref: `P${i + 1}`, id: p.id, title: p.title }));
   const cited = refs.filter((r) => answer.includes(`[${r.ref}]`) || new RegExp(`\\b${r.ref}\\b`).test(answer));
   return { answer, sources: cited, costUsd: (res.usage.input_tokens * 0.1 + res.usage.output_tokens * 0.5) / 1e6 };
+}
+
+/** Someone on the org chart (Admin → HR → People → Org chart). */
+export type OrgPerson = { id: string; entity_id: string; full_name: string; job_title: string | null; team: string | null; location: string | null; manager_id: string | null };
+export type OrgNode = OrgPerson & { reports: OrgNode[] };
+
+/**
+ * The reporting lines as trees: each person under their manager. People whose manager isn't on the chart
+ * (left, or in a company not shown) start a tree of their own; a loop of managers is broken where found.
+ */
+export function orgTree(people: OrgPerson[]): OrgNode[] {
+  const byId = new Map(people.map((p) => [p.id, { ...p, reports: [] as OrgNode[] }]));
+  const roots: OrgNode[] = [];
+  for (const n of byId.values()) {
+    const manager = n.manager_id && n.manager_id !== n.id ? byId.get(n.manager_id) : undefined;
+    (manager ? manager.reports : roots).push(n);
+  }
+  const placed = new Set<string>();
+  const walk = (n: OrgNode) => { if (placed.has(n.id)) return; placed.add(n.id); n.reports.forEach(walk); };
+  roots.forEach(walk);
+  for (const n of byId.values()) {
+    if (placed.has(n.id)) continue;
+    const manager = byId.get(n.manager_id!);
+    if (manager) manager.reports = manager.reports.filter((r) => r.id !== n.id);
+    roots.push(n);
+    walk(n);
+  }
+  const sort = (list: OrgNode[]) => { list.sort((a, b) => a.full_name.localeCompare(b.full_name)); list.forEach((n) => sort(n.reports)); return list; };
+  return sort(roots);
+}
+
+/** The org chart as a PDF: one landscape page (A4, or A3 for a big chart), scaled to fit. */
+export async function orgChartPdf(title: string, roots: OrgNode[], companyOf: (id: string) => string) {
+  const doc = await PDFDocument.create();
+  const regular = await doc.embedFont(StandardFonts.Helvetica), bold = await doc.embedFont(StandardFonts.HelveticaBold);
+  // Helvetica only has Western characters; anything else prints as "?" rather than failing.
+  const safe = (s: string) => [...s].map((ch) => { try { regular.encodeText(ch); return ch; } catch { return '?'; } }).join('');
+  const BOX = { w: 150, h: 54 }, GAP = { x: 14, y: 36 };
+  const width = (n: OrgNode): number => Math.max(BOX.w, n.reports.reduce((s, r) => s + width(r), 0) + GAP.x * Math.max(0, n.reports.length - 1));
+  const depth = (n: OrgNode): number => 1 + Math.max(0, ...n.reports.map(depth));
+  const totalW = roots.reduce((s, r) => s + width(r), 0) + GAP.x * 2 * Math.max(0, roots.length - 1);
+  const totalH = Math.max(1, ...roots.map(depth)) * (BOX.h + GAP.y) - GAP.y;
+  const [pw, ph] = totalW > 1100 ? [1191, 842] : [842, 595];
+  const M = 36, HEAD = 46;
+  const scale = Math.min(1, (pw - 2 * M) / Math.max(totalW, 1), (ph - 2 * M - HEAD) / Math.max(totalH, 1));
+  const page = doc.addPage([pw, ph]);
+  const ink = rgb(0.04, 0.11, 0.22), muted = rgb(0.42, 0.48, 0.56), line = rgb(0.72, 0.76, 0.82), blue = rgb(0.15, 0.39, 0.92);
+  page.drawText(safe(title), { x: M, y: ph - M - 14, size: 16, font: bold, color: ink });
+  page.drawText(safe(`${new Date().toLocaleDateString('en-AU', { day: 'numeric', month: 'long', year: 'numeric' })} · ${roots.reduce(function count(s, n): number { return n.reports.reduce(count, s + 1); }, 0)} people`), { x: M, y: ph - M - 30, size: 9, font: regular, color: muted });
+  const left = M + ((pw - 2 * M) - totalW * scale) / 2, top = ph - M - HEAD;
+  const X = (x: number) => left + x * scale, Y = (y: number) => top - y * scale;
+  const clip = (s: string, font: PDFFont, size: number, max = BOX.w - 12) => { let t = safe(s); while (t && font.widthOfTextAtSize(t, size) > max) t = t.slice(0, -2) + '…'; return t; };
+  const draw = (n: OrgNode, x0: number, level: number) => {
+    const w = width(n), cx = x0 + w / 2, y = level * (BOX.h + GAP.y);
+    page.drawRectangle({ x: X(cx - BOX.w / 2), y: Y(y + BOX.h), width: BOX.w * scale, height: BOX.h * scale, borderColor: line, borderWidth: 0.8, color: rgb(1, 1, 1) });
+    page.drawRectangle({ x: X(cx - BOX.w / 2), y: Y(y + BOX.h), width: 3 * scale, height: BOX.h * scale, color: blue });
+    const rows: [string, PDFFont, number, ReturnType<typeof rgb>][] = [
+      [n.full_name, bold, 9, ink],
+      [n.job_title || '', regular, 8, ink],
+      [[n.team, n.location].filter(Boolean).join(' · '), regular, 7, muted],
+      [companyOf(n.entity_id), regular, 7, muted],
+    ];
+    rows.filter(([s]) => s).forEach(([s, font, size, color], i) => page.drawText(clip(s, font, size), { x: X(cx - BOX.w / 2 + 8), y: Y(y + 13 + i * 11), size: size * scale, font, color }));
+    if (!n.reports.length) return;
+    const mid = y + BOX.h + GAP.y / 2;
+    page.drawLine({ start: { x: X(cx), y: Y(y + BOX.h) }, end: { x: X(cx), y: Y(mid) }, thickness: 0.8, color: line });
+    let x = x0 + (w - (n.reports.reduce((s, r) => s + width(r), 0) + GAP.x * (n.reports.length - 1))) / 2;
+    const centres: number[] = [];
+    for (const r of n.reports) { centres.push(x + width(r) / 2); draw(r, x, level + 1); x += width(r) + GAP.x; }
+    page.drawLine({ start: { x: X(centres[0]), y: Y(mid) }, end: { x: X(centres[centres.length - 1]), y: Y(mid) }, thickness: 0.8, color: line });
+    for (const c of centres) page.drawLine({ start: { x: X(c), y: Y(mid) }, end: { x: X(c), y: Y(y + BOX.h + GAP.y) }, thickness: 0.8, color: line });
+  };
+  let x = 0;
+  for (const r of roots) { draw(r, x, 0); x += width(r) + GAP.x * 2; }
+  return doc.save();
 }

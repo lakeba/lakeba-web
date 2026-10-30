@@ -75,3 +75,19 @@
 .lk-announce .driver-popover-footer a.lk-go {
   @apply ml-2 inline-flex items-center rounded-lg bg-lk-blue px-3 py-1.5 text-sm font-semibold text-[#fff] no-underline transition hover:bg-[#3a78ee];
 }
+
+/* The org chart (components/OrgNode.astro): each person above the people who report to them, joined by lines. */
+.org-tree, .org-tree ul { display: flex; justify-content: center; position: relative; }
+.org-tree ul { padding-top: 1.25rem; }
+.org-tree li { list-style: none; text-align: center; position: relative; padding: 1.25rem 0.375rem 0; }
+.org-tree li::before, .org-tree li::after { content: ''; position: absolute; top: 0; right: 50%; width: 50%; height: 1.25rem; border-top: 1px solid color-mix(in oklab, var(--color-white) 25%, transparent); }
+.org-tree li::after { right: auto; left: 50%; border-left: 1px solid color-mix(in oklab, var(--color-white) 25%, transparent); }
+.org-tree li:only-child { padding-top: 0; }
+.org-tree li:only-child::before, .org-tree li:only-child::after { display: none; }
+.org-tree li:first-child::before, .org-tree li:last-child::after { border: 0; }
+.org-tree li:last-child::before { border-right: 1px solid color-mix(in oklab, var(--color-white) 25%, transparent); border-top-right-radius: 6px; }
+.org-tree li:first-child::after { border-top-left-radius: 6px; }
+.org-tree ul::before { content: ''; position: absolute; top: 0; left: 50%; height: 1.25rem; border-left: 1px solid color-mix(in oklab, var(--color-white) 25%, transparent); }
+/* Separate trees (people with no manager on the chart) sit side by side, unjoined. */
+.org-tree > li { padding-top: 0; margin: 0 0.75rem; }
+.org-tree > li::before, .org-tree > li::after { display: none; }

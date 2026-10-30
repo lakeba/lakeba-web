@@ -1,0 +1,16 @@
+---
+import type { OrgNode } from '../lib/hr';
+// One person on the org chart (Admin → HR → People → Org chart), with the people who report to them below.
+interface Props { node: OrgNode; companyOf: (id: string) => string; showCompany: boolean }
+const { node, companyOf, showCompany } = Astro.props;
+---
+
+<li>
+  <a href={`/admin/hr/people/${node.id}`} class="inline-block w-44 rounded-xl border border-white/10 bg-ink px-3 py-2 text-left text-xs transition hover:border-lk-blue/60" style="border-left: 3px solid var(--color-lk-blue)">
+    <span class="block truncate text-sm font-semibold text-white">{node.full_name}</span>
+    {node.job_title && <span class="block truncate text-white/70">{node.job_title}</span>}
+    {(node.team || node.location) && <span class="block truncate text-white/45">{[node.team, node.location].filter(Boolean).join(' · ')}</span>}
+    {showCompany && <span class="block truncate text-white/40">{companyOf(node.entity_id)}</span>}
+  </a>
+  {node.reports.length > 0 && <ul>{node.reports.map((r) => <Astro.self node={r} companyOf={companyOf} showCompany={showCompany} />)}</ul>}
+</li>

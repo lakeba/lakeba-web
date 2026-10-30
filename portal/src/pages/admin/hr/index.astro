@@ -7,7 +7,8 @@ import HrNav from '../../../components/HrNav.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { shortDate } from '../../../lib/format';
-import { EMPLOYMENT, PERSON_STATES, addChecklist, hrChoices, hrCompanies, type Person } from '../../../lib/hr';
+import { EMPLOYMENT, PERSON_STATES, addChecklist, hrChoices, hrCompanies, orgTree, type Person } from '../../../lib/hr';
+import OrgNode from '../../../components/OrgNode.astro';
 
 // Admin → HR: the people of the companies this person looks after, and adding
 // someone who is starting (their onboarding checklist comes with them).
@@ -17,7 +18,7 @@ const companies = await hrCompanies(svc, access);
 const doCompanies = companies.filter((c) => access.can('hr.do', c.id));
 const q = Astro.url.searchParams;
 const pick = companies.find((c) => c.code === q.get('company')?.toUpperCase()) ?? null;
-const show = ['current', 'left', 'all'].includes(q.get('show') ?? '') ? q.get('show')! : 'current';
+const show = ['current', 'left', 'all', 'org'].includes(q.get('show') ?? '') ? q.get('show')! : 'current';
 let error = '';
 // Managers and the roles, teams and locations already used (suggested in the form, learned as people are added).
 const choices = await hrChoices(svc, companies.map((c) => c.id));
@@ -48,11 +49,14 @@ if (Astro.request.method === 'POST') {
 
 const ids = pick ? [pick.id] : companies.map((c) => c.id);
 let query = svc.from('people').select('id, entity_id, full_name, job_title, team, employment_type, start_date, end_date, status, user_id').in('entity_id', ids.length ? ids : ['00000000-0000-0000-0000-000000000000']).order('full_name');
-if (show === 'current') query = query.neq('status', 'left');
+if (show === 'current' || show === 'org') query = query.neq('status', 'left');
 if (show === 'left') query = query.eq('status', 'left');
 const { data } = await query;
 const rows = (data ?? []) as Pick<Person, 'id' | 'entity_id' | 'full_name' | 'job_title' | 'team' | 'employment_type' | 'start_date' | 'end_date' | 'status' | 'user_id'>[];
 const nameOf = new Map(companies.map((c) => [c.id, c.display_name]));
+// Org chart: the current people under their managers (a manager in another company shown here counts).
+const tree = show === 'org' ? orgTree(choices.managers.filter((m) => ids.includes(m.entity_id))) : [];
+const pdfHref = `/admin/hr/org-chart.pdf${pick ? `?company=${pick.code}` : ''}`;
 const day = (d: string | null) => (d ? shortDate.format(new Date(`${d}T12:00:00+10:00`)) : '—');
 const link = (k: string, v: string) => { const p = new URLSearchParams(q); p.set(k, v); return `?${p}`; };
 ---
@@ -62,10 +66,18 @@ const link = (k: string, v: string) => { const p = new URLSearchParams(q); p.set
   <PageHeader title="People" subtitle="People, their onboarding and leaving, equity grants, policies and documents. Pay, leave and tax details stay in the payroll system." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   <div class="mb-4 flex flex-wrap items-center justify-between gap-3 text-sm" data-tour="hr-show">
-    <nav class="flex flex-wrap gap-2" aria-label="Who">{[['current', 'Current'], ['left', 'Left'], ['all', 'All']].map(([k, l]) => <a href={link('show', k)} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}</nav>
+    <nav class="flex flex-wrap gap-2" aria-label="Who">{[['current', 'Current'], ['left', 'Left'], ['all', 'All'], ['org', 'Org chart']].map(([k, l]) => <a href={link('show', k)} aria-current={show === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', show === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}</nav>
     {companies.length > 1 && <form method="get" class="flex items-center gap-2"><input type="hidden" name="show" value={show} /><select class="field !w-auto" name="company" aria-label="Company"><option value="">All companies</option>{companies.map((c) => <option value={c.code} selected={c.id === pick?.id}>{c.display_name}</option>)}</select><button class="btn-ghost !py-1.5">Show</button></form>}
   </div>
-  {rows.length ? (
+  {show === 'org' ? (tree.length ? (
+    <section class="card mb-6" data-tour="hr-org">
+      <div class="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <p class="text-sm text-white/55">Everyone current, under their manager. Set someone’s manager on their page. Click a person to open them.</p>
+        <a href={pdfHref} class="btn-ghost text-sm">Download PDF</a>
+      </div>
+      <div class="overflow-x-auto pb-2"><ul class="org-tree mx-auto w-max">{tree.map((n) => <OrgNode node={n} companyOf={(id) => nameOf.get(id) ?? ''} showCompany={!pick && companies.length > 1} />)}</ul></div>
+    </section>
+  ) : <div class="mb-6"><Empty title="No one to show yet">Add someone below; set their manager to build the chart.</Empty></div>) : rows.length ? (
     <section class="card mb-6 overflow-x-auto p-0" data-tour="hr-list">
       <table class="w-full text-left text-sm">
         <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Name</th>{!pick && companies.length > 1 && <th class="px-5 py-3">Company</th>}<th class="px-5 py-3">Role</th><th class="px-5 py-3">Started</th><th class="px-5 py-3">State</th></tr></thead>

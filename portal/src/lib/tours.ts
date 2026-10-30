@@ -423,6 +423,7 @@ export const TOURS: Tour[] = [
       { el: 'hr-show', title: 'Who to show', body: 'Current staff, those who have left, or all, and by company.' },
       { el: 'hr-list', title: 'The list', body: 'Open someone for their checklist, documents, grants and policies. Starting and leaving show in orange.' },
       { el: 'hr-add', title: 'Someone starting', body: 'Their company, name, work email, role and start date. They’re added with the onboarding checklist.' },
+      { el: 'hr-org', title: 'Org chart', body: 'Org chart shows everyone current under their manager, across companies. Download PDF gives the same chart on one page.' },
     ],
   },
   {
