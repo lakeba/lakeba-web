@@ -93,6 +93,8 @@ export function adminMayRequest(a: Access, path: string, writing: boolean, actio
   if (under(path, '/admin/import')) return a.canAny('investors.do');
   // Performance: Finance (accounting.do) opens the scorecards to propose results, which HR confirms; each page checks the company.
   if (/^\/admin\/hr\/performance(\/[0-9a-f-]{36})?$/.test(path) && a.canAny('accounting.do') && (!writing || action === 'propose')) return true;
+  // Commissions show what each rep earns: Finance who prepare or approve runs, not "see" alone (Board, Compliance).
+  if (under(path, '/admin/accounting/commissions') && !a.can('accounting.do', null) && !a.can('accounting.approve', null)) return false;
   if (path.startsWith('/admin/investors/')) return !writing && a.can('investors.view', null);
   // Approvals: for anyone who prepares or approves something; each item checks its own area.
   if (under(path, '/admin/approvals')) return ALL_PERMISSIONS.some((p) => !p.endsWith('.view') && a.canAny(p));

@@ -17,7 +17,7 @@ import {
 
 // Admin → Finance → Commissions: a company's commission plans (tiers by % of target, cap, clawback), who is on
 // them with what target, who sold to which client (attribution, with splits), and its runs: a period's invoices
-// from Xero (or a CSV) credited to reps. Finance sees (accounting.view), changes (accounting.do) and approves on
+// from Xero (or a CSV) credited to reps. Finance prepares (accounting.do; "see" alone doesn't open it) and approves on
 // the run's page (accounting.approve).
 const svc = serviceClient();
 const access = Astro.locals.access;

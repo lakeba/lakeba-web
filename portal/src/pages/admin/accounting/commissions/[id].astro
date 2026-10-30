@@ -21,7 +21,7 @@ const access = Astro.locals.access;
 const userId = Astro.locals.user!.id;
 let run = await loadRun(svc, Astro.params.id ?? '');
 const company = run ? (await commissionCompanies(svc, access)).find((c) => c.id === run!.entity_id) : null;
-if (!run || !company || !access.can('accounting.view', run.entity_id)) return Astro.redirect('/admin/accounting/commissions');
+if (!run || !company || !(access.can('accounting.do', run.entity_id) || access.can('accounting.approve', run.entity_id))) return Astro.redirect('/admin/accounting/commissions');
 const mayDo = access.can('accounting.do', company.id);
 const central = Astro.locals.site?.central ?? Astro.url.origin;
 const label = periodText(run.period_start, run.period_end);

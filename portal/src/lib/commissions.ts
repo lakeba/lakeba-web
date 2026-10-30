@@ -299,7 +299,9 @@ type Company = { id: string; code: string; display_name: string };
 
 /** Companies whose commissions this person sees (Finance: accounting.view; Lakeba's team sees every company in the portal). */
 export async function commissionCompanies(svc: Svc, access: Access) {
-  const list = access.companies('accounting.view');
+  // Finance who prepare or approve runs; "see" alone (Board, Compliance) doesn't show what reps earn.
+  const doing = access.companies('accounting.do'), approving = access.companies('accounting.approve');
+  const list = doing === 'all' || approving === 'all' ? 'all' : [...new Set([...doing, ...approving])];
   let q = svc.from('entities').select('id, code, display_name').eq('portal', 'full').order('sort');
   if (list !== 'all') q = q.in('id', ids(list));
   return ((await q).data ?? []) as Company[];
