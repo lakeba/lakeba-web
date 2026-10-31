@@ -6,6 +6,8 @@ import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { KINDS, crmScope, ensurePipeline, salesTeam } from '../../../lib/crm';
 import { FIELD_LABELS, MAX_ROWS, guessMapping, readSheet, runImport, type ImportResult, type Sheet } from '../../../lib/crm-import';
+import { hubspotConnected, importHubSpot } from '../../../lib/crm-hubspot';
+import { centralOrigin } from '../../../lib/sites';
 
 // CRM → Import: a spreadsheet or CSV of people, companies or deals. First the file is read and its columns
 // matched (shown to check), then imported. Matching to existing records means a second run adds nothing twice.
@@ -31,7 +33,11 @@ if (Astro.request.method === 'POST' && company) {
     pipelineId = field(form, 'pipeline_id') || pipelineId;
     kind = field(form, 'kind') in KINDS ? field(form, 'kind') : 'lead';
     source = (field(form, 'source') || 'spreadsheet').toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 30) || 'spreadsheet';
-    if (field(form, 'intent') === 'read') {
+    if (field(form, 'intent') === 'hubspot') {
+      const r = await importHubSpot(svc, { entityId: company.id, central: centralOrigin(Astro.url), userId: me, currency: company.crm_currency });
+      result = { people: r.people, companies: r.companies, deals: r.deals, existing: r.existing, skipped: [] };
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_imported', event_detail: { entity_id: company.id, what: 'hubspot', ...r } });
+    } else if (field(form, 'intent') === 'read') {
       const file = form.get('file');
       if (!(file instanceof File) || !file.size) throw new Error('Choose a file.');
       if (file.size > 10_000_000) throw new Error('The file is over 10 MB; split it.');
@@ -49,6 +55,7 @@ if (Astro.request.method === 'POST' && company) {
     error = (e as Error).message;
   }
 }
+const hubspot = company ? await hubspotConnected(svc, company.id) : null;
 const WANT: Record<typeof what, string[]> = {
   people: ['full_name', 'first_name', 'last_name', 'email', 'phone', 'job_title', 'company', 'domain', 'country', 'city', 'kind', 'owner', 'external'],
   companies: ['company', 'domain', 'country', 'city', 'industry', 'kind', 'owner', 'external'],
@@ -64,6 +71,12 @@ const WANT: Record<typeof what, string[]> = {
       Imported: {result.people} new people, {result.companies} new companies, {result.deals} deals. {result.existing > 0 && `${result.existing} were already in the CRM and were matched, not duplicated. `}{result.skipped.length > 0 && `${result.skipped.length} rows skipped.`}
     </Alert>
     {result.skipped.length > 0 && <ul class="mt-2 max-h-48 overflow-y-auto text-xs text-white/55">{result.skipped.slice(0, 200).map((s) => <li>Row {s.row}: {s.why}</li>)}</ul>}</div>
+  )}
+  {!sheet && scope.canDo && (
+    <section class="card mb-6 flex flex-wrap items-center justify-between gap-3" data-tour="crm-import-hubspot">
+      <div><h2 class="font-display text-lg font-bold">From HubSpot</h2><p class="text-sm text-white/55">{hubspot ? 'Companies, contacts and deals (with their stages), through your HubSpot connection. HubSpot is only read; importing again adds only what’s new.' : 'Connect HubSpot first (Settings → Companies → Integrations), or export from HubSpot and import the files below.'}</p></div>
+      {hubspot && <form method="post" data-busy><input type="hidden" name="intent" value="hubspot" /><button class="btn-primary" onclick="this.textContent='Importing… (a minute or two)'">Import from HubSpot</button></form>}
+    </section>
   )}
   {!sheet ? (
     <form method="post" enctype="multipart/form-data" class="card grid gap-3 sm:grid-cols-2" data-tour="crm-import">
