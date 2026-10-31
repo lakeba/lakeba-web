@@ -1,0 +1,110 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import Tasks from '../../../components/admin/crm/Tasks.astro';
+import { serviceClient } from '../../../lib/admin';
+import { crmHref, crmScope, ensurePipeline, goingCold, money, namesOf, salesTeam, todayIso, type Deal, type Task } from '../../../lib/crm';
+import { commonAction } from '../../../lib/crm-actions';
+import { field } from '../../../lib/forms';
+
+// CRM → Today: what moves this person's deals forward today, each with the reason. Overdue and today's tasks,
+// then deals with no next step and deals going cold, today's meetings and how the week is going.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+const today = todayIso();
+let error = '';
+
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    // Tasks ticked here belong to their own records (the task carries them).
+    const { data: t } = await svc.from('crm_tasks').select('deal_id, person_id, company_id').eq('id', field(form, 'task_id')).eq('entity_id', company.id).maybeSingle();
+    await commonAction(svc, Astro.locals, scope, form, t ?? {}, Astro.url.origin, '/admin/crm');
+    return Astro.redirect(Astro.url.pathname + Astro.url.search, 303);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const list = company ? await ensurePipeline(svc, company.id) : [];
+const stages = new Map(list.flatMap((p) => p.stages).map((s) => [s.id, s]));
+const [{ data: myTasks }, { data: myDeals }, { data: wonWeek }] = company ? await Promise.all([
+  svc.from('crm_tasks').select('*').eq('entity_id', company.id).eq('owner_id', me).or(`done_at.is.null,done_at.gte.${today}`).order('due_on', { ascending: true, nullsFirst: false }).limit(100),
+  svc.from('crm_deals').select('*, crm_companies!crm_deals_company_id_fkey(name), crm_people!crm_deals_person_id_fkey(full_name)').eq('entity_id', company.id).eq('owner_id', me).eq('status', 'open').limit(500),
+  svc.from('crm_deals').select('amount, currency').eq('entity_id', company.id).eq('owner_id', me).eq('status', 'won').gte('won_at', new Date(Date.now() - ((new Date().getDay() + 6) % 7) * 86_400_000).toISOString().slice(0, 10)),
+]) : [{ data: [] }, { data: [] }, { data: [] }];
+type D = Deal & { crm_companies: { name: string } | null; crm_people: { full_name: string } | null };
+const deals = (myDeals ?? []) as D[];
+const label = (d: D) => d.crm_companies?.name ?? d.crm_people?.full_name ?? d.title;
+// The day's actions, most valuable first within each reason.
+type Action = { title: string; why: string; href: string; value: string; tone: 'red' | 'orange' | 'blue' };
+const actions: Action[] = [
+  ...deals.filter((d) => d.next_step_on && d.next_step_on <= today).sort((a, b) => Number(b.amount) - Number(a.amount))
+    .map((d) => ({ title: `${d.next_step} — ${label(d)}`, why: d.next_step_on! < today ? 'This next step is overdue.' : 'Planned for today.', href: `/admin/crm/deals/${d.id}`, value: money(Number(d.amount), d.currency), tone: d.next_step_on! < today ? 'red' : 'blue' }) as Action),
+  ...deals.filter((d) => goingCold(d, stages.get(d.stage_id))).sort((a, b) => Number(b.amount) - Number(a.amount))
+    .map((d) => ({ title: `Get back in touch with ${label(d)}`, why: `No contact for more than ${stages.get(d.stage_id)?.cold_after_days} days in ${stages.get(d.stage_id)?.name}.`, href: `/admin/crm/deals/${d.id}`, value: money(Number(d.amount), d.currency), tone: 'red' }) as Action),
+  ...deals.filter((d) => !d.next_step).sort((a, b) => Number(b.amount) - Number(a.amount))
+    .map((d) => ({ title: `Plan the next step for ${label(d)}`, why: 'It has no next step: deals with one close more often.', href: `/admin/crm/deals/${d.id}`, value: money(Number(d.amount), d.currency), tone: 'orange' }) as Action),
+];
+const seen = new Set<string>();
+const top = actions.filter((a) => (seen.has(a.href) ? false : (seen.add(a.href), true))).slice(0, 7);
+const tasks = (myTasks ?? []) as Task[];
+const meetings = tasks.filter((t) => t.kind === 'meeting' && t.due_on === today && !t.done_at);
+const open = deals.reduce((m, d) => m.set(d.currency, (m.get(d.currency) ?? 0) + Number(d.amount)), new Map<string, number>());
+const won = ((wonWeek ?? []) as { amount: number; currency: string }[]).reduce((m, d) => m.set(d.currency, (m.get(d.currency) ?? 0) + Number(d.amount)), new Map<string, number>());
+const sum = (m: Map<string, number>) => [...m.entries()].map(([c, v]) => money(v, c)).join(' + ') || money(0, company?.crm_currency);
+const first = Astro.locals.profile?.first_name || 'there';
+const hour = Number(new Intl.DateTimeFormat('en-AU', { hour: 'numeric', hour12: false, timeZone: 'Australia/Sydney' }).format(new Date()));
+const hello = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
+const dateLine = new Intl.DateTimeFormat('en-AU', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Australia/Sydney' }).format(new Date());
+const team = company ? await salesTeam(svc, company.id) : [];
+const names = await namesOf(svc, [me]);
+---
+
+<Crm title="Today" scope={scope}>
+  <div class="mb-6 flex flex-wrap items-end justify-between gap-4">
+    <div>
+      <p class="text-sm text-white/45">{dateLine}</p>
+      <h1 class="mt-1 font-display text-3xl font-bold">{hello}, {first}</h1>
+      <p class="mt-1 text-sm text-white/55">{top.length ? `${top.length} thing${top.length === 1 ? '' : 's'} move your deals forward today.` : 'Nothing urgent on your deals today.'}</p>
+    </div>
+    <div class="text-right">
+      <p class="text-xs uppercase tracking-widest text-white/40">Your open pipeline</p>
+      <p class="font-display text-2xl font-bold text-white">{sum(open)}</p>
+      <p class="text-xs text-white/45">{deals.length} open deal{deals.length === 1 ? '' : 's'}</p>
+    </div>
+  </div>
+  {error && <p class="mb-4 text-sm text-lk-red">{error}</p>}
+  <div class="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
+    <section class="card" data-tour="crm-today">
+      <h2 class="font-display text-lg font-bold">Do today</h2>
+      <ol class="mt-3 divide-y divide-white/5">
+        {top.map((a, i) => (
+          <li class="flex items-start gap-3 py-3">
+            <span class="grid size-7 shrink-0 place-items-center rounded-lg bg-white/[0.07] text-sm font-semibold text-white">{i + 1}</span>
+            <div class="min-w-0 flex-1"><a href={crmHref(scope, a.href)} class="font-medium text-white hover:text-lk-blue">{a.title}</a><p class="mt-0.5 text-sm text-white/55">{a.why}</p></div>
+            <span class:list={['shrink-0 rounded-full px-2 py-0.5 text-xs', a.tone === 'red' ? 'bg-lk-red/15 text-lk-red' : a.tone === 'orange' ? 'bg-lk-orange/15 text-lk-orange' : 'bg-lk-blue/15 text-lk-blue']}>{a.value}</span>
+          </li>
+        ))}
+        {!top.length && <li class="py-3 text-sm text-white/45">{deals.length ? 'Every deal has a dated next step and recent contact. Good.' : <>No deals of yours yet. <a class="text-lk-blue hover:underline" href={crmHref(scope, '/admin/crm/deals?new=1')}>Create one</a>.</>}</li>}
+      </ol>
+    </section>
+    <div class="grid content-start gap-6">
+      <section class="card">
+        <h2 class="mb-3 font-display text-lg font-bold">Your tasks</h2>
+        <Tasks tasks={tasks} names={names} team={team} me={me} canDo={scope.canDo} today={today} addLabel="Add a task for yourself" />
+      </section>
+      {meetings.length > 0 && (
+        <section class="card"><h2 class="mb-3 font-display text-lg font-bold">Meetings today</h2>
+          <ul class="divide-y divide-white/5">{meetings.map((m) => <li class="py-2 text-sm text-white">{m.title}</li>)}</ul>
+        </section>
+      )}
+      <section class="card">
+        <h2 class="font-display text-lg font-bold">This week</h2>
+        <p class="mt-2 text-sm text-white/65">Won so far: <b class="text-white">{sum(won)}</b></p>
+        <p class="mt-1 text-xs text-white/40">Once Xero is connected, a deal counts as won when its invoice is paid.</p>
+      </section>
+    </div>
+  </div>
+</Crm>

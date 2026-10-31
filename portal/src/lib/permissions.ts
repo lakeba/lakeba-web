@@ -27,6 +27,7 @@ export const AREAS: Area[] = [
   { key: 'boardroom', label: 'Boardroom', description: 'Board meetings with the Observer, Lex and the decks it presents, and their minutes. For one company: that company’s board only, without the rest of Legal.', levels: ['view', 'do'], menu: ['/admin/boardroom'] },
   { key: 'boardask', label: 'Board Ask', description: 'Directors’ questions answered by Lakeba AI from the portal, Xero and the law, with sources. “Do” looks after the law library and the test set.', levels: ['view', 'do'], menu: ['/admin/board-ask'] },
   { key: 'hr', label: 'HR', description: 'People, onboarding and leaving, equity plans and grants, policies, employee documents.', levels: ['view', 'do', 'approve'], menu: ['/admin/hr'] },
+  { key: 'crm', label: 'CRM and sales', description: 'A company’s CRM: people, companies, deals, pipelines, tasks and quotes. “Approve”: every deal of the company, discounts and quotes over the limit.', levels: ['view', 'do', 'approve'], menu: ['/admin/crm'] },
   { key: 'capital', label: 'Ventures, prices and trading', description: 'Ventures and reference prices, the secondary trading board.', levels: ['view', 'do', 'approve'], menu: ['/admin/ventures', '/admin/trading'] },
   { key: 'audit', label: 'Audit log', description: 'Who did what, when. “Do” allows deleting entries.', levels: ['view', 'do'], menu: ['/admin/audit'], groupOnly: true },
   { key: 'users', label: 'Users and roles', description: 'Giving and taking roles, custom roles and their permissions.', levels: ['view', 'do'], menu: ['/admin/system'], groupOnly: true },
@@ -45,6 +46,8 @@ export const BUILT_IN_ROLES: { key: string; name: string; description: string; p
   { key: 'finance', name: 'Finance', description: 'Does a company’s books: sends its reporting packs (profit and loss, balance sheet) and answers Lakeba’s questions about them.', permissions: P({ reporting: 'vd' }) },
   { key: 'secretary', name: 'Company secretary', description: 'A company’s board meetings: the Observer, Lex and the decks it presents, the minutes and their signing. Given for one company.', permissions: P({ boardroom: 'vd', boardask: 'v' }) },
   { key: 'hr', name: 'HR', description: 'Looks after a company’s people: employees, onboarding and leaving, equity grants, policies and employee documents.', permissions: P({ hr: 'vda' }) },
+  { key: 'sales', name: 'Sales', description: 'Sells for a company: its CRM, their own deals and the team’s pipeline, quotes and follow-ups.', permissions: P({ crm: 'vd' }) },
+  { key: 'sales_lead', name: 'Sales lead', description: 'Leads a company’s sales: every deal, the forecast, approving discounts and quotes.', permissions: P({ crm: 'vda' }) },
   { key: 'compliance', name: 'Compliance', description: 'Approves newsletters and secondary trades; sees the register, communications and the audit log.', permissions: P({ investors: 'v', documents: 'v', press: 'v', newsletters: 'va', inbox: 'v', ask: 'v', meetings: 'v', legal: 'v', accounting: 'v', boardask: 'v', capital: 'va', audit: 'v', users: 'v' }) },
 ];
 

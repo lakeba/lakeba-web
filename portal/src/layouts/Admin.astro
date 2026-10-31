@@ -72,6 +72,10 @@ const groups: { label: string; items: Item[] }[] = [
     { href: '/admin/hr/performance', label: 'Performance' },
     { href: '/admin/guides/hr.pdf', label: 'Guide (PDF)' },
   ] },
+  // The CRM opens in its own frame (layouts/Crm.astro), also at a venture's CRM address.
+  { label: 'Sales', items: [
+    { href: '/admin/crm', label: 'CRM' },
+  ] },
   // Companies: each company's set-up (details, share classes, legal record, website, domain and mail), so with the settings.
   { label: 'Settings', items: [
     { href: '/admin/companies', label: 'Companies' },

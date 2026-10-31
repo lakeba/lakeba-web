@@ -13,9 +13,9 @@ export type Svc = ReturnType<typeof serviceClient>;
 export type ApiKeyRow = { id: string; entity_id: string; name: string; kind: 'key' | 'oauth'; scopes: string[]; all_companies: boolean; allowed_ips: string[]; expires_at: string | null; created_by: string | null; client_id?: string | null };
 export type ApiCompany = { id: string; code: string; display_name: string; relationship: string; integrations_enabled: boolean };
 
-// Staging is the local Supabase on this Mac (port 54321, as in the middleware); production's database is on
+// Staging is the local Supabase on this Mac (port 54321, or 56321 for the CRM branch's copy; as in the middleware); production's database is on
 // 127.0.0.1 too, behind its own gateway, so the address alone doesn't tell them apart.
-export const LIVE = !/^http:\/\/(127\.0\.0\.1|localhost):54321\/?$/.test(SUPABASE_URL);
+export const LIVE = !/^http:\/\/(127\.0\.0\.1|localhost):(54321|56321)\/?$/.test(SUPABASE_URL);
 export const hashSecret = (s: string) => createHash('sha256').update(s).digest('hex');
 
 /** A new company key: shown once, only its hash is kept. Staging keys say "test". */

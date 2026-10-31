@@ -1,0 +1,96 @@
+---
+import Crm from '../../../../layouts/Crm.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Alert from '../../../../components/Alert.astro';
+import Empty from '../../../../components/Empty.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { KINDS, KINDS_PLURAL, SIZE_BANDS, cleanDomain, crmHref, crmScope, ensureRelationship, findOrCreateCompany, namesOf, warmth, warmthLabel } from '../../../../lib/crm';
+
+// CRM → Companies: the organisations this company sells to or works with (customers, prospects, partners such
+// as universities), with their open deals, and adding one.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+const q = Astro.url.searchParams;
+let error = '';
+
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canDo) throw new Error('You can see companies but not add them.');
+    const name = field(form, 'name');
+    const domain = cleanDomain(field(form, 'domain'));
+    if (!name && !domain) throw new Error('Give the company’s name or web address.');
+    const org = await findOrCreateCompany(svc, { name: name || domain!, domain, country: field(form, 'country'), createdBy: me });
+    if (org.created) await svc.from('crm_companies').update({ industry: field(form, 'industry').slice(0, 100), size_band: SIZE_BANDS.includes(field(form, 'size_band')) ? field(form, 'size_band') : '' }).eq('id', org.id);
+    await ensureRelationship(svc, company.id, { company_id: org.id }, { kind: field(form, 'kind') in KINDS ? field(form, 'kind') : 'prospect', owner_id: me, createdBy: me });
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_company_added', event_detail: { entity_id: company.id, company_id: org.id, existing: !org.created } });
+    return Astro.redirect(crmHref(scope, `/admin/crm/companies/${org.id}`), 303);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const kind = q.get('kind') && q.get('kind')! in KINDS ? q.get('kind')! : '';
+const term = (q.get('q') ?? '').trim();
+type Row = { id: string; kind: string; owner_id: string | null; last_contact_at: string | null; crm_companies: { id: string; name: string; domain: string | null; industry: string; country: string } };
+let rows: Row[] = [];
+const open = new Map<string, number>();
+if (company) {
+  let rq = svc.from('crm_relationships').select('id, kind, owner_id, last_contact_at, crm_companies!inner(id, name, domain, industry, country)').eq('entity_id', company.id).not('company_id', 'is', null).is('archived_at', null).order('last_contact_at', { ascending: false, nullsFirst: false }).limit(500);
+  if (kind) rq = rq.eq('kind', kind);
+  if (q.get('owner') === 'me') rq = rq.eq('owner_id', me);
+  if (term) rq = rq.or(`name.ilike.%${term.replace(/[%_,()]/g, ' ')}%,domain.ilike.%${term.replace(/[%_,()]/g, ' ')}%`, { referencedTable: 'crm_companies' });
+  rows = ((await rq).data ?? []) as unknown as Row[];
+  const { data: ds } = await svc.from('crm_deals').select('company_id').eq('entity_id', company.id).eq('status', 'open').not('company_id', 'is', null);
+  for (const d of ds ?? []) open.set(d.company_id, (open.get(d.company_id) ?? 0) + 1);
+}
+const names = await namesOf(svc, rows.map((r) => r.owner_id));
+const link = (k: string, v: string) => { const p = new URLSearchParams(q); if (v) p.set(k, v); else p.delete(k); return `?${p}`; };
+---
+
+<Crm title="Companies" scope={scope}>
+  <PageHeader title="Companies" subtitle={`Organisations ${company?.display_name ?? 'this company'} sells to or works with.`} />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  <div class="mb-4 flex flex-wrap items-center gap-2 text-sm">
+    <a href={link('kind', '')} aria-current={!kind ? 'page' : undefined} class:list={['rounded-full px-3 py-1', !kind ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>All</a>
+    {['prospect', 'customer', 'partner', 'university', 'supplier'].map((k) => <a href={link('kind', k)} aria-current={kind === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', kind === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{KINDS_PLURAL[k]}</a>)}
+    <span class="mx-1 text-white/20">|</span>
+    <a href={link('owner', q.get('owner') === 'me' ? '' : 'me')} class:list={['rounded-full px-3 py-1', q.get('owner') === 'me' ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>Mine</a>
+    <form method="get" class="ml-auto flex gap-2">{[...q.entries()].filter(([k]) => k !== 'q').map(([k, v]) => <input type="hidden" name={k} value={v} />)}<input class="field !w-56" type="search" name="q" value={term} placeholder="Name or web address" aria-label="Find" /></form>
+  </div>
+  {rows.length ? (
+    <section class="card mb-6 overflow-x-auto p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Company</th><th class="px-5 py-3">They are</th><th class="px-5 py-3">Open deals</th><th class="px-5 py-3">Owner</th><th class="px-5 py-3">Relationship</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {rows.map((r) => { const w = warmth(r.last_contact_at); return (
+            <tr>
+              <td class="px-5 py-3"><a href={crmHref(scope, `/admin/crm/companies/${r.crm_companies.id}`)} class="font-medium text-white hover:text-lk-blue">{r.crm_companies.name}</a><span class="block text-xs text-white/45">{[r.crm_companies.domain, r.crm_companies.industry, r.crm_companies.country].filter(Boolean).join(' · ')}</span></td>
+              <td class="px-5 py-3 text-white/65">{KINDS[r.kind]}</td>
+              <td class="px-5 py-3 text-white/65">{open.get(r.crm_companies.id) ?? 0}</td>
+              <td class="px-5 py-3 text-white/65">{r.owner_id ? names.get(r.owner_id) : '—'}</td>
+              <td class="px-5 py-3"><span class:list={['text-xs', w >= 70 ? 'text-lk-green' : w >= 35 ? 'text-lk-orange' : 'text-white/45']}>{warmthLabel(w)}</span></td>
+            </tr>
+          ); })}
+        </tbody>
+      </table>
+    </section>
+  ) : <div class="mb-6"><Empty title={term ? 'No company found' : 'No companies yet'}>{scope.canDo ? 'Add one below, or import a list (Import).' : 'Nothing to show with these filters.'}</Empty></div>}
+  {scope.canDo && company && (
+    <details class="card" open={Boolean(error)}>
+      <summary class="cursor-pointer font-display text-lg font-bold">Add a company</summary>
+      <form method="post" class="mt-5 grid gap-3 sm:grid-cols-2">
+        <div><label class="label" for="name">Name</label><input class="field" id="name" name="name" /></div>
+        <div><label class="label" for="domain">Web address</label><input class="field" id="domain" name="domain" placeholder="harbourlogistics.com" /></div>
+        <div><label class="label" for="industry">Industry</label><input class="field" id="industry" name="industry" /></div>
+        <div><label class="label" for="size_band">Size (people)</label><select class="field" id="size_band" name="size_band"><option value="">—</option>{SIZE_BANDS.map((b) => <option>{b}</option>)}</select></div>
+        <div><label class="label" for="country">Country</label><input class="field" id="country" name="country" /></div>
+        <div><label class="label" for="kind">They are</label><select class="field" id="kind" name="kind">{Object.entries(KINDS).map(([k, l]) => <option value={k} selected={k === 'prospect'}>{l}</option>)}</select></div>
+        <div class="sm:col-span-2"><button class="btn-primary">Add</button></div>
+      </form>
+    </details>
+  )}
+</Crm>

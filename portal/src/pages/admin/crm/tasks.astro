@@ -1,0 +1,49 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import Tasks from '../../../components/admin/crm/Tasks.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { crmHref, crmScope, namesOf, salesTeam, todayIso, type Task } from '../../../lib/crm';
+import { commonAction } from '../../../lib/crm-actions';
+
+// CRM → Tasks: this person's follow-ups across their deals, people and companies; a sales lead sees the team's.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+const today = todayIso();
+const whose = scope.canApprove && Astro.url.searchParams.get('who') === 'team' ? 'team' : 'me';
+let error = '';
+
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    const { data: t } = await svc.from('crm_tasks').select('deal_id, person_id, company_id').eq('id', field(form, 'task_id')).eq('entity_id', company.id).maybeSingle();
+    await commonAction(svc, Astro.locals, scope, form, t ?? {}, Astro.url.origin, '/admin/crm/tasks');
+    return Astro.redirect(Astro.url.pathname + Astro.url.search, 303);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+let rows: (Task & { crm_deals: { title: string } | null; crm_people: { full_name: string } | null; crm_companies: { name: string } | null })[] = [];
+if (company) {
+  let tq = svc.from('crm_tasks').select('*, crm_deals(title), crm_people(full_name), crm_companies(name)').eq('entity_id', company.id).or(`done_at.is.null,done_at.gte.${new Date(Date.now() - 7 * 86_400_000).toISOString()}`).order('due_on', { ascending: true, nullsFirst: false }).limit(500);
+  if (whose === 'me') tq = tq.eq('owner_id', me);
+  rows = ((await tq).data ?? []) as typeof rows;
+}
+const what = new Map(rows.map((t) => [t.id, t.deal_id ? { label: t.crm_deals?.title ?? 'deal', href: crmHref(scope, `/admin/crm/deals/${t.deal_id}`) } : t.person_id ? { label: t.crm_people?.full_name ?? 'person', href: crmHref(scope, `/admin/crm/people/${t.person_id}`) } : t.company_id ? { label: t.crm_companies?.name ?? 'company', href: crmHref(scope, `/admin/crm/companies/${t.company_id}`) } : null]).filter(([, v]) => v) as [string, { label: string; href: string }][]);
+const names = await namesOf(svc, rows.map((t) => t.owner_id));
+const team = company ? await salesTeam(svc, company.id) : [];
+---
+
+<Crm title="Tasks" scope={scope}>
+  <PageHeader title="Tasks" subtitle="Follow-ups across deals, people and companies. Overdue ones first." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {scope.canApprove && (
+    <nav class="mb-4 flex gap-2 text-sm">{[['me', 'Mine'], ['team', 'The team’s']].map(([k, l]) => <a href={crmHref(scope, `/admin/crm/tasks?who=${k}`)} aria-current={whose === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', whose === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}</nav>
+  )}
+  <section class="card"><Tasks tasks={rows} names={names} team={team} me={me} canDo={scope.canDo} today={today} showWhat={what} /></section>
+</Crm>

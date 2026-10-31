@@ -1,0 +1,25 @@
+---
+import { dateTime } from '../../../lib/format';
+import type { Activity } from '../../../lib/crm';
+
+// Everything that happened on a deal, person or company, newest first: notes, stage changes, emails, meetings,
+// calls, WhatsApp messages, deal-room visits, Xero changes. Logged by the CRM itself wherever it can.
+interface Props { items: Activity[]; names: Map<string, string>; empty?: string }
+const { items, names, empty = 'Nothing yet. Notes, emails, meetings and Xero changes appear here as they happen.' } = Astro.props;
+const ICON: Record<string, string> = { note: '✎', stage: '→', email: '✉', meeting: '▶', call: '☎', whatsapp: '◉', room: '◎', xero: '$', quote: '$', task: '✓', form: '▤', system: '·' };
+const LABEL: Record<string, string> = { note: 'Note', stage: 'Stage', email: 'Email', meeting: 'Meeting', call: 'Call', whatsapp: 'WhatsApp', room: 'Deal room', xero: 'Xero', quote: 'Quote', task: 'Task', form: 'Form', system: 'CRM' };
+---
+{items.length ? (
+  <ol class="divide-y divide-white/5">
+    {items.map((a) => (
+      <li class="flex gap-3 py-3">
+        <span class:list={['grid size-8 shrink-0 place-items-center rounded-lg text-sm', a.kind === 'xero' || a.kind === 'quote' ? 'bg-lk-green/15 text-lk-green' : a.kind === 'whatsapp' ? 'bg-lk-orange/15 text-lk-orange' : a.kind === 'room' ? 'bg-lk-blue/15 text-lk-blue' : 'bg-white/[0.07] text-white/70']} aria-hidden="true">{ICON[a.kind] ?? '·'}</span>
+        <div class="min-w-0 flex-1">
+          <p class="text-sm text-white"><span class="font-medium">{a.subject || LABEL[a.kind] || a.kind}</span>{a.direction && <span class="ml-2 text-xs text-white/40">{a.direction === 'in' ? 'from them' : 'from us'}</span>}</p>
+          {a.body && <p class="mt-0.5 whitespace-pre-line text-sm text-white/70 [overflow-wrap:anywhere]">{a.body.length > 1200 ? `${a.body.slice(0, 1200)}…` : a.body}</p>}
+          <p class="mt-1 text-xs text-white/40">{LABEL[a.kind] ?? a.kind} · {dateTime.format(new Date(a.occurred_at))}{a.created_by && names.get(a.created_by) && ` · ${names.get(a.created_by)}`}</p>
+        </div>
+      </li>
+    ))}
+  </ol>
+) : <p class="py-3 text-sm text-white/45">{empty}</p>}

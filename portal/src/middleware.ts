@@ -8,7 +8,7 @@ import { tradingEnabled } from './lib/trading';
 import { INTL, fromAcceptLanguage, isLocale, translator, type Locale } from './lib/i18n';
 import { formats } from './lib/format';
 import { SUPABASE_URL, TWO_STEP_OFF_FOR_TESTING } from 'astro:env/server';
-import { centralOrigin, ownDomainVenture, refreshOwnDomains, siteOf } from './lib/sites';
+import { centralOrigin, crmDomainVenture, ownDomainVenture, refreshOwnDomains, siteOf } from './lib/sites';
 import { isKnownHost } from './lib/known-hosts.mjs';
 import { NO_VIEW, chosenMode, hasWork, investorCompanyIds, rememberMode, sideOf, workHome, workOf } from './lib/view-mode';
 import { TABLET_COOKIE, TABLET_PATH, connected, tabletOf } from './lib/tablets';
@@ -26,8 +26,13 @@ const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-logi
 /** On a venture's own domain, these open on the central address (sign-in, two-step, passkeys and admin live there). */
 const CENTRAL_PATHS = ['/login', '/forgot-password', '/passkey-login', '/mfa', '/account/security', '/api/passkeys', '/admin', '/auth/pass', '/oauth'];
 
+/** On a venture's CRM address (crm.doxai.com): its CRM pages; anything else opens on the central address. */
+const CRM_SITE_PATHS = ['/admin/crm', '/api/admin/crm', '/auth/redeem', '/logout', '/company-logo', '/favicon.ico'];
+/** The CRM's company pick, remembered between CRM pages (lib/crm.ts). */
+const CRM_COMPANY_COOKIE = 'lakeba-crm-company';
+
 /** Staging on this Mac only: staff can try the portal without an authenticator app. Never on another database. */
-const twoStepOff = TWO_STEP_OFF_FOR_TESTING && /^http:\/\/(127\.0\.0\.1|localhost):54321$/.test(SUPABASE_URL);
+const twoStepOff = TWO_STEP_OFF_FOR_TESTING && /^http:\/\/(127\.0\.0\.1|localhost):(54321|56321)$/.test(SUPABASE_URL);
 
 const matches = (path: string, list: string[]) => list.some((p) => path === p || path.startsWith(`${p}/`));
 
@@ -42,7 +47,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (navigating && moved) return new Response(null, { status: 302, headers: { location: moved + url.search } });
   // Ventures' own domains are let through by Astro with any other HTTPS name: turn away all but those.
   await refreshOwnDomains();
-  if (!isKnownHost(url.hostname) && !ownDomainVenture(url.hostname)) return new Response('Not found', { status: 404 });
+  if (!isKnownHost(url.hostname) && !ownDomainVenture(url.hostname) && !crmDomainVenture(url.hostname)) return new Response('Not found', { status: 404 });
   rememberOrigin(url.origin);
   const site = siteOf(url);
   // The Observer page (a meeting's recording on the boardroom tablet) is the only one that may use the microphone.
@@ -56,6 +61,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   locals.companies = [];
   locals.company = null;
   locals.adminCompany = null;
+  locals.crmCompany = null;
   locals.group = null;
   locals.adminOf = [];
   locals.access = NO_ACCESS;
@@ -81,6 +87,18 @@ export const onRequest = defineMiddleware(async (context, next) => {
       if (path.startsWith('/admin')) { if (!params.has('company')) params.set('company', venture.code); }
       else if (venture.slug) params.set('venture', venture.slug);
       return redirect(`${locals.site.central}${path}?${params}`, 302);
+    }
+  }
+
+  // A venture's CRM address: the CRM opens at its root; sign-in and everything else are on the central address.
+  const crmVenture = site.kind === 'crm' ? crmDomainVenture(url.hostname) : null;
+  if (crmVenture) {
+    locals.crmCompany = crmVenture.code;
+    if (path === '/') return redirect('/admin/crm', 302);
+    if (!matches(path, CRM_SITE_PATHS)) {
+      const params = new URLSearchParams(url.search);
+      if (path.startsWith('/admin') && !params.has('company')) params.set('company', crmVenture.code);
+      return redirect(`${locals.site.central}${path}${params.size ? `?${params}` : ''}`, 302);
     }
   }
 
@@ -128,6 +146,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
 
   if (!locals.user) {
     if (matches(path, PUBLIC_PATHS)) return done(await go());
+    if (crmVenture) return redirect(`${locals.site.central}/login?${new URLSearchParams({ next: url.href })}`, 302);
     if (site.kind === 'venture') return redirect(`${locals.site.central}/login?${new URLSearchParams({ ...(site.slug ? { venture: site.slug } : {}), next: url.href })}`, 302);
     return redirect(`/login?next=${encodeURIComponent(path + url.search)}`);
   }
@@ -161,7 +180,7 @@ export const onRequest = defineMiddleware(async (context, next) => {
   // All, admin and investor views (view-mode.ts). On a venture's own domain only its investor side is shown.
   const svc = serviceClient();
   const work = await workOf(svc, locals.user.id, locals.access.mayOpen('/admin'));
-  if (hasWork(work) && site.kind !== 'venture') {
+  if (hasWork(work) && site.kind !== 'venture' && !crmVenture) {
     const own = await investorCompanyIds(svc, locals.user.id);
     const investor = own.holdings.size > 0;
     let mode = chosenMode(context.cookies) ?? 'all';
@@ -200,6 +219,15 @@ export const onRequest = defineMiddleware(async (context, next) => {
     boardQa: ((flags as { board_qa_enabled?: boolean } | null)?.board_qa_enabled ?? true) && (locals.company?.board_qa_enabled ?? true),
     trading: locals.company ? await tradingEnabled(serviceClient(), locals.company.id) : false,
   };
+
+  // On a CRM address, only people who may open that venture's CRM.
+  if (crmVenture && !locals.access.can('crm.view', crmVenture.id)) return redirect(`${locals.site.central}/admin/crm?company=${crmVenture.code}`, 302);
+  // The CRM's company pick (?company=CODE on a CRM page), remembered between its pages.
+  if (!crmVenture && matches(path, ['/admin/crm'])) {
+    const picked = url.searchParams.get('company');
+    if (picked && navigating && /^[A-Za-z0-9_-]{1,20}$/.test(picked)) context.cookies.set(CRM_COMPANY_COOKIE, picked.toUpperCase(), { path: '/', maxAge: 31_536_000, sameSite: 'lax', secure: url.protocol === 'https:', httpOnly: true });
+    locals.crmCompany = picked?.toUpperCase() ?? context.cookies.get(CRM_COMPANY_COOKIE)?.value ?? null;
+  }
 
   // Anyone with a staff role cannot use the portal until they have enrolled MFA.
   if (staff && !locals.mfaEnrolled && !twoStepOff && !matches(path, MFA_PATHS)) {

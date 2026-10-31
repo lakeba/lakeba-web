@@ -62,6 +62,11 @@ export const EVENTS: Record<string, string> = {
   'employee.added': 'A person was added in HR',
   'employee.left': 'A person was marked as having left',
   'equity.granted': 'An equity grant was made',
+  'deal.created': 'A deal was created in the CRM',
+  'deal.stage_changed': 'A deal moved to another stage',
+  'deal.won': 'A deal was won',
+  'deal.lost': 'A deal was lost (with the reason)',
+  'lead.added': 'Someone was added to the CRM (a new lead, or someone already known to the group)',
 };
 
 /** The scope a key needs to see an event of this type (GET /api/v1/events, Zapier subscriptions). */
@@ -71,7 +76,7 @@ export function eventScope(type: string) {
     document: 'documents.view', data_room: 'documents.view', news: 'news.view', meeting: 'meetings.view', proxy: 'meetings.view', query: 'inbox.view',
     newsletter: 'newsletters.view', trade_interest: 'capital.view', approval: 'investors.view', inbound: 'investors.view',
     company_record: 'legal.view', officer: 'legal.view', deadline: 'legal.view', contract: 'legal.view', reporting_pack: 'reporting.view',
-    board_meeting: 'boardroom.view', board_paper: 'boardroom.view', employee: 'hr.view', equity: 'hr.view' } as Record<string, string>)[area] ?? 'investors.view';
+    board_meeting: 'boardroom.view', board_paper: 'boardroom.view', employee: 'hr.view', equity: 'hr.view', deal: 'crm.view', lead: 'crm.view' } as Record<string, string>)[area] ?? 'investors.view';
 }
 
 const PERSONAL = /^(email|name|full_name|holder_name|first_name|last_name|phone|address|guest_name|subscriber|to|from|officer|person)$/i;

@@ -1,0 +1,16 @@
+---
+import type { Field } from '../../../lib/crm';
+
+// Inputs for a company's own fields (CRM → Settings), named field_<key> (lib/crm.ts readFields).
+interface Props { fields: Field[]; values: Record<string, unknown> }
+const { fields, values } = Astro.props;
+const v = (k: string) => (values[k] == null ? '' : String(values[k]));
+---
+{fields.map((f) => (
+  <div>
+    <label class="label" for={`field_${f.key}`}>{f.label}</label>
+    {f.type === 'choice' ? <select class="field" id={`field_${f.key}`} name={`field_${f.key}`}><option value="">—</option>{f.choices.map((c) => <option selected={v(f.key) === c}>{c}</option>)}</select>
+      : f.type === 'yes_no' ? <select class="field" id={`field_${f.key}`} name={`field_${f.key}`}><option value="no">No</option><option value="yes" selected={values[f.key] === true}>Yes</option></select>
+      : <input class="field" id={`field_${f.key}`} name={`field_${f.key}`} type={f.type === 'date' ? 'date' : 'text'} inputmode={f.type === 'number' ? 'decimal' : undefined} value={v(f.key)} />}
+  </div>
+))}

@@ -1,5 +1,5 @@
 import type { APIRoute } from 'astro';
-import { refreshOwnDomains, ownDomainVenture } from '../../../lib/sites';
+import { crmDomainVenture, refreshOwnDomains, ownDomainVenture } from '../../../lib/sites';
 
 /**
  * For the web server (Caddy's on-demand certificates): may a certificate be
@@ -7,5 +7,5 @@ import { refreshOwnDomains, ownDomainVenture } from '../../../lib/sites';
  */
 export const GET: APIRoute = async ({ url }) => {
   await refreshOwnDomains();
-  return new Response(null, { status: ownDomainVenture(url.searchParams.get('domain') ?? '') ? 200 : 404 });
+  return new Response(null, { status: ownDomainVenture(url.searchParams.get('domain') ?? '') || crmDomainVenture(url.searchParams.get('domain') ?? '') ? 200 : 404 });
 };

@@ -1,0 +1,98 @@
+---
+import Crm from '../../../../layouts/Crm.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Alert from '../../../../components/Alert.astro';
+import Empty from '../../../../components/Empty.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { KINDS, KINDS_PLURAL, cleanEmail, companyDomainOf, crmHref, crmScope, ensureRelationship, findOrCreateCompany, findOrCreatePerson, namesOf, validEmail, warmth, warmthLabel } from '../../../../lib/crm';
+
+// CRM → People: everyone this company knows (leads, customers, partners, students…), and adding someone. A
+// person is one record for the whole group; what this company knows about them stays with it.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+const q = Astro.url.searchParams;
+let error = '';
+
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canDo) throw new Error('You can see people but not add them.');
+    const email = cleanEmail(field(form, 'email'));
+    if (email && !validEmail(email)) throw new Error('That email address doesn’t look right.');
+    const name = field(form, 'full_name');
+    if (!name && !email) throw new Error('Give their name or email.');
+    const orgName = field(form, 'company_name');
+    const domain = companyDomainOf(email);
+    const org = orgName || domain ? await findOrCreateCompany(svc, { name: orgName || domain!, domain, createdBy: me }) : null;
+    const p = await findOrCreatePerson(svc, { full_name: name || email, email: email || null, phone: field(form, 'phone'), job_title: field(form, 'job_title'), company_id: org?.id ?? null, createdBy: me });
+    const kind = field(form, 'kind') in KINDS ? field(form, 'kind') : 'lead';
+    await ensureRelationship(svc, company.id, { person_id: p.id }, { kind, owner_id: me, createdBy: me });
+    if (org) await ensureRelationship(svc, company.id, { company_id: org.id }, { kind: kind === 'student' ? 'other' : kind, owner_id: me, createdBy: me });
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_person_added', event_detail: { entity_id: company.id, person_id: p.id, existing: !p.created } });
+    return Astro.redirect(crmHref(scope, `/admin/crm/people/${p.id}`), 303);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const kind = q.get('kind') && q.get('kind')! in KINDS ? q.get('kind')! : '';
+const term = (q.get('q') ?? '').trim();
+type Row = { id: string; kind: string; owner_id: string | null; last_contact_at: string | null; crm_people: { id: string; full_name: string; email: string | null; job_title: string; crm_companies: { name: string } | null } };
+let rows: Row[] = [];
+if (company) {
+  let rq = svc.from('crm_relationships').select('id, kind, owner_id, last_contact_at, crm_people!inner(id, full_name, email, job_title, crm_companies(name))').eq('entity_id', company.id).not('person_id', 'is', null).is('archived_at', null).order('last_contact_at', { ascending: false, nullsFirst: false }).limit(500);
+  if (kind) rq = rq.eq('kind', kind);
+  if (q.get('owner') === 'me') rq = rq.eq('owner_id', me);
+  if (term) rq = rq.or(`full_name.ilike.%${term.replace(/[%_,()]/g, ' ')}%,email.ilike.%${term.replace(/[%_,()]/g, ' ')}%`, { referencedTable: 'crm_people' });
+  rows = ((await rq).data ?? []) as unknown as Row[];
+}
+const names = await namesOf(svc, rows.map((r) => r.owner_id));
+const link = (k: string, v: string) => { const p = new URLSearchParams(q); if (v) p.set(k, v); else p.delete(k); return `?${p}`; };
+---
+
+<Crm title="People" scope={scope}>
+  <PageHeader title="People" subtitle={`Everyone ${company?.display_name ?? 'this company'} knows. Warmth comes from real contact: emails, meetings, calls and messages.`} />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  <div class="mb-4 flex flex-wrap items-center gap-2 text-sm">
+    <a href={link('kind', '')} aria-current={!kind ? 'page' : undefined} class:list={['rounded-full px-3 py-1', !kind ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>All</a>
+    {['lead', 'prospect', 'customer', 'partner', 'student', 'investor'].map((k) => <a href={link('kind', k)} aria-current={kind === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', kind === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{KINDS_PLURAL[k]}</a>)}
+    <span class="mx-1 text-white/20">|</span>
+    <a href={link('owner', q.get('owner') === 'me' ? '' : 'me')} class:list={['rounded-full px-3 py-1', q.get('owner') === 'me' ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>Mine</a>
+    <form method="get" class="ml-auto flex gap-2">{[...q.entries()].filter(([k]) => k !== 'q').map(([k, v]) => <input type="hidden" name={k} value={v} />)}<input class="field !w-56" type="search" name="q" value={term} placeholder="Name or email" aria-label="Find" /></form>
+  </div>
+  {rows.length ? (
+    <section class="card mb-6 overflow-x-auto p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Name</th><th class="px-5 py-3">Company</th><th class="px-5 py-3">They are</th><th class="px-5 py-3">Owner</th><th class="px-5 py-3">Relationship</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {rows.map((r) => { const w = warmth(r.last_contact_at); return (
+            <tr>
+              <td class="px-5 py-3"><a href={crmHref(scope, `/admin/crm/people/${r.crm_people.id}`)} class="font-medium text-white hover:text-lk-blue">{r.crm_people.full_name}</a><span class="block text-xs text-white/45">{[r.crm_people.job_title, r.crm_people.email].filter(Boolean).join(' · ')}</span></td>
+              <td class="px-5 py-3 text-white/65">{r.crm_people.crm_companies?.name ?? '—'}</td>
+              <td class="px-5 py-3 text-white/65">{KINDS[r.kind]}</td>
+              <td class="px-5 py-3 text-white/65">{r.owner_id ? names.get(r.owner_id) : '—'}</td>
+              <td class="px-5 py-3"><span class:list={['text-xs', w >= 70 ? 'text-lk-green' : w >= 35 ? 'text-lk-orange' : 'text-white/45']}>{warmthLabel(w)}</span></td>
+            </tr>
+          ); })}
+        </tbody>
+      </table>
+    </section>
+  ) : <div class="mb-6"><Empty title={term ? 'Nobody found' : 'Nobody here yet'}>{scope.canDo ? 'Add someone below, or import a list (Import).' : 'Nothing to show with these filters.'}</Empty></div>}
+  {scope.canDo && company && (
+    <details class="card" open={Boolean(error) || q.get('new') === '1'} data-tour="crm-add-person">
+      <summary class="cursor-pointer font-display text-lg font-bold">Add someone</summary>
+      <form method="post" class="mt-5 grid gap-3 sm:grid-cols-2">
+        <div><label class="label" for="full_name">Name</label><input class="field" id="full_name" name="full_name" /></div>
+        <div><label class="label" for="email">Email</label><input class="field" type="email" id="email" name="email" /></div>
+        <div><label class="label" for="job_title">Role</label><input class="field" id="job_title" name="job_title" /></div>
+        <div><label class="label" for="company_name">Company</label><input class="field" id="company_name" name="company_name" placeholder="Found from their email if left empty" /></div>
+        <div><label class="label" for="phone">Phone</label><input class="field" id="phone" name="phone" /></div>
+        <div><label class="label" for="kind">They are</label><select class="field" id="kind" name="kind">{Object.entries(KINDS).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
+        <div class="sm:col-span-2"><button class="btn-primary">Add</button><p class="mt-2 text-xs text-white/40">If they are already known in the group (same email), you get that record, and only what you fill in that was empty is added.</p></div>
+      </form>
+    </details>
+  )}
+</Crm>

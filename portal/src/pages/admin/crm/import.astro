@@ -1,0 +1,97 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { KINDS, crmScope, ensurePipeline, salesTeam } from '../../../lib/crm';
+import { FIELD_LABELS, MAX_ROWS, guessMapping, readSheet, runImport, type ImportResult, type Sheet } from '../../../lib/crm-import';
+
+// CRM → Import: a spreadsheet or CSV of people, companies or deals. First the file is read and its columns
+// matched (shown to check), then imported. Matching to existing records means a second run adds nothing twice.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+const list = company ? await ensurePipeline(svc, company.id) : [];
+let error = '';
+let sheet: Sheet | null = null;
+let map: Record<string, number> = {};
+let result: ImportResult | null = null;
+let what: 'people' | 'companies' | 'deals' = 'people';
+let pipelineId = list[0]?.id ?? '';
+let kind = 'lead';
+let source = 'spreadsheet';
+
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canDo) throw new Error('You can’t import into this CRM.');
+    what = (['people', 'companies', 'deals'].includes(field(form, 'what')) ? field(form, 'what') : 'people') as typeof what;
+    pipelineId = field(form, 'pipeline_id') || pipelineId;
+    kind = field(form, 'kind') in KINDS ? field(form, 'kind') : 'lead';
+    source = (field(form, 'source') || 'spreadsheet').toLowerCase().replace(/[^a-z0-9]+/g, '_').slice(0, 30) || 'spreadsheet';
+    if (field(form, 'intent') === 'read') {
+      const file = form.get('file');
+      if (!(file instanceof File) || !file.size) throw new Error('Choose a file.');
+      if (file.size > 10_000_000) throw new Error('The file is over 10 MB; split it.');
+      sheet = await readSheet(file);
+      map = guessMapping(sheet.headers);
+    } else if (field(form, 'intent') === 'run') {
+      sheet = JSON.parse(field(form, 'sheet')) as Sheet;
+      if (!Array.isArray(sheet.headers) || !Array.isArray(sheet.rows) || sheet.rows.length > MAX_ROWS) throw new Error('Read the file again.');
+      for (const f of Object.keys(FIELD_LABELS)) { const v = field(form, `map_${f}`); if (v !== '') map[f] = Number(v); }
+      result = await runImport(svc, { entityId: company.id, what, sheet, map, pipeline: list.find((p) => p.id === pipelineId) ?? null, defaultKind: kind, userId: me, team: (await salesTeam(svc, company.id)).map((t) => ({ id: t.id, email: t.email.toLowerCase() })), currency: company.crm_currency, source });
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_imported', event_detail: { entity_id: company.id, what, rows: sheet.rows.length, people: result.people, companies: result.companies, deals: result.deals, skipped: result.skipped.length } });
+      sheet = null;
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+const WANT: Record<typeof what, string[]> = {
+  people: ['full_name', 'first_name', 'last_name', 'email', 'phone', 'job_title', 'company', 'domain', 'country', 'city', 'kind', 'owner', 'external'],
+  companies: ['company', 'domain', 'country', 'city', 'industry', 'kind', 'owner', 'external'],
+  deals: ['deal', 'company', 'domain', 'full_name', 'first_name', 'last_name', 'email', 'job_title', 'amount', 'currency', 'stage', 'close', 'owner', 'source', 'external'],
+};
+---
+
+<Crm title="Import" scope={scope}>
+  <PageHeader title="Import" subtitle="A spreadsheet or CSV of people, companies or deals: an export from HubSpot, Salesforce, Pipedrive, or your own list." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {result && (
+    <div class="mb-6"><Alert tone={result.skipped.length ? 'info' : 'success'}>
+      Imported: {result.people} new people, {result.companies} new companies, {result.deals} deals. {result.existing > 0 && `${result.existing} were already in the CRM and were matched, not duplicated. `}{result.skipped.length > 0 && `${result.skipped.length} rows skipped.`}
+    </Alert>
+    {result.skipped.length > 0 && <ul class="mt-2 max-h-48 overflow-y-auto text-xs text-white/55">{result.skipped.slice(0, 200).map((s) => <li>Row {s.row}: {s.why}</li>)}</ul>}</div>
+  )}
+  {!sheet ? (
+    <form method="post" enctype="multipart/form-data" class="card grid gap-3 sm:grid-cols-2" data-tour="crm-import">
+      <input type="hidden" name="intent" value="read" />
+      <div><label class="label" for="what">The file has</label><select class="field" id="what" name="what">{[['people', 'People'], ['companies', 'Companies'], ['deals', 'Deals']].map(([k, l]) => <option value={k} selected={k === what}>{l}</option>)}</select></div>
+      <div><label class="label" for="file">File (.xlsx or .csv)</label><input class="field" type="file" id="file" name="file" accept=".csv,.xlsx,text/csv" required /></div>
+      <div><label class="label" for="kind">If it doesn’t say, they are</label><select class="field" id="kind" name="kind">{Object.entries(KINDS).map(([k, l]) => <option value={k} selected={k === kind}>{l}</option>)}</select></div>
+      <div><label class="label" for="pipeline_id">Deals go into</label><select class="field" id="pipeline_id" name="pipeline_id">{list.map((p) => <option value={p.id}>{p.name}</option>)}</select></div>
+      <div><label class="label" for="source">Where it comes from</label><input class="field" id="source" name="source" value="spreadsheet" placeholder="hubspot, salesforce, event-list…" /></div>
+      <div class="self-end"><button class="btn-primary">Read the file</button></div>
+      <p class="text-xs text-white/40 sm:col-span-2">Next you check how its columns were matched, before anything is imported. Up to {MAX_ROWS.toLocaleString('en-AU')} rows at a time.</p>
+    </form>
+  ) : (
+    <form method="post" class="card">
+      <input type="hidden" name="intent" value="run" /><input type="hidden" name="what" value={what} /><input type="hidden" name="pipeline_id" value={pipelineId} /><input type="hidden" name="kind" value={kind} /><input type="hidden" name="source" value={source} />
+      <textarea name="sheet" class="hidden">{JSON.stringify(sheet)}</textarea>
+      <h2 class="font-display text-lg font-bold">{sheet.rows.length} rows · check the columns</h2>
+      <div class="mt-4 grid gap-3 sm:grid-cols-3">
+        {WANT[what].map((f) => (
+          <div><label class="label" for={`map_${f}`}>{FIELD_LABELS[f]}</label>
+            <select class="field" id={`map_${f}`} name={`map_${f}`}><option value="">— not in the file —</option>{sheet!.headers.map((h, i) => <option value={i} selected={map[f] === i}>{h || `Column ${i + 1}`}</option>)}</select></div>
+        ))}
+      </div>
+      <div class="mt-5 overflow-x-auto">
+        <table class="w-full text-left text-xs"><thead class="text-white/40"><tr>{sheet.headers.map((h) => <th class="px-2 py-1">{h}</th>)}</tr></thead>
+          <tbody class="divide-y divide-white/5">{sheet.rows.slice(0, 5).map((r) => <tr>{r.map((c) => <td class="max-w-48 truncate px-2 py-1 text-white/70">{c}</td>)}</tr>)}</tbody></table>
+      </div>
+      <div class="mt-5 flex gap-3"><button class="btn-primary">Import {sheet.rows.length} rows</button><a href="/admin/crm/import" class="btn-ghost">Choose another file</a></div>
+    </form>
+  )}
+</Crm>

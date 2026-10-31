@@ -3,6 +3,11 @@
 // turned into words ("admin_saved_newsletter" → "Saved newsletter").
 
 const LABELS: Record<string, string> = {
+  crm_switched_on: 'Switched a company’s CRM on', crm_switched_off: 'Switched a company’s CRM off', crm_pipeline_added: 'Added a CRM pipeline', crm_pipeline_changed: 'Changed a CRM pipeline',
+  crm_field_added: 'Added a CRM field', crm_domain_set: 'Set the CRM’s address', crm_domain_removed: 'Removed the CRM’s address',
+  crm_deal_created: 'Created a deal', crm_deal_changed: 'Changed a deal', crm_deal_stage_changed: 'Moved a deal to another stage', crm_deal_won: 'Won a deal', crm_deal_lost: 'Lost a deal', crm_deal_deleted: 'Deleted a deal',
+  crm_person_added: 'Added someone to the CRM', crm_person_changed: 'Changed someone in the CRM', crm_company_added: 'Added a company to the CRM', crm_company_changed: 'Changed a company in the CRM',
+  crm_note_added: 'Added a CRM note', crm_task_added: 'Added a CRM task', crm_imported: 'Imported into the CRM',
   sign_in: 'Signed in', sign_out: 'Signed out',
   mfa_enrolled: 'Set up two-step sign-in', mfa_verified: 'Passed two-step sign-in', mfa_removed: 'Removed two-step sign-in',
   passkey_added: 'Added a passkey', passkey_removed: 'Removed a passkey', password_changed: 'Changed their password',

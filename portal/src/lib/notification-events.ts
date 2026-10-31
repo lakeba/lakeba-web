@@ -25,7 +25,7 @@ export type Category = {
   when?: 'trading' | 'employee' | 'signer';
 };
 
-export const ADMIN_SECTIONS = ['Overview', 'Investors', 'Communications', 'Board & governance', 'Legal', 'Finance', 'People', 'Companies', 'Settings'] as const;
+export const ADMIN_SECTIONS = ['Overview', 'Investors', 'Communications', 'Board & governance', 'Legal', 'Finance', 'People', 'Sales', 'Companies', 'Settings'] as const;
 export type AdminSection = (typeof ADMIN_SECTIONS)[number];
 
 export const CATEGORIES: Category[] = [
@@ -54,6 +54,7 @@ export const CATEGORIES: Category[] = [
   { key: 'legal_requests', audience: 'admin', label: 'Legal requests', description: 'A legal request was sent, answered or changed.', email: true, push: true, section: 'Legal', for: ['staff'], kinds: ['legal_request'] },
   { key: 'reporting', audience: 'admin', label: 'Reporting packs', description: 'A reporting pack is due, overdue, sent, accepted or has a question, or a commission run is waiting for approval.', email: true, push: true, section: 'Finance', for: ['reporting', 'accounting'], kinds: ['reporting'] },
   { key: 'hr', audience: 'admin', label: 'HR', description: 'An employee accepted a grant, asked to exercise options or acknowledged their review, Finance proposed a KPI result, someone’s KPIs went off track, or a checklist needs a look.', email: true, push: true, section: 'People', for: ['hr'], kinds: ['hr'] },
+  { key: 'crm', audience: 'admin', label: 'CRM', description: 'A deal or task was given to you, a quote waits for your approval or was accepted, an invoice was paid, a deal is going cold, or a new lead or introduction arrived.', email: true, push: true, section: 'Sales', for: ['crm'], kinds: ['crm'] },
   { key: 'admin_setup', audience: 'admin', label: 'Venture set-up', description: 'A venture’s own address or email finished a set-up step, or a venture asked Lakeba for help with it.', email: true, push: true, section: 'Companies', kinds: ['admin_setup'] },
   { key: 'admin_integrations', audience: 'admin', label: 'Integrations', description: 'An integration needs a look: a webhook was switched off, something received waits for review, or a HubSpot or Xero connection has a problem.', email: true, push: true, section: 'Settings', kinds: ['admin_integrations'] },
   { key: 'admin_security', audience: 'admin', label: 'Admin security', description: 'An admin account signed in from a new device, or someone’s two-step was reset.', email: true, push: true, locked: true, section: 'Settings', kinds: ['admin_security'] },
@@ -95,6 +96,7 @@ export function pushText(kind: string, brand: string, detail?: string): { title:
     case 'reporting': return { title: 'Reporting packs: an update', body: open };
     case 'my_hr': return { title: 'My HR: something for you', body: open };
     case 'hr': return { title: 'HR: an update', body: open };
+    case 'crm': return { title: 'CRM: something for you', body: open };
     case 'admin_legal': return { title: 'Legal: deadlines to look at', body: open };
     case 'admin_setup': return { title: 'Venture set-up: an update', body: open };
     case 'admin_integrations': return { title: 'Integrations: something needs a look', body: open };

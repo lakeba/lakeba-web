@@ -14,7 +14,7 @@ import { COLUMNS, type Company } from './companies';
  * as one portal; unknown host names are turned away (known-hosts.mjs).
  */
 
-export type SiteKind = 'central' | 'venture' | 'other';
+export type SiteKind = 'central' | 'venture' | 'crm' | 'other';
 
 // Ventures' own domains (verified, full portals), refreshed every minute.
 let own = new Map<string, Company>();
@@ -24,7 +24,14 @@ export async function refreshOwnDomains() {
   ownAt = Date.now();
   const { data } = await serviceClient().from('entities').select(COLUMNS).not('custom_domain', 'is', null).not('custom_domain_verified_at', 'is', null).eq('portal', 'full').neq('relationship', 'group');
   own = new Map(((data ?? []) as Company[]).map((c) => [c.custom_domain!.toLowerCase(), c]));
+  // CRM addresses (crm.doxai.com): verified, with the CRM switched on (lib/crm.ts).
+  const { data: crm } = await serviceClient().from('entities').select('id, code, display_name, crm_domain').not('crm_domain', 'is', null).not('crm_domain_verified_at', 'is', null).eq('crm_enabled', true);
+  crmByHost = new Map(((crm ?? []) as (CrmVenture & { crm_domain: string })[]).map(({ crm_domain, ...c }) => [crm_domain.toLowerCase(), c]));
 }
+let crmByHost = new Map<string, CrmVenture>();
+export type CrmVenture = { id: string; code: string; display_name: string };
+/** The venture whose CRM address this is (crm.doxai.com), if verified and the CRM is on. */
+export const crmDomainVenture = (hostname: string) => (domain ? crmByHost.get(hostname.toLowerCase()) ?? null : null);
 /** The venture whose own domain this is, if verified. */
 export const ownDomainVenture = (hostname: string) => (domain ? own.get(hostname.toLowerCase()) ?? null : null);
 
@@ -35,6 +42,7 @@ export function siteOf(url: URL): { kind: SiteKind; slug: string | null; own?: b
   const host = url.hostname.toLowerCase();
   const venture = ownDomainVenture(host);
   if (venture) return { kind: 'venture', slug: venture.slug, own: true };
+  if (crmDomainVenture(host)) return { kind: 'crm', slug: null, own: true };
   return domain && host === domain ? { kind: 'central', slug: null } : { kind: 'other', slug: null };
 }
 

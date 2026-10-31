@@ -1,0 +1,39 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import { serviceClient } from '../../../lib/admin';
+import { KINDS, crmHref, crmScope, money } from '../../../lib/crm';
+
+// CRM → Search (the header's box): this company's people, companies and deals whose name, email, web
+// address or deal name match.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+const term = (Astro.url.searchParams.get('q') ?? '').trim().slice(0, 100);
+const like = `%${term.replace(/[%_,()]/g, ' ')}%`;
+type P = { kind: string; crm_people: { id: string; full_name: string; email: string | null; job_title: string } };
+type C = { kind: string; crm_companies: { id: string; name: string; domain: string | null } };
+type D = { id: string; title: string; amount: number; currency: string; status: string; crm_companies: { name: string } | null };
+let people: P[] = [], orgs: C[] = [], deals: D[] = [];
+if (company && term.length >= 2) {
+  const [p, c, d1, d2] = await Promise.all([
+    svc.from('crm_relationships').select('kind, crm_people!inner(id, full_name, email, job_title)').eq('entity_id', company.id).or(`full_name.ilike.${like},email.ilike.${like},job_title.ilike.${like}`, { referencedTable: 'crm_people' }).limit(30),
+    svc.from('crm_relationships').select('kind, crm_companies!inner(id, name, domain)').eq('entity_id', company.id).or(`name.ilike.${like},domain.ilike.${like}`, { referencedTable: 'crm_companies' }).limit(30),
+    svc.from('crm_deals').select('id, title, amount, currency, status, crm_companies!crm_deals_company_id_fkey(name)').eq('entity_id', company.id).ilike('title', like).limit(30),
+    svc.from('crm_deals').select('id, title, amount, currency, status, crm_companies!crm_deals_company_id_fkey!inner(name)').eq('entity_id', company.id).ilike('crm_companies.name', like).limit(30),
+  ]);
+  people = (p.data ?? []) as unknown as P[];
+  orgs = (c.data ?? []) as unknown as C[];
+  deals = [...new Map([...(d1.data ?? []), ...(d2.data ?? [])].map((d) => [d.id, d])).values()] as unknown as D[];
+}
+const none = term.length >= 2 && !people.length && !orgs.length && !deals.length;
+---
+
+<Crm title="Search" scope={scope}>
+  <PageHeader title={term ? `“${term}”` : 'Search'} subtitle={term.length < 2 ? 'Type at least two letters in the search box above.' : none ? 'Nothing matches in this company’s CRM.' : undefined} />
+  <div class="grid gap-6 lg:grid-cols-3">
+    {deals.length > 0 && <section class="card"><h2 class="mb-2 font-display text-lg font-bold">Deals</h2><ul class="divide-y divide-white/5">{deals.map((d) => <li class="py-2 text-sm"><a class="font-medium text-white hover:text-lk-blue" href={crmHref(scope, `/admin/crm/deals/${d.id}`)}>{d.crm_companies?.name ? `${d.crm_companies.name} — ` : ''}{d.title}</a><span class="block text-xs text-white/45">{money(Number(d.amount), d.currency)} · {d.status}</span></li>)}</ul></section>}
+    {people.length > 0 && <section class="card"><h2 class="mb-2 font-display text-lg font-bold">People</h2><ul class="divide-y divide-white/5">{people.map((r) => <li class="py-2 text-sm"><a class="font-medium text-white hover:text-lk-blue" href={crmHref(scope, `/admin/crm/people/${r.crm_people.id}`)}>{r.crm_people.full_name}</a><span class="block text-xs text-white/45">{[KINDS[r.kind], r.crm_people.job_title, r.crm_people.email].filter(Boolean).join(' · ')}</span></li>)}</ul></section>}
+    {orgs.length > 0 && <section class="card"><h2 class="mb-2 font-display text-lg font-bold">Companies</h2><ul class="divide-y divide-white/5">{orgs.map((r) => <li class="py-2 text-sm"><a class="font-medium text-white hover:text-lk-blue" href={crmHref(scope, `/admin/crm/companies/${r.crm_companies.id}`)}>{r.crm_companies.name}</a><span class="block text-xs text-white/45">{[KINDS[r.kind], r.crm_companies.domain].filter(Boolean).join(' · ')}</span></li>)}</ul></section>}
+  </div>
+</Crm>

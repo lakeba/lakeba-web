@@ -1,0 +1,48 @@
+---
+import { TASK_KINDS, type Task } from '../../../lib/crm';
+import { shortDate } from '../../../lib/format';
+
+// Open and recently done tasks, with a tick to finish them and (for those who may) a form to add one.
+interface Props { tasks: Task[]; names: Map<string, string>; team: { id: string; name: string }[]; me: string; canDo: boolean; today: string; addLabel?: string; showWhat?: Map<string, { label: string; href: string }> }
+const { tasks, names, team, me, canDo, today, addLabel = 'Add a task', showWhat } = Astro.props;
+const open = tasks.filter((t) => !t.done_at).sort((a, b) => (a.due_on ?? '9999').localeCompare(b.due_on ?? '9999'));
+const done = tasks.filter((t) => t.done_at).slice(0, 5);
+const day = (d: string) => shortDate.format(new Date(`${d}T12:00:00+10:00`));
+---
+<ul class="divide-y divide-white/5">
+  {open.map((t) => (
+    <li class="flex items-start gap-3 py-2.5">
+      {canDo ? <form method="post"><input type="hidden" name="intent" value="task-done" /><input type="hidden" name="task_id" value={t.id} /><button class="mt-0.5 grid size-5 place-items-center rounded-md border border-white/25 hover:border-lk-green hover:bg-lk-green/15" aria-label={`Done: ${t.title}`}></button></form> : <span class="mt-0.5 size-5 rounded-md border border-white/15"></span>}
+      <div class="min-w-0 flex-1">
+        <p class="text-sm text-white">{t.title}</p>
+        <p class="text-xs text-white/45">
+          {TASK_KINDS[t.kind]}
+          {t.due_on && <span class:list={[t.due_on < today ? 'text-lk-red' : t.due_on === today ? 'text-lk-orange' : '']}> · {t.due_on < today ? 'overdue, ' : t.due_on === today ? 'today, ' : ''}{day(t.due_on)}</span>}
+          {t.owner_id && t.owner_id !== me && ` · ${names.get(t.owner_id) ?? ''}`}
+          {showWhat?.get(t.id) && <> · <a class="text-lk-blue hover:underline" href={showWhat.get(t.id)!.href}>{showWhat.get(t.id)!.label}</a></>}
+          {t.suggested && <span class="ml-1 rounded bg-lk-blue/15 px-1 text-[10px] font-semibold text-lk-blue">SUGGESTED</span>}
+        </p>
+      </div>
+    </li>
+  ))}
+  {!open.length && <li class="py-2.5 text-sm text-white/45">Nothing open.</li>}
+  {done.map((t) => (
+    <li class="flex items-start gap-3 py-2 opacity-60">
+      {canDo ? <form method="post"><input type="hidden" name="intent" value="task-undo" /><input type="hidden" name="task_id" value={t.id} /><button class="mt-0.5 grid size-5 place-items-center rounded-md bg-lk-green/25 text-xs text-lk-green" aria-label={`Open again: ${t.title}`}>✓</button></form> : <span class="mt-0.5 grid size-5 place-items-center rounded-md bg-lk-green/25 text-xs text-lk-green">✓</span>}
+      <p class="text-sm text-white/70 line-through">{t.title}</p>
+    </li>
+  ))}
+</ul>
+{canDo && (
+  <details class="mt-3">
+    <summary class="cursor-pointer text-sm font-medium text-lk-blue">{addLabel}</summary>
+    <form method="post" class="mt-3 grid gap-2 sm:grid-cols-[1fr_8rem_9.5rem]">
+      <input type="hidden" name="intent" value="task" />
+      <input class="field sm:col-span-3" name="title" placeholder="e.g. Call Mia about the security review" required aria-label="Task" />
+      <select class="field" name="kind" aria-label="Kind">{Object.entries(TASK_KINDS).map(([k, l]) => <option value={k}>{l}</option>)}</select>
+      <input class="field" type="date" name="due_on" value={today} aria-label="Due" />
+      <select class="field" name="owner_id" aria-label="For">{team.map((p) => <option value={p.id} selected={p.id === me}>{p.id === me ? 'Me' : p.name}</option>)}{!team.some((p) => p.id === me) && <option value={me} selected>Me</option>}</select>
+      <button class="btn-primary !py-2 sm:col-span-3 sm:justify-self-start">Add</button>
+    </form>
+  </details>
+)}

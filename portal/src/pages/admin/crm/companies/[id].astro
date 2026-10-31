@@ -1,0 +1,150 @@
+---
+import Crm from '../../../../layouts/Crm.astro';
+import Alert from '../../../../components/Alert.astro';
+import Timeline from '../../../../components/admin/crm/Timeline.astro';
+import Tasks from '../../../../components/admin/crm/Tasks.astro';
+import NoteForm from '../../../../components/admin/crm/NoteForm.astro';
+import FieldInputs from '../../../../components/admin/crm/FieldInputs.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { KINDS, SIZE_BANDS, cleanDomain, crmHref, crmScope, fieldsOf, initials, money, namesOf, readFields, salesTeam, todayIso, warmth, warmthLabel, type Activity, type Org, type Relationship, type Task } from '../../../../lib/crm';
+import { commonAction } from '../../../../lib/crm-actions';
+
+// CRM → a company: its people this company knows, its deals (and those it referred, for partners), the
+// timeline, tasks and details. The company's details are shared by the whole group.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+const id = Astro.params.id!;
+if (!/^[0-9a-f-]{36}$/.test(id) || !company) return Astro.redirect('/admin/crm/companies');
+const loadRel = async () => (await svc.from('crm_relationships').select('*').eq('entity_id', company.id).eq('company_id', id).maybeSingle()).data as Relationship | null;
+let rel = await loadRel();
+if (!rel) return Astro.redirect(crmHref(scope, '/admin/crm/companies'));
+const team = await salesTeam(svc, company.id);
+const orgFields = await fieldsOf(svc, company.id, 'company');
+const self = crmHref(scope, `/admin/crm/companies/${id}`);
+const mayEdit = scope.canApprove || (scope.canDo && (!rel.owner_id || rel.owner_id === me));
+let error = '';
+let done = Astro.url.searchParams.get('done') ?? '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canDo) throw new Error('You can see this company but not change anything.');
+    const msg = await commonAction(svc, Astro.locals, scope, form, { company_id: id }, Astro.url.origin, `/admin/crm/companies/${id}`);
+    if (msg) return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent(msg)}`, 303);
+    if (!mayEdit) throw new Error('Only the relationship’s owner or a sales lead changes this.');
+    if (field(form, 'intent') === 'save') {
+      const domain = cleanDomain(field(form, 'domain'));
+      if (domain) {
+        const { data: other } = await svc.from('crm_companies').select('id').eq('domain', domain).neq('id', id).is('merged_into', null).maybeSingle();
+        if (other) throw new Error('Another company in the CRM has that web address.');
+      }
+      const owner = field(form, 'owner_id') || rel.owner_id;
+      if (owner && owner !== rel.owner_id && (!scope.canApprove || !team.some((p) => p.id === owner))) throw new Error('Only a sales lead gives a relationship to someone else on the team.');
+      await svc.from('crm_companies').update({
+        name: (field(form, 'name') || 'Unnamed').slice(0, 200), domain, industry: field(form, 'industry').slice(0, 100), size_band: SIZE_BANDS.includes(field(form, 'size_band')) ? field(form, 'size_band') : '',
+        country: field(form, 'country').slice(0, 100), city: field(form, 'city').slice(0, 100), phone: field(form, 'phone').slice(0, 50), linkedin_url: field(form, 'linkedin_url').slice(0, 300), updated_at: new Date().toISOString(),
+      }).eq('id', id).throwOnError();
+      await svc.from('crm_relationships').update({ kind: field(form, 'kind') in KINDS ? field(form, 'kind') : rel.kind, owner_id: owner, shareable: field(form, 'shareable') === 'yes', fields: { ...rel.fields, ...readFields(form, orgFields) }, updated_at: new Date().toISOString() }).eq('id', rel.id);
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_company_changed', event_detail: { entity_id: company.id, company_id: id } });
+      return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=Saved.`, 303);
+    }
+    if (field(form, 'intent') === 'archive') {
+      await svc.from('crm_relationships').update({ archived_at: rel.archived_at ? null : new Date().toISOString() }).eq('id', rel.id);
+      return Astro.redirect(self, 303);
+    }
+  } catch (e) {
+    error = (e as Error).message;
+    done = '';
+    rel = (await loadRel())!;
+  }
+}
+
+const { data: o } = await svc.from('crm_companies').select('*').eq('id', id).single();
+const org = o as Org;
+// Its people this company knows (the person records are the group's; the tie is this company's).
+const { data: staff } = await svc.from('crm_people').select('id, full_name, job_title, email').eq('company_id', id).is('merged_into', null).order('full_name').limit(200);
+const { data: knownRels } = await svc.from('crm_relationships').select('person_id').eq('entity_id', company.id).in('person_id', (staff ?? []).map((s) => s.id).concat('00000000-0000-0000-0000-000000000000'));
+const known = new Set((knownRels ?? []).map((r) => r.person_id));
+const people = (staff ?? []).filter((s) => known.has(s.id));
+const [{ data: acts }, { data: tasks }, { data: deals }, { data: referred }] = await Promise.all([
+  svc.from('crm_activities').select('*').eq('entity_id', company.id).eq('company_id', id).order('occurred_at', { ascending: false }).limit(200),
+  svc.from('crm_tasks').select('*').eq('entity_id', company.id).eq('company_id', id).order('created_at', { ascending: false }).limit(50),
+  svc.from('crm_deals').select('id, title, amount, currency, status, crm_stages(name)').eq('entity_id', company.id).eq('company_id', id).order('updated_at', { ascending: false }),
+  svc.from('crm_deals').select('id, title, status, amount, currency, crm_people!crm_deals_person_id_fkey(full_name), crm_stages(name, kind)').eq('entity_id', company.id).eq('referred_by_company_id', id).order('created_at', { ascending: false }).limit(500),
+]);
+const names = await namesOf(svc, [rel.owner_id, ...((acts ?? []) as Activity[]).map((a) => a.created_by), ...((tasks ?? []) as Task[]).map((t) => t.owner_id)]);
+const w = warmth(rel.last_contact_at);
+type Ref = { id: string; title: string; status: string; amount: number; currency: string; crm_people: { full_name: string } | null; crm_stages: { name: string; kind: string } | null };
+const refs = (referred ?? []) as unknown as Ref[];
+type DealRow = { id: string; title: string; amount: number; currency: string; status: string; crm_stages: { name: string } | null };
+---
+
+<Crm title={org.name} scope={scope}>
+  <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <h1 class="font-display text-3xl font-bold">{org.name}</h1>
+      <p class="mt-1 text-sm text-white/55">{[org.domain, org.industry, org.size_band && `${org.size_band} people`, org.city, org.country].filter(Boolean).join(' · ')}</p>
+    </div>
+    <div class="text-right">
+      <p class="text-xs uppercase tracking-widest text-white/40">Relationship</p>
+      <p class:list={['font-display text-xl font-bold', w >= 70 ? 'text-lk-green' : w >= 35 ? 'text-lk-orange' : 'text-white/60']}>{warmthLabel(w)}</p>
+      <p class="text-xs text-white/45">{KINDS[rel.kind]}{rel.owner_id && ` · ${names.get(rel.owner_id)}`}</p>
+    </div>
+  </div>
+  {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+  {done && <div class="mb-4"><Alert tone="success">{done}</Alert></div>}
+  {refs.length > 0 && (
+    <section class="card mb-6">
+      <h2 class="font-display text-lg font-bold">Referred by {org.name}</h2>
+      <p class="mt-1 text-sm text-white/55">{refs.length} referred · {refs.filter((r) => r.status === 'won').length} won (paid) · {refs.filter((r) => r.status === 'open').length} in progress. A partner’s value is what its referrals became.</p>
+      <ul class="mt-3 divide-y divide-white/5">{refs.slice(0, 15).map((r) => <li class="flex justify-between gap-3 py-1.5 text-sm"><a class="text-white hover:text-lk-blue" href={crmHref(scope, `/admin/crm/deals/${r.id}`)}>{r.crm_people?.full_name ?? r.title}</a><span class:list={['text-xs', r.status === 'won' ? 'text-lk-green' : r.status === 'lost' ? 'text-lk-red' : 'text-white/55']}>{r.crm_stages?.name}</span></li>)}</ul>
+    </section>
+  )}
+  <div class="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+    <section class="card">
+      <h2 class="mb-2 font-display text-lg font-bold">Everything that happened</h2>
+      {scope.canDo && <div class="mb-3"><NoteForm /></div>}
+      <Timeline items={(acts ?? []) as Activity[]} names={names} />
+    </section>
+    <div class="grid content-start gap-6">
+      <section class="card">
+        <h2 class="mb-3 font-display text-lg font-bold">Deals</h2>
+        {(deals ?? []).length ? <ul class="divide-y divide-white/5">{((deals ?? []) as unknown as DealRow[]).map((d) => (
+          <li class="flex items-center justify-between gap-3 py-2 text-sm"><a href={crmHref(scope, `/admin/crm/deals/${d.id}`)} class="text-white hover:text-lk-blue">{d.title}</a><span class:list={['shrink-0 text-xs', d.status === 'won' ? 'text-lk-green' : d.status === 'lost' ? 'text-lk-red' : 'text-white/55']}>{d.crm_stages?.name} · {money(Number(d.amount), d.currency)}</span></li>
+        ))}</ul> : <p class="text-sm text-white/45">No deals yet.</p>}
+      </section>
+      <section class="card">
+        <h2 class="mb-3 font-display text-lg font-bold">People</h2>
+        {people.length ? <ul class="divide-y divide-white/5">{people.map((p) => (
+          <li class="flex items-center gap-3 py-2"><span class="grid size-8 place-items-center rounded-full bg-white/10 text-xs font-semibold text-white">{initials(p.full_name)}</span><div class="min-w-0"><a href={crmHref(scope, `/admin/crm/people/${p.id}`)} class="text-sm font-medium text-white hover:text-lk-blue">{p.full_name}</a><p class="truncate text-xs text-white/45">{[p.job_title, p.email].filter(Boolean).join(' · ')}</p></div></li>
+        ))}</ul> : <p class="text-sm text-white/45">Nobody yet.</p>}
+      </section>
+      <section class="card">
+        <h2 class="mb-3 font-display text-lg font-bold">Tasks</h2>
+        <Tasks tasks={(tasks ?? []) as Task[]} names={names} team={team} me={me} canDo={scope.canDo} today={todayIso()} />
+      </section>
+      <details class="card" open={Boolean(error)}>
+        <summary class="cursor-pointer font-display text-lg font-bold">Details</summary>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2"><input type="hidden" name="intent" value="save" />
+          <div><label class="label" for="name">Name</label><input class="field" id="name" name="name" value={org.name} disabled={!mayEdit} /></div>
+          <div><label class="label" for="domain">Web address</label><input class="field" id="domain" name="domain" value={org.domain ?? ''} disabled={!mayEdit} /></div>
+          <div><label class="label" for="industry">Industry</label><input class="field" id="industry" name="industry" value={org.industry} disabled={!mayEdit} /></div>
+          <div><label class="label" for="size_band">Size (people)</label><select class="field" id="size_band" name="size_band" disabled={!mayEdit}><option value="">—</option>{SIZE_BANDS.map((b) => <option selected={b === org.size_band}>{b}</option>)}</select></div>
+          <div><label class="label" for="city">City</label><input class="field" id="city" name="city" value={org.city} disabled={!mayEdit} /></div>
+          <div><label class="label" for="country">Country</label><input class="field" id="country" name="country" value={org.country} disabled={!mayEdit} /></div>
+          <div><label class="label" for="phone">Phone</label><input class="field" id="phone" name="phone" value={org.phone} disabled={!mayEdit} /></div>
+          <div><label class="label" for="linkedin_url">LinkedIn</label><input class="field" id="linkedin_url" name="linkedin_url" value={org.linkedin_url} disabled={!mayEdit} /></div>
+          <div><label class="label" for="kind">To {company.display_name} they are</label><select class="field" id="kind" name="kind" disabled={!mayEdit}>{Object.entries(KINDS).map(([k, l]) => <option value={k} selected={k === rel!.kind}>{l}</option>)}</select></div>
+          {scope.canApprove && <div><label class="label" for="owner_id">Owner</label><select class="field" id="owner_id" name="owner_id"><option value="">—</option>{team.map((t) => <option value={t.id} selected={t.id === rel!.owner_id}>{t.name}</option>)}</select></div>}
+          <div class="sm:col-span-2"><label class="flex items-center gap-2 text-sm text-white/70"><input type="checkbox" name="shareable" value="yes" checked={rel.shareable} disabled={!mayEdit} /> Other Lakeba ventures may see that we know them (only where both ventures switched sharing on)</label></div>
+          <FieldInputs fields={orgFields} values={rel.fields} />
+          {mayEdit && <div class="sm:col-span-2"><button class="btn-primary">Save</button></div>}
+        </form>
+        {mayEdit && <form method="post" class="mt-3"><input type="hidden" name="intent" value="archive" /><button class="text-xs text-white/40 hover:text-white">{rel.archived_at ? 'Bring back to the list' : 'Archive (hide from the list)'}</button></form>}
+      </details>
+    </div>
+  </div>
+</Crm>

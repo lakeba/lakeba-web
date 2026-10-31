@@ -1,0 +1,146 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { crmHref, crmScope, ensurePipeline, goingCold, initials, mayEditDeal, money, moneyShort, namesOf, type Deal } from '../../../lib/crm';
+import { moveDeal } from '../../../lib/crm-actions';
+
+// CRM → Pipeline: the open deals of one pipeline by stage, with their value, owner, chance and what matters
+// next. Drag a card to another stage (or open the deal); recent wins show in the won column.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+let error = '';
+const list = company ? await ensurePipeline(svc, company.id) : [];
+const q = Astro.url.searchParams;
+const pipeline = list.find((p) => p.id === q.get('pipeline')) ?? list[0] ?? null;
+const owner = q.get('owner') ?? 'all';
+
+if (Astro.request.method === 'POST' && company && pipeline) {
+  const form = await Astro.request.formData();
+  try {
+    if (field(form, 'intent') !== 'move') throw new Error('Unknown action.');
+    const { data: d } = await svc.from('crm_deals').select('id, owner_id, stage_id, status, title').eq('id', field(form, 'deal_id')).eq('entity_id', company.id).maybeSingle();
+    if (!d) throw new Error('That deal isn’t here any more.');
+    if (!mayEditDeal(scope, d, me)) throw new Error('Only its owner or a sales lead can move it.');
+    const stage = list.flatMap((p) => p.stages).find((s) => s.id === field(form, 'stage_id'));
+    if (!stage) throw new Error('Choose a stage.');
+    await moveDeal(svc, Astro.locals, company.id, d, stage, field(form, 'reason'));
+    if (form.get('ajax')) return new Response(JSON.stringify({ ok: true }), { headers: { 'content-type': 'application/json' } });
+    return Astro.redirect(Astro.url.pathname + Astro.url.search, 303);
+  } catch (e) {
+    error = (e as Error).message;
+    if (form.get('ajax')) return new Response(JSON.stringify({ ok: false, error }), { status: 400, headers: { 'content-type': 'application/json' } });
+  }
+}
+
+const stages = pipeline?.stages.filter((s) => s.kind !== 'lost') ?? [];
+const recent = new Date(Date.now() - 30 * 86_400_000).toISOString();
+let deals: (Deal & { crm_companies: { name: string } | null; crm_people: { full_name: string } | null })[] = [];
+if (company && pipeline) {
+  let dq = svc.from('crm_deals').select('*, crm_companies!crm_deals_company_id_fkey(name), crm_people!crm_deals_person_id_fkey(full_name)').eq('entity_id', company.id).eq('pipeline_id', pipeline.id)
+    .or(`status.eq.open,and(status.eq.won,won_at.gte.${recent})`).order('amount', { ascending: false });
+  if (owner === 'me') dq = dq.eq('owner_id', me);
+  else if (/^[0-9a-f-]{36}$/.test(owner)) dq = dq.eq('owner_id', owner);
+  deals = ((await dq).data ?? []) as typeof deals;
+}
+const names = await namesOf(svc, deals.map((d) => d.owner_id));
+const byStage = new Map(stages.map((s) => [s.id, deals.filter((d) => d.stage_id === s.id)]));
+const totals = (ds: Deal[]) => {
+  const by = new Map<string, number>();
+  for (const d of ds) by.set(d.currency, (by.get(d.currency) ?? 0) + Number(d.amount));
+  return [...by.entries()].sort((a, b) => (a[0] === company?.crm_currency ? -1 : b[0] === company?.crm_currency ? 1 : b[1] - a[1])).map(([c, v]) => moneyShort(v, c)).join(' + ') || moneyShort(0, company?.crm_currency);
+};
+const stageOf = new Map(stages.map((s) => [s.id, s]));
+const link = (k: string, v: string) => { const p = new URLSearchParams(q); p.set(k, v); return `?${p}`; };
+const owners = [...new Set(deals.map((d) => d.owner_id).filter(Boolean) as string[])];
+const what = pipeline?.kind === 'people' ? 'person' : pipeline?.kind === 'partners' ? 'partner' : 'deal';
+---
+
+<Crm title="Pipeline" scope={scope} wide>
+  <PageHeader title={pipeline?.name ?? 'Pipeline'} subtitle={`${company?.display_name ?? ''} · drag a card to move it. Totals in each deal’s own currency.`}>
+    {scope.canDo && <a href={crmHref(scope, `/admin/crm/deals?new=1${pipeline ? `&pipeline=${pipeline.id}` : ''}`)} class="btn-primary">New {what}</a>}
+  </PageHeader>
+  {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+  <div class="mb-4 flex flex-wrap items-center gap-2 text-sm" data-tour="crm-pipeline-filters">
+    {list.length > 1 && list.map((p) => <a href={link('pipeline', p.id)} aria-current={p.id === pipeline?.id ? 'page' : undefined} class:list={['rounded-full px-3 py-1', p.id === pipeline?.id ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{p.name}</a>)}
+    <span class="mx-1 text-white/20">|</span>
+    {[['all', 'Everyone'], ['me', 'Mine']].map(([k, l]) => <a href={link('owner', k)} aria-current={owner === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', owner === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}
+    {owners.filter((o) => o !== me).map((o) => <a href={link('owner', o)} aria-current={owner === o ? 'page' : undefined} class:list={['rounded-full px-3 py-1', owner === o ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{names.get(o)}</a>)}
+  </div>
+  <div class="grid auto-cols-[minmax(15rem,1fr)] grid-flow-col gap-3 overflow-x-auto pb-4" data-board data-tour="crm-board">
+    {stages.map((s) => {
+      const ds = byStage.get(s.id) ?? [];
+      return (
+        <section class="flex min-h-48 flex-col rounded-2xl" data-stage={s.id} data-kind={s.kind}>
+          <header class="mb-2 flex items-baseline justify-between gap-2 px-1">
+            <h2 class:list={['font-medium', s.kind === 'won' ? 'text-lk-green' : 'text-white']}>{s.kind === 'won' ? `${s.name} · last 30 days` : s.name}</h2>
+            <span class="text-xs text-white/45">{totals(ds)} · {ds.length}</span>
+          </header>
+          <div class="flex flex-1 flex-col gap-2 rounded-2xl p-1 transition" data-drop>
+            {ds.map((d) => {
+              const cold = goingCold(d, stageOf.get(d.stage_id));
+              const chance = d.ai_chance ?? s.chance;
+              const can = mayEditDeal(scope, d, me);
+              return (
+                <a href={crmHref(scope, `/admin/crm/deals/${d.id}`)} draggable={can ? 'true' : 'false'} data-deal={d.id} class="card block !rounded-2xl !p-3.5 hover:border-white/20">
+                  <div class="flex items-start justify-between gap-2">
+                    <p class="font-medium text-white">{d.crm_companies?.name ?? d.crm_people?.full_name ?? d.title}</p>
+                    {d.owner_id && <span class="grid size-6 shrink-0 place-items-center rounded-full bg-lk-blue text-[10px] font-semibold text-[#fff]" title={names.get(d.owner_id)}>{initials(names.get(d.owner_id) ?? '')}</span>}
+                  </div>
+                  {(d.crm_companies || d.crm_people) && <p class="truncate text-xs text-white/45">{d.title}</p>}
+                  <p class="mt-1.5 font-display text-lg font-bold text-white">{money(Number(d.amount), d.currency)}</p>
+                  <div class="mt-1.5 flex items-center justify-between gap-2 text-xs">
+                    {cold ? <span class="rounded-full bg-lk-red/15 px-2 py-0.5 text-lk-red">going cold</span>
+                      : d.next_step ? <span class="truncate rounded-full bg-white/[0.07] px-2 py-0.5 text-white/60">{d.next_step}</span>
+                      : s.kind === 'won' ? <span class="rounded-full bg-lk-green/15 px-2 py-0.5 text-lk-green">won</span>
+                      : <span class="rounded-full bg-lk-orange/15 px-2 py-0.5 text-lk-orange">no next step</span>}
+                    {s.kind === 'open' && <span class="shrink-0 text-white/45" title={d.ai_chance != null ? 'Lakeba AI’s view' : 'The stage’s usual chance'}>{chance}%{d.ai_chance != null && ' AI'}</span>}
+                  </div>
+                </a>
+              );
+            })}
+            {!ds.length && <p class="px-2 py-6 text-center text-xs text-white/30">Nothing here</p>}
+          </div>
+        </section>
+      );
+    })}
+    {pipeline && (() => { const lost = pipeline.stages.find((s) => s.kind === 'lost'); return lost && scope.canDo && (
+      <section class="flex min-h-48 w-40 flex-col" data-stage={lost.id} data-kind="lost">
+        <header class="mb-2 px-1"><h2 class="font-medium text-white/45">{lost.name}</h2></header>
+        <div class="grid flex-1 place-items-center rounded-2xl border border-dashed border-white/10 p-3 text-center text-xs text-white/35 transition" data-drop>Drop here if it’s lost</div>
+      </section>
+    ); })()}
+  </div>
+  <form method="post" class="hidden" data-move><input type="hidden" name="intent" value="move" /><input type="hidden" name="deal_id" /><input type="hidden" name="stage_id" /><input type="hidden" name="reason" /></form>
+</Crm>
+
+<script>
+  // Drag a card to another stage: the move is saved straight away (lost asks why), then the board reloads.
+  const form = document.querySelector<HTMLFormElement>('[data-move]')!;
+  let dragging: string | null = null;
+  document.querySelectorAll<HTMLElement>('[data-deal][draggable="true"]').forEach((card) => {
+    card.addEventListener('dragstart', (e) => { dragging = card.dataset.deal!; e.dataTransfer?.setData('text/plain', dragging); card.classList.add('opacity-50'); });
+    card.addEventListener('dragend', () => { card.classList.remove('opacity-50'); dragging = null; });
+  });
+  document.querySelectorAll<HTMLElement>('[data-stage]').forEach((col) => {
+    const zone = col.querySelector<HTMLElement>('[data-drop]')!;
+    col.addEventListener('dragover', (e) => { if (dragging) { e.preventDefault(); zone.classList.add('bg-white/[0.06]'); } });
+    col.addEventListener('dragleave', () => zone.classList.remove('bg-white/[0.06]'));
+    col.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      zone.classList.remove('bg-white/[0.06]');
+      if (!dragging) return;
+      let reason = '';
+      if (col.dataset.kind === 'lost') { reason = prompt('Why was it lost? (price, timing, a competitor, no decision…)') ?? ''; if (!reason.trim()) return; }
+      const body = new FormData(form);
+      body.set('deal_id', dragging); body.set('stage_id', col.dataset.stage!); body.set('reason', reason); body.set('ajax', '1');
+      const res = await fetch(location.href, { method: 'POST', body });
+      const out = await res.json().catch(() => ({ ok: false, error: 'Couldn’t move it.' }));
+      if (!out.ok) alert(out.error); else location.reload();
+    });
+  });
+</script>

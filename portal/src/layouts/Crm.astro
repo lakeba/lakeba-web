@@ -1,0 +1,142 @@
+---
+import '../styles/portal.css';
+import ThemeInit from '../../../src/components/ThemeInit.astro';
+import ThemeToggle from '../../../src/components/ThemeToggle.astro';
+import Tour from '../components/Tour.astro';
+import { initials, type CrmScope } from '../lib/crm';
+import { accentOf } from '../lib/brand';
+
+// The CRM's own frame (docs/crm.md): the venture's name and colour, a search, its menu. The same pages open
+// in the admin (/admin/crm) and on the venture's CRM address (crm.doxai.com), where they are all there is.
+interface Props { title: string; scope: CrmScope; wide?: boolean; /** Shown even with no company picked (Settings, where the CRM is switched on). */ always?: boolean }
+const { title, scope, wide, always } = Astro.props;
+const { profile, access } = Astro.locals;
+const company = scope.current;
+const onCrmSite = Astro.locals.site?.kind === 'crm';
+const path = Astro.url.pathname;
+const q = (href: string) => (company && scope.companies.length > 1 && !onCrmSite ? `${href}${href.includes('?') ? '&' : '?'}company=${company.code}` : href);
+type Item = { href: string; label: string; exact?: boolean; show?: boolean; tag?: string | number | null };
+const groups: { label?: string; items: Item[] }[] = [
+  { items: [
+    { href: '/admin/crm', label: 'Today', exact: true },
+    { href: '/admin/crm/pipeline', label: 'Pipeline' },
+    { href: '/admin/crm/deals', label: 'Deals' },
+    { href: '/admin/crm/people', label: 'People' },
+    { href: '/admin/crm/companies', label: 'Companies' },
+    { href: '/admin/crm/tasks', label: 'Tasks' },
+  ] },
+  { label: 'Lead', items: [
+    { href: '/admin/crm/import', label: 'Import', show: scope.canDo },
+    { href: '/admin/crm/settings', label: 'Settings', show: scope.canSettings },
+  ] },
+];
+const under = (p: string) => path === p || path.startsWith(`${p}/`);
+const on = (i: Item) => (i.exact ? path === i.href : under(i.href));
+const visible = groups.map((g) => ({ ...g, items: g.items.filter((i) => i.show !== false) })).filter((g) => g.items.length);
+const name = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || profile?.email || '';
+const accent = accentOf(company);
+const switchHref = (code: string) => {
+  const p = new URLSearchParams(Astro.url.search); p.set('company', code);
+  // A record of one company doesn't exist in another: switching opens the same section's list.
+  const section = path.match(/^\/admin\/crm\/[a-z-]+/)?.[0] ?? '/admin/crm';
+  return `${/\/[0-9a-f-]{36}/.test(path) ? section : path}?${p}`;
+};
+---
+
+<!doctype html>
+<html lang="en" style={accent ? `--color-lk-blue:${accent}` : undefined}>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex, nofollow" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <meta name="theme-color" content="#050b16" />
+    <ThemeInit />
+    <title>{title} · {company?.display_name ?? 'CRM'} CRM</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body class="overflow-x-clip">
+    <div aria-hidden="true" class="pointer-events-none fixed inset-x-0 top-0 -z-10 h-[30rem] overflow-hidden">
+      <div class="absolute -top-48 right-1/4 h-[30rem] w-[30rem] rounded-full bg-lk-blue/15 blur-[120px]"></div>
+    </div>
+    <header class="sticky top-0 z-40 border-b border-white/5 bg-ink/80 backdrop-blur-xl">
+      <div class="flex h-16 items-center gap-4 px-4 sm:px-6">
+        <a href={q('/admin/crm')} class="flex min-w-0 shrink-0 items-center gap-2.5" data-tour="crm-brand">
+          {company?.logo_url
+            ? <span class="grid h-9 shrink-0 place-items-center rounded-lg bg-[#fff] px-2"><img src={company.logo_url} alt={company.display_name} class="max-h-7 max-w-28 object-contain" /></span>
+            : <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-lk-blue font-display text-xs font-extrabold text-[#fff]">{(company?.code ?? 'CRM').slice(0, 3)}</span>}
+          <span class="hidden truncate font-display text-lg font-bold text-white sm:inline">{company?.display_name ?? 'CRM'}</span>
+          <span class="rounded-md bg-white/10 px-1.5 py-0.5 text-[11px] font-semibold uppercase tracking-widest text-white/60">CRM</span>
+        </a>
+        {scope.companies.length > 1 && !onCrmSite && (
+          <details data-menu class="relative">
+            <summary class="flex cursor-pointer list-none items-center gap-1 rounded-full border border-white/10 px-3 py-1.5 text-sm text-white/75 hover:bg-white/5" aria-label="Company">
+              Switch <svg viewBox="0 0 20 20" class="size-4 text-white/45" aria-hidden="true"><path d="M5.5 7.5 10 12l4.5-4.5" stroke="currentColor" stroke-width="1.6" fill="none" stroke-linecap="round" stroke-linejoin="round" /></svg>
+            </summary>
+            <div class="absolute left-0 mt-2 w-64 rounded-2xl border border-white/10 bg-ink p-2 text-sm shadow-2xl shadow-black/50">
+              {scope.companies.map((c) => (
+                <a href={switchHref(c.code)} class:list={['flex items-center gap-2.5 rounded-lg px-3 py-2 hover:bg-white/5', c.id === company?.id && 'bg-white/5 text-white']}>
+                  <span class="size-2.5 shrink-0 rounded-full" style={`background:${c.brand_color ?? '#276ae7'}`}></span><span class="truncate">{c.display_name}</span>
+                </a>
+              ))}
+            </div>
+          </details>
+        )}
+        <form method="get" action="/admin/crm/search" class="hidden max-w-xl flex-1 md:block" role="search" data-tour="crm-search">
+          {scope.companies.length > 1 && !onCrmSite && company && <input type="hidden" name="company" value={company.code} />}
+          <input class="field" type="search" name="q" placeholder="Search people, companies, deals…" aria-label="Search the CRM" value={path === '/admin/crm/search' ? Astro.url.searchParams.get('q') ?? '' : ''} />
+        </form>
+        <div class="ml-auto flex items-center gap-3 text-sm">
+          <slot name="header" />
+          <ThemeToggle />
+          <details data-menu class="relative">
+            <summary class="flex cursor-pointer list-none items-center gap-2 text-white/70 hover:text-white" aria-label="Your account">
+              <span class="hidden sm:inline">{name}</span>
+              <span class="grid size-8 place-items-center rounded-full bg-lk-blue text-xs font-semibold text-[#fff]">{initials(name)}</span>
+            </summary>
+            <div class="absolute right-0 mt-2 w-56 rounded-2xl border border-white/10 bg-ink p-2 text-sm shadow-2xl shadow-black/50">
+              {!onCrmSite && access.mayOpen('/admin') && <a href="/admin" class="block rounded-lg px-3 py-2 text-white/70 hover:bg-white/5 hover:text-white">Admin</a>}
+              {!onCrmSite && <a href="/" class="block rounded-lg px-3 py-2 text-white/70 hover:bg-white/5 hover:text-white">Portal</a>}
+              <form method="post" action="/logout"><button class="w-full rounded-lg px-3 py-2 text-left text-white/70 hover:bg-white/5 hover:text-white">Sign out</button></form>
+            </div>
+          </details>
+        </div>
+      </div>
+    </header>
+    <div class="grid gap-6 px-4 py-6 sm:px-6 lg:grid-cols-[11.5rem_1fr]">
+      <nav class="text-sm lg:sticky lg:top-24 lg:self-start" aria-label="CRM" data-tour="crm-menu">
+        <div class="flex gap-1 overflow-x-auto pb-2 lg:block lg:overflow-visible lg:pb-0 [scrollbar-width:none]">
+          {visible.map((g) => (
+            <>
+              {g.label && <p class="hidden px-3 pb-1.5 pt-4 text-[10.5px] font-semibold uppercase tracking-widest text-white/35 lg:block">{g.label}</p>}
+              {g.items.map((i) => (
+                <a href={q(i.href)} aria-current={on(i) ? 'page' : undefined} data-tour={`crm-nav-${i.href.split('/').pop()}`}
+                  class:list={['flex shrink-0 items-center justify-between gap-2 rounded-lg px-3 py-2 transition', on(i) ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>
+                  {i.label}{i.tag ? <span class="rounded-full bg-lk-orange/20 px-2 text-xs text-lk-orange">{i.tag}</span> : null}
+                </a>
+              ))}
+            </>
+          ))}
+        </div>
+      </nav>
+      <main class:list={['min-w-0', !wide && 'max-w-[1250px]']}>
+        {company || always ? <slot /> : (
+          <div class="card max-w-xl">
+            <h1 class="font-display text-2xl font-bold">No CRM to open yet</h1>
+            <p class="mt-2 text-sm text-white/60">{access.can('crm.approve', null) || access.groupAdmin ? 'Switch the CRM on for a company in CRM → Settings.' : 'None of your companies has its CRM switched on. Ask your company’s admin.'}</p>
+            {(access.groupAdmin || access.can('crm.approve', null)) && <a href="/admin/crm/settings" class="btn-primary mt-4">Open CRM settings</a>}
+          </div>
+        )}
+      </main>
+    </div>
+    <Tour />
+    <script>
+      // Menus close when another opens or on a click elsewhere.
+      const menus = [...document.querySelectorAll<HTMLDetailsElement>('details[data-menu]')];
+      document.addEventListener('click', (e) => { for (const m of menus) if (m.open && !m.contains(e.target as Node)) m.open = false; });
+    </script>
+  </body>
+</html>

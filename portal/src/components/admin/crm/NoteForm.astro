@@ -1,0 +1,10 @@
+---
+// A note on a deal, person or company (it goes on their timeline).
+interface Props { placeholder?: string }
+const { placeholder = 'What happened, what was agreed, what matters next…' } = Astro.props;
+---
+<form method="post" class="flex flex-col gap-2" data-tour="crm-note">
+  <input type="hidden" name="intent" value="note" />
+  <textarea class="field min-h-20" name="body" rows="3" placeholder={placeholder} aria-label="Note" required></textarea>
+  <button class="btn-ghost self-start !py-1.5 text-sm">Add note</button>
+</form>

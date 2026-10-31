@@ -1,0 +1,233 @@
+---
+import Crm from '../../../../layouts/Crm.astro';
+import Alert from '../../../../components/Alert.astro';
+import Timeline from '../../../../components/admin/crm/Timeline.astro';
+import Tasks from '../../../../components/admin/crm/Tasks.astro';
+import NoteForm from '../../../../components/admin/crm/NoteForm.astro';
+import FieldInputs from '../../../../components/admin/crm/FieldInputs.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { shortDate } from '../../../../lib/format';
+import { CURRENCIES, PARTS, SOURCES, cleanEmail, companyDomainOf, crmHref, crmScope, ensureRelationship, fieldsOf, findOrCreateCompany, findOrCreatePerson, goingCold, initials, logActivity, mayEditDeal, money, namesOf, pipelines, readFields, salesTeam, todayIso, validEmail, type Activity, type Deal, type Task } from '../../../../lib/crm';
+import { commonAction, moveDeal } from '../../../../lib/crm-actions';
+import { notifyMembers } from '../../../../lib/notify';
+
+// CRM → a deal: where it stands, everything that happened (logged automatically wherever the CRM can), the
+// buying group, tasks and its details. Its owner or a sales lead changes it.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+const id = Astro.params.id!;
+if (!/^[0-9a-f-]{36}$/.test(id) || !company) return Astro.redirect('/admin/crm/deals');
+const load = async () => (await svc.from('crm_deals').select('*').eq('id', id).eq('entity_id', company.id).maybeSingle()).data as Deal | null;
+let deal = await load();
+if (!deal) return Astro.redirect(crmHref(scope, '/admin/crm/deals'));
+const may = mayEditDeal(scope, deal, me);
+const list = await pipelines(svc, company.id, true);
+const team = await salesTeam(svc, company.id);
+const dealFields = await fieldsOf(svc, company.id, 'deal');
+const self = crmHref(scope, `/admin/crm/deals/${id}`);
+let error = '';
+let done = Astro.url.searchParams.get('done') ?? '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (!may) throw new Error('Only the deal’s owner or a sales lead changes it.');
+    const msg = await commonAction(svc, Astro.locals, scope, form, { deal_id: id }, Astro.url.origin, `/admin/crm/deals/${id}`);
+    if (msg) return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent(msg)}`, 303);
+    if (intent === 'move') {
+      const stage = list.flatMap((p) => p.stages).find((s) => s.id === field(form, 'stage_id'));
+      if (!stage) throw new Error('Choose a stage.');
+      await moveDeal(svc, Astro.locals, company.id, deal, stage, field(form, 'reason'));
+      return Astro.redirect(self, 303);
+    }
+    if (intent === 'save') {
+      const amount = Number(field(form, 'amount').replace(/[, $€]/g, '') || 0);
+      if (!Number.isFinite(amount) || amount < 0) throw new Error('The value is a number, e.g. 86000.');
+      const owner = field(form, 'owner_id') || deal.owner_id;
+      if (owner && owner !== deal.owner_id && !scope.canApprove) throw new Error('Only a sales lead gives a deal to someone else.');
+      if (owner && owner !== deal.owner_id && !team.some((p) => p.id === owner)) throw new Error('Choose an owner from the sales team.');
+      const date = (n: string) => (/^\d{4}-\d{2}-\d{2}$/.test(field(form, n)) ? field(form, n) : null);
+      const changes = {
+        title: (field(form, 'title') || deal.title).slice(0, 200), amount, currency: CURRENCIES.includes(field(form, 'currency')) ? field(form, 'currency') : deal.currency,
+        expected_close: date('expected_close'), next_step: field(form, 'next_step').slice(0, 300), next_step_on: date('next_step_on'),
+        source: SOURCES.includes(field(form, 'source')) ? field(form, 'source') : '', owner_id: owner, fields: { ...deal.fields, ...readFields(form, dealFields) }, updated_at: new Date().toISOString(),
+      };
+      await svc.from('crm_deals').update(changes).eq('id', id).throwOnError();
+      if (Number(deal.amount) !== amount || deal.currency !== changes.currency) await logActivity(svc, { entity_id: company.id, kind: 'system', deal_id: id, subject: `Value ${money(Number(deal.amount), deal.currency)} → ${money(amount, changes.currency)}`, created_by: me });
+      if (owner && owner !== deal.owner_id) {
+        await logActivity(svc, { entity_id: company.id, kind: 'system', deal_id: id, subject: `Given to ${team.find((p) => p.id === owner)?.name ?? 'someone'}`, created_by: me });
+        if (owner !== me) await notifyMembers({ kind: 'crm', origin: Astro.url.origin, link: `/admin/crm/deals/${id}`, title: 'A deal for you', body: `${changes.title} · ${money(amount, changes.currency)}`, userIds: [owner] }).catch(() => 0);
+      }
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_deal_changed', event_detail: { entity_id: company.id, deal_id: id } });
+      return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=Saved.`, 303);
+    }
+    if (intent === 'add-person') {
+      const email = cleanEmail(field(form, 'email'));
+      if (email && !validEmail(email)) throw new Error('That email address doesn’t look right.');
+      if (!field(form, 'full_name') && !email) throw new Error('Give their name or email.');
+      const p = await findOrCreatePerson(svc, { full_name: field(form, 'full_name') || email, email: email || null, job_title: field(form, 'job_title'), company_id: deal.company_id, createdBy: me });
+      await ensureRelationship(svc, company.id, { person_id: p.id }, { kind: 'prospect', createdBy: me });
+      await svc.from('crm_deal_people').upsert({ deal_id: id, person_id: p.id, part: field(form, 'part') in PARTS ? field(form, 'part') : 'involved' });
+      return Astro.redirect(self, 303);
+    }
+    if (intent === 'remove-person') {
+      await svc.from('crm_deal_people').delete().eq('deal_id', id).eq('person_id', field(form, 'person_id'));
+      return Astro.redirect(self, 303);
+    }
+    if (intent === 'set-company') {
+      const name = field(form, 'company_name');
+      if (!name) throw new Error('Name the company.');
+      const org = await findOrCreateCompany(svc, { name, domain: field(form, 'domain') || null, createdBy: me });
+      await ensureRelationship(svc, company.id, { company_id: org.id }, { kind: 'prospect', owner_id: deal.owner_id, createdBy: me });
+      await svc.from('crm_deals').update({ company_id: org.id }).eq('id', id);
+      return Astro.redirect(self, 303);
+    }
+    if (intent === 'reopen') {
+      const stage = list.find((p) => p.id === deal!.pipeline_id)?.stages.find((s) => s.kind === 'open');
+      if (!stage) throw new Error('This pipeline has no open stage.');
+      await moveDeal(svc, Astro.locals, company.id, deal, stage);
+      return Astro.redirect(self, 303);
+    }
+    if (intent === 'delete') {
+      if (!scope.canApprove) throw new Error('Only a sales lead deletes deals.');
+      await svc.from('crm_deals').delete().eq('id', id);
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_deal_deleted', event_detail: { entity_id: company.id, deal_id: id, title: deal.title } });
+      return Astro.redirect(crmHref(scope, '/admin/crm/deals'), 303);
+    }
+  } catch (e) {
+    error = (e as Error).message;
+    done = '';
+    deal = (await load())!;
+  }
+}
+
+const pipeline = list.find((p) => p.id === deal.pipeline_id)!;
+const stage = pipeline.stages.find((s) => s.id === deal.stage_id);
+const [{ data: acts }, { data: tasks }, { data: group }, { data: org }, { data: main }, { data: referrer }] = await Promise.all([
+  svc.from('crm_activities').select('*').eq('deal_id', id).order('occurred_at', { ascending: false }).limit(200),
+  svc.from('crm_tasks').select('*').eq('deal_id', id).order('created_at', { ascending: false }).limit(50),
+  svc.from('crm_deal_people').select('part, crm_people(id, full_name, email, job_title)').eq('deal_id', id),
+  deal.company_id ? svc.from('crm_companies').select('id, name, domain, country').eq('id', deal.company_id).maybeSingle() : Promise.resolve({ data: null }),
+  deal.person_id ? svc.from('crm_people').select('id, full_name, email').eq('id', deal.person_id).maybeSingle() : Promise.resolve({ data: null }),
+  deal.referred_by_company_id ? svc.from('crm_companies').select('id, name').eq('id', deal.referred_by_company_id).maybeSingle() : Promise.resolve({ data: null }),
+]);
+const people = ((group ?? []) as unknown as { part: string; crm_people: { id: string; full_name: string; email: string | null; job_title: string } }[]).filter((g) => g.crm_people);
+const names = await namesOf(svc, [deal.owner_id, ...((acts ?? []) as Activity[]).map((a) => a.created_by), ...((tasks ?? []) as Task[]).map((t) => t.owner_id)]);
+const day = (d: string | null) => (d ? shortDate.format(new Date(`${d}T12:00:00+10:00`)) : '—');
+const cold = goingCold(deal, stage);
+const chance = deal.status === 'won' ? 100 : deal.status === 'lost' ? 0 : deal.ai_chance ?? stage?.chance ?? 0;
+const ownerName = deal.owner_id ? names.get(deal.owner_id) : null;
+const open = pipeline.stages.filter((s) => s.kind === 'open');
+const won = pipeline.stages.find((s) => s.kind === 'won');
+const lost = pipeline.stages.find((s) => s.kind === 'lost');
+---
+
+<Crm title={deal.title} scope={scope}>
+  <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <div class="min-w-0">
+      <p class="text-sm text-white/45"><a href={crmHref(scope, `/admin/crm/pipeline?pipeline=${pipeline.id}`)} class="hover:text-white">{pipeline.name}</a> · {stage?.name} · {ownerName ? `owner ${ownerName}` : <span class="text-lk-orange">no owner</span>}</p>
+      <h1 class="mt-1 font-display text-3xl font-bold">{org?.name ? `${org.name} — ` : ''}{deal.title}</h1>
+      {referrer && <p class="mt-1 text-sm text-white/55">Referred by <a class="text-lk-blue hover:underline" href={crmHref(scope, `/admin/crm/companies/${referrer.id}`)}>{referrer.name}</a></p>}
+    </div>
+    <div class="text-right">
+      <p class="font-display text-3xl font-bold text-white">{money(Number(deal.amount), deal.currency)}</p>
+      <p class="mt-1 text-sm">{deal.status === 'won' ? <span class="rounded-full bg-lk-green/15 px-2 py-0.5 text-lk-green">Won</span> : deal.status === 'lost' ? <span class="rounded-full bg-lk-red/15 px-2 py-0.5 text-lk-red">Lost</span> : <span class="text-white/55">{chance}% chance{deal.ai_chance != null ? ' (Lakeba AI)' : ''}</span>}</p>
+    </div>
+  </div>
+  {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+  {done && <div class="mb-4"><Alert tone="success">{done}</Alert></div>}
+
+  <section class="card mb-6 !p-3" data-tour="crm-stages">
+    <div class="flex flex-wrap items-center gap-1.5">
+      {open.map((s) => (
+        <form method="post" class="contents"><input type="hidden" name="intent" value="move" /><input type="hidden" name="stage_id" value={s.id} />
+          <button disabled={!may || deal.status !== 'open'} title={s.exit_criteria || undefined} class:list={['rounded-lg px-3 py-1.5 text-sm transition', s.id === deal.stage_id ? 'bg-lk-blue text-[#fff]' : s.sort < (stage?.sort ?? 0) ? 'bg-lk-blue/15 text-white/80' : 'bg-white/[0.05] text-white/55 hover:bg-white/10 hover:text-white']}>{s.name}</button>
+        </form>
+      ))}
+      {may && deal.status === 'open' && won && <form method="post" class="ml-auto"><input type="hidden" name="intent" value="move" /><input type="hidden" name="stage_id" value={won.id} /><button class="rounded-lg bg-lk-green/15 px-3 py-1.5 text-sm text-lk-green hover:bg-lk-green/25">Mark won</button></form>}
+      {may && deal.status === 'open' && lost && (
+        <details class="relative"><summary class="cursor-pointer list-none rounded-lg bg-white/[0.05] px-3 py-1.5 text-sm text-white/55 hover:text-white">Lost…</summary>
+          <form method="post" class="absolute right-0 z-10 mt-2 w-72 rounded-2xl border border-white/10 bg-ink p-3 shadow-2xl"><input type="hidden" name="intent" value="move" /><input type="hidden" name="stage_id" value={lost.id} />
+            <label class="label" for="reason">Why was it lost?</label><input class="field" id="reason" name="reason" placeholder="Price, timing, a competitor…" required /><button class="btn-ghost mt-2 !py-1.5 text-sm">Mark lost</button></form>
+        </details>
+      )}
+      {may && deal.status !== 'open' && <form method="post" class="ml-auto"><input type="hidden" name="intent" value="reopen" /><button class="rounded-lg bg-white/[0.05] px-3 py-1.5 text-sm text-white/60 hover:text-white">Open again</button></form>}
+    </div>
+    {stage?.exit_criteria && deal.status === 'open' && <p class="mt-2 px-1 text-xs text-white/45">To move on: {stage.exit_criteria}</p>}
+    {deal.status === 'lost' && deal.lost_reason && <p class="mt-2 px-1 text-xs text-white/55">Lost: {deal.lost_reason}</p>}
+  </section>
+
+  <div class="grid gap-6 xl:grid-cols-[1.5fr_1fr]">
+    <div class="grid content-start gap-6">
+      <section class="card">
+        <div class="mb-2 flex flex-wrap items-baseline justify-between gap-2"><h2 class="font-display text-lg font-bold">Everything that happened</h2><span class="text-xs text-white/40">Logged automatically wherever the CRM can</span></div>
+        {may && <div class="mb-3"><NoteForm /></div>}
+        <Timeline items={(acts ?? []) as Activity[]} names={names} />
+      </section>
+    </div>
+    <div class="grid content-start gap-6">
+      {(cold || !deal.next_step) && deal.status === 'open' && (
+        <section class:list={['card', cold ? 'border-lk-red/30' : 'border-lk-orange/30']}>
+          <p class="text-sm">{cold ? <><b class="text-lk-red">Going cold.</b> No contact for longer than this stage usually allows ({stage?.cold_after_days} days).</> : <><b class="text-lk-orange">No next step.</b> Deals with a dated next step close more often.</>}</p>
+        </section>
+      )}
+      <section class="card">
+        <h2 class="mb-3 font-display text-lg font-bold">Tasks</h2>
+        <Tasks tasks={(tasks ?? []) as Task[]} names={names} team={team} me={me} canDo={may} today={todayIso()} />
+      </section>
+      <section class="card" data-tour="crm-buying-group">
+        <h2 class="mb-3 font-display text-lg font-bold">Buying group</h2>
+        <ul class="divide-y divide-white/5">
+          {people.map((g) => (
+            <li class="flex items-center gap-3 py-2">
+              <span class="grid size-8 shrink-0 place-items-center rounded-full bg-white/10 text-xs font-semibold text-white">{initials(g.crm_people.full_name)}</span>
+              <div class="min-w-0 flex-1"><a href={crmHref(scope, `/admin/crm/people/${g.crm_people.id}`)} class="text-sm font-medium text-white hover:text-lk-blue">{g.crm_people.full_name}</a><p class="truncate text-xs text-white/45">{[g.crm_people.job_title, g.crm_people.email].filter(Boolean).join(' · ')}</p></div>
+              <span class:list={['rounded-full px-2 py-0.5 text-xs', g.part === 'champion' ? 'bg-lk-green/15 text-lk-green' : g.part === 'decides' ? 'bg-lk-blue/15 text-lk-blue' : g.part === 'blocks' ? 'bg-lk-red/15 text-lk-red' : 'bg-white/[0.07] text-white/60']}>{PARTS[g.part]}</span>
+              {may && <form method="post"><input type="hidden" name="intent" value="remove-person" /><input type="hidden" name="person_id" value={g.crm_people.id} /><button class="text-xs text-white/35 hover:text-lk-red" aria-label={`Remove ${g.crm_people.full_name}`}>✕</button></form>}
+            </li>
+          ))}
+          {!people.some((g) => g.part === 'decides') && deal.status === 'open' && <li class="py-2 text-xs text-lk-orange">Who decides isn’t known yet.</li>}
+        </ul>
+        {may && (
+          <details class="mt-3"><summary class="cursor-pointer text-sm font-medium text-lk-blue">Add someone</summary>
+            <form method="post" class="mt-3 grid gap-2 sm:grid-cols-2"><input type="hidden" name="intent" value="add-person" />
+              <input class="field" name="full_name" placeholder="Name" aria-label="Name" />
+              <input class="field" name="email" type="email" placeholder="Work email" aria-label="Email" />
+              <input class="field" name="job_title" placeholder="Role, e.g. CFO" aria-label="Role" />
+              <select class="field" name="part" aria-label="Part">{Object.entries(PARTS).map(([k, l]) => <option value={k} selected={k === 'involved'}>{l}</option>)}</select>
+              <button class="btn-ghost !py-1.5 text-sm sm:col-span-2 sm:justify-self-start">Add</button>
+            </form>
+          </details>
+        )}
+      </section>
+      <section class="card">
+        <h2 class="mb-3 font-display text-lg font-bold">Company and contact</h2>
+        {org ? <p class="text-sm"><a href={crmHref(scope, `/admin/crm/companies/${org.id}`)} class="font-medium text-white hover:text-lk-blue">{org.name}</a>{org.domain && <span class="text-white/45"> · {org.domain}</span>}</p> : may ? (
+          <form method="post" class="flex gap-2"><input type="hidden" name="intent" value="set-company" /><input class="field" name="company_name" placeholder="Company name" aria-label="Company" /><button class="btn-ghost !py-1.5 text-sm">Set</button></form>
+        ) : <p class="text-sm text-white/45">No company.</p>}
+        {main && <p class="mt-2 text-sm"><a href={crmHref(scope, `/admin/crm/people/${main.id}`)} class="text-white hover:text-lk-blue">{main.full_name}</a>{main.email && <a href={`mailto:${main.email}`} class="text-white/45 hover:text-white"> · {main.email}</a>}</p>}
+      </section>
+      <details class="card" open={Boolean(error)}>
+        <summary class="cursor-pointer font-display text-lg font-bold">Details</summary>
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-2"><input type="hidden" name="intent" value="save" />
+          <div class="sm:col-span-2"><label class="label" for="title">Deal name</label><input class="field" id="title" name="title" value={deal.title} disabled={!may} /></div>
+          <div><label class="label" for="amount">Value</label><input class="field" id="amount" name="amount" inputmode="decimal" value={String(deal.amount)} disabled={!may} /></div>
+          <div><label class="label" for="currency">Currency</label><select class="field" id="currency" name="currency" disabled={!may}>{CURRENCIES.map((c) => <option selected={c === deal!.currency}>{c}</option>)}</select></div>
+          <div><label class="label" for="expected_close">Expected to close</label><input class="field" type="date" id="expected_close" name="expected_close" value={deal.expected_close ?? ''} disabled={!may} /></div>
+          <div><label class="label" for="source">Where it came from</label><select class="field" id="source" name="source" disabled={!may}><option value="">—</option>{SOURCES.map((s) => <option selected={s === deal!.source}>{s}</option>)}</select></div>
+          <div><label class="label" for="next_step">Next step</label><input class="field" id="next_step" name="next_step" value={deal.next_step} disabled={!may} /></div>
+          <div><label class="label" for="next_step_on">By</label><input class="field" type="date" id="next_step_on" name="next_step_on" value={deal.next_step_on ?? ''} disabled={!may} /></div>
+          {scope.canApprove && <div><label class="label" for="owner_id">Owner</label><select class="field" id="owner_id" name="owner_id"><option value="">—</option>{team.map((p) => <option value={p.id} selected={p.id === deal!.owner_id}>{p.name}</option>)}</select></div>}
+          <FieldInputs fields={dealFields} values={deal.fields} />
+          {may && <div class="sm:col-span-2"><button class="btn-primary">Save</button></div>}
+        </form>
+        <p class="mt-3 text-xs text-white/40">Created {day(deal.created_at.slice(0, 10))} · in this stage since {day(deal.stage_changed_at.slice(0, 10))}</p>
+        {scope.canApprove && <form method="post" class="mt-3" onsubmit="return confirm('Delete this deal and its timeline? This can’t be undone.')"><input type="hidden" name="intent" value="delete" /><button class="text-xs text-white/40 hover:text-lk-red">Delete this deal</button></form>}
+      </details>
+    </div>
+  </div>
+</Crm>

@@ -30,6 +30,8 @@ declare namespace App {
     company: import('./lib/companies').Company | null;
     /** The company remembered in the admin's company filter (admin-company.ts), or null. */
     adminCompany: string | null;
+    /** The CRM's company: the venture whose CRM address this is (crm.doxai.com), or the CRM's remembered pick (lib/crm.ts). */
+    crmCompany: string | null;
     group: import('./lib/companies').Company | null;
     /** Companies this person administers as a company admin. */
     adminOf: string[];

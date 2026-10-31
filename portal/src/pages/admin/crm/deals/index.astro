@@ -1,0 +1,151 @@
+---
+import Crm from '../../../../layouts/Crm.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Alert from '../../../../components/Alert.astro';
+import Empty from '../../../../components/Empty.astro';
+import FieldInputs from '../../../../components/admin/crm/FieldInputs.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { shortDate } from '../../../../lib/format';
+import { CURRENCIES, SOURCES, cleanEmail, companyDomainOf, crmHref, crmScope, ensurePipeline, ensureRelationship, fieldsOf, findOrCreateCompany, findOrCreatePerson, logActivity, money, namesOf, readFields, salesTeam, validEmail, type Deal } from '../../../../lib/crm';
+import { notifyMembers } from '../../../../lib/notify';
+
+// CRM → Deals: every deal of the company, filtered by state, owner and pipeline, and a new deal (with its
+// company and main contact, found or added, so nobody is entered twice).
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+const q = Astro.url.searchParams;
+let error = '';
+const list = company ? await ensurePipeline(svc, company.id) : [];
+const team = company ? await salesTeam(svc, company.id) : [];
+const dealFields = company ? await fieldsOf(svc, company.id, 'deal') : [];
+
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canDo) throw new Error('You can see the deals but not add them.');
+    const pipeline = list.find((p) => p.id === field(form, 'pipeline_id')) ?? list[0];
+    const stage = pipeline?.stages.find((s) => s.id === field(form, 'stage_id') && s.kind === 'open') ?? pipeline?.stages.find((s) => s.kind === 'open');
+    if (!pipeline || !stage) throw new Error('Choose a pipeline with an open stage.');
+    const orgName = field(form, 'company_name');
+    const personName = field(form, 'person_name');
+    const email = cleanEmail(field(form, 'person_email'));
+    if (email && !validEmail(email)) throw new Error('That email address doesn’t look right.');
+    if (pipeline.kind !== 'people' && !orgName && !email) throw new Error('Name the company (or give the contact’s work email, and we’ll find it).');
+    if (pipeline.kind === 'people' && !personName) throw new Error('Give the person’s name.');
+    const owner = field(form, 'owner_id') || me;
+    if (owner !== me && !team.some((p) => p.id === owner)) throw new Error('Choose an owner from the sales team.');
+    if (owner !== me && !scope.canApprove) throw new Error('Only a sales lead gives deals to someone else.');
+    const amount = Number(field(form, 'amount').replace(/[, $€]/g, '') || 0);
+    if (!Number.isFinite(amount) || amount < 0) throw new Error('The value is a number, e.g. 86000.');
+    const currency = CURRENCIES.includes(field(form, 'currency')) ? field(form, 'currency') : company.crm_currency;
+
+    const domain = companyDomainOf(email);
+    const org = orgName || domain ? await findOrCreateCompany(svc, { name: orgName || domain!, domain, createdBy: me }) : null;
+    const person = personName || email ? await findOrCreatePerson(svc, { full_name: personName || email, email: email || null, job_title: field(form, 'person_title'), company_id: org?.id ?? null, createdBy: me }) : null;
+    const kind = pipeline.kind === 'partners' ? 'partner' : pipeline.kind === 'people' ? 'student' : 'prospect';
+    if (org) await ensureRelationship(svc, company.id, { company_id: org.id }, { kind, owner_id: owner, createdBy: me });
+    if (person) await ensureRelationship(svc, company.id, { person_id: person.id }, { kind, owner_id: owner, createdBy: me });
+    const title = field(form, 'title') || (pipeline.kind === 'people' ? personName : `${orgName || domain} — new deal`);
+    const close = /^\d{4}-\d{2}-\d{2}$/.test(field(form, 'expected_close')) ? field(form, 'expected_close') : null;
+    const referrer = field(form, 'referred_by') ? await findOrCreateCompany(svc, { name: field(form, 'referred_by'), createdBy: me }) : null;
+    const { data: d } = await svc.from('crm_deals').insert({
+      entity_id: company.id, pipeline_id: pipeline.id, stage_id: stage.id, title: title.slice(0, 200), company_id: org?.id ?? null, person_id: person?.id ?? null, owner_id: owner,
+      amount, currency, expected_close: close, source: SOURCES.includes(field(form, 'source')) ? field(form, 'source') : '', referred_by_company_id: referrer?.id ?? null,
+      next_step: field(form, 'next_step').slice(0, 300), next_step_on: /^\d{4}-\d{2}-\d{2}$/.test(field(form, 'next_step_on')) ? field(form, 'next_step_on') : null,
+      fields: readFields(form, dealFields), created_by: me,
+    }).select('id').single().throwOnError();
+    if (person) await svc.from('crm_deal_people').insert({ deal_id: d!.id, person_id: person.id, part: 'champion' });
+    await logActivity(svc, { entity_id: company.id, kind: 'system', deal_id: d!.id, subject: `Deal created in ${stage.name}`, created_by: me });
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_deal_created', event_detail: { entity_id: company.id, deal_id: d!.id } });
+    if (owner !== me) await notifyMembers({ kind: 'crm', origin: Astro.url.origin, link: `/admin/crm/deals/${d!.id}`, title: 'A deal for you', body: `${title} · ${money(amount, currency)}`, userIds: [owner] }).catch(() => 0);
+    return Astro.redirect(crmHref(scope, `/admin/crm/deals/${d!.id}`), 303);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+
+const status = ['open', 'won', 'lost', 'all'].includes(q.get('status') ?? '') ? q.get('status')! : 'open';
+const owner = q.get('owner') ?? 'all';
+const pick = list.find((p) => p.id === q.get('pipeline')) ?? null;
+type Row = Deal & { crm_companies: { name: string } | null; crm_people: { full_name: string } | null; crm_stages: { name: string; chance: number } | null };
+let rows: Row[] = [];
+if (company) {
+  let dq = svc.from('crm_deals').select('*, crm_companies!crm_deals_company_id_fkey(name), crm_people!crm_deals_person_id_fkey(full_name), crm_stages(name, chance)').eq('entity_id', company.id).order('updated_at', { ascending: false }).limit(500);
+  if (status !== 'all') dq = dq.eq('status', status);
+  if (owner === 'me') dq = dq.eq('owner_id', me);
+  else if (/^[0-9a-f-]{36}$/.test(owner)) dq = dq.eq('owner_id', owner);
+  if (pick) dq = dq.eq('pipeline_id', pick.id);
+  rows = ((await dq).data ?? []) as Row[];
+}
+const names = await namesOf(svc, rows.map((r) => r.owner_id));
+const link = (k: string, v: string) => { const p = new URLSearchParams(q); p.set(k, v); p.delete('new'); return `?${p}`; };
+const day = (d: string | null) => (d ? shortDate.format(new Date(`${d}T12:00:00+10:00`)) : '—');
+const startOpen = q.get('new') === '1' || Boolean(error);
+// Companies this venture already knows, suggested as you type.
+const { data: known } = company ? await svc.from('crm_relationships').select('crm_companies(name)').eq('entity_id', company.id).not('company_id', 'is', null).is('archived_at', null).limit(1000) : { data: [] };
+const orgNames = [...new Set(((known ?? []) as unknown as { crm_companies: { name: string } | null }[]).map((k) => k.crm_companies?.name).filter(Boolean) as string[])].sort();
+const newPipeline = list.find((p) => p.id === q.get('pipeline')) ?? list[0];
+---
+
+<Crm title="Deals" scope={scope}>
+  <PageHeader title="Deals" subtitle={`${company?.display_name ?? ''} · every deal, newest change first.`} />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {scope.canDo && company && (
+    <details class="card mb-6" open={startOpen} data-tour="crm-new-deal">
+      <summary class="cursor-pointer font-display text-lg font-bold">New deal</summary>
+      <form method="post" class="mt-5 grid gap-3 sm:grid-cols-2">
+        <div><label class="label" for="pipeline_id">Pipeline and stage</label>
+          <select class="field" id="pipeline_id" name="stage_id">{list.map((p) => <optgroup label={p.name}>{p.stages.filter((s) => s.kind === 'open').map((s) => <option value={s.id} selected={p.id === newPipeline?.id && s.sort === Math.min(...p.stages.map((x) => x.sort))}>{s.name}</option>)}</optgroup>)}</select>
+          <input type="hidden" name="pipeline_id" value="" data-pipeline-of />
+        </div>
+        <div><label class="label" for="title">Deal name <span class="text-white/40">(optional)</span></label><input class="field" id="title" name="title" placeholder="e.g. DoxAI Platform, 3 sites" /></div>
+        <div><label class="label" for="company_name">Company</label><input class="field" id="company_name" name="company_name" list="crm-orgs" autocomplete="off" placeholder="Harbour Logistics" /></div>
+        <div><label class="label" for="person_name">Main contact</label><input class="field" id="person_name" name="person_name" placeholder="Mia Chen" /></div>
+        <div><label class="label" for="person_email">Their work email</label><input class="field" type="email" id="person_email" name="person_email" placeholder="mia.chen@harbourlogistics.com" /></div>
+        <div><label class="label" for="person_title">Their role</label><input class="field" id="person_title" name="person_title" placeholder="Head of Operations" /></div>
+        <div class="grid grid-cols-[1fr_6rem] gap-2"><div><label class="label" for="amount">Value</label><input class="field" id="amount" name="amount" inputmode="decimal" placeholder="86000" /></div><div><label class="label" for="currency">Currency</label><select class="field" id="currency" name="currency">{CURRENCIES.map((c) => <option selected={c === company.crm_currency}>{c}</option>)}</select></div></div>
+        <div><label class="label" for="expected_close">Expected to close</label><input class="field" type="date" id="expected_close" name="expected_close" /></div>
+        <div><label class="label" for="source">Where it came from</label><select class="field" id="source" name="source"><option value="">—</option>{SOURCES.map((s) => <option>{s}</option>)}</select></div>
+        <div><label class="label" for="referred_by">Referred by <span class="text-white/40">(a partner, e.g. a university)</span></label><input class="field" id="referred_by" name="referred_by" list="crm-orgs" autocomplete="off" /></div>
+        <div><label class="label" for="next_step">Next step</label><input class="field" id="next_step" name="next_step" placeholder="Demo with their IT team" /></div>
+        <div><label class="label" for="next_step_on">By</label><input class="field" type="date" id="next_step_on" name="next_step_on" /></div>
+        {scope.canApprove && team.length > 1 && <div><label class="label" for="owner_id">Owner</label><select class="field" id="owner_id" name="owner_id">{team.map((p) => <option value={p.id} selected={p.id === me}>{p.name}</option>)}</select></div>}
+        <FieldInputs fields={dealFields} values={{}} />
+        <div class="sm:col-span-2"><button class="btn-primary">Create the deal</button><p class="mt-2 text-xs text-white/40">The company and contact are matched to existing records (by name, web domain or email) so nobody is entered twice.</p></div>
+      </form>
+      <script define:vars={{ map: Object.fromEntries(list.flatMap((p) => p.stages.map((s) => [s.id, p.id]))) }}>
+        const sel = document.getElementById('pipeline_id'); const hid = document.querySelector('[data-pipeline-of]');
+        const sync = () => { hid.value = map[sel.value] ?? ''; }; sel.addEventListener('change', sync); sync();
+      </script>
+    </details>
+  )}
+  <div class="mb-4 flex flex-wrap items-center gap-2 text-sm">
+    {[['open', 'Open'], ['won', 'Won'], ['lost', 'Lost'], ['all', 'All']].map(([k, l]) => <a href={link('status', k)} aria-current={status === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', status === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}
+    <span class="mx-1 text-white/20">|</span>
+    {[['all', 'Everyone'], ['me', 'Mine']].map(([k, l]) => <a href={link('owner', k)} aria-current={owner === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', owner === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}
+    {list.length > 1 && <><span class="mx-1 text-white/20">|</span>{list.map((p) => <a href={link('pipeline', p.id)} aria-current={pick?.id === p.id ? 'page' : undefined} class:list={['rounded-full px-3 py-1', pick?.id === p.id ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{p.name}</a>)}</>}
+  </div>
+  {rows.length ? (
+    <section class="card overflow-x-auto p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Deal</th><th class="px-5 py-3">Stage</th><th class="px-5 py-3 text-right">Value</th><th class="px-5 py-3">Owner</th><th class="px-5 py-3">Close</th><th class="px-5 py-3">Next step</th></tr></thead>
+        <tbody class="divide-y divide-white/5">
+          {rows.map((r) => (
+            <tr>
+              <td class="px-5 py-3"><a href={crmHref(scope, `/admin/crm/deals/${r.id}`)} class="font-medium text-white hover:text-lk-blue">{r.crm_companies?.name ?? r.crm_people?.full_name ?? r.title}</a><span class="block text-xs text-white/45">{r.title}</span></td>
+              <td class:list={['px-5 py-3', r.status === 'won' ? 'text-lk-green' : r.status === 'lost' ? 'text-lk-red' : 'text-white/65']}>{r.crm_stages?.name}</td>
+              <td class="px-5 py-3 text-right tabular-nums text-white">{money(Number(r.amount), r.currency)}</td>
+              <td class="px-5 py-3 text-white/65">{r.owner_id ? names.get(r.owner_id) : <span class="text-lk-orange">nobody</span>}</td>
+              <td class="px-5 py-3 text-white/65">{day(r.expected_close)}</td>
+              <td class="px-5 py-3 text-white/65">{r.next_step || <span class="text-white/35">—</span>}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </section>
+  ) : <Empty title="No deals here">{scope.canDo ? 'Create the first one above, or import a list (Import).' : 'Nothing to show with these filters.'}</Empty>}
+  <datalist id="crm-orgs">{orgNames.map((n) => <option value={n} />)}</datalist>
+</Crm>

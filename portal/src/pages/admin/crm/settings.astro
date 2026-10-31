@@ -1,0 +1,275 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { CURRENCIES, TEMPLATES, addPipeline, crmCompanies, crmScope, fieldsOf, pipelines, type CrmCompany } from '../../../lib/crm';
+import { domainStatus } from '../../../lib/domains';
+import { forgetVentureSites } from '../../../lib/sites';
+import { PORTAL_DOMAIN } from 'astro:env/server';
+
+// CRM → Settings: switching a company's CRM on (its Admins), its pipelines and stages, its own fields, its CRM
+// address (crm.doxai.com) and the currency its totals are shown in (sales leads and Admins).
+const svc = serviceClient();
+const { access, user } = Astro.locals;
+const url = Astro.url;
+const isAdminOf = (id: string) => access.roles.some((r) => r.role_key === 'admin' && (r.entity_id === null || r.entity_id === id)) && access.can('crm.approve', id);
+// Every company this person could switch the CRM on for, on or off.
+const all = (await crmCompanies(svc, access, { includeOff: true })).filter((c) => access.can('crm.approve', c.id));
+const scope = await crmScope(svc, Astro.locals, url);
+const code = (url.searchParams.get('company') ?? Astro.locals.crmCompany ?? '').toUpperCase();
+const current: CrmCompany | null = all.find((c) => c.code === code) ?? (scope.current && all.find((c) => c.id === scope.current!.id)) ?? all[0] ?? null;
+let error = '';
+let done = url.searchParams.get('done') ?? '';
+const here = (msg: string) => Astro.redirect(`/admin/crm/settings?company=${current!.code}&done=${encodeURIComponent(msg)}`, 303);
+const audit = (action: string, detail: Record<string, unknown>) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: current!.id, ...detail } });
+
+if (Astro.request.method === 'POST' && current) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (!access.can('crm.approve', current.id)) throw new Error('Only a sales lead or an Admin of the company changes its CRM settings.');
+    if (intent === 'switch') {
+      if (!isAdminOf(current.id)) throw new Error('Only the company’s Admins switch its CRM on or off.');
+      const on = field(form, 'on') === 'yes';
+      await svc.from('entities').update({ crm_enabled: on }).eq('id', current.id);
+      if (on) { const list = await pipelines(svc, current.id); if (!list.length) await addPipeline(svc, current.id, 'b2b'); }
+      forgetVentureSites();
+      await audit(on ? 'crm_switched_on' : 'crm_switched_off', {});
+      return here(on ? 'The CRM is on.' : 'The CRM is off. Its records are kept.');
+    }
+    if (intent === 'add-pipeline') {
+      const t = field(form, 'template') as keyof typeof TEMPLATES;
+      if (!(t in TEMPLATES)) throw new Error('Choose a kind of pipeline.');
+      await addPipeline(svc, current.id, t, field(form, 'name'));
+      await audit('crm_pipeline_added', { template: t });
+      return here('Pipeline added.');
+    }
+    const pipelineOf = async (id: string) => (await pipelines(svc, current.id, true)).find((p) => p.id === id) ?? null;
+    if (intent === 'save-pipeline') {
+      const p = await pipelineOf(field(form, 'pipeline_id'));
+      if (!p) throw new Error('That pipeline isn’t here any more.');
+      const name = field(form, 'name');
+      if (name) await svc.from('crm_pipelines').update({ name: name.slice(0, 100) }).eq('id', p.id);
+      for (const s of p.stages) {
+        const n = field(form, `stage_${s.id}_name`);
+        if (!n) continue;
+        const chance = Math.max(0, Math.min(100, Number(field(form, `stage_${s.id}_chance`)) || 0));
+        const cold = Math.max(1, Math.min(365, Number(field(form, `stage_${s.id}_cold`)) || 14));
+        const sort = Number(field(form, `stage_${s.id}_sort`));
+        await svc.from('crm_stages').update({ name: n.slice(0, 60), chance: s.kind === 'won' ? 100 : s.kind === 'lost' ? 0 : chance, cold_after_days: cold, exit_criteria: field(form, `stage_${s.id}_exit`).slice(0, 500), ...(Number.isFinite(sort) ? { sort } : {}) }).eq('id', s.id);
+      }
+      await audit('crm_pipeline_changed', { pipeline_id: p.id });
+      return here('Pipeline saved.');
+    }
+    if (intent === 'add-stage') {
+      const p = await pipelineOf(field(form, 'pipeline_id'));
+      if (!p) throw new Error('That pipeline isn’t here any more.');
+      const name = field(form, 'name');
+      if (!name) throw new Error('Name the stage.');
+      // New open stages go before won and lost.
+      const lastOpen = Math.max(-1, ...p.stages.filter((s) => s.kind === 'open').map((s) => s.sort));
+      for (const s of p.stages.filter((s) => s.sort > lastOpen)) await svc.from('crm_stages').update({ sort: s.sort + 1 }).eq('id', s.id);
+      await svc.from('crm_stages').insert({ pipeline_id: p.id, name: name.slice(0, 60), sort: lastOpen + 1, chance: Math.max(0, Math.min(100, Number(field(form, 'chance')) || 50)) });
+      return here('Stage added.');
+    }
+    if (intent === 'remove-stage') {
+      const p = await pipelineOf(field(form, 'pipeline_id'));
+      const s = p?.stages.find((x) => x.id === field(form, 'stage_id'));
+      if (!p || !s) throw new Error('That stage isn’t here any more.');
+      if (s.kind !== 'open') throw new Error('Won and lost stay: every pipeline needs them.');
+      const { count } = await svc.from('crm_deals').select('id', { count: 'exact', head: true }).eq('stage_id', s.id);
+      if (count) throw new Error(`${count} deal${count === 1 ? ' is' : 's are'} in “${s.name}”. Move ${count === 1 ? 'it' : 'them'} first.`);
+      await svc.from('crm_stages').delete().eq('id', s.id);
+      return here('Stage removed.');
+    }
+    if (intent === 'archive-pipeline' || intent === 'restore-pipeline') {
+      const p = await pipelineOf(field(form, 'pipeline_id'));
+      if (!p) throw new Error('That pipeline isn’t here any more.');
+      const live = (await pipelines(svc, current.id)).length;
+      if (intent === 'archive-pipeline' && live <= 1) throw new Error('Keep at least one pipeline.');
+      await svc.from('crm_pipelines').update({ archived_at: intent === 'archive-pipeline' ? new Date().toISOString() : null }).eq('id', p.id);
+      return here(intent === 'archive-pipeline' ? 'Pipeline put away. Its deals are kept.' : 'Pipeline back in use.');
+    }
+    if (intent === 'add-field') {
+      const label = field(form, 'label');
+      const appliesTo = field(form, 'applies_to');
+      const type = field(form, 'type');
+      if (!label) throw new Error('Name the field.');
+      if (!['deal', 'person', 'company'].includes(appliesTo)) throw new Error('Choose what the field is on.');
+      if (!['text', 'number', 'date', 'choice', 'yes_no'].includes(type)) throw new Error('Choose the kind of field.');
+      const key = label.toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').replace(/^(\d)/, 'f_$1').slice(0, 40) || 'field';
+      const choices = type === 'choice' ? field(form, 'choices').split(/[,\n]/).map((c) => c.trim()).filter(Boolean).slice(0, 50) : [];
+      if (type === 'choice' && !choices.length) throw new Error('List the choices, separated by commas.');
+      const { error: e } = await svc.from('crm_fields').insert({ entity_id: current.id, applies_to: appliesTo, key, label: label.slice(0, 80), type, choices, sort: 99 });
+      if (e?.code === '23505') throw new Error('There is already a field with that name there.');
+      if (e) throw e;
+      await audit('crm_field_added', { key, applies_to: appliesTo });
+      return here('Field added.');
+    }
+    if (intent === 'remove-field') {
+      await svc.from('crm_fields').delete().eq('id', field(form, 'field_id')).eq('entity_id', current.id);
+      return here('Field removed. Values already filled in are kept on the records.');
+    }
+    if (intent === 'currency') {
+      const c = field(form, 'currency');
+      if (!CURRENCIES.includes(c)) throw new Error('Choose a currency.');
+      await svc.from('entities').update({ crm_currency: c }).eq('id', current.id);
+      return here('Currency saved.');
+    }
+    if (intent === 'domain') {
+      if (!isAdminOf(current.id)) throw new Error('Only the company’s Admins set its CRM address.');
+      const host = field(form, 'crm_domain').toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+      if (!host) {
+        await svc.from('entities').update({ crm_domain: null, crm_domain_verified_at: null }).eq('id', current.id);
+        forgetVentureSites();
+        await audit('crm_domain_removed', {});
+        return here('The CRM address is removed; the CRM stays in the admin.');
+      }
+      if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) || host.split('.').length < 3) throw new Error('Use an address like crm.doxai.com (a name under the company’s own domain).');
+      if (/(^|\.)lakeba\.com$/.test(host) || host === (PORTAL_DOMAIN ?? '').toLowerCase()) throw new Error('That address belongs to Lakeba. Use one under the company’s own domain.');
+      const { data: taken } = await svc.from('entities').select('id').or(`custom_domain.eq.${host},crm_domain.eq.${host}`).neq('id', current.id).limit(1);
+      if (taken?.length) throw new Error('Another company already uses that address.');
+      const dns = await domainStatus(host);
+      await svc.from('entities').update({ crm_domain: host, crm_domain_verified_at: dns.ok ? new Date().toISOString() : null }).eq('id', current.id);
+      forgetVentureSites();
+      await audit('crm_domain_set', { domain: host, verified: dns.ok });
+      return here(dns.ok ? `${host} points to the portal: the CRM opens there now.` : `Saved. ${dns.problem ?? 'It doesn’t point to the portal yet.'}`);
+    }
+    if (intent === 'check-domain' && current.crm_domain) {
+      const dns = await domainStatus(current.crm_domain);
+      await svc.from('entities').update({ crm_domain_verified_at: dns.ok ? current.crm_domain_verified_at ?? new Date().toISOString() : null }).eq('id', current.id);
+      forgetVentureSites();
+      return here(dns.ok ? `${current.crm_domain} points to the portal.` : dns.problem ?? 'It doesn’t point to the portal yet.');
+    }
+  } catch (e) {
+    error = (e as Error).message;
+    done = '';
+  }
+}
+
+const list = current ? await pipelines(svc, current.id, true) : [];
+const { data: counts } = current ? await svc.from('crm_deals').select('stage_id').eq('entity_id', current.id).eq('status', 'open') : { data: [] };
+const inStage = new Map<string, number>();
+for (const d of counts ?? []) inStage.set(d.stage_id, (inStage.get(d.stage_id) ?? 0) + 1);
+const fields = current ? [...await fieldsOf(svc, current.id, 'deal'), ...await fieldsOf(svc, current.id, 'person'), ...await fieldsOf(svc, current.id, 'company')] : [];
+const portalHost = (PORTAL_DOMAIN ?? '').trim() || 'the portal’s address';
+const ON = { deal: 'Deals', person: 'People', company: 'Companies' } as const;
+const TYPES = { text: 'Text', number: 'Number', date: 'Date', choice: 'Choice from a list', yes_no: 'Yes or no' } as const;
+// The layout's company is this page's pick (it may be one whose CRM is still off).
+const layoutScope = { ...scope, current, companies: all, canSettings: true };
+---
+
+<Crm title="Settings" scope={layoutScope} always>
+  <PageHeader title="CRM settings" subtitle="Switch the CRM on for a company, shape its pipelines and fields, and give it its own address." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {done && <div class="mb-6"><Alert tone="success">{done}</Alert></div>}
+  {!current ? <div class="card"><p class="text-sm text-white/60">You don’t lead sales or administer any company yet.</p></div> : (
+  <div class="grid gap-6">
+    {all.length > 1 && (
+      <form method="get" class="flex items-center gap-2 text-sm"><label class="text-white/55" for="company">Company</label><select class="field !w-auto" id="company" name="company">{all.map((c) => <option value={c.code} selected={c.id === current.id}>{c.display_name}{c.crm_enabled ? '' : ' (off)'}</option>)}</select><button class="btn-ghost !py-1.5">Open</button></form>
+    )}
+    <section class="card" data-tour="crm-switch">
+      <div class="flex flex-wrap items-center justify-between gap-4">
+        <div>
+          <h2 class="font-display text-xl font-bold">The CRM is {current.crm_enabled ? 'on' : 'off'} for {current.display_name}</h2>
+          <p class="mt-1 text-sm text-white/55">{current.crm_enabled ? 'Its salespeople (Sales and Sales lead roles, in Users) work in it.' : 'Switch it on to start; give people the Sales or Sales lead role for this company in Settings → Users.'}</p>
+        </div>
+        {isAdminOf(current.id) && <form method="post"><input type="hidden" name="intent" value="switch" /><input type="hidden" name="on" value={current.crm_enabled ? 'no' : 'yes'} /><button class={current.crm_enabled ? 'btn-ghost' : 'btn-primary'}>{current.crm_enabled ? 'Switch off' : 'Switch the CRM on'}</button></form>}
+      </div>
+    </section>
+
+    {list.map((p) => (
+      <section class:list={['card', p.archived_at && 'opacity-60']}>
+        <form method="post">
+          <input type="hidden" name="intent" value="save-pipeline" /><input type="hidden" name="pipeline_id" value={p.id} />
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <div class="flex items-center gap-3"><input class="field !w-64 font-display text-lg font-bold" name="name" value={p.name} aria-label="Pipeline name" /><span class="text-xs text-white/45">{p.kind === 'deals' ? 'Deals with companies' : p.kind === 'partners' ? 'Partner organisations' : 'One person each'}{p.archived_at && ' · put away'}</span></div>
+            <button class="btn-primary !py-1.5">Save</button>
+          </div>
+          <div class="mt-4 overflow-x-auto">
+            <table class="w-full text-left text-sm">
+              <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="py-2 pr-2">Order</th><th class="py-2 pr-2">Stage</th><th class="py-2 pr-2">Chance %</th><th class="py-2 pr-2">Cold after (days)</th><th class="py-2 pr-2">What must be true to move on</th><th class="py-2">Deals</th><th></th></tr></thead>
+              <tbody class="divide-y divide-white/5">
+                {p.stages.map((s) => (
+                  <tr>
+                    <td class="py-2 pr-2"><input class="field !w-16" type="number" name={`stage_${s.id}_sort`} value={s.sort} aria-label="Order" /></td>
+                    <td class="py-2 pr-2"><input class="field !w-44" name={`stage_${s.id}_name`} value={s.name} aria-label="Stage name" />{s.kind !== 'open' && <span class:list={['ml-2 text-xs', s.kind === 'won' ? 'text-lk-green' : 'text-lk-red']}>{s.kind}</span>}</td>
+                    <td class="py-2 pr-2"><input class="field !w-20" type="number" min="0" max="100" name={`stage_${s.id}_chance`} value={s.chance} disabled={s.kind !== 'open'} aria-label="Chance" /></td>
+                    <td class="py-2 pr-2"><input class="field !w-20" type="number" min="1" max="365" name={`stage_${s.id}_cold`} value={s.cold_after_days} aria-label="Cold after" /></td>
+                    <td class="py-2 pr-2"><input class="field min-w-56" name={`stage_${s.id}_exit`} value={s.exit_criteria} aria-label="Exit criteria" /></td>
+                    <td class="py-2 text-white/55">{inStage.get(s.id) ?? 0}</td>
+                    <td class="py-2 text-right">{s.kind === 'open' && <button form={`rm-${s.id}`} class="text-xs text-white/45 hover:text-lk-red">Remove</button>}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </form>
+        {p.stages.filter((s) => s.kind === 'open').map((s) => <form id={`rm-${s.id}`} method="post" class="hidden"><input type="hidden" name="intent" value="remove-stage" /><input type="hidden" name="pipeline_id" value={p.id} /><input type="hidden" name="stage_id" value={s.id} /></form>)}
+        <div class="mt-4 flex flex-wrap items-end justify-between gap-3">
+          <form method="post" class="flex flex-wrap items-end gap-2"><input type="hidden" name="intent" value="add-stage" /><input type="hidden" name="pipeline_id" value={p.id} />
+            <div><label class="label" for={`ns-${p.id}`}>New stage</label><input class="field !w-48" id={`ns-${p.id}`} name="name" placeholder="e.g. Security review" /></div>
+            <div><label class="label" for={`nc-${p.id}`}>Chance %</label><input class="field !w-20" id={`nc-${p.id}`} type="number" name="chance" min="0" max="100" value="50" /></div>
+            <button class="btn-ghost !py-2">Add stage</button>
+          </form>
+          <form method="post"><input type="hidden" name="intent" value={p.archived_at ? 'restore-pipeline' : 'archive-pipeline'} /><input type="hidden" name="pipeline_id" value={p.id} /><button class="text-sm text-white/45 hover:text-white">{p.archived_at ? 'Use again' : 'Put away'}</button></form>
+        </div>
+      </section>
+    ))}
+
+    <section class="card">
+      <h2 class="font-display text-lg font-bold">Add a pipeline</h2>
+      <p class="mt-1 text-sm text-white/55">Start from a ready-made one and change its stages above. MIST, for example, uses one for universities and one for students.</p>
+      <form method="post" class="mt-4 flex flex-wrap items-end gap-2"><input type="hidden" name="intent" value="add-pipeline" />
+        <div><label class="label" for="template">Kind</label><select class="field" id="template" name="template">{Object.entries(TEMPLATES).map(([k, t]) => <option value={k}>{t.label}</option>)}</select></div>
+        <div><label class="label" for="pname">Name (optional)</label><input class="field" id="pname" name="name" placeholder="e.g. Enterprise" /></div>
+        <button class="btn-primary !py-2">Add</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <h2 class="font-display text-lg font-bold">Your own fields</h2>
+      <p class="mt-1 text-sm text-white/55">Extra details your team keeps on deals, people or companies (e.g. number of sites, intake year).</p>
+      {fields.length > 0 && (
+        <ul class="mt-4 divide-y divide-white/5 text-sm">{fields.map((f) => (
+          <li class="flex items-center justify-between gap-3 py-2"><span><span class="text-white">{f.label}</span> <span class="text-white/45">· {ON[f.applies_to]} · {TYPES[f.type]}{f.choices.length > 0 && `: ${f.choices.join(', ')}`}</span></span>
+            <form method="post"><input type="hidden" name="intent" value="remove-field" /><input type="hidden" name="field_id" value={f.id} /><button class="text-xs text-white/45 hover:text-lk-red">Remove</button></form></li>
+        ))}</ul>
+      )}
+      <form method="post" class="mt-4 grid gap-2 sm:grid-cols-4"><input type="hidden" name="intent" value="add-field" />
+        <div><label class="label" for="flabel">Name</label><input class="field" id="flabel" name="label" required /></div>
+        <div><label class="label" for="fon">On</label><select class="field" id="fon" name="applies_to">{Object.entries(ON).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
+        <div><label class="label" for="ftype">Kind</label><select class="field" id="ftype" name="type">{Object.entries(TYPES).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
+        <div><label class="label" for="fchoices">Choices (for a list)</label><input class="field" id="fchoices" name="choices" placeholder="Small, Medium, Large" /></div>
+        <button class="btn-ghost !py-2 sm:col-span-4 sm:justify-self-start">Add field</button>
+      </form>
+    </section>
+
+    <section class="card" data-tour="crm-address">
+      <h2 class="font-display text-lg font-bold">The CRM’s own address</h2>
+      <p class="mt-1 text-sm text-white/55">The salespeople can open the CRM at an address under the company’s domain, such as crm.doxai.com. Its IT adds one DNS record: a <b class="text-white">CNAME</b> for that name pointing to <b class="text-white">{portalHost}</b>. People with roles only at this company sign in there; Lakeba staff keep using it here.</p>
+      {current.crm_domain && <p class="mt-3 text-sm"><b class="text-white">{current.crm_domain}</b> · {current.crm_domain_verified_at ? <span class="text-lk-green">points to the portal; the CRM opens there</span> : <span class="text-lk-orange">waiting for the DNS record</span>}</p>}
+      {isAdminOf(current.id) ? (
+        <div class="mt-4 flex flex-wrap items-end gap-2">
+          <form method="post" class="flex flex-wrap items-end gap-2"><input type="hidden" name="intent" value="domain" />
+            <div><label class="label" for="crm_domain">Address</label><input class="field !w-64" id="crm_domain" name="crm_domain" value={current.crm_domain ?? ''} placeholder="crm.doxai.com" /></div>
+            <button class="btn-primary !py-2">Save</button>
+          </form>
+          {current.crm_domain && <form method="post"><input type="hidden" name="intent" value="check-domain" /><button class="btn-ghost !py-2">Check now</button></form>}
+        </div>
+      ) : <p class="mt-3 text-xs text-white/45">The company’s Admins set it.</p>}
+    </section>
+
+    <section class="card">
+      <h2 class="font-display text-lg font-bold">Currency for totals</h2>
+      <p class="mt-1 text-sm text-white/55">Each deal keeps its own currency (A$, C$, €…); pipeline and forecast totals are shown in this one.</p>
+      <form method="post" class="mt-4 flex items-end gap-2"><input type="hidden" name="intent" value="currency" />
+        <select class="field !w-32" name="currency" aria-label="Currency">{CURRENCIES.map((c) => <option selected={c === current.crm_currency}>{c}</option>)}</select>
+        <button class="btn-ghost !py-2">Save</button>
+      </form>
+    </section>
+  </div>
+  )}
+</Crm>
