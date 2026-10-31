@@ -166,7 +166,9 @@ if (Astro.request.method === 'POST' && current) {
         return here('The CRM address is removed; the CRM stays in the admin.');
       }
       if (!/^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(host) || host.split('.').length < 3) throw new Error('Use an address like crm.doxai.com (a name under the company’s own domain).');
-      if (/(^|\.)lakeba\.com$/.test(host) || host === (PORTAL_DOMAIN ?? '').toLowerCase()) throw new Error('That address belongs to Lakeba. Use one under the company’s own domain.');
+      // lakeba.com names are Lakeba Group's own (crm.lakeba.com); never the portal's address or its venture addresses.
+      const portal = (PORTAL_DOMAIN ?? '').toLowerCase();
+      if ((/(^|\.)lakeba\.com$/.test(host) && current.relationship !== 'group') || host === portal || (portal && host.endsWith(`.${portal}`))) throw new Error('That address belongs to Lakeba. Use one under the company’s own domain.');
       const { data: taken } = await svc.from('entities').select('id').or(`custom_domain.eq.${host},crm_domain.eq.${host}`).neq('id', current.id).limit(1);
       if (taken?.length) throw new Error('Another company already uses that address.');
       const dns = await domainStatus(host);

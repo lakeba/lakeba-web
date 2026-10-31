@@ -87,7 +87,7 @@ export default defineConfig({
       WHATSAPP_NUMBER: envField.string({ context: 'server', access: 'secret', optional: true }),
       WHATSAPP_VERIFY_TOKEN: envField.string({ context: 'server', access: 'secret', optional: true }),
       WHATSAPP_APP_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
-      WHATSAPP_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://graph.facebook.com/v21.0' }),
+      WHATSAPP_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://graph.facebook.com/v26.0' }),
       ELEVENLABS_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       ELEVENLABS_VOICE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
       // How fast Lex speaks: 0.7 (slow) to 1.2 (fast); 1 is the voice's own pace.
