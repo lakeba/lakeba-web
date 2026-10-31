@@ -49,7 +49,8 @@ The CRM's pages are `/admin/crm/…` on the portal's address. A company can add 
 (CRM → Settings → The CRM's own address): a CNAME to the portal's address; once it points there, the CRM
 opens at its root and everything else goes to the central address. Sign-in happens on the central address
 and a one-time pass carries it across (`auth/pass`), **only for people whose every role is for that
-company**; Lakeba staff use the CRM on the central address. Caddy's on-demand certificates are allowed for
+company**; Lakeba staff use the CRM on the central address. Lakeba Group's own CRM address is a lakeba.com name
+(crm.lakeba.com, only Lakeba Group may set one): it is in Lakeba's DNS, so Lakeba's staff sign in there too. Caddy's on-demand certificates are allowed for
 verified CRM addresses (`/api/public/domain-check`).
 
 ## Xero, end to end (lib/crm-xero.ts)

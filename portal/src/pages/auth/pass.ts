@@ -21,7 +21,8 @@ import { loadAccess } from '../../lib/access';
  *
  * A venture's CRM address (crm.doxai.com) works the same way for its staff: a pass only for people whose
  * every role is for that venture alone (its salespeople, sales lead, admins) and who may open its CRM.
- * Anyone with a role for the group or another company opens the CRM on the central address.
+ * Anyone with a role for the group or another company opens the CRM on the central address, except on a
+ * lakeba.com CRM address (Lakeba Group's own, in Lakeba's DNS), which Lakeba's staff may use too.
  */
 export const GET: APIRoute = async ({ url, locals, redirect }) => {
   const to = url.searchParams.get('to') ?? '';
@@ -60,7 +61,9 @@ async function crmPass(target: URL, crm: { id: string; code: string }, locals: A
     domainStatus(target.hostname),
   ]);
   const onlyThisVenture = (roles ?? []).length > 0 && (roles ?? []).every((r) => r.entity_id === crm.id);
-  if (!onlyThisVenture || !access.can('crm.view', crm.id) || !dns.ok) return instead();
+  // A lakeba.com CRM address (crm.lakeba.com) is in Lakeba's own DNS, so Lakeba's staff may use it too.
+  const lakebaOwn = /(^|\.)lakeba\.com$/.test(target.hostname);
+  if ((!onlyThisVenture && !lakebaOwn) || !access.can('crm.view', crm.id) || !dns.ok) return instead();
   const token = randomBytes(32).toString('base64url');
   await svc.from('sign_in_passes').insert({
     token_hash: createHash('sha256').update(token).digest('hex'), user_id: user.id, target_origin: target.origin,

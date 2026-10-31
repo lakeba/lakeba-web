@@ -54,9 +54,9 @@ export function siteOriginFor(url: URL, c: Pick<Company, 'relationship'> & Parti
   return centralOrigin(url);
 }
 
-/** Whether an absolute address is on a venture's own domain (sign-in gets there with a one-time pass). */
+/** Whether an absolute address is on a venture's own domain or CRM address (sign-in gets there with a one-time pass). */
 export function isOwnDomainAddress(href: string) {
-  try { const u = new URL(href); return /^https?:$/.test(u.protocol) && Boolean(ownDomainVenture(u.hostname)) && !u.username && !u.password; } catch { return false; }
+  try { const u = new URL(href); return /^https?:$/.test(u.protocol) && Boolean(ownDomainVenture(u.hostname) || crmDomainVenture(u.hostname)) && !u.username && !u.password; } catch { return false; }
 }
 
 /** Whether an absolute address is the central one, for redirects after sign-in (own domains go through a pass). */
