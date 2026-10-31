@@ -81,6 +81,13 @@ export default defineConfig({
       ASSEMBLYAI_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://api.assemblyai.com' }),
       ASSEMBLYAI_STREAMING_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://streaming.assemblyai.com' }),
       // Lex's voice (the board assistant on the Observer tablet): an ElevenLabs key; the voice and model can be changed here.
+      // The CRM's WhatsApp assistant (Meta's WhatsApp Business Cloud API; lib/whatsapp.ts). Without a token it's off.
+      WHATSAPP_TOKEN: envField.string({ context: 'server', access: 'secret', optional: true }),
+      WHATSAPP_PHONE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
+      WHATSAPP_NUMBER: envField.string({ context: 'server', access: 'secret', optional: true }),
+      WHATSAPP_VERIFY_TOKEN: envField.string({ context: 'server', access: 'secret', optional: true }),
+      WHATSAPP_APP_SECRET: envField.string({ context: 'server', access: 'secret', optional: true }),
+      WHATSAPP_API_BASE: envField.string({ context: 'server', access: 'secret', default: 'https://graph.facebook.com/v21.0' }),
       ELEVENLABS_API_KEY: envField.string({ context: 'server', access: 'secret', optional: true }),
       ELEVENLABS_VOICE_ID: envField.string({ context: 'server', access: 'secret', optional: true }),
       // How fast Lex speaks: 0.7 (slow) to 1.2 (fast); 1 is the voice's own pace.

@@ -1,0 +1,68 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { crmHref, crmScope } from '../../../lib/crm';
+import { linkCode, whatsappNumber, whatsappReady } from '../../../lib/whatsapp';
+
+// CRM → My phone: the CRM on the phone. Link your WhatsApp to update deals and ask questions there (text or
+// voice); install the CRM as an app (Android app, or "Add to Home Screen" on iPhone); voice notes after calls.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+const me = Astro.locals.user!.id;
+let error = '';
+let code: string | null = null;
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canDo) throw new Error('Only people who sell for the company link a phone.');
+    if (field(form, 'intent') === 'code') code = await linkCode(svc, me, company.id);
+    if (field(form, 'intent') === 'unlink') {
+      await svc.from('crm_phones').delete().eq('user_id', me).eq('entity_id', company.id);
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_whatsapp_unlinked', event_detail: { entity_id: company.id } });
+    }
+  } catch (e) { error = (e as Error).message; }
+}
+const { data: phone } = company ? await svc.from('crm_phones').select('phone, linked_at').eq('user_id', me).eq('entity_id', company.id).maybeSingle() : { data: null };
+const number = whatsappNumber();
+const wa = code && number ? `https://wa.me/${number}?text=${encodeURIComponent(`LINK ${code}`)}` : null;
+const masked = phone?.phone ? `+${phone.phone.slice(0, -4).replace(/\d/g, '•')}${phone.phone.slice(-4)}` : '';
+---
+
+<Crm title="My phone" scope={scope}>
+  <PageHeader title="My phone" subtitle="Update your deals and ask questions from your phone: on WhatsApp (text or voice), or in the CRM app." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  <div class="grid gap-6 lg:grid-cols-2">
+    <section class="card" data-tour="crm-whatsapp">
+      <h2 class="font-display text-lg font-bold">WhatsApp</h2>
+      {!whatsappReady() ? <p class="mt-2 text-sm text-white/55">The WhatsApp assistant isn’t switched on on this server yet (Lakeba sets up the WhatsApp Business number).</p>
+        : phone?.linked_at ? (
+          <>
+            <p class="mt-2 text-sm text-white/75">Linked to {masked}. Message the CRM’s number{number && <> (<a class="text-lk-blue" href={`https://wa.me/${number}`}>+{number}</a>)</>}: “Just left Harbour, budget approved, follow up Wednesday”, or “What’s my day tomorrow?”. Voice notes work too, and get a spoken reply.</p>
+            <form method="post" class="mt-3"><input type="hidden" name="intent" value="unlink" /><button class="text-xs text-white/45 hover:text-lk-red">Unlink</button></form>
+          </>
+        ) : code ? (
+          <>
+            <p class="mt-2 text-sm text-white/75">Send this code from your WhatsApp within 30 minutes:</p>
+            <p class="mt-2 font-display text-3xl font-bold tracking-widest text-white">{code}</p>
+            {wa && <a class="btn-primary mt-3" href={wa}>Open WhatsApp and send it</a>}
+            <p class="mt-2 text-xs text-white/40">On a computer: send “LINK {code}” to +{number} from your phone.</p>
+          </>
+        ) : (
+          <>
+            <p class="mt-2 text-sm text-white/65">Link your own WhatsApp number once. Only your deals change; nothing goes to a buyer or to Xero from WhatsApp.</p>
+            <form method="post" class="mt-3"><input type="hidden" name="intent" value="code" /><button class="btn-primary">Link my WhatsApp</button></form>
+          </>
+        )}
+    </section>
+    <section class="card" data-tour="crm-app">
+      <h2 class="font-display text-lg font-bold">The CRM app</h2>
+      <p class="mt-2 text-sm text-white/65"><b class="text-white">Android:</b> install “Lakeba CRM” (your sales lead shares the install link). After each business call it asks how it went and takes a voice note.</p>
+      <p class="mt-2 text-sm text-white/65"><b class="text-white">iPhone:</b> open the CRM in Safari, tap Share, then <b class="text-white">Add to Home Screen</b>. It opens like an app, with notifications.</p>
+      <a class="btn-ghost mt-4" href={crmHref(scope, '/admin/crm/voice')}>Try a voice note now</a>
+    </section>
+  </div>
+</Crm>

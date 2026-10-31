@@ -1,0 +1,145 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { crmHref, crmScope, money } from '../../../lib/crm';
+import { aiBudget } from '../../../lib/crm-ai';
+import { applyProposal, interpret, readCard, transcribeNote, type Proposal } from '../../../lib/crm-voice';
+
+// CRM → Voice note: after a call or meeting, say (or type) how it went; or photograph a business card. Lakeba AI
+// proposes the changes (a note on the right deal, its next step, a stage it reached, a task, a new contact) and
+// the salesperson ticks what to keep. The CRM app on the phone opens this page when a call ends.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+const me = Astro.locals.user!.id;
+const afterCall = Astro.url.searchParams.get('after_call') === '1';
+let error = '';
+let done: string[] | null = null;
+let doneDeal: string | null = null;
+let proposal: Proposal | null = null;
+let raw = '';
+let source: 'voice' | 'card' = 'voice';
+
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canDo) throw new Error('Only people who sell for the company update it.');
+    const intent = field(form, 'intent');
+    if (intent === 'read') {
+      const audio = form.get('audio'), photo = form.get('photo');
+      if (photo instanceof File && photo.size) {
+        if (photo.size > 8_000_000) throw new Error('The photo is over 8 MB.');
+        const mime = ['image/jpeg', 'image/png', 'image/webp', 'image/gif'].includes(photo.type) ? photo.type : 'image/jpeg';
+        const card = await readCard(svc, { entityId: company.id, userId: me, image: Buffer.from(await photo.arrayBuffer()), mime });
+        source = 'card';
+        raw = [card.name, card.job_title, card.company, card.email, card.phone, card.website].filter(Boolean).join(' · ');
+        proposal = await interpret(svc, { entityId: company.id, userId: me, text: `I met someone; their business card says: ${raw}. ${field(form, 'text')}`, feature: 'voice' });
+        proposal.contact = { name: card.name, email: card.email, job_title: card.job_title, company: card.company, phone: card.phone };
+      } else {
+        raw = field(form, 'text');
+        if (audio instanceof File && audio.size) {
+          if (audio.size > 20_000_000) throw new Error('The recording is too long: keep it under a few minutes.');
+          raw = [await transcribeNote(Buffer.from(await audio.arrayBuffer()), audio.type.split(';')[0] || 'audio/webm'), raw].filter(Boolean).join(' ');
+        }
+        if (raw.length < 3) throw new Error('Record a few words, or type them.');
+        proposal = await interpret(svc, { entityId: company.id, userId: me, text: raw, feature: 'voice' });
+      }
+    } else if (intent === 'apply') {
+      const p = JSON.parse(field(form, 'proposal')) as Proposal;
+      raw = field(form, 'raw');
+      const parts = new Set(form.getAll('part').map(String));
+      if (p.next_step !== undefined) p.next_step = field(form, 'next_step') || p.next_step;
+      const r = await applyProposal(svc, { entityId: company.id, userId: me, p, parts, source: field(form, 'source') === 'card' ? 'card' : 'voice', raw });
+      done = r.done;
+      doneDeal = r.deal?.id ?? null;
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+const budget = company ? await aiBudget(svc, company.id) : null;
+const tick = (name: string, label: string, on = true) => ({ name, label, on });
+const parts = proposal ? [
+  proposal.deal_id && (proposal.note || raw) ? tick('note', `Notes on ${proposal.deal_label}`) : null,
+  proposal.deal_id && proposal.next_step ? tick('next', `Next step: ${proposal.next_step}${proposal.next_step_on ? ` (${proposal.next_step_on})` : ''}`) : null,
+  proposal.deal_id && proposal.stage ? tick('stage', `Move to ${proposal.stage}`) : null,
+  proposal.deal_id && proposal.amount ? tick('amount', `New value: ${money(proposal.amount, company!.crm_currency)}`, false) : null,
+  proposal.task ? tick('task', `Task: ${proposal.task}${proposal.task_due ? ` (${proposal.task_due})` : ''}`) : null,
+  proposal.contact ? tick('contact', `Contact: ${[proposal.contact.name, proposal.contact.job_title, proposal.contact.company, proposal.contact.email].filter(Boolean).join(', ')}`) : null,
+].filter(Boolean) as { name: string; label: string; on: boolean }[] : [];
+---
+
+<Crm title="Voice note" scope={scope}>
+  <div class="mx-auto max-w-xl">
+    <p class="text-sm text-white/45">{afterCall ? 'Call ended' : 'Quick update'}</p>
+    <h1 class="mt-1 font-display text-3xl font-bold">{afterCall ? 'How did it go?' : 'Tell the CRM'}</h1>
+    {!budget?.ok && <div class="mt-4"><Alert tone="info">Lakeba AI is paused for this CRM, so voice notes can’t be read this month. Update the deal directly.</Alert></div>}
+    {error && <div class="mt-4"><Alert tone="error">{error}</Alert></div>}
+    {done && (
+      <section class="card mt-6">
+        <p class="font-medium text-lk-green">Saved</p>
+        <ul class="mt-2 list-disc pl-5 text-sm text-white/75">{done.map((d) => <li>{d}</li>)}{!done.length && <li>Nothing was changed.</li>}</ul>
+        <div class="mt-4 flex gap-2">{doneDeal && <a class="btn-ghost !py-1.5 text-sm" href={crmHref(scope, `/admin/crm/deals/${doneDeal}`)}>Open the deal</a>}<a class="btn-ghost !py-1.5 text-sm" href={crmHref(scope, '/admin/crm/voice')}>Another</a></div>
+      </section>
+    )}
+    {proposal ? (
+      <form method="post" class="card mt-6" data-tour="crm-voice-proposal">
+        <input type="hidden" name="intent" value="apply" />
+        <input type="hidden" name="source" value={source} />
+        <textarea name="proposal" class="hidden">{JSON.stringify(proposal)}</textarea>
+        <textarea name="raw" class="hidden">{raw}</textarea>
+        <p class="text-xs uppercase tracking-widest text-white/40">You said</p>
+        <p class="mt-1 text-sm italic text-white/75">“{raw}”</p>
+        <p class="mt-4 text-xs font-semibold uppercase tracking-widest text-lk-blue">Suggested from it</p>
+        {parts.length ? (
+          <ul class="mt-2 divide-y divide-white/5">{parts.map((p) => <li class="py-2"><label class="flex items-start gap-3 text-sm text-white"><input type="checkbox" name="part" value={p.name} checked={p.on} class="mt-1" />{p.label}</label></li>)}</ul>
+        ) : <p class="mt-2 text-sm text-white/60">{proposal.reply || 'I couldn’t tell which deal this is about. Say the company’s name.'}</p>}
+        {proposal.deal_id && proposal.next_step && <div class="mt-3"><label class="label" for="next_step">Next step (edit if needed)</label><input class="field" id="next_step" name="next_step" value={proposal.next_step} /></div>}
+        <div class="mt-4 flex gap-2">{parts.length > 0 && <button class="btn-primary">Save</button>}<a class="btn-ghost" href={crmHref(scope, '/admin/crm/voice')}>Start again</a></div>
+      </form>
+    ) : !done && (
+      <form method="post" enctype="multipart/form-data" class="card mt-6 grid gap-4" data-voice data-tour="crm-voice">
+        <input type="hidden" name="intent" value="read" />
+        <div class="text-center">
+          <button type="button" class="mx-auto grid size-24 place-items-center rounded-full bg-lk-orange text-4xl text-[#fff] shadow-[0_0_0_12px_rgba(235,128,43,0.15)] disabled:opacity-50" data-rec aria-label="Hold to record" disabled={!budget?.ok}>🎙</button>
+          <p class="mt-3 font-medium text-white" data-rec-label>Hold to say how it went</p>
+          <p class="text-xs text-white/45">20 seconds is enough. Lakeba AI files it; you check before it’s saved.</p>
+        </div>
+        <input type="file" name="audio" class="hidden" data-audio />
+        <div><label class="label" for="text">Or type it</label><textarea class="field min-h-20" id="text" name="text" placeholder="e.g. Harbour: budget approved, CFO wants a 2-year price, follow up Wednesday"></textarea></div>
+        <div><label class="label" for="photo">Or a business card</label><input class="field" type="file" id="photo" name="photo" accept="image/*" capture="environment" /></div>
+        <button class="btn-primary justify-self-start" disabled={!budget?.ok}>Read it</button>
+      </form>
+    )}
+  </div>
+</Crm>
+
+<script>
+  // Hold the button to record (press and hold on a phone, or click to start and click to stop); it sends itself when released.
+  const form = document.querySelector<HTMLFormElement>('[data-voice]');
+  const btn = document.querySelector<HTMLButtonElement>('[data-rec]');
+  const label = document.querySelector<HTMLElement>('[data-rec-label]');
+  if (form && btn && navigator.mediaDevices?.getUserMedia) {
+    let rec: MediaRecorder | null = null; let chunks: Blob[] = [];
+    const start = async () => {
+      if (rec) return;
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true }).catch(() => null);
+      if (!stream) { label!.textContent = 'The microphone isn’t allowed: type it instead.'; return; }
+      rec = new MediaRecorder(stream); chunks = [];
+      rec.ondataavailable = (e) => chunks.push(e.data);
+      rec.onstop = () => {
+        stream.getTracks().forEach((t) => t.stop());
+        const blob = new Blob(chunks, { type: rec!.mimeType || 'audio/webm' });
+        const dt = new DataTransfer(); dt.items.add(new File([blob], 'note.webm', { type: blob.type }));
+        form.querySelector<HTMLInputElement>('[data-audio]')!.files = dt.files;
+        label!.textContent = 'Reading it…'; form.requestSubmit();
+      };
+      rec.start(); label!.textContent = 'Listening… let go when you’re done';
+    };
+    const stop = () => { if (rec && rec.state === 'recording') rec.stop(); };
+    btn.addEventListener('pointerdown', (e) => { e.preventDefault(); void start(); });
+    btn.addEventListener('pointerup', stop); btn.addEventListener('pointerleave', stop);
+  }
+</script>

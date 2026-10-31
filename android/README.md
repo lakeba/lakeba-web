@@ -89,3 +89,32 @@ Without device owner, choose Lex as the home app in Android's settings and use s
 - On-device "Lex" wake word (instant, works offline).
 - Audio kept on the tablet while the network is down, sent when it returns.
 - Google Play (needs a Google developer account) or managed distribution to Lakeba's tablets.
+
+---
+
+# Lakeba CRM — the salesperson's phone app (Android, module `crm`)
+
+The portal's CRM (`/admin/crm`) in an app, for salespeople. Everything is the portal's (sign-in, two-step,
+pages); the app adds:
+
+- **After each business call** (over 30 seconds) a notification, "How did the call go?", which opens the CRM's
+  voice note: say it in 20 seconds and Lakeba AI proposes the deal's notes, next step and stage. The app only
+  notices that a call started and ended (READ_PHONE_STATE), never the number or the call. It can be switched
+  off in the app's settings.
+- The microphone (voice notes) and the camera (business cards) for the portal's pages only.
+- **App settings** (from the CRM's account menu): the CRM's address — the portal (investors.lakeba.com), or a
+  venture's CRM address such as `https://crm.doxai.com` — and the after-call prompt.
+
+| Build | App | Opens |
+|---|---|---|
+| `debug` | "CRM (staging)", `com.lakeba.crm.staging` | staging (needs Tailscale) |
+| `release` | "Lakeba CRM", `com.lakeba.crm` | `https://investors.lakeba.com` (or the address set in its settings) |
+
+```bash
+export JAVA_HOME=/opt/homebrew/opt/openjdk@17 ANDROID_HOME=$HOME/Library/Android/sdk
+./gradlew :crm:assembleDebug     # crm/build/outputs/apk/debug/crm-debug.apk
+./gradlew :crm:assembleRelease   # signed with ~/.lakeba/crm-signing.properties when present
+```
+
+On iPhone, salespeople add the CRM to the Home Screen from Safari (it is an installable web app with its own
+manifest, `/crm.webmanifest`).

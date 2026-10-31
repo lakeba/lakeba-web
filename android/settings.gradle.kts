@@ -14,3 +14,4 @@ dependencyResolutionManagement {
 }
 rootProject.name = "LexTablet"
 include(":app")
+include(":crm")

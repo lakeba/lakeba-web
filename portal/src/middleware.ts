@@ -27,7 +27,7 @@ const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-logi
 const CENTRAL_PATHS = ['/login', '/forgot-password', '/passkey-login', '/mfa', '/account/security', '/api/passkeys', '/admin', '/auth/pass', '/oauth'];
 
 /** On a venture's CRM address (crm.doxai.com): its CRM pages; anything else opens on the central address. */
-const CRM_SITE_PATHS = ['/admin/crm', '/api/admin/crm', '/auth/redeem', '/logout', '/company-logo', '/favicon.ico'];
+const CRM_SITE_PATHS = ['/admin/crm', '/auth/redeem', '/logout', '/company-logo', '/favicon.ico', '/crm.webmanifest', '/icons', '/sw.js', '/deal'];
 /** The CRM's company pick, remembered between CRM pages (lib/crm.ts). */
 const CRM_COMPANY_COOKIE = 'lakeba-crm-company';
 
@@ -50,8 +50,8 @@ export const onRequest = defineMiddleware(async (context, next) => {
   if (!isKnownHost(url.hostname) && !ownDomainVenture(url.hostname) && !crmDomainVenture(url.hostname)) return new Response('Not found', { status: 404 });
   rememberOrigin(url.origin);
   const site = siteOf(url);
-  // The Observer page (a meeting's recording on the boardroom tablet) is the only one that may use the microphone.
-  const done = (response: Response) => withSecurityHeaders(response, /^\/admin\/legal\/meetings\/[0-9a-f-]{36}\/observe$/.test(path));
+  // The microphone: the Observer page (a meeting's recording on the boardroom tablet) and the CRM's voice notes.
+  const done = (response: Response) => withSecurityHeaders(response, /^\/admin\/legal\/meetings\/[0-9a-f-]{36}\/observe$/.test(path) || path === '/admin/crm/voice');
   locals.supabase = createSupabase(context);
   locals.site = { kind: site.kind, venture: null, central: centralOrigin(url) };
   locals.user = null;

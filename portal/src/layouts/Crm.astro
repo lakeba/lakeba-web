@@ -15,6 +15,8 @@ const { title, scope, wide, always } = Astro.props;
 const { profile, access } = Astro.locals;
 const company = scope.current;
 const onCrmSite = Astro.locals.site?.kind === 'crm';
+// Inside the Lakeba CRM app on Android (android/crm): its settings open from the account menu.
+const inApp = /LakebaCRM\//.test(Astro.request.headers.get('user-agent') ?? '');
 const path = Astro.url.pathname;
 const q = (href: string) => (company && scope.companies.length > 1 && !onCrmSite ? `${href}${href.includes('?') ? '&' : '?'}company=${company.code}` : href);
 // Emails waiting in "Found in your inbox" for this person.
@@ -32,12 +34,14 @@ const groups: { label?: string; items: Item[] }[] = [
     { href: '/admin/crm/quotes', label: 'Quotes' },
     { href: '/admin/crm/inbox', label: 'Inbox', tag: inboxCount || null },
     { href: '/admin/crm/ask', label: 'Ask Lakeba AI' },
+    { href: '/admin/crm/voice', label: 'Voice note', show: scope.canDo },
   ] },
   { label: 'Lead', items: [
     { href: '/admin/crm/forecast', label: 'Forecast' },
     { href: '/admin/crm/import', label: 'Import', show: scope.canDo },
     { href: '/admin/crm/settings', label: 'Settings', show: scope.canSettings },
     { href: '/admin/crm/mailbox', label: 'My mailbox', show: scope.canDo },
+    { href: '/admin/crm/phone', label: 'My phone', show: scope.canDo },
   ] },
 ];
 const under = (p: string) => path === p || path.startsWith(`${p}/`);
@@ -60,7 +64,11 @@ const switchHref = (code: string) => {
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex, nofollow" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="manifest" href="/crm.webmanifest" />
+    <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-title" content="CRM" />
     <meta name="theme-color" content="#050b16" />
     <ThemeInit />
     <title>{title} · {company?.display_name ?? 'CRM'} CRM</title>
@@ -111,6 +119,7 @@ const switchHref = (code: string) => {
             <div class="absolute right-0 mt-2 w-56 rounded-2xl border border-white/10 bg-ink p-2 text-sm shadow-2xl shadow-black/50">
               {!onCrmSite && access.mayOpen('/admin') && <a href="/admin" class="block rounded-lg px-3 py-2 text-white/70 hover:bg-white/5 hover:text-white">Admin</a>}
               {!onCrmSite && <a href="/" class="block rounded-lg px-3 py-2 text-white/70 hover:bg-white/5 hover:text-white">Portal</a>}
+              {inApp && <a href="/app-settings" class="block rounded-lg px-3 py-2 text-white/70 hover:bg-white/5 hover:text-white">App settings</a>}
               <form method="post" action="/logout"><button class="w-full rounded-lg px-3 py-2 text-left text-white/70 hover:bg-white/5 hover:text-white">Sign out</button></form>
             </div>
           </details>

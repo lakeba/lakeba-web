@@ -82,7 +82,7 @@ export function meetingFacts(svc: Svc, access: Access, central: string, userId: 
 
 let voice: Promise<string> | null = null;
 /** The voice: as set, or the account's first Australian stock voice, or its first voice. */
-function voiceId() {
+export function voiceId() {
   if (ELEVENLABS_VOICE_ID) return Promise.resolve(ELEVENLABS_VOICE_ID);
   voice ??= (async () => {
     const res = await outbound('GET', `${ELEVENLABS_API_BASE}/v1/voices`, { headers: { 'xi-api-key': ELEVENLABS_API_KEY ?? '' } });
