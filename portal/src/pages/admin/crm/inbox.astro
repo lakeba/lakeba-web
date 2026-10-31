@@ -6,6 +6,7 @@ import Empty from '../../../components/Empty.astro';
 import { serviceClient } from '../../../lib/admin';
 import { field } from '../../../lib/forms';
 import { dateTime } from '../../../lib/format';
+import { classifyInbox } from '../../../lib/crm-ai';
 import { companyDomainOf, crmHref, crmScope, ensurePipeline, ensureRelationship, findOrCreateCompany, findOrCreatePerson, logActivity } from '../../../lib/crm';
 
 // CRM → Found in your inbox: emails from business addresses that nobody in the CRM knows yet, read from the
@@ -20,6 +21,7 @@ if (Astro.request.method === 'POST' && company) {
   const form = await Astro.request.formData();
   try {
     if (!scope.canDo) throw new Error('You can’t change this.');
+    if (field(form, 'intent') === 'sort') { await classifyInbox(svc, company.id); return Astro.redirect(Astro.url.pathname + Astro.url.search, 303); }
     const { data: m } = await svc.from('crm_inbox').select('*').eq('id', field(form, 'id')).eq('entity_id', company.id).maybeSingle();
     if (!m || (m.user_id !== me && !scope.canApprove)) throw new Error('That email isn’t here any more.');
     const intent = field(form, 'intent');
@@ -44,15 +46,20 @@ if (Astro.request.method === 'POST' && company) {
     error = (e as Error).message;
   }
 }
-const { data: rows } = company ? await (scope.canApprove && Astro.url.searchParams.get('who') === 'team'
+const showAll = Astro.url.searchParams.get('all') === '1';
+const { data: rows0 } = company ? await (scope.canApprove && Astro.url.searchParams.get('who') === 'team'
   ? svc.from('crm_inbox').select('*').eq('entity_id', company.id).eq('status', 'open').order('received_at', { ascending: false }).limit(200)
   : svc.from('crm_inbox').select('*').eq('entity_id', company.id).eq('user_id', me).eq('status', 'open').order('received_at', { ascending: false }).limit(200)) : { data: [] };
+ const rows = (rows0 ?? []).filter((r) => showAll || (r.ai as { is_sales?: boolean } | null)?.is_sales !== false);
+const hidden = (rows0 ?? []).length - (rows0 ?? []).filter((r) => (r.ai as { is_sales?: boolean } | null)?.is_sales !== false).length;
 ---
 
 <Crm title="Found in your inbox" scope={scope}>
   <PageHeader title="Found in your inbox" subtitle="Emails from businesses nobody in the CRM knows yet. Make a deal (or just add the person), or dismiss them." />
   {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
   {scope.canApprove && <nav class="mb-4 flex gap-2 text-sm">{[['me', 'Mine'], ['team', 'The team’s']].map(([k, l]) => <a href={crmHref(scope, `/admin/crm/inbox?who=${k}`)} class:list={['rounded-full px-3 py-1', (Astro.url.searchParams.get('who') ?? 'me') === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}</nav>}
+  {scope.canDo && (rows0 ?? []).some((r) => !r.ai) && <form method="post" class="mb-4"><input type="hidden" name="intent" value="sort" /><button class="btn-ghost !py-1.5 text-sm">Sort with Lakeba AI: which are sales?</button></form>}
+  {hidden > 0 && <p class="mb-3 text-xs text-white/45">{hidden} email{hidden === 1 ? '' : 's'} Lakeba AI thinks aren’t sales {showAll ? 'are shown too' : 'are hidden'}. <a class="text-lk-blue hover:underline" href={crmHref(scope, `/admin/crm/inbox${showAll ? '' : '?all=1'}`)}>{showAll ? 'Hide them' : 'Show them'}</a></p>}
   {(rows ?? []).length ? (
     <section class="card divide-y divide-white/5 !py-2">
       {(rows ?? []).map((m) => (

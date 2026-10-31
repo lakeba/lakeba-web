@@ -6,6 +6,7 @@ import { crmHref, crmScope, ensurePipeline, goingCold, money, namesOf, salesTeam
 import { commonAction } from '../../../lib/crm-actions';
 import { field } from '../../../lib/forms';
 import { sydneyMidnight } from '../../../lib/ask-limits';
+import { aiBudget, reviewDeal } from '../../../lib/crm-ai';
 
 // CRM → Today: what moves this person's deals forward today, each with the reason. Overdue and today's tasks,
 // then deals with no next step and deals going cold, today's meetings and how the week is going.
@@ -19,6 +20,12 @@ let error = '';
 if (Astro.request.method === 'POST' && company) {
   const form = await Astro.request.formData();
   try {
+    if (field(form, 'intent') === 'review-mine') {
+      const { data: ds } = await svc.from('crm_deals').select('id, ai_review').eq('entity_id', company.id).eq('owner_id', me).eq('status', 'open').order('amount', { ascending: false }).limit(20);
+      const stale = (ds ?? []).filter((d) => !(d.ai_review as { at?: string } | null)?.at || Date.now() - Date.parse((d.ai_review as { at: string }).at) > 20 * 3_600_000).slice(0, 5);
+      for (const d of stale) await reviewDeal(svc, d.id, me);
+      return Astro.redirect(Astro.url.pathname + Astro.url.search, 303);
+    }
     // Tasks ticked here belong to their own records (the task carries them).
     const { data: t } = await svc.from('crm_tasks').select('deal_id, person_id, company_id').eq('id', field(form, 'task_id')).eq('entity_id', company.id).maybeSingle();
     await commonAction(svc, Astro.locals, scope, form, t ?? {}, Astro.url.origin, '/admin/crm');
@@ -39,8 +46,14 @@ type D = Deal & { crm_companies: { name: string } | null; crm_people: { full_nam
 const deals = (myDeals ?? []) as D[];
 const label = (d: D) => d.crm_companies?.name ?? d.crm_people?.full_name ?? d.title;
 // The day's actions, most valuable first within each reason.
-type Action = { title: string; why: string; href: string; value: string; tone: 'red' | 'orange' | 'blue' };
+type Action = { title: string; why: string; href: string; value: string; tone: 'red' | 'orange' | 'blue'; ai?: boolean; draft?: string };
+const byId = new Map(deals.map((d) => [d.id, d]));
+// Lakeba AI's next steps (suggested tasks, due now) come first, most valuable deal first.
+const aiSteps = ((myTasks ?? []) as Task[]).filter((t) => t.suggested && !t.done_at && t.deal_id && byId.has(t.deal_id) && (!t.due_on || t.due_on <= today))
+  .sort((a, b) => Number(byId.get(b.deal_id!)!.amount) - Number(byId.get(a.deal_id!)!.amount))
+  .map((t) => { const d = byId.get(t.deal_id!)!; const [why, ...rest] = ((t as Task & { note?: string }).note ?? '').split('\n\n'); return { title: t.title, why: why || `For ${label(d)}.`, href: `/admin/crm/deals/${d.id}`, value: money(Number(d.amount), d.currency), tone: 'blue', ai: true, draft: rest.join('\n\n') } as Action; });
 const actions: Action[] = [
+  ...aiSteps,
   ...deals.filter((d) => d.next_step_on && d.next_step_on <= today).sort((a, b) => Number(b.amount) - Number(a.amount))
     .map((d) => ({ title: `${d.next_step} — ${label(d)}`, why: d.next_step_on! < today ? 'This next step is overdue.' : 'Planned for today.', href: `/admin/crm/deals/${d.id}`, value: money(Number(d.amount), d.currency), tone: d.next_step_on! < today ? 'red' : 'blue' }) as Action),
   ...deals.filter((d) => goingCold(d, stages.get(d.stage_id))).sort((a, b) => Number(b.amount) - Number(a.amount))
@@ -60,6 +73,7 @@ const hour = Number(new Intl.DateTimeFormat('en-AU', { hour: 'numeric', hour12: 
 const hello = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 const dateLine = new Intl.DateTimeFormat('en-AU', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Australia/Sydney' }).format(new Date());
 const team = company ? await salesTeam(svc, company.id) : [];
+const budget = company ? await aiBudget(svc, company.id) : null;
 // Today's meetings with people the CRM knows (from the connected calendar), emails found in the inbox, the week's target.
 const dayStart = sydneyMidnight(0), dayEnd = sydneyMidnight(-1);
 const [{ data: cal }, { data: found }, { data: ent }] = company ? await Promise.all([
@@ -89,15 +103,16 @@ const names = await namesOf(svc, [me]);
   {error && <p class="mb-4 text-sm text-lk-red">{error}</p>}
   <div class="grid gap-6 xl:grid-cols-[1.55fr_1fr]">
     <section class="card" data-tour="crm-today">
-      <h2 class="font-display text-lg font-bold">Do today</h2>
+      <div class="flex flex-wrap items-baseline justify-between gap-2"><h2 class="font-display text-lg font-bold">Do today</h2>{aiSteps.length > 0 && <span class="text-xs font-semibold uppercase tracking-widest text-lk-blue">Chosen by Lakeba AI from your deals</span>}</div>
       <ol class="mt-3 divide-y divide-white/5">
         {top.map((a, i) => (
           <li class="flex items-start gap-3 py-3">
             <span class="grid size-7 shrink-0 place-items-center rounded-lg bg-white/[0.07] text-sm font-semibold text-white">{i + 1}</span>
-            <div class="min-w-0 flex-1"><a href={crmHref(scope, a.href)} class="font-medium text-white hover:text-lk-blue">{a.title}</a><p class="mt-0.5 text-sm text-white/55">{a.why}</p></div>
+            <div class="min-w-0 flex-1"><a href={crmHref(scope, a.href)} class="font-medium text-white hover:text-lk-blue">{a.title}</a><p class="mt-0.5 text-sm text-white/55">{a.why}</p>{a.draft && <details class="mt-1"><summary class="cursor-pointer text-xs text-lk-blue">Draft ready</summary><p class="mt-1 whitespace-pre-line text-sm text-white/70">{a.draft}</p><button type="button" class="btn-ghost mt-1 !py-1 text-xs" data-copy={a.draft}>Copy</button></details>}</div>
             <span class:list={['shrink-0 rounded-full px-2 py-0.5 text-xs', a.tone === 'red' ? 'bg-lk-red/15 text-lk-red' : a.tone === 'orange' ? 'bg-lk-orange/15 text-lk-orange' : 'bg-lk-blue/15 text-lk-blue']}>{a.value}</span>
           </li>
         ))}
+        {budget?.ok && deals.length > 0 && <li class="py-3"><form method="post"><input type="hidden" name="intent" value="review-mine" /><button class="text-sm text-lk-blue hover:underline">Ask Lakeba AI to review my deals now</button></form></li>}
         {!top.length && <li class="py-3 text-sm text-white/45">{deals.length ? 'Every deal has a dated next step and recent contact. Good.' : <>No deals of yours yet. <a class="text-lk-blue hover:underline" href={crmHref(scope, '/admin/crm/deals?new=1')}>Create one</a>.</>}</li>}
       </ol>
     </section>
@@ -110,7 +125,7 @@ const names = await namesOf(svc, [me]);
         <section class="card"><h2 class="mb-3 font-display text-lg font-bold">Meetings today</h2>
           <ul class="divide-y divide-white/5">
             {((cal ?? []) as unknown as { id: string; subject: string; occurred_at: string; deal_id: string | null; person_id: string | null; crm_people: { full_name: string } | null; crm_companies: { name: string } | null }[]).map((m) => (
-              <li class="flex gap-3 py-2 text-sm"><span class="w-14 shrink-0 text-white/55">{time(m.occurred_at)}</span><a class="text-white hover:text-lk-blue" href={crmHref(scope, m.deal_id ? `/admin/crm/deals/${m.deal_id}` : `/admin/crm/people/${m.person_id}`)}>{m.crm_companies?.name ? `${m.crm_companies.name} · ` : ''}{m.subject}</a></li>
+              <li class="flex gap-3 py-2 text-sm"><span class="w-14 shrink-0 text-white/55">{time(m.occurred_at)}</span><a class="min-w-0 flex-1 text-white hover:text-lk-blue" href={crmHref(scope, m.deal_id ? `/admin/crm/deals/${m.deal_id}` : `/admin/crm/people/${m.person_id}`)}>{m.crm_companies?.name ? `${m.crm_companies.name} · ` : ''}{m.subject}</a><a class="shrink-0 text-xs text-lk-blue hover:underline" href={crmHref(scope, `/admin/crm/brief/${m.id}`)}>Brief</a></li>
             ))}
             {meetings.map((m) => <li class="py-2 text-sm text-white">{m.title}</li>)}
           </ul>
@@ -134,3 +149,7 @@ const names = await namesOf(svc, [me]);
     </div>
   </div>
 </Crm>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((b) => b.addEventListener('click', async () => { await navigator.clipboard.writeText(b.dataset.copy!); b.textContent = 'Copied'; }));
+</script>

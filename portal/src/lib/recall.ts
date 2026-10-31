@@ -38,11 +38,11 @@ export function platformOf(link: string) {
   return null;
 }
 
-const api = (method: string, path: string, body?: unknown) => outbound(method, `${RECALL_API_BASE}/api/v1/${path}`, {
+export const api = (method: string, path: string, body?: unknown) => outbound(method, `${RECALL_API_BASE}/api/v1/${path}`, {
   headers: { authorization: `Token ${RECALL_API_KEY ?? ''}`, accept: 'application/json', ...(body !== undefined ? { 'content-type': 'application/json' } : {}) },
   body: body === undefined ? undefined : JSON.stringify(body), timeout: 30_000,
 });
-const failure = (status: number, text: string) => {
+export const failure = (status: number, text: string) => {
   let detail = text.slice(0, 200);
   try { const j = JSON.parse(text); detail = j.detail ?? j.message ?? JSON.stringify(j).slice(0, 200); } catch { /* not JSON */ }
   return new Error(status === 507 ? 'Recall has no bot free just now: try again in a minute.' : `Recall: ${status} ${detail}`);
@@ -106,7 +106,7 @@ export function signedByRecall(headers: Headers, body: string) {
   });
 }
 
-const STATUS_OF: Record<string, string> = {
+export const STATUS_OF: Record<string, string> = {
   'bot.joining_call': 'joining', 'bot.in_waiting_room': 'lobby', 'bot.in_call_not_recording': 'in_call', 'bot.recording_permission_allowed': 'in_call',
   'bot.in_call_recording': 'in_call', 'bot.recording_permission_denied': 'refused', 'bot.call_ended': 'ended', 'bot.done': 'done', 'bot.fatal': 'failed',
 };

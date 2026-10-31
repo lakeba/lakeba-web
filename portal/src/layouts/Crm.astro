@@ -6,6 +6,7 @@ import Tour from '../components/Tour.astro';
 import { initials, type CrmScope } from '../lib/crm';
 import { accentOf } from '../lib/brand';
 import { serviceClient } from '../lib/admin';
+import { aiBudget } from '../lib/crm-ai';
 
 // The CRM's own frame (docs/crm.md): the venture's name and colour, a search, its menu. The same pages open
 // in the admin (/admin/crm) and on the venture's CRM address (crm.doxai.com), where they are all there is.
@@ -17,6 +18,7 @@ const onCrmSite = Astro.locals.site?.kind === 'crm';
 const path = Astro.url.pathname;
 const q = (href: string) => (company && scope.companies.length > 1 && !onCrmSite ? `${href}${href.includes('?') ? '&' : '?'}company=${company.code}` : href);
 // Emails waiting in "Found in your inbox" for this person.
+const budget = company ? await aiBudget(serviceClient(), company.id) : null;
 const { count: inboxCount } = company ? await serviceClient().from('crm_inbox').select('id', { count: 'exact', head: true }).eq('entity_id', company.id).eq('user_id', Astro.locals.user!.id).eq('status', 'open') : { count: 0 };
 type Item = { href: string; label: string; exact?: boolean; show?: boolean; tag?: string | number | null };
 const groups: { label?: string; items: Item[] }[] = [
@@ -29,6 +31,7 @@ const groups: { label?: string; items: Item[] }[] = [
     { href: '/admin/crm/tasks', label: 'Tasks' },
     { href: '/admin/crm/quotes', label: 'Quotes' },
     { href: '/admin/crm/inbox', label: 'Inbox', tag: inboxCount || null },
+    { href: '/admin/crm/ask', label: 'Ask Lakeba AI' },
   ] },
   { label: 'Lead', items: [
     { href: '/admin/crm/forecast', label: 'Forecast' },
@@ -98,6 +101,7 @@ const switchHref = (code: string) => {
         </form>
         <div class="ml-auto flex items-center gap-3 text-sm">
           <slot name="header" />
+          {budget?.limit ? <a href="/admin/crm/settings" class:list={['hidden rounded-full px-2.5 py-0.5 text-xs font-semibold lg:inline', budget.pct >= 90 ? 'bg-lk-red/15 text-lk-red' : 'bg-lk-orange/15 text-lk-orange']} title="Lakeba AI’s monthly budget for this CRM">AI · {budget.pct}% of this month’s budget</a> : null}
           <ThemeToggle />
           <details data-menu class="relative">
             <summary class="flex cursor-pointer list-none items-center gap-2 text-white/70 hover:text-white" aria-label="Your account">

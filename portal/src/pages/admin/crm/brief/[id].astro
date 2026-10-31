@@ -1,0 +1,45 @@
+---
+import Crm from '../../../../layouts/Crm.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { dateTime } from '../../../../lib/format';
+import { crmHref, crmScope } from '../../../../lib/crm';
+import { aiBudget, briefMeeting, type Brief } from '../../../../lib/crm-ai';
+
+// CRM → a meeting's brief: who's coming, the relationship so far, what we promised, what to settle. Made by
+// Lakeba AI from the CRM's records before the meeting (or now, on request).
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+const id = Astro.params.id!;
+if (!company || !/^[0-9a-f-]{36}$/.test(id)) return Astro.redirect('/admin/crm');
+const load = async () => (await svc.from('crm_activities').select('id, subject, occurred_at, deal_id, person_id, company_id, meta, crm_companies(name)').eq('id', id).eq('entity_id', company.id).eq('kind', 'meeting').maybeSingle()).data;
+let m = await load();
+if (!m) return Astro.redirect(crmHref(scope, '/admin/crm'));
+let error = '';
+if (Astro.request.method === 'POST') {
+  try { if (!scope.canDo) throw new Error('You can’t do this here.'); await briefMeeting(svc, id, Astro.locals.user!.id); m = await load(); } catch (e) { error = (e as Error).message; }
+}
+const brief = (m!.meta as { brief?: Brief }).brief;
+const budget = await aiBudget(svc, company.id);
+const org = (m as unknown as { crm_companies: { name: string } | null }).crm_companies;
+---
+<Crm title="Meeting brief" scope={scope}>
+  <p class="text-sm text-white/45">{dateTime.format(new Date(m!.occurred_at))}{org && ` · ${org.name}`}</p>
+  <h1 class="mt-1 font-display text-3xl font-bold">{m!.subject}</h1>
+  {error && <div class="mt-4"><Alert tone="error">{error}</Alert></div>}
+  <section class="card mt-6 max-w-3xl" data-tour="crm-brief">
+    {brief ? (
+      <div class="grid gap-4 text-sm">
+        <p class="text-base text-white"><b>Aim:</b> {brief.aim}</p>
+        <div><p class="text-xs font-semibold uppercase tracking-widest text-white/40">Who</p><ul class="mt-1 list-disc pl-5 text-white/80">{brief.who.map((w) => <li>{w}</li>)}</ul></div>
+        <div><p class="text-xs font-semibold uppercase tracking-widest text-white/40">So far</p><p class="mt-1 text-white/80">{brief.history}</p></div>
+        {brief.promises.length > 0 && <div><p class="text-xs font-semibold uppercase tracking-widest text-lk-orange/80">We promised</p><ul class="mt-1 list-disc pl-5 text-white/80">{brief.promises.map((w) => <li>{w}</li>)}</ul></div>}
+        {brief.questions.length > 0 && <div><p class="text-xs font-semibold uppercase tracking-widest text-lk-blue">To settle</p><ul class="mt-1 list-disc pl-5 text-white/80">{brief.questions.map((w) => <li>{w}</li>)}</ul></div>}
+        <p class="text-xs text-white/40">Prepared by Lakeba AI {brief.at.slice(0, 16).replace('T', ' ')} from the CRM’s records.</p>
+      </div>
+    ) : <p class="text-sm text-white/55">{budget.ok ? 'No brief yet: briefs are made an hour or so before meetings.' : 'Lakeba AI is paused for this CRM.'}</p>}
+    {budget.ok && scope.canDo && <form method="post" class="mt-4"><button class="btn-ghost !py-1.5 text-sm">{brief ? 'Prepare it again' : 'Prepare the brief now'}</button></form>}
+    {m!.deal_id && <a class="mt-4 inline-block text-sm text-lk-blue hover:underline" href={crmHref(scope, `/admin/crm/deals/${m!.deal_id}`)}>Open the deal</a>}
+  </section>
+</Crm>

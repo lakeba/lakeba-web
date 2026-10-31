@@ -3,7 +3,7 @@ import '../../styles/portal.css';
 import { serviceClient } from '../../lib/admin';
 import { field } from '../../lib/forms';
 import { centralOrigin } from '../../lib/sites';
-import { money, namesOf } from '../../lib/crm';
+import { logActivity, money, namesOf } from '../../lib/crm';
 import { lineTotals, type Line, type Quote } from '../../lib/crm-quotes';
 import { recordVisit, roomForToken } from '../../lib/crm-rooms';
 import { crmXero, setXeroQuoteStatus } from '../../lib/crm-xero';
@@ -48,6 +48,14 @@ if (Astro.request.method === 'POST') {
       const xero = await crmXero(svc, ent!, centralOrigin(Astro.url)).catch(() => null);
       if (xero && quote.xero_quote_id && d.xero_contact_id) await setXeroQuoteStatus(xero, quote.xero_quote_id, d.xero_contact_id, 'ACCEPTED').then(() => svc.from('crm_quotes').update({ xero_status: 'ACCEPTED' }).eq('id', quote!.id)).catch(() => null);
       await svc.from('crm_deals').update({ next_step: 'Raise the invoice in Xero', next_step_on: new Date().toISOString().slice(0, 10) }).eq('id', d.id);
+      // Accepted: the deal moves to its pipeline's last open stage (it's won when Xero says it's paid).
+      const { data: cur } = await svc.from('crm_deals').select('stage_id, pipeline_id, crm_stages(sort, name)').eq('id', d.id).single();
+      const { data: last } = await svc.from('crm_stages').select('id, name, sort').eq('pipeline_id', cur!.pipeline_id).eq('kind', 'open').order('sort', { ascending: false }).limit(1).maybeSingle();
+      const at = (cur as unknown as { crm_stages: { sort: number; name: string } | null }).crm_stages;
+      if (last && at && last.sort > at.sort) {
+        await svc.from('crm_deals').update({ stage_id: last.id, stage_changed_at: new Date().toISOString() }).eq('id', d.id);
+        await logActivity(svc, { entity_id: ent!.id, kind: 'stage', deal_id: d.id, subject: `${at.name} → ${last.name} (quote accepted)` });
+      }
       if (d.owner_id) await notifyMembers({ kind: 'crm', origin: centralOrigin(Astro.url), link: `/admin/crm/quotes/${quote.id}`, title: `Quote accepted: ${d.crm_companies?.name ?? d.title}`, body: `${name}${title ? `, ${title},` : ''} accepted ${quote.number} (${money(Number(quote.total), quote.currency)}).`, userIds: [d.owner_id], entityId: ent!.id }).catch(() => 0);
       quote = await loadQuote();
       notice = 'Thank you: accepted. We’ll be in touch about the next steps.';

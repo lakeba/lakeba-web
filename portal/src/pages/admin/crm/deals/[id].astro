@@ -17,6 +17,8 @@ import { QUOTE_STATES, nextNumber, type Quote } from '../../../../lib/crm-quotes
 import { ensureRoom, roomLink, roomLive, roomOf } from '../../../../lib/crm-rooms';
 import { worthToOwner } from '../../../../lib/crm-commission';
 import { crmXero, syncDeal } from '../../../../lib/crm-xero';
+import { aiBudget, reviewDeal, type Review } from '../../../../lib/crm-ai';
+import { sendNotetaker } from '../../../../lib/crm-recall';
 
 // CRM → a deal: where it stands, everything that happened (logged automatically wherever the CRM can), the
 // buying group, tasks and its details. Its owner or a sales lead changes it.
@@ -140,6 +142,14 @@ if (Astro.request.method === 'POST') {
       const r = await syncDeal(svc, x, deal as never);
       return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent(r ? (r.won ? 'Paid in full: the deal is won.' : 'Updated from Xero.') : 'Nothing new in Xero.')}`, 303);
     }
+    if (intent === 'ai-review') {
+      await reviewDeal(svc, id, me);
+      return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent('Lakeba AI reviewed the deal.')}`, 303);
+    }
+    if (intent === 'record') {
+      await sendNotetaker(svc, { entityId: company.id, dealId: id, link: field(form, 'link'), userId: me, company: company.display_name });
+      return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent('The notetaker is on its way: admit it from the lobby if asked.')}`, 303);
+    }
     if (intent === 'reopen') {
       const stage = list.find((p) => p.id === deal!.pipeline_id)?.stages.find((s) => s.kind === 'open');
       if (!stage) throw new Error('This pipeline has no open stage.');
@@ -177,6 +187,9 @@ const { data: roomFiles } = room ? await svc.from('crm_room_files').select('id, 
 const roomUrl = room && roomLive(room) ? roomLink(centralOrigin(Astro.url), room) : null;
 const { data: ent } = await svc.from('entities').select('crm_currency, crm_fx').eq('id', company.id).single();
 const worth = await worthToOwner(svc, deal, ent as { crm_currency: string; crm_fx: Record<string, number> }).catch(() => null);
+const review = deal.ai_review as Review | null;
+const budget = await aiBudget(svc, company.id);
+const { data: recs } = await svc.from('crm_recordings').select('id, status, error, sent_at').eq('deal_id', id).order('sent_at', { ascending: false }).limit(3);
 const x = deal as unknown as { forecast: string; xero_contact_id: string | null; invoiced_amount: number; paid_amount: number; paid_at: string | null };
 const day = (d: string | null) => (d ? shortDate.format(new Date(`${d}T12:00:00+10:00`)) : '—');
 const cold = goingCold(deal, stage);
@@ -233,6 +246,32 @@ const lost = pipeline.stages.find((s) => s.kind === 'lost');
       </section>
     </div>
     <div class="grid content-start gap-6">
+      {deal.status === 'open' && (
+        <section class="card border-lk-blue/20" data-tour="crm-ai-review">
+          <div class="flex items-baseline justify-between gap-2">
+            <h2 class="font-display text-lg font-bold">Lakeba AI’s review</h2>
+            {review && <span class="font-display text-2xl font-bold text-white">{review.chance}%</span>}
+          </div>
+          {review ? (
+            <>
+              <p class="mt-2 text-sm text-white/80">{review.summary}</p>
+              {review.risks.length > 0 && <><p class="mt-3 text-xs font-semibold uppercase tracking-widest text-lk-red/80">Why it may still be lost</p><ul class="mt-1 list-disc pl-5 text-sm text-white/70">{review.risks.map((r) => <li>{r}</li>)}</ul></>}
+              {review.missing.length > 0 && <><p class="mt-3 text-xs font-semibold uppercase tracking-widest text-lk-orange/80">Not known yet</p><ul class="mt-1 list-disc pl-5 text-sm text-white/70">{review.missing.map((r) => <li>{r}</li>)}</ul></>}
+              {review.next?.title && <div class="mt-3 rounded-xl bg-white/[0.04] p-3"><p class="text-sm text-white"><b>Next:</b> {review.next.title}</p><p class="text-xs text-white/55">{review.next.why}</p>{review.next.draft && <details class="mt-2"><summary class="cursor-pointer text-xs text-lk-blue">Draft email</summary><p class="mt-2 whitespace-pre-line text-sm text-white/75">{review.next.draft}</p><button type="button" class="btn-ghost mt-2 !py-1 text-xs" data-copy={review.next.draft}>Copy</button></details>}</div>}
+              <p class="mt-2 text-xs text-white/40">Reviewed {review.at.slice(0, 10)}. A guide, not a promise: it reads only what’s in the CRM.</p>
+            </>
+          ) : <p class="mt-2 text-sm text-white/55">{budget.ok ? 'Not reviewed yet. Deals are reviewed each morning; review this one now if it changed.' : 'Lakeba AI is paused for this CRM (switched off, or this month’s budget is used).'}</p>}
+          {may && budget.ok && <form method="post" class="mt-3"><input type="hidden" name="intent" value="ai-review" /><button class="btn-ghost !py-1.5 text-sm">{review ? 'Review again' : 'Review now'}</button></form>}
+        </section>
+      )}
+      {may && deal.status === 'open' && (
+        <section class="card" data-tour="crm-record">
+          <h2 class="font-display text-lg font-bold">Record a meeting</h2>
+          <p class="mt-1 text-sm text-white/55">A notetaker joins the call (Teams, Zoom, Meet, Webex), asks everyone’s agreement, and Lakeba AI writes the notes and next steps here afterwards.</p>
+          <form method="post" class="mt-3 flex gap-2"><input type="hidden" name="intent" value="record" /><input class="field" name="link" placeholder="Paste the meeting link" aria-label="Meeting link" /><button class="btn-ghost !py-1.5 text-sm">Send</button></form>
+          {(recs ?? []).map((r) => <p class="mt-2 text-xs text-white/45">{r.sent_at.slice(0, 10)} · {r.status === 'done' ? 'notes ready' : r.status === 'failed' || r.status === 'refused' ? `didn’t record (${r.error ?? r.status})` : r.status === 'lobby' ? 'waiting in the lobby: admit it' : r.status}</p>)}
+        </section>
+      )}
       {(cold || !deal.next_step) && deal.status === 'open' && (
         <section class:list={['card', cold ? 'border-lk-red/30' : 'border-lk-orange/30']}>
           <p class="text-sm">{cold ? <><b class="text-lk-red">Going cold.</b> No contact for longer than this stage usually allows ({stage?.cold_after_days} days).</> : <><b class="text-lk-orange">No next step.</b> Deals with a dated next step close more often.</>}</p>
