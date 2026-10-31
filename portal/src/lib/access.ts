@@ -1,5 +1,6 @@
 import type { serviceClient } from './admin';
 import { ALL_PERMISSIONS, AREAS, areaOf } from './permissions';
+import { guideAt } from './guides';
 
 type Svc = ReturnType<typeof serviceClient>;
 
@@ -83,6 +84,8 @@ export function adminMayRequest(a: Access, path: string, writing: boolean, actio
   if (under(path, '/admin/legal-requests')) return a.roles.length > 0;
   // What's new: every staff member (each entry checks its area).
   if (under(path, '/admin/whats-new')) return !writing && a.roles.length > 0;
+  // Staff guides: each department's PDF for whoever opens that department's pages (lib/guides.ts).
+  if (under(path, '/admin/guides')) return !writing && Boolean(guideAt(path)?.mayRead(a));
   // Integrations: the list for any company Admin (each company's page checks its own Admins).
   if (under(path, '/admin/integrations')) return !writing && a.roles.some((r) => r.role_key === 'admin');
   // Import data: the whole platform for group Admins; one company's workbook for whoever manages a company's register (lib/import-scope.ts).

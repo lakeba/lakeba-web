@@ -1,0 +1,287 @@
+[
+ {
+  "name": "C01-approvals",
+  "path": "/admin/approvals",
+  "clip": [
+   "h1",
+   "[data-tour=appr-lists]"
+  ],
+  "marks": [
+   [
+    "[data-tour=appr-lists]",
+    1
+   ]
+  ]
+ },
+ {
+  "name": "C02-approval",
+  "path": "/admin/approvals/post/{{post}}",
+  "clip": [
+   "h1",
+   "[data-tour=appr-what]",
+   "[data-tour=appr-state]",
+   "[data-tour=appr-decide]"
+  ],
+  "maxHeight": 2200,
+  "marks": [
+   [
+    "[data-tour=appr-what]",
+    1
+   ],
+   [
+    "[data-tour=appr-state]",
+    2
+   ],
+   [
+    "[data-tour=appr-decide]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "C03-audit",
+  "path": "/admin/audit",
+  "keep": [
+   "tbody tr"
+  ],
+  "clip": [
+   "h1",
+   "[data-tour=audit-rules]",
+   "table"
+  ],
+  "maxHeight": 1800,
+  "marks": [
+   [
+    "[data-tour=audit-export]",
+    1
+   ],
+   [
+    "[data-tour=audit-rules]",
+    2
+   ],
+   [
+    "[data-tour=audit-add]",
+    3
+   ],
+   [
+    "table",
+    4
+   ]
+  ],
+  "js": "document.querySelectorAll('details').forEach((d) => { if (/Delete these/.test(d.textContent)) d.open = false; }); 1"
+ },
+ {
+  "name": "C04-users",
+  "path": "/admin/system/users?q=sample&show=all",
+  "keep": [
+   "tbody tr"
+  ],
+  "clip": [
+   "h1",
+   "table"
+  ],
+  "marks": [
+   [
+    "form",
+    1
+   ],
+   [
+    "table",
+    2
+   ]
+  ]
+ },
+ {
+  "name": "C05-user",
+  "path": "/admin/system/users/{{alex}}",
+  "clip": [
+   "h1",
+   "button|text=Give the role"
+  ],
+  "maxHeight": 2600,
+  "marks": [
+   [
+    "table",
+    1
+   ],
+   [
+    "button|text=Remove",
+    2
+   ],
+   [
+    "label|text=For",
+    3,
+    "dot"
+   ],
+   [
+    "label|text=Until",
+    4,
+    "dot"
+   ],
+   [
+    "button|text=Give the role",
+    5
+   ]
+  ]
+ },
+ {
+  "name": "C06-roles",
+  "path": "/admin/system/roles",
+  "clip": [
+   "h1",
+   "table"
+  ],
+  "maxHeight": 1600
+ },
+ {
+  "name": "C07-role",
+  "path": "/admin/system/roles/compliance",
+  "keep": [
+   "[data-tour=role-holders] li",
+   "[data-tour=role-holders] tr"
+  ],
+  "clip": [
+   "h1",
+   "[data-tour=role-perms]",
+   "[data-tour=role-holders]"
+  ],
+  "maxHeight": 2400,
+  "marks": [
+   [
+    "[data-tour=role-perms]",
+    1
+   ],
+   [
+    "[data-tour=role-about]",
+    2
+   ],
+   [
+    "[data-tour=role-holders]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "C08-investors",
+  "path": "/admin/investors?q=sample",
+  "keep": [
+   "[data-tour=inv-table] tbody tr"
+  ],
+  "clip": [
+   "[data-tour=inv-add]",
+   "[data-tour=inv-filters]",
+   "[data-tour=inv-table]"
+  ],
+  "maxHeight": 2400,
+  "marks": [
+   [
+    "[data-tour=inv-add]",
+    1
+   ],
+   [
+    "[data-tour=inv-filters]",
+    2
+   ],
+   [
+    "[data-tour=inv-table]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "C09-investor",
+  "path": "/admin/investors/{{inv}}",
+  "clip": [
+   "h1",
+   "h2|text=Holdings"
+  ],
+  "maxHeight": 2400
+ },
+ {
+  "name": "C11-holder",
+  "path": "/admin/holders/{{holder}}",
+  "maxHeight": 2200
+ },
+ {
+  "name": "C12-import",
+  "path": "/admin/import/register",
+  "maxHeight": 1400,
+  "marks": [
+   [
+    "[data-tour=reg-company]",
+    1
+   ],
+   [
+    "[data-tour=reg-check]",
+    2
+   ]
+  ]
+ },
+ {
+  "name": "C14-integr",
+  "path": "/admin/companies/SMPL/integrations",
+  "maxHeight": 1600
+ },
+ {
+  "name": "C15-askreview",
+  "path": "/admin/ask-review",
+  "clip": [
+   "h1",
+   "ol"
+  ],
+  "maxHeight": 2600,
+  "marks": [
+   [
+    "button|text=\u2705 Good",
+    1
+   ],
+   [
+    "button|text=\u270f\ufe0f Save correction",
+    2
+   ],
+   [
+    "button|text=\ud83d\uddc2 Missing document",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "C13-company",
+  "path": "/admin/companies/SMPL",
+  "clip": [
+   "h1",
+   ".card|text=Share classes",
+   ".card|text=Board",
+   ".card|text=Details"
+  ],
+  "maxHeight": 1800,
+  "marks": [
+   [
+    ".card|text=Share classes",
+    1
+   ],
+   [
+    ".card|text=Board",
+    2
+   ],
+   [
+    ".card|text=Details",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "C13b-settings",
+  "path": "/admin/companies/SMPL",
+  "clip": [
+   ".card|text=Venture settings"
+  ],
+  "maxHeight": 2200,
+  "marks": [
+   [
+    ".card|text=Venture settings",
+    1
+   ]
+  ]
+ }
+]

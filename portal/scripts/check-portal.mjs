@@ -8,15 +8,17 @@
 //      (or is listed below as for group Admins only).
 //   5. Translations: every text investors see has its Spanish, Italian and Chinese.
 //   6. What's new: the newest entry is not older than the newest feature commit (a warning only).
+//   7. Staff guides: each guide has its text, pictures and PDF; warns when its pages changed after it did.
 // Warnings don't fail it; errors do. AGENTS.md has the checklist for what a script can't judge.
 
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { CATEGORIES } from '../src/lib/notification-events.ts';
 import { AREAS } from '../src/lib/permissions.ts';
 import { toShown } from '../src/lib/admin-paths.ts';
 import { POINTS, TOURS, TOUR_BUTTONS } from '../src/lib/tours.ts';
+import { GUIDES } from '../src/lib/guides.ts';
 
 const root = new URL('..', import.meta.url).pathname;
 const errors = [];
@@ -178,6 +180,20 @@ try {
   const commit = execFileSync('git', ['log', '-1', '--format=%cs', '--', 'src/pages', 'src/lib'], { cwd: root, encoding: 'utf8' }).trim();
   if (latest && commit && commit > latest) warnings.push(`What's new: the newest entry is ${latest}, but pages changed on ${commit}. Add an entry if people would notice (lib/whats-new.ts).`);
 } catch { /* no git (e.g. a release folder) */ }
+
+// ── 7. Staff guides ─────────────────────────────────────────────────────────────────────────────────
+// docs/guides/README.md: the text and pictures are the source, the PDF is built from them (npm run guides:pdf).
+const lastChange = (...paths) => { try { return execFileSync('git', ['log', '-1', '--format=%cI', '--', ...paths], { cwd: root, encoding: 'utf8' }).trim(); } catch { return ''; } };
+for (const g of GUIDES) {
+  const md = `docs/guides/${g.key}.md`, pdf = `templates/guides/${g.key}.pdf`;
+  if (!existsSync(join(root, md))) { errors.push(`Guides: ${md} is missing (lib/guides.ts lists "${g.key}").`); continue; }
+  if (!existsSync(join(root, pdf))) errors.push(`Guides: ${pdf} is missing: run npm run guides:pdf.`);
+  for (const img of read(md).matchAll(/!\[[^\]]*\]\((img\/[^)]+)\)/g)) if (!existsSync(join(root, 'docs/guides', img[1]))) errors.push(`Guides: ${md} shows ${img[1]}, which doesn't exist.`);
+  if (!read('src/layouts/Admin.astro').includes(`/admin/guides/${g.key}.pdf`)) errors.push(`Guides: the ${g.title} isn't in the admin menu (layouts/Admin.astro).`);
+  const guideAt = lastChange(md), pdfAt = lastChange(pdf), pagesAt = lastChange(...g.covers);
+  if (guideAt && pdfAt && guideAt > pdfAt) warnings.push(`Guides: ${md} changed after its PDF. Run npm run guides:pdf.`);
+  if (guideAt && pagesAt && pagesAt > guideAt) warnings.push(`Guides: the ${g.title}'s pages changed after it (${pagesAt.slice(0, 10)}). Check it still matches, and re-shoot changed screens (docs/guides/README.md).`);
+}
 
 for (const w of warnings) console.log(`warning  ${w}`);
 for (const e of errors) console.log(`error    ${e}`);

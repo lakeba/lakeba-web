@@ -1,0 +1,337 @@
+[
+ {
+  "name": "F01-group",
+  "path": "/admin/accounting",
+  "clip": [
+   "[aria-label=Finance]",
+   "table"
+  ],
+  "marks": [
+   [
+    "[aria-label=Finance]",
+    1
+   ],
+   [
+    "label[for=period]",
+    2,
+    "dot"
+   ],
+   [
+    "table",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "F02-consol",
+  "path": "/admin/accounting/group",
+  "clip": [
+   "[aria-label=Finance]",
+   ".card|text=Between the companies"
+  ],
+  "marks": [
+   [
+    "label[for=group]",
+    1,
+    "dot"
+   ],
+   [
+    "a|text=Download Excel",
+    2
+   ],
+   [
+    ".card|text=Lakeba and its",
+    3
+   ],
+   [
+    ".card|text=Between the companies",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "F03-packs",
+  "path": "/admin/accounting/packs?show=all",
+  "clip": [
+   "[aria-label=Finance]",
+   "table"
+  ],
+  "marks": [
+   [
+    "a|text=To review",
+    1
+   ],
+   [
+    "table",
+    2
+   ]
+  ]
+ },
+ {
+  "name": "F04-packA",
+  "path": "/admin/accounting/packs/{{packA}}",
+  "clip": [
+   "h1",
+   ".card|text=Messages",
+   ".card|text=Message or question"
+  ],
+  "marks": [
+   [
+    "table",
+    1
+   ],
+   [
+    "details|text=With other",
+    2
+   ],
+   [
+    "label[for=body]",
+    3,
+    "dot"
+   ],
+   [
+    "button|text=Accept",
+    4
+   ],
+   [
+    "button|text=Send back",
+    5
+   ]
+  ]
+ },
+ {
+  "name": "F05-packB",
+  "path": "/admin/accounting/packs/{{packB}}",
+  "clip": [
+   "h1",
+   ".card|text=Messages"
+  ],
+  "marks": [
+   [
+    ".card|text=Messages",
+    1
+   ]
+  ]
+ },
+ {
+  "name": "F06-board",
+  "path": "/admin/accounting/board?period=2026-09-30",
+  "clip": [
+   "[aria-label=Finance]",
+   ".card|text=One landscape"
+  ],
+  "marks": [
+   [
+    "label[for=period]",
+    1,
+    "dot"
+   ],
+   [
+    "label[for=commentary]",
+    2,
+    "dot"
+   ],
+   [
+    "button|text=Draft",
+    3
+   ],
+   [
+    "a|text=Preview the PDF",
+    4
+   ],
+   [
+    "button|text=File in Documents",
+    5
+   ]
+  ]
+ },
+ {
+  "name": "F07-ye",
+  "path": "/admin/accounting/year-end",
+  "clip": [
+   "[aria-label=Finance]",
+   "button|text=Send to the venture"
+  ],
+  "marks": [
+   [
+    "table",
+    1
+   ],
+   [
+    "label[for=entity_id]",
+    2,
+    "dot"
+   ],
+   [
+    "label[for=year_end]",
+    3,
+    "dot"
+   ],
+   [
+    "label[for=due_on]",
+    4,
+    "dot"
+   ],
+   [
+    "fieldset",
+    5
+   ],
+   [
+    "button|text=Send to the venture",
+    6
+   ]
+  ]
+ },
+ {
+  "name": "F08-yereq",
+  "path": "/admin/accounting/year-end/{{req}}",
+  "clip": [
+   "h1",
+   "button|text=Add and tell"
+  ],
+  "marks": [
+   [
+    "a|text=Download everything",
+    1
+   ],
+   [
+    "button|text=Accept",
+    2
+   ],
+   [
+    "button|text=Ask again",
+    3
+   ],
+   [
+    "label[for=title]",
+    4,
+    "dot"
+   ]
+  ]
+ },
+ {
+  "name": "F09-sched",
+  "path": "/admin/accounting/schedules",
+  "keep": [
+   "details"
+  ],
+  "clip": [
+   "[aria-label=Finance]",
+   "details"
+  ],
+  "marks": [
+   [
+    "label|text=How often",
+    1,
+    "dot"
+   ],
+   [
+    "label|text=Due (days",
+    2,
+    "dot"
+   ],
+   [
+    "label|text=First period",
+    3,
+    "dot"
+   ],
+   [
+    "details button",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "F10-com",
+  "path": "/admin/accounting/commissions?company=SMPL",
+  "clip": [
+   "[data-tour=com-company]",
+   "[data-tour=com-runs]",
+   "[data-tour=com-new-run]"
+  ],
+  "marks": [
+   [
+    "[data-tour=com-company]",
+    1
+   ],
+   [
+    "[data-tour=com-runs]",
+    2
+   ],
+   [
+    "[data-tour=com-new-run]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "F11-plans",
+  "path": "/admin/accounting/commissions?company=SMPL",
+  "clip": [
+   "[data-tour=com-plans]",
+   "[data-tour=com-new-plan]",
+   "[data-tour=com-assign]"
+  ],
+  "marks": [
+   [
+    "[data-tour=com-plans]",
+    1
+   ],
+   [
+    "[data-tour=com-new-plan]",
+    2
+   ],
+   [
+    "[data-tour=com-assign]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "F12-attrib",
+  "path": "/admin/accounting/commissions?company=SMPL",
+  "clip": [
+   "[data-tour=com-attrib]",
+   "[data-tour=com-attribute]"
+  ],
+  "marks": [
+   [
+    "[data-tour=com-attrib]",
+    1
+   ],
+   [
+    "[data-tour=com-attribute]",
+    2
+   ]
+  ]
+ },
+ {
+  "name": "F13-run",
+  "path": "/admin/accounting/commissions/{{q3}}",
+  "clip": [
+   "h1",
+   "[data-tour=run-reps]",
+   "[data-tour=run-unattributed]",
+   "[data-tour=run-status]",
+   "[data-tour=run-rebuild]"
+  ],
+  "marks": [
+   [
+    "[data-tour=run-reps]",
+    1
+   ],
+   [
+    "[data-tour=run-unattributed]",
+    2
+   ],
+   [
+    "[data-tour=run-status]",
+    3
+   ],
+   [
+    "[data-tour=run-rebuild]",
+    4
+   ]
+  ]
+ }
+]

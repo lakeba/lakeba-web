@@ -33,6 +33,7 @@ const groups: { label: string; items: Item[] }[] = [
     { href: '/admin/linkedin', label: 'LinkedIn campaign' },
     { href: '/admin/emails', label: 'Shareholder emails' },
     { href: '/admin/queries', label: 'Investor questions' },
+    { href: '/admin/guides/marketing.pdf', label: 'Guide (PDF)' },
   ] },
   { label: 'Documents', items: [
     { href: '/admin/documents', label: 'Documents' },
@@ -51,6 +52,7 @@ const groups: { label: string; items: Item[] }[] = [
     // One place for requests: Lakeba's Legal team sees every company's, everyone else their own.
     { href: access.canAny('legal.view') ? '/admin/legal/requests' : '/admin/legal-requests', label: 'Requests', also: ['/admin/legal/requests', '/admin/legal-requests'] },
     { href: '/admin/legal/ask', label: 'Legal Ask' },
+    { href: '/admin/guides/legal.pdf', label: 'Guide (PDF)' },
   ] },
   { label: 'Finance', items: [
     { href: '/admin/accounting', label: 'Group view', exact: true, also: ['/admin/accounting/group', '/admin/accounting/schedules'] },
@@ -61,23 +63,25 @@ const groups: { label: string; items: Item[] }[] = [
     { href: '/admin/accounting/commissions', label: 'Commissions' },
     { href: '/admin/ventures', label: 'Ventures & prices' },
     { href: '/admin/trading', label: 'Secondary trading' },
+    { href: '/admin/guides/finance.pdf', label: 'Guide (PDF)' },
   ] },
   { label: 'People', items: [
     { href: '/admin/hr', label: 'People', exact: true, also: ['/admin/hr/people'] },
     { href: '/admin/hr/equity', label: 'Equity plans' },
     { href: '/admin/hr/policies', label: 'Policies' },
     { href: '/admin/hr/performance', label: 'Performance' },
+    { href: '/admin/guides/hr.pdf', label: 'Guide (PDF)' },
   ] },
-  { label: 'Companies', items: [
-    { href: '/admin/companies', label: 'Companies' },
-  ] },
+  // Companies: each company's set-up (details, share classes, legal record, website, domain and mail), so with the settings.
   { label: 'Settings', items: [
+    { href: '/admin/companies', label: 'Companies' },
     { href: '/admin/system/users', label: 'Users' },
     { href: '/admin/system/roles', label: 'Roles' },
     { href: '/admin/audit', label: 'Audit log' },
     { href: '/admin/integrations', label: 'Integrations' },
     { href: '/admin/notifications', label: 'Notifications' },
     { href: '/admin/ask-review', label: 'AI assistants', also: ['/admin/ask-knowledge', '/admin/ask-tests'] },
+    { href: '/admin/guides/compliance.pdf', label: 'Guide (PDF)' },
   ] },
 ];
 // Approvals: for anyone who prepares or approves; the count is what waits for them.

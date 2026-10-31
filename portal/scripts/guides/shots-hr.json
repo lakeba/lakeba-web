@@ -1,0 +1,412 @@
+[
+ {
+  "name": "s01-people",
+  "path": "/admin/hr",
+  "maxHeight": 1300,
+  "marks": [
+   [
+    "[data-tour=hr-show]",
+    1
+   ],
+   [
+    "[data-tour=hr-list]",
+    2
+   ],
+   [
+    "[data-tour=hr-add]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "s02-add",
+  "path": "/admin/hr",
+  "js": "document.querySelectorAll('details').forEach((d) => d.open = true); 1",
+  "clip": [
+   "[data-tour=hr-add]"
+  ],
+  "marks": [
+   [
+    "label[for=entity_id]",
+    1,
+    "dot"
+   ],
+   [
+    "label[for=full_name]",
+    2,
+    "dot"
+   ],
+   [
+    "label[for=email]",
+    3,
+    "dot"
+   ],
+   [
+    "label[for=job_title]",
+    4,
+    "dot"
+   ],
+   [
+    "label[for=team]",
+    5,
+    "dot"
+   ],
+   [
+    "label[for=manager_id]",
+    6,
+    "dot"
+   ],
+   [
+    "label[for=location]",
+    7,
+    "dot"
+   ],
+   [
+    "label[for=employment_type]",
+    8,
+    "dot"
+   ],
+   [
+    "label[for=start_date]",
+    9,
+    "dot"
+   ],
+   [
+    "button|text=Add, with",
+    10
+   ]
+  ]
+ },
+ {
+  "name": "s03-org",
+  "path": "/admin/hr?show=org",
+  "clip": [
+   "[data-tour=hr-show]",
+   "[data-tour=hr-org]"
+  ],
+  "marks": [
+   [
+    "a|text=Download PDF",
+    1
+   ]
+  ]
+ },
+ {
+  "name": "s04-person",
+  "path": "/admin/hr/people/{{sam}}",
+  "clip": [
+   "h1",
+   "[data-tour=person-private]",
+   "[data-tour=person-docs]"
+  ],
+  "marks": [
+   [
+    "form|text=Details",
+    1
+   ],
+   [
+    "[data-tour=person-docs]",
+    2
+   ],
+   [
+    "[data-tour=person-stand]",
+    3
+   ],
+   [
+    "[data-tour=person-grants]",
+    4
+   ],
+   [
+    "[data-tour=person-policies]",
+    5
+   ],
+   [
+    "[data-tour=person-private]",
+    6
+   ]
+  ]
+ },
+ {
+  "name": "s05-invite",
+  "path": "/admin/hr/people/{{zoe}}",
+  "clip": [
+   "[data-tour=person-stand]"
+  ],
+  "marks": [
+   [
+    "button|text=Invite to the portal",
+    1
+   ]
+  ]
+ },
+ {
+  "name": "s06-onboard",
+  "path": "/admin/hr/people/{{noah}}",
+  "clip": [
+   "[data-tour=person-checklist]",
+   "[data-tour=person-stand]"
+  ],
+  "marks": [
+   [
+    "[data-tour=person-checklist]",
+    1
+   ],
+   [
+    "button|text=They",
+    2
+   ]
+  ]
+ },
+ {
+  "name": "s07-leave",
+  "path": "/admin/hr/people/{{ella}}",
+  "clip": [
+   "[data-tour=person-checklist]",
+   "[data-tour=person-stand]"
+  ],
+  "marks": [
+   [
+    "[data-tour=person-checklist]",
+    1
+   ],
+   [
+    "button|text=They",
+    2
+   ]
+  ]
+ },
+ {
+  "name": "s08-policies",
+  "path": "/admin/hr/policies",
+  "maxHeight": 900
+ },
+ {
+  "name": "s09-policy",
+  "path": "/admin/hr/policies/{{leave}}",
+  "clip": [
+   "[data-tour=pol-text]",
+   "[data-tour=pol-accepted]",
+   "[data-tour=pol-publish]"
+  ],
+  "marks": [
+   [
+    "[data-tour=pol-text]",
+    1
+   ],
+   [
+    "[data-tour=pol-ack]",
+    2
+   ],
+   [
+    "[data-tour=pol-publish]",
+    3
+   ],
+   [
+    "[data-tour=pol-accepted]",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "s10-plan",
+  "path": "/admin/hr/equity",
+  "clip": [
+   "[data-tour=eqp-plan]"
+  ],
+  "marks": [
+   [
+    "label[for=p-pool]",
+    1,
+    "dot"
+   ],
+   [
+    "label[for=p-vm]",
+    2,
+    "dot"
+   ],
+   [
+    "label[for=p-cm]",
+    3,
+    "dot"
+   ],
+   [
+    "label[for=p-leaver]",
+    4,
+    "dot"
+   ]
+  ]
+ },
+ {
+  "name": "s11-grantform",
+  "path": "/admin/hr/equity",
+  "clip": [
+   "[data-tour=eqp-grant]"
+  ],
+  "marks": [
+   [
+    "label[for=person_id]",
+    1,
+    "dot"
+   ],
+   [
+    "label[for=number]",
+    2,
+    "dot"
+   ],
+   [
+    "label[for=exercise_price]",
+    3,
+    "dot"
+   ],
+   [
+    "label[for=vesting_start]",
+    4,
+    "dot"
+   ],
+   [
+    "button|text=Draft the grant",
+    5
+   ]
+  ]
+ },
+ {
+  "name": "s12-grant",
+  "path": "/admin/hr/equity/{{samGrant}}",
+  "clip": [
+   "h1",
+   "[data-tour=eq-position]",
+   "[data-tour=eq-vesting]",
+   "[data-tour=eq-actions]"
+  ],
+  "marks": [
+   [
+    "[data-tour=eq-position]",
+    1
+   ],
+   [
+    "[data-tour=eq-vesting]",
+    2
+   ],
+   [
+    "[data-tour=eq-actions]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "s13-perf",
+  "path": "/admin/hr/performance",
+  "maxHeight": 1500,
+  "marks": [
+   [
+    "[data-tour=perf-period]",
+    1
+   ],
+   [
+    "[data-tour=perf-list]",
+    2
+   ],
+   [
+    "[data-tour=perf-give]",
+    3
+   ],
+   [
+    "[data-tour=perf-insights]",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "s14-lib",
+  "path": "/admin/hr/performance/library",
+  "clip": [
+   "[data-tour=lib-defs]",
+   "[data-tour=lib-sets]"
+  ],
+  "maxHeight": 1500,
+  "marks": [
+   [
+    "[data-tour=lib-defs]",
+    1
+   ],
+   [
+    "[data-tour=lib-sets]",
+    2
+   ]
+  ]
+ },
+ {
+  "name": "s15-card",
+  "path": "/admin/hr/performance/{{miaCard}}",
+  "clip": [
+   "h1",
+   "[data-tour=card-items]",
+   "[data-tour=card-results]",
+   "[data-tour=card-status]"
+  ],
+  "marks": [
+   [
+    "[data-tour=card-items]",
+    1
+   ],
+   [
+    "[data-tour=card-results]",
+    2
+   ],
+   [
+    "[data-tour=card-add-result]",
+    3
+   ],
+   [
+    "[data-tour=card-status]",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "s16-insights",
+  "path": "/admin/hr/performance/insights",
+  "maxHeight": 1500
+ },
+ {
+  "name": "s17-myhr",
+  "path": "/my-hr",
+  "maxHeight": 960,
+  "marks": [
+   [
+    "[data-tour=myhr-accept]",
+    1
+   ],
+   [
+    "[data-tour=myhr-grants]",
+    2
+   ],
+   [
+    "[data-tour=myhr-docs]",
+    3
+   ],
+   [
+    "[data-tour=myhr-policies]",
+    4
+   ],
+   [
+    "[data-tour=myhr-performance]",
+    5
+   ],
+   [
+    "[data-tour=myhr-ask]",
+    6
+   ]
+  ]
+ },
+ {
+  "name": "s18-myperf",
+  "path": "/my-hr/performance",
+  "maxHeight": 1300
+ },
+ {
+  "name": "s19-myask",
+  "path": "/my-hr/ask",
+  "maxHeight": 800
+ }
+]

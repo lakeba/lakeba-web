@@ -1,0 +1,370 @@
+[
+ {
+  "name": "M01-news",
+  "path": "/admin/news",
+  "keep": [
+   "tbody tr"
+  ],
+  "clip": [
+   "h1",
+   "table"
+  ],
+  "marks": [
+   [
+    "a|text=New post",
+    1
+   ],
+   [
+    "input[name=q]",
+    2
+   ],
+   [
+    "table",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "M02-post",
+  "path": "/admin/news/{{p1}}",
+  "clip": [
+   "h1",
+   "[data-tour=news-text]",
+   "[data-tour=news-actions]",
+   "[data-tour=news-notify]"
+  ],
+  "maxHeight": 2400,
+  "marks": [
+   [
+    "label[for=title]",
+    1,
+    "dot"
+   ],
+   [
+    "[data-tour=news-text]",
+    2
+   ],
+   [
+    "[data-tour=news-audience]",
+    3
+   ],
+   [
+    "[data-tour=news-where]",
+    4
+   ],
+   [
+    "[data-tour=news-status]",
+    5
+   ],
+   [
+    "[data-tour=news-notify]",
+    6
+   ],
+   [
+    "[data-tour=news-actions]",
+    7
+   ]
+  ]
+ },
+ {
+  "name": "M03-sched",
+  "path": "/admin/news/{{p3}}",
+  "clip": [
+   "[data-tour=news-audience]",
+   "[data-tour=news-notify]",
+   "[data-tour=news-actions]"
+  ],
+  "maxHeight": 1600,
+  "marks": [
+   [
+    "[data-tour=news-status]",
+    1
+   ],
+   [
+    "[data-tour=news-notify]",
+    2
+   ]
+  ]
+ },
+ {
+  "name": "M04-ann",
+  "path": "/admin/content?company=SMPL",
+  "keep": [
+   "[data-tour=ann-list] li",
+   "[data-tour=ann-list] tr"
+  ],
+  "clip": [
+   "h1",
+   "[data-tour=ann-list]",
+   "button|text=Add announcement"
+  ],
+  "maxHeight": 3000,
+  "marks": [
+   [
+    "[data-tour=ann-list]",
+    1
+   ],
+   [
+    "[data-tour=ann-text]",
+    2
+   ],
+   [
+    "[data-tour=ann-audience]",
+    3
+   ],
+   [
+    "[data-tour=ann-popup]",
+    4
+   ],
+   [
+    "[data-tour=ann-languages]",
+    5
+   ],
+   [
+    "button|text=Add announcement",
+    6
+   ]
+  ]
+ },
+ {
+  "name": "M05-nls",
+  "path": "/admin/newsletters?company=SMPL",
+  "keep": [
+   "tbody tr"
+  ],
+  "clip": [
+   "h1",
+   "table"
+  ],
+  "maxHeight": 1400
+ },
+ {
+  "name": "M06-nlnew",
+  "path": "/admin/newsletters/new",
+  "clip": [
+   "h1",
+   "[data-tour=nl-start]"
+  ],
+  "maxHeight": 1400,
+  "marks": [
+   [
+    "[data-tour=nl-start]",
+    1
+   ]
+  ]
+ },
+ {
+  "name": "M08-nlsent",
+  "path": "/admin/newsletters/{{sent}}",
+  "maxHeight": 2200
+ },
+ {
+  "name": "M09-press",
+  "path": "/admin/press?desk=SMPL",
+  "maxHeight": 1400
+ },
+ {
+  "name": "M11-chan",
+  "path": "/admin/press/{{r1}}/channels?desk=SMPL",
+  "maxHeight": 2600,
+  "marks": [
+   [
+    "[data-tour=chan-social]",
+    1
+   ],
+   [
+    "[data-tour=chan-wires]",
+    2
+   ],
+   [
+    "[data-tour=chan-record]",
+    3
+   ],
+   [
+    "[data-tour=chan-history]",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "M12-dist",
+  "path": "/admin/press/distribution/{{dist}}?desk=SMPL",
+  "maxHeight": 2400
+ },
+ {
+  "name": "M13-media",
+  "path": "/admin/press/media?desk=SMPL",
+  "maxHeight": 1800,
+  "marks": [
+   [
+    "[data-tour=media-add]",
+    1
+   ],
+   [
+    "[data-tour=media-filters]",
+    2
+   ],
+   [
+    "[data-tour=media-table]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "M14-contact",
+  "path": "/admin/press/media/{{c1}}?desk=SMPL",
+  "maxHeight": 2400
+ },
+ {
+  "name": "M15-cov",
+  "path": "/admin/press/coverage?desk=SMPL",
+  "maxHeight": 2200
+ },
+ {
+  "name": "M16-report",
+  "path": "/admin/press/report?desk=SMPL",
+  "maxHeight": 2200
+ },
+ {
+  "name": "M17-research",
+  "path": "/admin/press/research?desk=SMPL",
+  "maxHeight": 1800
+ },
+ {
+  "name": "M18-settings",
+  "path": "/admin/press/settings?desk=SMPL",
+  "maxHeight": 2600
+ },
+ {
+  "name": "M19-keys",
+  "path": "/admin/companies/SMPL/website",
+  "maxHeight": 2200
+ },
+ {
+  "name": "M20-relpub",
+  "path": "/admin/press/{{r1}}?desk=SMPL",
+  "maxHeight": 1400
+ },
+ {
+  "name": "M10a-release",
+  "path": "/admin/press/{{r2}}?desk=SMPL",
+  "clip": [
+   "h1",
+   "[data-tour=press-points]",
+   "[data-tour=press-quotes]"
+  ],
+  "maxHeight": 3000,
+  "marks": [
+   [
+    "[data-tour=press-points]",
+    1
+   ],
+   [
+    "button|text=\u2728 Draft with AI",
+    2
+   ],
+   [
+    "label[for=headline]",
+    3,
+    "dot"
+   ],
+   [
+    "[data-tour=press-quotes]",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "M10b-approve",
+  "path": "/admin/press/{{r2}}?desk=SMPL",
+  "clip": [
+   "[data-tour=press-release]",
+   "[data-tour=press-checks]",
+   "[data-tour=press-approve]"
+  ],
+  "maxHeight": 2400,
+  "marks": [
+   [
+    "[data-tour=press-release]",
+    1
+   ],
+   [
+    "[data-tour=press-checks]",
+    2
+   ],
+   [
+    "[data-tour=press-approve]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "M07a-nltop",
+  "path": "/admin/newsletters/{{draft}}",
+  "clip": [
+   "h1",
+   "button|text=Build the newsletter"
+  ],
+  "maxHeight": 1600,
+  "marks": [
+   [
+    "[data-tour=nl-modes]",
+    1
+   ],
+   [
+    "label[for=subject]",
+    2,
+    "dot"
+   ],
+   [
+    "button|text=\u2728 Suggest subject",
+    3
+   ],
+   [
+    "button|text=Build the newsletter",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "M07b-nlcontent",
+  "path": "/admin/newsletters/{{draft}}",
+  "keep": [
+   "[data-tour=nl-content] label"
+  ],
+  "keepRe": "[Ss]ample|meeting|holding|Upcoming|Each reader",
+  "clip": [
+   "[data-tour=nl-content]"
+  ],
+  "maxHeight": 1400,
+  "marks": [
+   [
+    "[data-tour=nl-content]",
+    1
+   ]
+  ]
+ },
+ {
+  "name": "M07c-nlsend",
+  "path": "/admin/newsletters/{{draft}}",
+  "clip": [
+   "[data-tour=nl-audience]",
+   "[data-tour=nl-send]"
+  ],
+  "maxHeight": 1600,
+  "marks": [
+   [
+    "[data-tour=nl-audience]",
+    1
+   ],
+   [
+    "[data-tour=nl-test]",
+    2
+   ],
+   [
+    "[data-tour=nl-send]",
+    3
+   ]
+  ]
+ }
+]

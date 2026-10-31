@@ -45,7 +45,12 @@ changes or removes something people use, go through this list in the same change
    `tour:` on its What's new line ("Show me"). Shareholder tours need translations too.
 8. **Docs**: `portal/docs/` (deploy, integrations, online meetings…) and the Android app (`android/`)
    when the change touches them.
+9. **Staff guides** (`portal/docs/guides/`): if the change adds, moves or removes something a department's
+   guide shows or describes, update its text (and re-take the screens that changed), then
+   `npm run guides:pdf` and commit the PDF with it. A new department gets a guide, an entry in
+   `src/lib/guides.ts` and a "Guide (PDF)" item in its menu. How to: `portal/docs/guides/README.md`.
 
-`npm run check:portal` (in `portal/`) checks 1–5 and 7 and reminds about 6. It runs before every deploy and
+`npm run check:portal` (in `portal/`) checks 1–5 and 7, reminds about 6, and checks the guides' files and warns
+when a guide's pages changed after it (9). It runs before every deploy and
 monthly (`.github/workflows/portal-checks.yml`). It can't judge whether something *should* notify
 people or appear in What's new: that part is this list.

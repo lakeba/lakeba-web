@@ -21,7 +21,8 @@
     "check:portal": "node scripts/check-portal.mjs",
     "dev:demo": "astro dev --mode demo --port 4324",
     "demo:db": "supabase start --workdir demo-db",
-    "seed:demo": "node --env-file=.env.demo scripts/seed-demo.mjs"
+    "seed:demo": "node --env-file=.env.demo scripts/seed-demo.mjs",
+    "guides:pdf": "node scripts/guides/build-pdfs.mjs"
   },
   "dependencies": {
     "@anam-ai/js-sdk": "^4.29.1",

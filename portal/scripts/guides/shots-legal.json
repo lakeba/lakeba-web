@@ -1,0 +1,332 @@
+[
+ {
+  "name": "L01-overview",
+  "path": "/admin/legal",
+  "keep": [
+   "[data-tour=legal-due] details",
+   "tbody tr"
+  ],
+  "js": "document.querySelectorAll('details').forEach((d) => d.open = false); 1",
+  "clip": [
+   "[data-tour=legal-stats]",
+   "[data-tour=legal-due]",
+   "[data-tour=legal-records]"
+  ],
+  "marks": [
+   [
+    "[data-tour=legal-stats]",
+    1
+   ],
+   [
+    "[data-tour=legal-due]",
+    2
+   ],
+   [
+    "[data-tour=legal-records]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "L02-item",
+  "path": "/admin/legal",
+  "keep": [
+   "[data-tour=legal-due] details"
+  ],
+  "js": "document.querySelectorAll('details').forEach((d) => d.open = false); document.querySelector('[data-tour=legal-due] details').open = true; 1",
+  "clip": [
+   "[data-tour=legal-due] details"
+  ],
+  "marks": [
+   [
+    "button|text=Mark done",
+    1
+   ],
+   [
+    "button|text=Not needed",
+    2
+   ],
+   [
+    "label|text=Looked after by",
+    3,
+    "dot"
+   ],
+   [
+    "button|text=Move",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "L03-record",
+  "path": "/admin/companies/SMPL/legal",
+  "clip": [
+   "[data-tour=co-tabs]",
+   "[data-tour=co-record]",
+   "[data-tour=co-extract]"
+  ],
+  "marks": [
+   [
+    "[data-tour=co-tabs]",
+    1
+   ],
+   [
+    "label[for=acn]",
+    2,
+    "dot"
+   ],
+   [
+    "label|text=Annual review date",
+    3,
+    "dot"
+   ],
+   [
+    "label|text=Registered office",
+    4,
+    "dot"
+   ],
+   [
+    "[data-tour=co-extract]",
+    5
+   ],
+   [
+    "button|text=Save the record",
+    6
+   ]
+  ]
+ },
+ {
+  "name": "L04-officers",
+  "path": "/admin/companies/SMPL/legal?tab=officers",
+  "js": "document.querySelectorAll('details').forEach((d) => d.open = false); const o = document.querySelector('[data-tour=co-officers] details'); if (o) o.open = true; document.querySelector('[data-tour=co-add-officer] details') && (document.querySelector('[data-tour=co-add-officer] details').open = true); 1",
+  "clip": [
+   "[data-tour=co-officers]",
+   "[data-tour=co-add-officer]"
+  ],
+  "maxHeight": 2400,
+  "marks": [
+   [
+    "[data-tour=co-officers]",
+    1
+   ],
+   [
+    "[data-tour=co-add-officer]",
+    2
+   ]
+  ]
+ },
+ {
+  "name": "L05-cocal",
+  "path": "/admin/companies/SMPL/legal?tab=calendar",
+  "js": "document.querySelectorAll('details').forEach((d) => d.open = false); 1",
+  "clip": [
+   "[data-tour=co-tabs]",
+   "[data-tour=co-calendar]"
+  ],
+  "maxHeight": 2000,
+  "marks": [
+   [
+    "[data-tour=co-calendar]",
+    1
+   ]
+  ]
+ },
+ {
+  "name": "L06-contracts",
+  "path": "/admin/legal/contracts?show=all",
+  "keep": [
+   "tbody tr"
+  ],
+  "clip": [
+   "[data-tour=contracts-import]",
+   "[data-tour=contracts-show]",
+   "[data-tour=contracts-list]"
+  ],
+  "marks": [
+   [
+    "[data-tour=contracts-import]",
+    1
+   ],
+   [
+    "[data-tour=contracts-show]",
+    2
+   ],
+   [
+    "[data-tour=contracts-search]",
+    3
+   ],
+   [
+    "[data-tour=contracts-list]",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "L07-contract",
+  "path": "/admin/legal/contracts/{{c1}}",
+  "clip": [
+   "h1",
+   "[data-tour=contract-terms]",
+   "[data-tour=contract-clauses]",
+   "[data-tour=contract-check]",
+   "[data-tour=contract-calendar]"
+  ],
+  "maxHeight": 3200,
+  "marks": [
+   [
+    "[data-tour=contract-terms]",
+    1
+   ],
+   [
+    "[data-tour=contract-dates]",
+    2
+   ],
+   [
+    "[data-tour=contract-clauses]",
+    3
+   ],
+   [
+    "[data-tour=contract-check]",
+    4
+   ],
+   [
+    "[data-tour=contract-calendar]",
+    5
+   ]
+  ]
+ },
+ {
+  "name": "L08-tocheck",
+  "path": "/admin/legal/contracts/{{c2}}",
+  "clip": [
+   "h1",
+   "[data-tour=contract-terms]"
+  ],
+  "maxHeight": 1100
+ },
+ {
+  "name": "L09-calendar",
+  "path": "/admin/legal/calendar",
+  "keep": [
+   "[data-tour=cal-items] details"
+  ],
+  "js": "document.querySelectorAll('details').forEach((d) => d.open = false); 1",
+  "clip": [
+   "[data-tour=cal-filters]",
+   "[data-tour=cal-items]",
+   "[data-tour=cal-add]",
+   "[data-tour=cal-feed]"
+  ],
+  "maxHeight": 2400,
+  "marks": [
+   [
+    "[data-tour=cal-filters]",
+    1
+   ],
+   [
+    "[data-tour=cal-items]",
+    2
+   ],
+   [
+    "[data-tour=cal-add]",
+    3
+   ],
+   [
+    "[data-tour=cal-feed]",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "L10-requests",
+  "path": "/admin/legal/requests",
+  "keep": [
+   "tbody tr"
+  ],
+  "clip": [
+   "h1",
+   "table"
+  ]
+ },
+ {
+  "name": "L11-request",
+  "path": "/admin/legal/requests/{{req}}",
+  "clip": [
+   "h1",
+   "[data-tour=lreq-thread]",
+   "[data-tour=lreq-reply]",
+   "[data-tour=lreq-details]",
+   "[data-tour=lreq-triage]"
+  ],
+  "maxHeight": 2600,
+  "marks": [
+   [
+    "[data-tour=lreq-thread]",
+    1
+   ],
+   [
+    "[data-tour=lreq-reply]",
+    2
+   ],
+   [
+    "[data-tour=lreq-details]",
+    3
+   ],
+   [
+    "[data-tour=lreq-triage]",
+    4
+   ]
+  ]
+ },
+ {
+  "name": "L12-newreq",
+  "path": "/admin/legal-requests",
+  "keep": [
+   "[data-tour=lr-open] li",
+   "[data-tour=lr-open] tbody tr"
+  ],
+  "clip": [
+   "[data-tour=lr-new]",
+   "[data-tour=lr-open]"
+  ],
+  "maxHeight": 2400,
+  "marks": [
+   [
+    "[data-tour=lr-details]",
+    1
+   ],
+   [
+    "[data-tour=lr-send]",
+    2
+   ],
+   [
+    "[data-tour=lr-open]",
+    3
+   ]
+  ]
+ },
+ {
+  "name": "L13-ask",
+  "path": "/admin/legal/ask",
+  "clip": [
+   "[data-tour=la-about]",
+   "[data-tour=la-question]",
+   "[data-tour=la-answer]"
+  ],
+  "maxHeight": 2000,
+  "marks": [
+   [
+    "[data-tour=la-about]",
+    1
+   ],
+   [
+    "[data-tour=la-question]",
+    2
+   ],
+   [
+    "[data-tour=la-answer]",
+    3
+   ]
+  ]
+ }
+]
