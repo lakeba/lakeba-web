@@ -6,7 +6,7 @@ import { hashSecret } from '../../../../lib/api/core';
 import { isCompanyAdmin } from '../../../../lib/integrations/admin';
 import { finishConnect, PROVIDERS, type Provider } from '../../../../lib/integrations/connections';
 import { hubspotAccount } from '../../../../lib/integrations/hubspot';
-import { xeroTenants } from '../../../../lib/integrations/xero';
+import { chooseXeroTenant, xeroTenants } from '../../../../lib/integrations/xero';
 
 // Where HubSpot and Xero send the company's Admin back after "Connect": the
 // one-time code becomes the connection's tokens. Only an Admin of that company
@@ -31,19 +31,20 @@ else if (denied) {
   try {
     const { connection, tokens } = await finishConnect(svc, provider, code, state, central);
     let account: { id: string; name: string } | null = null;
+    let extra = '';
     const settings: Record<string, unknown> = { ...(connection.settings ?? {}) };
     if (provider === 'hubspot') account = await hubspotAccount(tokens.access_token);
     else {
-      const tenants = await xeroTenants(tokens.access_token);
-      if (!tenants.length) throw new Error('No Xero organisation was shared with the portal.');
-      account = tenants[0];
-      Object.assign(settings, { tenant_id: tenants[0].id, tenants });
+      const { kept, released } = await chooseXeroTenant(svc, tokens.access_token, connection.id, company.display_name);
+      account = kept;
+      Object.assign(settings, { tenant_id: kept.id, tenants: await xeroTenants(tokens.access_token) });
+      if (released.length) extra = ` Only ${kept.name} is used; the other organisations you ticked (${released.join(', ')}) were released, so they don’t count towards Lakeba’s Xero connections.`;
     }
     // Activity notes start from now, not from the past month.
     const { data: last } = await svc.from('integration_events').select('id').eq('entity_id', pending.entity_id).order('id', { ascending: false }).limit(1).maybeSingle();
     await svc.from('connections').update({ account_id: account.id, account_name: account.name, settings, cursor: { event_id: last?.id ?? 0, sync_now: true } }).eq('id', connection.id).throwOnError();
     await Astro.locals.supabase.rpc('log_event', { event_action: 'admin_connected_integration', event_detail: { company: company.code, provider, account: account.name } });
-    return Astro.redirect(`/admin/companies/${company.code}/integrations?tab=${provider}&notice=${encodeURIComponent(`${PROVIDERS[provider].name} is connected (${account.name}). The first sync starts within a minute.`)}`, 303);
+    return Astro.redirect(`/admin/companies/${company.code}/integrations?tab=${provider}&notice=${encodeURIComponent(`${PROVIDERS[provider].name} is connected (${account.name}). The first sync starts within a minute.${extra}`)}`, 303);
   } catch (e) {
     error = `${PROVIDERS[provider].name} couldn’t be connected: ${(e as Error).message}`;
     await svc.from('connections').update({ status: 'disconnected', state_hash: null, last_error: error }).eq('id', pending.id);

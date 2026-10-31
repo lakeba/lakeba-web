@@ -13,7 +13,7 @@ import { outboundProblem } from '../../../../lib/outbound';
 import { integrationsReady } from '../../../../lib/secret-box';
 import { connectionOf, PROVIDERS, startConnect, type Provider } from '../../../../lib/integrations/connections';
 import { hubspotSettings } from '../../../../lib/integrations/hubspot';
-import { equityAccounts, prepareDividend, registerPaidUp, xeroContext, xeroSettings } from '../../../../lib/integrations/xero';
+import { equityAccounts, prepareDividend, registerPaidUp, releaseXero, xeroContext, xeroSettings } from '../../../../lib/integrations/xero';
 import { inviteGuest } from '../../../../lib/data-rooms';
 import { brandOf } from '../../../../lib/brand';
 import { AUTHS, DEFAULT_MAP, KINDS, newInboundSecret, newInboundToken } from '../../../../lib/integrations/inbound';
@@ -129,9 +129,11 @@ if (Astro.request.method === 'POST') {
     const c = await connectionOf(svc, company.id, provider);
     if (!c) error = 'Not connected.';
     else if (intent === 'disconnect') {
+      // Xero: the connection is removed in Xero too, so it stops counting towards Lakeba's connection limit.
+      const released = provider === 'xero' ? await releaseXero(svc, c, origin).catch(() => false) : false;
       await svc.from('connections').update({ status: 'disconnected', tokens_enc: null, token_expires_at: null }).eq('id', c.id);
-      await log('admin_disconnected_integration', { provider });
-      notice = `${PROVIDERS[provider].name} is disconnected. Nothing was deleted there; connect again any time.`;
+      await log('admin_disconnected_integration', { provider, released });
+      notice = `${PROVIDERS[provider].name} is disconnected${released ? ' and the portal no longer appears in its connected apps' : ''}. Nothing was deleted there; connect again any time.`;
     } else if (intent === 'sync-now') {
       await svc.from('connections').update({ cursor: { ...c.cursor, sync_now: true } }).eq('id', c.id);
       notice = 'Syncing within a minute.';

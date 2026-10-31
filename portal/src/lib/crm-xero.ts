@@ -101,25 +101,84 @@ export async function draftInvoice(x: XeroCtx, q: QuoteRow, lines: LineRow[], co
 type XInv = { InvoiceID: string; InvoiceNumber?: string; Status: string; Reference?: string; Total?: number; AmountPaid?: number; AmountDue?: number; FullyPaidOnDate?: string; DateString?: string; CurrencyCode?: string };
 const xeroDay = (v: string | undefined) => { const ms = Number(/\/Date\((-?\d+)/.exec(v ?? '')?.[1]); return Number.isFinite(ms) ? new Date(ms).toISOString() : null; };
 
+type DealRow = { id: string; entity_id: string; title: string; owner_id: string | null; xero_contact_id: string | null; xero_invoice_ids: string[]; invoiced_amount: number; paid_amount: number; status: string; pipeline_id: string; stage_id: string };
+type QuoteRef = { id: string; deal_id: string; number: string; xero_quote_id: string | null; xero_status: string | null; status: string; xero_invoice_id: string | null };
+const QUOTE_COLUMNS = 'id, deal_id, number, xero_quote_id, xero_status, status, xero_invoice_id';
+const INVOICE_STATUSES = 'DRAFT,SUBMITTED,AUTHORISED,PAID';
+
 /**
- * Reads a deal's Xero quote and invoices onto it: the deal's own invoices (raised from its quote, or whose
- * reference names its quote number) and their payments. Fully paid: the deal is won. Returns what changed.
+ * Reads a deal's Xero quote and invoices onto it, on demand (the deal page): the deal's own invoices (raised from
+ * its quote, or whose reference names its quote number) and their payments. Fully paid: the deal is won.
  */
-export async function syncDeal(svc: Svc, x: XeroCtx, deal: { id: string; entity_id: string; title: string; owner_id: string | null; xero_contact_id: string | null; xero_invoice_ids: string[]; invoiced_amount: number; paid_amount: number; status: string; pipeline_id: string; stage_id: string }) {
+export async function syncDeal(svc: Svc, x: XeroCtx, deal: DealRow) {
   if (!deal.xero_contact_id) return null;
-  const { data: quotes } = await svc.from('crm_quotes').select('id, number, version, xero_quote_id, xero_status, status, xero_invoice_id, total').eq('deal_id', deal.id);
-  const numbers = (quotes ?? []).map((q) => q.number as string);
-  // Quotes' status in Xero (accepted there by Finance, for example).
+  const { data: quotes } = await svc.from('crm_quotes').select(QUOTE_COLUMNS).eq('deal_id', deal.id);
+  const statuses = new Map<string, string>();
   for (const q of (quotes ?? []).filter((q) => q.xero_quote_id)) {
     const r = await xeroCall<{ Quotes?: { Status: string }[] }>(x, 'GET', `/Quotes/${q.xero_quote_id}`).catch(() => null);
-    const st = r?.Quotes?.[0]?.Status;
-    if (st && st !== q.xero_status) {
+    if (r?.Quotes?.[0]?.Status) statuses.set(q.xero_quote_id!, r.Quotes[0].Status);
+  }
+  const res = await xeroCall<{ Invoices?: XInv[] }>(x, 'GET', `/Invoices?ContactIDs=${deal.xero_contact_id}&Statuses=${INVOICE_STATUSES}&summaryOnly=true&page=1`);
+  return applyXero(svc, deal, (quotes ?? []) as QuoteRef[], statuses, res.Invoices ?? []);
+}
+
+/** Every page of a Xero list (100 a page), optionally only what changed since a time (If-Modified-Since). */
+async function allPages<T>(x: XeroCtx, path: string, key: string, since?: Date) {
+  const out: T[] = [];
+  for (let page = 1; page <= 50; page++) {
+    const r = await xeroCall<Record<string, T[]>>(x, 'GET', `${path}${path.includes('?') ? '&' : '?'}page=${page}`, undefined, since ? { 'if-modified-since': since.toUTCString() } : {});
+    const rows = r?.[key] ?? [];
+    out.push(...rows);
+    if (rows.length < 100) break;
+  }
+  return out;
+}
+
+/**
+ * The background sync for one company, in a handful of calls whatever the number of deals (Xero's Core tier
+ * allows 5,000 calls a day per organisation): the quotes and invoices changed since the last run, then all the
+ * invoices of the clients they belong to (and of deals changed in the CRM since), applied to their deals.
+ */
+export async function syncDeals(svc: Svc, x: XeroCtx, deals: (DealRow & { updated_at: string })[], since: Date) {
+  const linked = deals.filter((d) => d.xero_contact_id);
+  if (!linked.length) return [];
+  const { data: quoteRows } = await svc.from('crm_quotes').select(QUOTE_COLUMNS).in('deal_id', linked.map((d) => d.id));
+  const quotes = (quoteRows ?? []) as QuoteRef[];
+  const statuses = new Map<string, string>();
+  if (quotes.some((q) => q.xero_quote_id)) {
+    const ours = new Set(quotes.map((q) => q.xero_quote_id).filter(Boolean));
+    for (const q of await allPages<{ QuoteID: string; Status: string }>(x, '/Quotes', 'Quotes', since)) if (ours.has(q.QuoteID)) statuses.set(q.QuoteID, q.Status);
+  }
+  const contacts = [...new Set(linked.map((d) => d.xero_contact_id!))];
+  const chunks = (ids: string[]) => Array.from({ length: Math.ceil(ids.length / 40) }, (_, i) => ids.slice(i * 40, i * 40 + 40));
+  const touched = new Set<string>();
+  for (const c of chunks(contacts)) for (const v of await allPages<XInv & { Contact?: { ContactID: string } }>(x, `/Invoices?ContactIDs=${c.join(',')}&Statuses=${INVOICE_STATUSES}&summaryOnly=true`, 'Invoices', since)) if (v.Contact?.ContactID) touched.add(v.Contact.ContactID);
+  for (const d of linked) if (new Date(d.updated_at) > since || quotes.some((q) => q.deal_id === d.id && q.xero_quote_id && statuses.has(q.xero_quote_id))) touched.add(d.xero_contact_id!);
+  const byContact = new Map<string, XInv[]>();
+  for (const c of chunks([...touched])) for (const v of await allPages<XInv & { Contact?: { ContactID: string } }>(x, `/Invoices?ContactIDs=${c.join(',')}&Statuses=${INVOICE_STATUSES}&summaryOnly=true`, 'Invoices')) {
+    const id = v.Contact?.ContactID ?? '';
+    byContact.set(id, [...(byContact.get(id) ?? []), v]);
+  }
+  const results: { deal: DealRow; result: Awaited<ReturnType<typeof applyXero>> }[] = [];
+  for (const d of linked.filter((d) => touched.has(d.xero_contact_id!))) {
+    const result = await applyXero(svc, d, quotes.filter((q) => q.deal_id === d.id), statuses, byContact.get(d.xero_contact_id!) ?? []);
+    results.push({ deal: d, result });
+  }
+  return results;
+}
+
+/** What Xero says about a deal's quotes and invoices, written onto it (no calls to Xero). */
+async function applyXero(svc: Svc, deal: DealRow, quotes: QuoteRef[], statuses: Map<string, string>, invoices: XInv[]) {
+  const numbers = quotes.map((q) => q.number);
+  // Quotes' status in Xero (accepted there by Finance, for example).
+  for (const q of quotes.filter((q) => q.xero_quote_id && statuses.has(q.xero_quote_id))) {
+    const st = statuses.get(q.xero_quote_id!)!;
+    if (st !== q.xero_status) {
       await svc.from('crm_quotes').update({ xero_status: st, ...(st === 'ACCEPTED' && q.status !== 'accepted' ? { status: 'accepted', accepted_at: new Date().toISOString(), accepted_name: 'in Xero' } : {}) }).eq('id', q.id);
       if (st === 'ACCEPTED' && q.status !== 'accepted') await logActivity(svc, { entity_id: deal.entity_id, kind: 'xero', deal_id: deal.id, subject: `Quote ${q.number} accepted in Xero` });
     }
   }
-  const res = await xeroCall<{ Invoices?: XInv[] }>(x, 'GET', `/Invoices?ContactIDs=${deal.xero_contact_id}&Statuses=DRAFT,SUBMITTED,AUTHORISED,PAID&summaryOnly=true&page=1`);
-  const mine = (res.Invoices ?? []).filter((v) => deal.xero_invoice_ids.includes(v.InvoiceID) || (quotes ?? []).some((q) => q.xero_invoice_id === v.InvoiceID) || numbers.some((n) => (v.Reference ?? '').includes(n)));
+  const mine = invoices.filter((v) => deal.xero_invoice_ids.includes(v.InvoiceID) || (quotes ?? []).some((q) => q.xero_invoice_id === v.InvoiceID) || numbers.some((n) => (v.Reference ?? '').includes(n)));
   if (!mine.length) return null;
   const live = mine.filter((v) => ['AUTHORISED', 'PAID'].includes(v.Status));
   const invoiced = live.reduce((s, v) => s + Number(v.Total ?? 0), 0);

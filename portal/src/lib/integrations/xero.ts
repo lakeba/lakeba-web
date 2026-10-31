@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { XERO_API_BASE } from 'astro:env/server';
+import { SUPABASE_URL, XERO_API_BASE } from 'astro:env/server';
 import type { serviceClient } from '../admin';
 import { holdersIn } from '../api/data';
 import { outboundJson } from '../outbound';
@@ -25,15 +25,59 @@ export const xeroSettings = (s: Record<string, unknown>): XeroSettings => ({
 });
 
 type Ctx = { svc: Svc; c: Connection; company: { id: string; code: string; display_name: string }; token: string; tenant: string };
-const xr = <T = unknown>(x: Ctx, method: string, path: string, body?: unknown) =>
-  outboundJson<T>(method, `${XERO_API_BASE}/api.xro/2.0${path}`, body, { authorization: `Bearer ${x.token}`, 'xero-tenant-id': x.tenant });
+const xr = <T = unknown>(x: Ctx, method: string, path: string, body?: unknown, headers: Record<string, string> = {}) =>
+  outboundJson<T>(method, `${XERO_API_BASE}/api.xro/2.0${path}`, body, { authorization: `Bearer ${x.token}`, 'xero-tenant-id': x.tenant, ...headers });
 const aud = (n: number) => `$${n.toLocaleString('en-AU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const hashOf = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex').slice(0, 32);
 
+type XeroConnection = { id: string; authEventId?: string; tenantId: string; tenantName: string; tenantType: string; createdDateUtc?: string };
+const xeroConnections = async (token: string) =>
+  ((await outboundJson<XeroConnection[]>('GET', `${XERO_API_BASE}/connections`, undefined, { authorization: `Bearer ${token}` })) ?? []).filter((t) => t.tenantType === 'ORGANISATION');
+
 /** The organisations this connection may reach. */
 export async function xeroTenants(token: string) {
-  const list = await outboundJson<{ tenantId: string; tenantName: string; tenantType: string }[]>('GET', `${XERO_API_BASE}/connections`, undefined, { authorization: `Bearer ${token}` });
-  return (list ?? []).filter((t) => t.tenantType === 'ORGANISATION').map((t) => ({ id: t.tenantId, name: t.tenantName }));
+  return (await xeroConnections(token)).map((t) => ({ id: t.tenantId, name: t.tenantName }));
+}
+
+/** Xero organisations other companies of this portal use (never released for them). */
+async function tenantsInUse(svc: Svc, exceptConnectionId: string) {
+  const { data } = await svc.from('connections').select('id, account_id, settings').eq('provider', 'xero').neq('status', 'disconnected').neq('id', exceptConnectionId);
+  return new Set((data ?? []).flatMap((c) => [c.account_id, (c.settings as { tenant_id?: string } | null)?.tenant_id]).filter(Boolean) as string[]);
+}
+// Staging on a Mac uses the same Xero app as production, but only sees its own companies: it never removes a
+// connection in Xero, which could be the one production uses for the same organisation.
+const mayRelease = !/^http:\/\/(127\.0\.0\.1|localhost):/.test(SUPABASE_URL);
+const plainName = (n: string) => n.toLowerCase().replace(/\b(pty|ltd|limited|inc|llc|srl|s\.r\.l\.)\b|[^a-z0-9]/g, '');
+
+/**
+ * After someone connects a company: Xero lets them tick several organisations, and each counts towards the
+ * app's connection limit (5 on Xero's Starter tier, 50 on Core). The organisation named like the company (or the
+ * first) is kept; the others ticked in the same sign-in are released in Xero, unless another company uses them.
+ */
+export async function chooseXeroTenant(svc: Svc, token: string, connectionId: string, companyName: string) {
+  const all = await xeroConnections(token);
+  if (!all.length) throw new Error('No Xero organisation was shared with the portal.');
+  const latest = [...all].sort((a, b) => (b.createdDateUtc ?? '').localeCompare(a.createdDateUtc ?? ''))[0];
+  const ticked = all.filter((t) => !latest.authEventId || t.authEventId === latest.authEventId);
+  const kept = ticked.find((t) => plainName(t.tenantName) === plainName(companyName)) ?? ticked.find((t) => plainName(t.tenantName).includes(plainName(companyName)) || plainName(companyName).includes(plainName(t.tenantName))) ?? ticked[0];
+  const inUse = await tenantsInUse(svc, connectionId);
+  const released: string[] = [];
+  for (const t of ticked.filter((t) => mayRelease && t.tenantId !== kept.tenantId && !inUse.has(t.tenantId))) {
+    const ok = await outboundJson('DELETE', `${XERO_API_BASE}/connections/${t.id}`, undefined, { authorization: `Bearer ${token}` }).then(() => true, () => false);
+    if (ok) released.push(t.tenantName);
+  }
+  return { kept: { id: kept.tenantId, name: kept.tenantName }, released };
+}
+
+/** Disconnecting a company: its organisation's connection is removed in Xero too (it stops counting), unless another company uses it. */
+export async function releaseXero(svc: Svc, c: Connection, central: string) {
+  const tenant = xeroSettings(c.settings).tenant_id || c.account_id;
+  if (!mayRelease || !tenant || !c.tokens_enc || (await tenantsInUse(svc, c.id)).has(tenant)) return false;
+  const token = await accessToken(svc, c, central).catch(() => null);
+  if (!token) return false;
+  const conn = (await xeroConnections(token).catch(() => [])).find((t) => t.tenantId === tenant);
+  if (!conn) return false;
+  return outboundJson('DELETE', `${XERO_API_BASE}/connections/${conn.id}`, undefined, { authorization: `Bearer ${token}` }).then(() => true, () => false);
 }
 
 async function ctxOf(svc: Svc, c: Connection, company: Ctx['company'], central: string): Promise<Ctx> {
