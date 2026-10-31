@@ -1,0 +1,67 @@
+---
+import Crm from '../../../../../layouts/Crm.astro';
+import Alert from '../../../../../components/Alert.astro';
+import { serviceClient } from '../../../../../lib/admin';
+import { field } from '../../../../../lib/forms';
+import { dateTime } from '../../../../../lib/format';
+import { crmHref, crmScope, namesOf } from '../../../../../lib/crm';
+import type { Step } from '../../../../../lib/crm-marketing';
+
+// CRM → Marketing → a sequence: its emails ({first_name}, {company} and {sender} are filled in), on or off, and
+// the people in it with where they are. Salespeople add people from their page; forms can enrol everyone.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+const id = Astro.params.id!;
+if (!company || !/^[0-9a-f-]{36}$/.test(id)) return Astro.redirect('/admin/crm/marketing/sequences');
+const load = async () => (await svc.from('crm_sequences').select('*').eq('id', id).eq('entity_id', company.id).maybeSingle()).data as { id: string; name: string; active: boolean; steps: Step[] } | null;
+let s = await load();
+if (!s) return Astro.redirect(crmHref(scope, '/admin/crm/marketing/sequences'));
+let error = '';
+let done = '';
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canMarket) throw new Error('You can’t change sequences here.');
+    if (field(form, 'intent') === 'stop') {
+      await svc.from('crm_enrolments').update({ status: 'stopped', stopped_reason: 'stopped by hand', next_at: null }).eq('id', field(form, 'enrolment')).eq('sequence_id', id);
+    } else {
+      const days = form.getAll('day').map(Number), subjects = form.getAll('subject').map(String), bodies = form.getAll('body').map(String);
+      const steps: Step[] = subjects.map((sub, i) => ({ day: Math.max(0, Math.min(120, Math.round(days[i] || 0))), subject: sub.trim().slice(0, 200), body: (bodies[i] ?? '').trim().slice(0, 5000) })).filter((st) => st.subject && st.body).sort((a, b) => a.day - b.day);
+      if (!steps.length) throw new Error('Write at least one email (subject and text).');
+      await svc.from('crm_sequences').update({ name: field(form, 'name').slice(0, 120) || s.name, active: field(form, 'active') === 'yes', steps }).eq('id', id);
+      done = 'Saved.';
+    }
+    s = (await load())!;
+  } catch (e) { error = (e as Error).message; }
+}
+const { data: people } = await svc.from('crm_enrolments').select('id, status, step, next_at, stopped_reason, owner_id, crm_people(id, full_name, email)').eq('sequence_id', id).order('enrolled_at', { ascending: false }).limit(200);
+const names = await namesOf(svc, (people ?? []).map((p) => p.owner_id));
+const rows = [...s.steps, { day: (s.steps.at(-1)?.day ?? 0) + 3, subject: '', body: '' }];
+---
+<Crm title={s.name} scope={scope}>
+  <p class="text-sm text-white/45"><a class="hover:text-white" href={crmHref(scope, '/admin/crm/marketing/sequences')}>Sequences</a></p>
+  <h1 class="mt-1 font-display text-3xl font-bold">{s.name}</h1>
+  {error && <div class="mt-4"><Alert tone="error">{error}</Alert></div>}
+  {done && <div class="mt-4"><Alert tone="success">{done}</Alert></div>}
+  <div class="mt-6 grid gap-6 xl:grid-cols-[1.4fr_1fr]">
+    <form method="post" class="card grid gap-4">
+      <div class="grid gap-3 sm:grid-cols-2"><div><label class="label" for="name">Name</label><input class="field" id="name" name="name" value={s.name} /></div><div><label class="label" for="active">State</label><select class="field" id="active" name="active"><option value="yes" selected={s.active}>On</option><option value="no" selected={!s.active}>Off</option></select></div></div>
+      {rows.map((st, i) => (
+        <fieldset class="rounded-xl border border-white/10 p-3"><legend class="px-1 text-xs text-white/45">Email {i + 1}{!st.subject && ' (new)'}</legend>
+          <div class="grid gap-2 sm:grid-cols-[6rem_1fr]"><div><label class="label" for={`d${i}`}>Day</label><input class="field" id={`d${i}`} name="day" type="number" min="0" max="120" value={st.day} /></div><div><label class="label" for={`s${i}`}>Subject</label><input class="field" id={`s${i}`} name="subject" value={st.subject} /></div></div>
+          <label class="label mt-2" for={`b${i}`}>Text</label><textarea class="field min-h-28" id={`b${i}`} name="body">{st.body}</textarea>
+        </fieldset>
+      ))}
+      <p class="text-xs text-white/40">Day 0 is sent within minutes of someone being enrolled. {'{first_name}'}, {'{company}'} and {'{sender}'} are filled in. An opt-out link is added to every email.</p>
+      {scope.canMarket && <button class="btn-primary justify-self-start">Save</button>}
+    </form>
+    <section class="card">
+      <h2 class="font-display text-lg font-bold">People in it</h2>
+      <ul class="mt-2 divide-y divide-white/5 text-sm">{((people ?? []) as unknown as { id: string; status: string; step: number; next_at: string | null; stopped_reason: string; owner_id: string | null; crm_people: { id: string; full_name: string; email: string | null } | null }[]).map((p) => (
+        <li class="flex items-start justify-between gap-3 py-2"><div><p class="text-white">{p.crm_people?.full_name}</p><p class="text-xs text-white/45">{p.status === 'active' ? `next email ${p.next_at ? dateTime.format(new Date(p.next_at)) : ''} (email ${p.step + 1})` : p.status === 'finished' ? 'all sent' : `stopped: ${p.stopped_reason}`}{p.owner_id && ` · from ${names.get(p.owner_id)}`}</p></div>
+          {p.status === 'active' && scope.canMarket && <form method="post"><input type="hidden" name="intent" value="stop" /><input type="hidden" name="enrolment" value={p.id} /><button class="text-xs text-white/40 hover:text-lk-red">Stop</button></form>}</li>
+      ))}{!(people ?? []).length && <li class="py-2 text-white/45">Nobody yet.</li>}</ul>
+    </section>
+  </div>
+</Crm>

@@ -9,6 +9,7 @@ import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { KINDS, cleanEmail, crmHref, crmScope, ensureRelationship, fieldsOf, findOrCreateCompany, initials, money, namesOf, readFields, salesTeam, todayIso, validEmail, warmth, warmthLabel, type Activity, type Person, type Relationship, type Task } from '../../../../lib/crm';
 import { commonAction } from '../../../../lib/crm-actions';
+import { enrol, optOut, optedOut } from '../../../../lib/crm-marketing';
 
 // CRM → a person: what this company knows about them (their part, owner, warmth, deals, timeline, tasks) and
 // their details, which are shared by the whole group (one record per person).
@@ -35,6 +36,17 @@ if (Astro.request.method === 'POST') {
     if (!scope.canDo) throw new Error('You can see this person but not change anything.');
     const msg = await commonAction(svc, Astro.locals, scope, form, { person_id: id }, Astro.url.origin, `/admin/crm/people/${id}`);
     if (msg) return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent(msg)}`, 303);
+    if (intent === 'enrol') {
+      await enrol(svc, { sequenceId: field(form, 'sequence_id'), entityId: company.id, personId: id, ownerId: rel.owner_id ?? me });
+      return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent('Added to the sequence: the first email goes from their owner’s mailbox shortly.')}`, 303);
+    }
+    if (intent === 'consent') {
+      const ch = field(form, 'channel');
+      if (!['sales_email', 'newsletter', 'whatsapp', 'recording'].includes(ch)) throw new Error('Choose what they agreed to.');
+      if (field(form, 'status') === 'no' && ch === 'sales_email') await optOut(svc, id, company.id, 'by hand');
+      else await svc.from('crm_consents').upsert({ person_id: id, channel: ch, status: field(form, 'status') === 'yes' ? 'yes' : 'no', source: 'by hand', entity_id: company.id, at: new Date().toISOString() });
+      return Astro.redirect(self, 303);
+    }
     if (!mayEdit) throw new Error('Only the relationship’s owner or a sales lead changes this.');
     if (intent === 'save') {
       const email = cleanEmail(field(form, 'email'));
@@ -76,6 +88,12 @@ const [{ data: acts }, { data: tasks }, { data: deals }] = await Promise.all([
 ]);
 const names = await namesOf(svc, [rel.owner_id, ...((acts ?? []) as Activity[]).map((a) => a.created_by), ...((tasks ?? []) as Task[]).map((t) => t.owner_id)]);
 const w = warmth(rel.last_contact_at);
+const { data: consents } = await svc.from('crm_consents').select('channel, status, source, at').eq('person_id', id);
+const said = (ch: string) => (consents ?? []).find((c) => c.channel === ch);
+const blocked = p.email ? await optedOut(svc, p.email, id) : false;
+const { data: seqs } = await svc.from('crm_sequences').select('id, name').eq('entity_id', company.id).eq('active', true);
+const { data: inSeq } = await svc.from('crm_enrolments').select('status, step, stopped_reason, crm_sequences(name)').eq('person_id', id).eq('entity_id', company.id);
+const r2 = rel as Relationship & { score?: number; score_reasons?: string[] };
 ---
 
 <Crm title={p.full_name} scope={scope}>
@@ -108,6 +126,17 @@ const w = warmth(rel.last_contact_at);
           <li class="flex items-center justify-between gap-3 py-2 text-sm"><a href={crmHref(scope, `/admin/crm/deals/${d.id}`)} class="text-white hover:text-lk-blue">{d.title}</a><span class:list={['shrink-0 text-xs', d.status === 'won' ? 'text-lk-green' : d.status === 'lost' ? 'text-lk-red' : 'text-white/55']}>{d.crm_stages?.name} · {money(Number(d.amount), d.currency)}</span></li>
         ))}</ul> : <p class="text-sm text-white/45">No deals yet.</p>}
         {scope.canDo && <a href={crmHref(scope, '/admin/crm/deals?new=1')} class="mt-3 inline-block text-sm text-lk-blue hover:underline">New deal</a>}
+      </section>
+      <section class="card" data-tour="crm-consent">
+        <h2 class="mb-2 font-display text-lg font-bold">Consent and emails</h2>
+        {r2.score ? <p class="mb-2 text-sm text-white/65">Lead score <b class="text-white">{r2.score}</b>{r2.score_reasons?.length ? <span class="text-white/45"> · {r2.score_reasons.join(', ')}</span> : null}</p> : null}
+        <ul class="grid gap-1 text-sm">{[['sales_email', 'Sales emails'], ['newsletter', 'Newsletters'], ['whatsapp', 'WhatsApp'], ['recording', 'Recording meetings']].map(([k, l]) => { const c = said(k); return (
+          <li class="flex items-center justify-between gap-2"><span class="text-white/70">{l}</span><span class="flex items-center gap-2">{k === 'sales_email' && blocked ? <b class="text-lk-red">no</b> : c ? <b class:list={[c.status === 'yes' ? 'text-lk-green' : 'text-lk-red']}>{c.status}</b> : <span class="text-white/40">not asked</span>}
+            {scope.canDo && <form method="post" class="inline"><input type="hidden" name="intent" value="consent" /><input type="hidden" name="channel" value={k} /><input type="hidden" name="status" value={c?.status === 'yes' ? 'no' : 'yes'} /><button class="text-xs text-white/35 hover:text-white">{c?.status === 'yes' ? 'set no' : 'set yes'}</button></form>}</span></li>
+        ); })}</ul>
+        {blocked && <p class="mt-2 text-xs text-white/45">On the group’s opt-out list (the CRM, newsletters or the press office): no sales emails.</p>}
+        {(inSeq ?? []).map((e) => <p class="mt-2 text-xs text-white/55">Sequence “{(e as unknown as { crm_sequences: { name: string } | null }).crm_sequences?.name}”: {e.status === 'active' ? `email ${e.step + 1} next` : e.status === 'finished' ? 'all sent' : `stopped (${e.stopped_reason})`}</p>)}
+        {scope.canDo && !blocked && (seqs ?? []).length > 0 && p.email && <form method="post" class="mt-3 flex gap-2"><input type="hidden" name="intent" value="enrol" /><select class="field" name="sequence_id" aria-label="Sequence">{(seqs ?? []).map((q) => <option value={q.id}>{q.name}</option>)}</select><button class="btn-ghost !py-1.5 text-sm">Add to sequence</button></form>}
       </section>
       <section class="card">
         <h2 class="mb-3 font-display text-lg font-bold">Tasks</h2>

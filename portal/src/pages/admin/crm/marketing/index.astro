@@ -1,0 +1,144 @@
+---
+import Crm from '../../../../layouts/Crm.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { centralOrigin } from '../../../../lib/sites';
+import { KINDS, SIZE_BANDS, crmHref, crmScope, money, namesOf, salesTeam } from '../../../../lib/crm';
+import { CAMPAIGN_KINDS, campaignResults, scoreLead } from '../../../../lib/crm-marketing';
+
+// CRM → Marketing: campaigns measured in cash (leads, deals, won and paid in Xero, spend from Xero bills or
+// typed in), hot leads by score, and the ideal customer the scores use. Marketing works here without seeing deals.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+const me = Astro.locals.user!.id;
+let error = '';
+let done = Astro.url.searchParams.get('done') ?? '';
+const { data: ent } = company ? await svc.from('entities').select('id, code, display_name, crm_currency, crm_fx, crm_ideal').eq('id', company.id).single() : { data: null };
+
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (!scope.canMarket) throw new Error('You can see marketing but not change it.');
+    if (intent === 'campaign') {
+      const name = field(form, 'name');
+      if (!name) throw new Error('Name the campaign.');
+      const utm = (field(form, 'utm') || name).toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 60) || 'campaign';
+      const spend = Number(field(form, 'spend').replace(/[, $]/g, '') || 0);
+      const { error: e } = await svc.from('crm_campaigns').insert({ entity_id: company.id, name: name.slice(0, 120), kind: field(form, 'kind') in CAMPAIGN_KINDS ? field(form, 'kind') : 'other', utm, spend: Number.isFinite(spend) ? spend : 0, xero_tracking: field(form, 'xero_tracking') || null, starts_on: /^\d{4}-\d{2}-\d{2}$/.test(field(form, 'starts_on')) ? field(form, 'starts_on') : null, created_by: me });
+      if (e?.code === '23505') throw new Error('Another campaign already uses that link tag.');
+      if (e) throw e;
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_campaign_added', event_detail: { entity_id: company.id, name } });
+      done = 'Campaign added. Tag its links with ?utm_campaign=' + utm;
+    }
+    if (intent === 'spend') {
+      const spend = Number(field(form, 'spend').replace(/[, $]/g, '') || 0);
+      await svc.from('crm_campaigns').update({ spend: Number.isFinite(spend) ? spend : 0, xero_tracking: field(form, 'xero_tracking') || null }).eq('id', field(form, 'id')).eq('entity_id', company.id);
+      done = 'Saved.';
+    }
+    if (intent === 'ideal') {
+      const list = (n: string) => field(form, n).split(',').map((x) => x.trim()).filter(Boolean).slice(0, 30);
+      await svc.from('entities').update({ crm_ideal: { industries: list('industries'), sizes: form.getAll('sizes').map(String).filter((x) => SIZE_BANDS.includes(x)), countries: list('countries'), titles: list('titles').map((t) => t.toLowerCase()) } }).eq('id', company.id);
+      done = 'Saved. Scores update as leads come in (or rescore now).';
+    }
+    if (intent === 'rescore') {
+      const { data: rels } = await svc.from('crm_relationships').select('person_id').eq('entity_id', company.id).not('person_id', 'is', null).in('kind', ['lead', 'prospect']).is('archived_at', null).limit(1000);
+      for (const r of rels ?? []) await scoreLead(svc, company.id, r.person_id!);
+      done = `Rescored ${(rels ?? []).length} leads.`;
+    }
+    if (intent === 'assign') {
+      const team = await salesTeam(svc, company.id);
+      if (!team.some((t) => t.id === field(form, 'owner_id'))) throw new Error('Choose someone from the sales team.');
+      await svc.from('crm_relationships').update({ owner_id: field(form, 'owner_id') }).eq('entity_id', company.id).eq('id', field(form, 'rel_id'));
+      done = 'Given to them.';
+    }
+  } catch (e) {
+    error = (e as Error).message;
+    done = '';
+  }
+}
+
+const results = company && ent ? await campaignResults(svc, company.id, { ...ent, crm_fx: (ent.crm_fx ?? {}) as Record<string, number> }, centralOrigin(Astro.url)) : [];
+const cur = ent?.crm_currency ?? 'AUD';
+const totals = results.reduce((t, r) => ({ leads: t.leads + r.leads, deals: t.deals + r.deals, paid: t.paid + r.paid, spend: t.spend + r.spend }), { leads: 0, deals: 0, paid: 0, spend: 0 });
+const { data: hot } = company ? await svc.from('crm_relationships').select('id, score, score_reasons, owner_id, kind, crm_people!inner(id, full_name, job_title, crm_companies(name))').eq('entity_id', company.id).in('kind', ['lead', 'prospect']).gt('score', 0).is('archived_at', null).order('score', { ascending: false }).limit(12) : { data: [] };
+type Hot = { id: string; score: number; score_reasons: string[]; owner_id: string | null; kind: string; crm_people: { id: string; full_name: string; job_title: string; crm_companies: { name: string } | null } };
+const names = await namesOf(svc, ((hot ?? []) as unknown as Hot[]).map((h) => h.owner_id));
+const team = company ? await salesTeam(svc, company.id) : [];
+const ideal = (ent?.crm_ideal ?? {}) as { industries?: string[]; sizes?: string[]; countries?: string[]; titles?: string[] };
+---
+
+<Crm title="Marketing" scope={scope}>
+  <PageHeader title="Marketing" subtitle={`Measured in cash paid in Xero, not clicks. Totals in ${cur}.`}>
+    <div class="flex gap-2"><a class="btn-ghost" href={crmHref(scope, '/admin/crm/marketing/forms')}>Forms and pages</a><a class="btn-ghost" href={crmHref(scope, '/admin/crm/marketing/sequences')}>Sequences</a></div>
+  </PageHeader>
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {done && <div class="mb-6"><Alert tone="success">{done}</Alert></div>}
+  <div class="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" data-tour="crm-marketing-totals">
+    {[['Leads from campaigns', String(totals.leads), 'people who came through one'], ['Became deals', String(totals.deals), totals.leads ? `${Math.round((totals.deals / totals.leads) * 100)}% of leads` : ''], ['Won and paid', money(totals.paid, cur), 'paid in Xero'], ['Spend', money(totals.spend, cur), totals.spend ? `${(totals.paid / totals.spend).toFixed(1)}× returned` : 'typed in or from Xero bills']].map(([l, v, s]) => (
+      <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">{l}</p><p class="mt-1 font-display text-2xl font-bold text-white">{v}</p><p class="text-xs text-white/45">{s}</p></div>
+    ))}
+  </div>
+  <div class="grid gap-6 xl:grid-cols-[1.6fr_1fr]">
+    <section class="card overflow-x-auto p-0">
+      <h2 class="px-5 pt-5 font-display text-lg font-bold">Campaigns</h2>
+      <table class="mt-3 w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Campaign</th><th class="px-5 py-3 text-right">Leads</th><th class="px-5 py-3 text-right">Deals</th><th class="px-5 py-3 text-right">Paid</th><th class="px-5 py-3 text-right">Spend</th><th class="px-5 py-3 text-right">Return</th></tr></thead>
+        <tbody class="divide-y divide-white/5">{results.map((r) => (
+          <tr class="align-top">
+            <td class="px-5 py-3"><p class="font-medium text-white">{r.name}</p><p class="text-xs text-white/45">{CAMPAIGN_KINDS[r.kind]} · utm_campaign={r.utm}{r.xero_tracking && ` · Xero: ${r.xero_tracking}`}</p>
+              {scope.canMarket && <details class="mt-1"><summary class="cursor-pointer text-xs text-lk-blue">Spend</summary><form method="post" class="mt-2 flex flex-wrap gap-2"><input type="hidden" name="intent" value="spend" /><input type="hidden" name="id" value={r.id} /><input class="field !w-28" name="spend" value={String(r.spend - 0)} aria-label="Spend" /><input class="field !w-44" name="xero_tracking" value={r.xero_tracking ?? ''} placeholder="Xero tracking option" aria-label="Xero tracking option" /><button class="btn-ghost !py-1 text-xs">Save</button></form></details>}
+            </td>
+            <td class="px-5 py-3 text-right">{r.leads}</td><td class="px-5 py-3 text-right">{r.deals}</td>
+            <td class="px-5 py-3 text-right tabular-nums text-lk-green">{money(r.paid, cur)}</td><td class="px-5 py-3 text-right tabular-nums text-white/65">{money(r.spend, cur)}</td>
+            <td class="px-5 py-3 text-right text-white/65">{r.ret == null ? '—' : `${r.ret.toFixed(1)}×`}</td>
+          </tr>
+        ))}{!results.length && <tr><td colspan="6" class="px-5 py-4 text-white/45">No campaigns yet. Add one below; leads from its links and forms are credited to it.</td></tr>}</tbody>
+      </table>
+      {scope.canMarket && (
+        <details class="border-t border-white/5 p-5"><summary class="cursor-pointer font-medium text-white">New campaign</summary>
+          <form method="post" class="mt-3 grid gap-3 sm:grid-cols-2"><input type="hidden" name="intent" value="campaign" />
+            <div><label class="label" for="cn">Name</label><input class="field" id="cn" name="name" placeholder="Logistics ops webinar" required /></div>
+            <div><label class="label" for="ck">Kind</label><select class="field" id="ck" name="kind">{Object.entries(CAMPAIGN_KINDS).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
+            <div><label class="label" for="cu">Link tag (utm_campaign)</label><input class="field" id="cu" name="utm" placeholder="made from the name" /></div>
+            <div><label class="label" for="cs">Starts</label><input class="field" type="date" id="cs" name="starts_on" /></div>
+            <div><label class="label" for="csp">Spend ({cur})</label><input class="field" id="csp" name="spend" inputmode="decimal" /></div>
+            <div><label class="label" for="cx">Xero tracking option (bills)</label><input class="field" id="cx" name="xero_tracking" placeholder="optional" /></div>
+            <button class="btn-primary sm:justify-self-start">Add</button>
+          </form>
+        </details>
+      )}
+    </section>
+    <div class="grid content-start gap-6">
+      <section class="card" data-tour="crm-hot-leads">
+        <div class="flex items-baseline justify-between gap-2"><h2 class="font-display text-lg font-bold">Hot leads</h2><span class="text-xs text-white/40">by fit and behaviour</span></div>
+        <ul class="mt-2 divide-y divide-white/5">{((hot ?? []) as unknown as Hot[]).map((h) => (
+          <li class="flex items-start gap-3 py-2.5">
+            <span class:list={['grid size-9 shrink-0 place-items-center rounded-lg text-sm font-semibold', h.score >= 60 ? 'bg-lk-green/15 text-lk-green' : h.score >= 30 ? 'bg-lk-orange/15 text-lk-orange' : 'bg-white/[0.07] text-white/70']}>{h.score}</span>
+            <div class="min-w-0 flex-1">{scope.canSell ? <a class="text-sm font-medium text-white hover:text-lk-blue" href={crmHref(scope, `/admin/crm/people/${h.crm_people.id}`)}>{h.crm_people.full_name}</a> : <p class="text-sm font-medium text-white">{h.crm_people.full_name}</p>}
+              <p class="truncate text-xs text-white/45">{[h.crm_people.job_title, h.crm_people.crm_companies?.name].filter(Boolean).join(' · ')}</p>
+              <p class="truncate text-xs text-white/35">{h.score_reasons.join(', ')}</p></div>
+            {scope.canMarket && team.length > 0 ? <form method="post" class="shrink-0"><input type="hidden" name="intent" value="assign" /><input type="hidden" name="rel_id" value={h.id} /><select class="field !w-32 !py-1 text-xs" name="owner_id" onchange="this.form.requestSubmit()" aria-label="Owner"><option value="">{h.owner_id ? names.get(h.owner_id) : 'Assign…'}</option>{team.map((t) => <option value={t.id}>{t.name}</option>)}</select></form> : <span class="text-xs text-white/45">{h.owner_id ? names.get(h.owner_id) : ''}</span>}
+          </li>
+        ))}{!(hot ?? []).length && <li class="py-2 text-sm text-white/45">No scored leads yet.</li>}</ul>
+        {scope.canMarket && <form method="post" class="mt-2"><input type="hidden" name="intent" value="rescore" /><button class="text-xs text-white/45 hover:text-white">Rescore all leads</button></form>}
+      </section>
+      {scope.canMarket && (
+        <details class="card"><summary class="cursor-pointer font-display text-lg font-bold">Your ideal customer</summary>
+          <p class="mt-2 text-sm text-white/55">Leads who fit score higher. Separate with commas.</p>
+          <form method="post" class="mt-3 grid gap-3"><input type="hidden" name="intent" value="ideal" />
+            <div><label class="label" for="ii">Industries</label><input class="field" id="ii" name="industries" value={(ideal.industries ?? []).join(', ')} placeholder="Logistics, Manufacturing, Healthcare" /></div>
+            <fieldset><legend class="label">Company sizes</legend><div class="flex flex-wrap gap-3 text-sm">{SIZE_BANDS.map((b) => <label class="flex items-center gap-1.5 text-white/70"><input type="checkbox" name="sizes" value={b} checked={(ideal.sizes ?? []).includes(b)} />{b}</label>)}</div></fieldset>
+            <div><label class="label" for="ic">Countries</label><input class="field" id="ic" name="countries" value={(ideal.countries ?? []).join(', ')} placeholder="Australia, Canada, Italy" /></div>
+            <div><label class="label" for="it">Job titles (words)</label><input class="field" id="it" name="titles" value={(ideal.titles ?? []).join(', ')} /></div>
+            <button class="btn-ghost justify-self-start !py-1.5 text-sm">Save</button>
+          </form>
+        </details>
+      )}
+    </div>
+  </div>
+  <p class="mt-4 text-xs text-white/40">Newsletters, press releases and news posts count as campaigns when their links carry the campaign’s tag (?utm_campaign=…). {KINDS.lead} records keep the campaign they first came from.</p>
+</Crm>

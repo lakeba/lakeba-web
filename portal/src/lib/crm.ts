@@ -47,7 +47,9 @@ export const CURRENCIES = ['AUD', 'CAD', 'EUR', 'USD', 'GBP', 'NZD', 'SGD'];
 
 /** Companies whose CRM this person may open (switched on), or every company they could switch it on for (Admins). */
 export async function crmCompanies(svc: Svc, access: Access, opts: { includeOff?: boolean } = {}) {
-  const ids = access.companies('crm.view');
+  // Selling (crm) or marketing (leadgen): either opens the company's CRM, each to its own pages.
+  const a = access.companies('crm.view'), b = access.companies('leadgen.view');
+  const ids = a === 'all' || b === 'all' ? 'all' : [...new Set([...a, ...b])];
   let q = svc.from('entities').select(CRM_COLUMNS).order('sort');
   if (ids !== 'all') q = q.in('id', ids.length ? ids : [NONE]);
   if (!opts.includeOff) q = q.eq('crm_enabled', true);
@@ -63,6 +65,10 @@ export type CrmScope = {
   canApprove: boolean;
   /** May change the CRM's settings (pipelines, fields, address): Admins of the company and sales leads. */
   canSettings: boolean;
+  /** Sees the deals (Sales, Sales lead, Admin); marketing-only people see the marketing pages. */
+  canSell: boolean;
+  /** Works on forms, campaigns and sequences (CRM marketing). */
+  canMarket: boolean;
 };
 
 /** The company the CRM works on: ?company=CODE, the admin's remembered pick, the address's venture, or the first. */
@@ -76,6 +82,8 @@ export async function crmScope(svc: Svc, locals: App.Locals, url: URL): Promise<
     canDo: Boolean(current && a.can('crm.do', current.id)),
     canApprove: Boolean(current && a.can('crm.approve', current.id)),
     canSettings: Boolean(current && (a.can('crm.approve', current.id) || a.roles.some((r) => r.role_key === 'admin' && (r.entity_id === null || r.entity_id === current.id)))),
+    canSell: Boolean(current && a.can('crm.view', current.id)),
+    canMarket: Boolean(current && a.can('leadgen.do', current.id)),
   };
 }
 

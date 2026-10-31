@@ -8,6 +8,7 @@ import { CURRENCIES, TEMPLATES, addPipeline, crmCompanies, crmScope, fieldsOf, p
 import { domainStatus } from '../../../lib/domains';
 import { forgetVentureSites } from '../../../lib/sites';
 import { aiBudget } from '../../../lib/crm-ai';
+import { PLAYBOOKS, applyPlaybook } from '../../../lib/crm-playbooks';
 import { PORTAL_DOMAIN } from 'astro:env/server';
 
 // CRM → Settings: switching a company's CRM on (its Admins), its pipelines and stages, its own fields, its CRM
@@ -40,6 +41,11 @@ if (Astro.request.method === 'POST' && current) {
       forgetVentureSites();
       await audit(on ? 'crm_switched_on' : 'crm_switched_off', {});
       return here(on ? 'The CRM is on.' : 'The CRM is off. Its records are kept.');
+    }
+    if (intent === 'playbook') {
+      const added = await applyPlaybook(svc, current.id, field(form, 'playbook'), user!.id);
+      await audit('crm_playbook_applied', { playbook: field(form, 'playbook') });
+      return here(added.length ? `Added ${added.join(', ')}.` : 'You already have everything this playbook brings.');
     }
     if (intent === 'add-pipeline') {
       const t = field(form, 'template') as keyof typeof TEMPLATES;
@@ -238,6 +244,15 @@ const layoutScope = { ...scope, current, companies: all, canSettings: true };
         </div>
       </section>
     ))}
+
+    <section class="card" data-tour="crm-playbooks">
+      <h2 class="font-display text-lg font-bold">Start from a playbook</h2>
+      <p class="mt-1 text-sm text-white/55">A working sales process on day one: pipelines with what must be true to move on, starter email sequences and an ideal customer for lead scores. Nothing you have is replaced.</p>
+      <form method="post" class="mt-4 grid gap-2"><input type="hidden" name="intent" value="playbook" />
+        {Object.entries(PLAYBOOKS).map(([k, p]) => <label class="flex items-start gap-2 text-sm"><input type="radio" name="playbook" value={k} class="mt-1" /><span><b class="text-white">{p.label}</b> <span class="text-white/55">· {p.describe}</span></span></label>)}
+        <button class="btn-ghost justify-self-start !py-1.5 text-sm">Add what it brings</button>
+      </form>
+    </section>
 
     <section class="card">
       <h2 class="font-display text-lg font-bold">Add a pipeline</h2>

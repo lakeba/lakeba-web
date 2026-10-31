@@ -4,6 +4,7 @@ import { crmXero, syncDeal } from './crm-xero';
 import { money } from './crm';
 import { notifyMembers } from './notify';
 import { aiBudget, briefMeeting, classifyInbox, reviewDeal } from './crm-ai';
+import { sequenceJobs } from './crm-marketing';
 
 // The CRM's background work, from the notification worker every minute: the salespeople's mailboxes and
 // calendars every 5 minutes, Xero's quotes, invoices and payments every 15.
@@ -19,6 +20,7 @@ export async function crmJobs(svc: Svc, origin: string) {
   if (now - mailAt > 5 * 60_000) {
     mailAt = now;
     await syncMailboxes(svc).catch((e) => console.error('crm mail', (e as Error).message));
+    await sequenceJobs(svc, origin).catch((e) => console.error('crm sequences', (e as Error).message));
   }
   if (now - aiAt > 30 * 60_000) {
     aiAt = now;

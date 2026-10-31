@@ -4,6 +4,7 @@ import ThemeInit from '../../../src/components/ThemeInit.astro';
 import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 import Tour from '../components/Tour.astro';
 import { initials, type CrmScope } from '../lib/crm';
+import { mayOpenItem } from '../lib/access';
 import { accentOf } from '../lib/brand';
 import { serviceClient } from '../lib/admin';
 import { aiBudget } from '../lib/crm-ai';
@@ -36,6 +37,11 @@ const groups: { label?: string; items: Item[] }[] = [
     { href: '/admin/crm/ask', label: 'Ask Lakeba AI' },
     { href: '/admin/crm/voice', label: 'Voice note', show: scope.canDo },
   ] },
+  { label: 'Grow', items: [
+    { href: '/admin/crm/marketing', label: 'Marketing', exact: true },
+    { href: '/admin/crm/marketing/forms', label: 'Forms and pages' },
+    { href: '/admin/crm/marketing/sequences', label: 'Sequences' },
+  ] },
   { label: 'Lead', items: [
     { href: '/admin/crm/forecast', label: 'Forecast' },
     { href: '/admin/crm/import', label: 'Import', show: scope.canDo },
@@ -46,7 +52,8 @@ const groups: { label?: string; items: Item[] }[] = [
 ];
 const under = (p: string) => path === p || path.startsWith(`${p}/`);
 const on = (i: Item) => (i.exact ? path === i.href : under(i.href));
-const visible = groups.map((g) => ({ ...g, items: g.items.filter((i) => i.show !== false) })).filter((g) => g.items.length);
+// Only what this person may open: salespeople the selling pages, marketing people the marketing ones.
+const visible = groups.map((g) => ({ ...g, items: g.items.filter((i) => i.show !== false && mayOpenItem(access, i.href) && (!company || access.can(i.href.startsWith('/admin/crm/marketing') ? 'leadgen.view' : 'crm.view', company.id))) })).filter((g) => g.items.length);
 const name = `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || profile?.email || '';
 const accent = accentOf(company);
 const switchHref = (code: string) => {
@@ -82,7 +89,7 @@ const switchHref = (code: string) => {
     </div>
     <header class="sticky top-0 z-40 border-b border-white/5 bg-ink/80 backdrop-blur-xl">
       <div class="flex h-16 items-center gap-4 px-4 sm:px-6">
-        <a href={q('/admin/crm')} class="flex min-w-0 shrink-0 items-center gap-2.5" data-tour="crm-brand">
+        <a href={q(scope.canSell || !company ? '/admin/crm' : '/admin/crm/marketing')} class="flex min-w-0 shrink-0 items-center gap-2.5" data-tour="crm-brand">
           {company?.logo_url
             ? <span class="grid h-9 shrink-0 place-items-center rounded-lg bg-[#fff] px-2"><img src={company.logo_url} alt={company.display_name} class="max-h-7 max-w-28 object-contain" /></span>
             : <span class="grid size-8 shrink-0 place-items-center rounded-lg bg-lk-blue font-display text-xs font-extrabold text-[#fff]">{(company?.code ?? 'CRM').slice(0, 3)}</span>}
@@ -103,10 +110,10 @@ const switchHref = (code: string) => {
             </div>
           </details>
         )}
-        <form method="get" action="/admin/crm/search" class="hidden max-w-xl flex-1 md:block" role="search" data-tour="crm-search">
+        {scope.canSell && <form method="get" action="/admin/crm/search" class="hidden max-w-xl flex-1 md:block" role="search" data-tour="crm-search">
           {scope.companies.length > 1 && !onCrmSite && company && <input type="hidden" name="company" value={company.code} />}
           <input class="field" type="search" name="q" placeholder="Search people, companies, deals…" aria-label="Search the CRM" value={path === '/admin/crm/search' ? Astro.url.searchParams.get('q') ?? '' : ''} />
-        </form>
+        </form>}
         <div class="ml-auto flex items-center gap-3 text-sm">
           <slot name="header" />
           {budget?.limit ? <a href="/admin/crm/settings" class:list={['hidden rounded-full px-2.5 py-0.5 text-xs font-semibold lg:inline', budget.pct >= 90 ? 'bg-lk-red/15 text-lk-red' : 'bg-lk-orange/15 text-lk-orange']} title="Lakeba AI’s monthly budget for this CRM">AI · {budget.pct}% of this month’s budget</a> : null}

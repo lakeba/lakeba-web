@@ -1,0 +1,99 @@
+---
+import Crm from '../../../../../layouts/Crm.astro';
+import Alert from '../../../../../components/Alert.astro';
+import { serviceClient } from '../../../../../lib/admin';
+import { field } from '../../../../../lib/forms';
+import { centralOrigin } from '../../../../../lib/sites';
+import { crmHref, crmScope, pipelines, salesTeam } from '../../../../../lib/crm';
+import type { Form, FormField } from '../../../../../lib/crm-marketing';
+
+// CRM → Marketing → a form: its fields (one per line: key | label | type | required | options), what happens
+// with a submission (a deal, who gets it, a campaign, a sequence), the websites allowed to show it, and the
+// code to put on the website or the hosted landing page's address.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+const id = Astro.params.id!;
+if (!company || !/^[0-9a-f-]{36}$/.test(id)) return Astro.redirect('/admin/crm/marketing/forms');
+const load = async () => (await svc.from('crm_forms').select('*').eq('id', id).eq('entity_id', company.id).maybeSingle()).data as Form | null;
+let f = await load();
+if (!f) return Astro.redirect(crmHref(scope, '/admin/crm/marketing/forms'));
+let error = '';
+let done = '';
+const TYPES = ['text', 'email', 'phone', 'textarea', 'select'];
+const fieldsText = (list: FormField[]) => list.map((x) => [x.key, x.label, x.type, x.required ? 'required' : 'optional', (x.options ?? []).join(', ')].join(' | ').replace(/ \| $/, '')).join('\n');
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canMarket) throw new Error('You can’t change forms here.');
+    const fields: FormField[] = field(form, 'fields').split('\n').map((l) => l.split('|').map((x) => x.trim())).filter((p) => p[0]).map(([key, label, type, req, options]) => ({
+      key: key.toLowerCase().replace(/[^a-z0-9_]/g, '_').slice(0, 40), label: (label || key).slice(0, 120), type: (TYPES.includes(type) ? type : 'text') as FormField['type'], required: /^req/i.test(req ?? ''), ...(options ? { options: options.split(',').map((o) => o.trim()).filter(Boolean).slice(0, 30) } : {}),
+    }));
+    if (!fields.some((x) => x.key === 'email')) throw new Error('Keep an “email” field: it’s how the person is found or added.');
+    const origins = field(form, 'origins').split(/[\s,]+/).map((o) => o.trim().replace(/\/+$/, '')).filter(Boolean).map((o) => { try { const u = new URL(o.startsWith('http') ? o : `https://${o}`); return u.origin; } catch { return null; } }).filter(Boolean) as string[];
+    const team = await salesTeam(svc, company.id);
+    const owner = field(form, 'owner_id');
+    if (owner && !team.some((t) => t.id === owner)) throw new Error('Choose someone from the sales team.');
+    const redirect = field(form, 'redirect_url');
+    if (redirect && !/^https:\/\//.test(redirect)) throw new Error('The page after sending must be an https:// address.');
+    await svc.from('crm_forms').update({
+      name: field(form, 'name').slice(0, 120) || f.name, headline: field(form, 'headline').slice(0, 200), intro: field(form, 'intro').slice(0, 2000), fields, button: field(form, 'button').slice(0, 40) || 'Send',
+      thank_you: field(form, 'thank_you').slice(0, 500), redirect_url: redirect || null, allowed_origins: [...new Set(origins)].slice(0, 10), consent_text: field(form, 'consent_text').slice(0, 300) || f.consent_text,
+      create_deal: field(form, 'create_deal') === 'yes', pipeline_id: field(form, 'pipeline_id') || null, owner_rule: owner ? 'fixed' : 'round_robin', owner_id: owner || null,
+      campaign_id: field(form, 'campaign_id') || null, sequence_id: field(form, 'sequence_id') || null, active: field(form, 'active') === 'yes',
+    }).eq('id', id).throwOnError();
+    done = 'Saved.';
+    f = (await load())!;
+  } catch (e) { error = (e as Error).message; }
+}
+const [{ data: camps }, { data: seqs }, list, team] = await Promise.all([
+  svc.from('crm_campaigns').select('id, name').eq('entity_id', company.id).order('created_at', { ascending: false }),
+  svc.from('crm_sequences').select('id, name').eq('entity_id', company.id).eq('active', true),
+  pipelines(svc, company.id), salesTeam(svc, company.id),
+]);
+const central = centralOrigin(Astro.url);
+const embed = `<script src="${central}/embed/crm-form.js" async></script>\n<lakeba-form form="${id}"></lakeba-form>`;
+const page = `${central}/f/${id}`;
+---
+<Crm title={f.name} scope={scope}>
+  <p class="text-sm text-white/45"><a class="hover:text-white" href={crmHref(scope, '/admin/crm/marketing/forms')}>Forms and pages</a> · {f.submissions} lead{f.submissions === 1 ? '' : 's'} so far</p>
+  <h1 class="mt-1 font-display text-3xl font-bold">{f.name}</h1>
+  {error && <div class="mt-4"><Alert tone="error">{error}</Alert></div>}
+  {done && <div class="mt-4"><Alert tone="success">{done}</Alert></div>}
+  <div class="mt-6 grid gap-6 xl:grid-cols-[1.4fr_1fr]">
+    <form method="post" class="card grid gap-3 sm:grid-cols-2">
+      <div><label class="label" for="name">Name (in the CRM)</label><input class="field" id="name" name="name" value={f.name} /></div>
+      <div><label class="label" for="active">State</label><select class="field" id="active" name="active"><option value="yes" selected={f.active}>Live</option><option value="no" selected={!f.active}>Off</option></select></div>
+      <div class="sm:col-span-2"><label class="label" for="headline">Headline</label><input class="field" id="headline" name="headline" value={f.headline} /></div>
+      <div class="sm:col-span-2"><label class="label" for="intro">Text above the form</label><textarea class="field min-h-16" id="intro" name="intro">{f.intro}</textarea></div>
+      <div class="sm:col-span-2"><label class="label" for="fields">Fields: key | label | type | required | choices</label><textarea class="field min-h-36 font-mono text-xs" id="fields" name="fields">{fieldsText(f.fields)}</textarea><p class="mt-1 text-xs text-white/40">Types: text, email, phone, textarea, select (with choices). name, email, company, job_title and phone fill in the person’s record; others go in the note.</p></div>
+      <div><label class="label" for="button">Button</label><input class="field" id="button" name="button" value={f.button} /></div>
+      <div><label class="label" for="consent_text">Consent box</label><input class="field" id="consent_text" name="consent_text" value={f.consent_text} /></div>
+      <div class="sm:col-span-2"><label class="label" for="thank_you">Thank-you message</label><input class="field" id="thank_you" name="thank_you" value={f.thank_you} /></div>
+      <div class="sm:col-span-2"><label class="label" for="redirect_url">Or go to this page after sending (optional)</label><input class="field" id="redirect_url" name="redirect_url" value={f.redirect_url ?? ''} placeholder="https://doxai.com/thank-you" /></div>
+      <div><label class="label" for="campaign_id">Campaign</label><select class="field" id="campaign_id" name="campaign_id"><option value="">From the page’s utm_campaign</option>{(camps ?? []).map((c) => <option value={c.id} selected={c.id === f!.campaign_id}>{c.name}</option>)}</select></div>
+      <div><label class="label" for="owner_id">Leads go to</label><select class="field" id="owner_id" name="owner_id"><option value="">The sales team, in turn</option>{team.map((t) => <option value={t.id} selected={f!.owner_rule === 'fixed' && t.id === f!.owner_id}>{t.name}</option>)}</select></div>
+      <div><label class="label" for="create_deal">Also make a deal</label><select class="field" id="create_deal" name="create_deal"><option value="no">No, just the lead</option><option value="yes" selected={f.create_deal}>Yes</option></select></div>
+      <div><label class="label" for="pipeline_id">In pipeline</label><select class="field" id="pipeline_id" name="pipeline_id"><option value="">The first one</option>{list.map((p) => <option value={p.id} selected={p.id === f!.pipeline_id}>{p.name}</option>)}</select></div>
+      <div class="sm:col-span-2"><label class="label" for="sequence_id">Then send them a sequence (from their salesperson’s mailbox)</label><select class="field" id="sequence_id" name="sequence_id"><option value="">No</option>{(seqs ?? []).map((s) => <option value={s.id} selected={s.id === f!.sequence_id}>{s.name}</option>)}</select></div>
+      <div class="sm:col-span-2"><label class="label" for="origins">Websites allowed to show it</label><input class="field" id="origins" name="origins" value={f.allowed_origins.join(', ')} placeholder="https://doxai.com, https://www.doxai.com" /></div>
+      {scope.canMarket && <button class="btn-primary sm:justify-self-start">Save</button>}
+    </form>
+    <div class="grid content-start gap-6">
+      <section class="card" data-tour="crm-form-embed">
+        <h2 class="font-display text-lg font-bold">On your website</h2>
+        <p class="mt-1 text-sm text-white/55">Paste where the form should appear (after adding the website above).</p>
+        <pre class="mt-3 overflow-x-auto rounded-xl bg-white/[0.04] p-3 text-xs text-white/80">{embed}</pre>
+        <button type="button" class="btn-ghost mt-2 !py-1 text-xs" data-copy={embed}>Copy</button>
+      </section>
+      <section class="card">
+        <h2 class="font-display text-lg font-bold">Landing page</h2>
+        <p class="mt-1 text-sm text-white/55">A page with the headline, text and form, in the company’s colours. Add ?utm_campaign=… to credit a campaign.</p>
+        <a class="mt-3 block break-all text-sm text-lk-blue hover:underline" href={page} target="_blank">{page}</a>
+      </section>
+    </div>
+  </div>
+</Crm>
+<script>
+  document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((b) => b.addEventListener('click', async () => { await navigator.clipboard.writeText(b.dataset.copy!); b.textContent = 'Copied'; }));
+</script>

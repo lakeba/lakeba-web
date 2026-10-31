@@ -1,0 +1,69 @@
+---
+import '../../styles/portal.css';
+import { serviceClient } from '../../lib/admin';
+import { submitForm, type Form } from '../../lib/crm-marketing';
+import { accentOf } from '../../lib/brand';
+
+// A hosted landing page for a CRM form (CRM → Marketing → Forms → "Landing page"), for campaigns without a page
+// on the venture's website: its headline, text and form, in the company's colour. utm_ parameters credit the
+// campaign. English for now.
+const svc = serviceClient();
+const id = Astro.params.id ?? '';
+const { data } = /^[0-9a-f-]{36}$/.test(id) ? await svc.from('crm_forms').select('*, entities(display_name, legal_name, brand_color, logo_url, relationship, crm_enabled)').eq('id', id).eq('active', true).maybeSingle() : { data: null };
+const f = data as (Form & { entities: { display_name: string; legal_name: string | null; brand_color: string | null; logo_url: string | null; relationship: string; crm_enabled: boolean } }) | null;
+if (!f?.entities?.crm_enabled) return new Response('Not found', { status: 404 });
+let error = '';
+let done = false;
+const utm = Object.fromEntries([...Astro.url.searchParams.entries()].filter(([k]) => /^utm_[a-z]+$/.test(k)).map(([k, v]) => [k, v.slice(0, 100)]));
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    if (String(form.get('website') ?? '')) { done = true; }
+    else {
+      if (form.get('consent') !== 'yes') throw new Error('Please tick the box to agree.');
+      const values = Object.fromEntries(f.fields.map((x) => [x.key, String(form.get(x.key) ?? '').slice(0, 4000)]));
+      await submitForm(svc, f, values, { origin: Astro.url.origin, page: Astro.url.href, utm, ip: Astro.request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? Astro.clientAddress, central: Astro.locals.site?.central ?? Astro.url.origin });
+      if (f.redirect_url) return Astro.redirect(f.redirect_url, 303);
+      done = true;
+    }
+  } catch (e) { error = (e as Error).message; }
+}
+const accent = accentOf(f.entities as never) ?? '#276ae7';
+---
+<!doctype html>
+<html lang="en" style={`--color-lk-blue:${accent}`}>
+  <head>
+    <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{f.headline || f.name} · {f.entities.display_name}</title>
+    <meta name="description" content={f.intro.slice(0, 160)} />
+    <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body class="min-h-dvh">
+    <header class="border-b border-white/5"><div class="container-portal flex h-16 items-center">{f.entities.logo_url ? <span class="grid h-9 place-items-center rounded-lg bg-[#fff] px-2"><img src={f.entities.logo_url} alt={f.entities.display_name} class="max-h-7 max-w-36 object-contain" /></span> : <span class="font-display text-lg font-bold text-white">{f.entities.display_name}</span>}</div></header>
+    <main class="container-portal grid gap-10 py-12 lg:grid-cols-2">
+      <section>
+        <h1 class="font-display text-4xl font-bold">{f.headline || f.name}</h1>
+        {f.intro && <p class="mt-4 whitespace-pre-line text-lg text-white/70">{f.intro}</p>}
+      </section>
+      <section class="card">
+        {done ? <p class="text-lg text-white">{f.thank_you}</p> : (
+          <form method="post" class="grid gap-3">
+            {error && <p role="alert" class="rounded-xl border border-lk-red/40 bg-lk-red/10 px-4 py-3 text-sm">{error}</p>}
+            {f.fields.map((x) => (
+              <div><label class="label" for={`f-${x.key}`}>{x.label}{x.required && ' *'}</label>
+                {x.type === 'textarea' ? <textarea class="field min-h-24" id={`f-${x.key}`} name={x.key} required={x.required}></textarea>
+                  : x.type === 'select' ? <select class="field" id={`f-${x.key}`} name={x.key} required={x.required}><option value=""></option>{(x.options ?? []).map((o) => <option>{o}</option>)}</select>
+                  : <input class="field" id={`f-${x.key}`} name={x.key} type={x.type === 'email' ? 'email' : x.type === 'phone' ? 'tel' : 'text'} required={x.required} />}
+              </div>
+            ))}
+            <input type="text" name="website" class="hidden" tabindex="-1" autocomplete="off" aria-hidden="true" />
+            <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="consent" value="yes" class="mt-1" required /> {f.consent_text}</label>
+            <button class="btn-primary justify-self-start">{f.button}</button>
+          </form>
+        )}
+      </section>
+    </main>
+    <footer class="container-portal pb-8 text-xs text-white/35">{f.entities.legal_name ?? f.entities.display_name}</footer>
+  </body>
+</html>

@@ -1,0 +1,41 @@
+---
+import Crm from '../../../../../layouts/Crm.astro';
+import PageHeader from '../../../../../components/PageHeader.astro';
+import Alert from '../../../../../components/Alert.astro';
+import { serviceClient } from '../../../../../lib/admin';
+import { field } from '../../../../../lib/forms';
+import { crmHref, crmScope } from '../../../../../lib/crm';
+import { DEFAULT_FIELDS } from '../../../../../lib/crm-marketing';
+
+// CRM → Marketing → Forms and pages: forms for the venture's website (one line of code) or a hosted landing page,
+// each bringing leads straight into the CRM, credited to a campaign and given to a salesperson.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+let error = '';
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canMarket) throw new Error('You can’t add forms here.');
+    const name = field(form, 'name');
+    if (!name) throw new Error('Name the form.');
+    const { data: f } = await svc.from('crm_forms').insert({ entity_id: company.id, name: name.slice(0, 120), headline: name.slice(0, 200), fields: DEFAULT_FIELDS, created_by: Astro.locals.user!.id }).select('id').single().throwOnError();
+    await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_form_added', event_detail: { entity_id: company.id, name } });
+    return Astro.redirect(crmHref(scope, `/admin/crm/marketing/forms/${f!.id}`), 303);
+  } catch (e) { error = (e as Error).message; }
+}
+const { data: forms } = company ? await svc.from('crm_forms').select('id, name, active, submissions, create_deal, crm_campaigns(name)').eq('entity_id', company.id).order('created_at', { ascending: false }) : { data: [] };
+---
+<Crm title="Forms and pages" scope={scope}>
+  <PageHeader title="Forms and pages" subtitle="Forms on your website, or hosted landing pages: every submission becomes a lead in the CRM, credited to its campaign and given to a salesperson." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  <section class="card mb-6 overflow-x-auto p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Form</th><th class="px-5 py-3">Campaign</th><th class="px-5 py-3 text-right">Leads</th><th class="px-5 py-3">State</th></tr></thead>
+      <tbody class="divide-y divide-white/5">{((forms ?? []) as unknown as { id: string; name: string; active: boolean; submissions: number; create_deal: boolean; crm_campaigns: { name: string } | null }[]).map((f) => (
+        <tr><td class="px-5 py-3"><a class="font-medium text-white hover:text-lk-blue" href={crmHref(scope, `/admin/crm/marketing/forms/${f.id}`)}>{f.name}</a>{f.create_deal && <span class="block text-xs text-white/45">makes a deal</span>}</td><td class="px-5 py-3 text-white/65">{f.crm_campaigns?.name ?? '—'}</td><td class="px-5 py-3 text-right">{f.submissions}</td><td class:list={['px-5 py-3', f.active ? 'text-lk-green' : 'text-white/45']}>{f.active ? 'Live' : 'Off'}</td></tr>
+      ))}{!(forms ?? []).length && <tr><td colspan="4" class="px-5 py-4 text-white/45">No forms yet.</td></tr>}</tbody>
+    </table>
+  </section>
+  {scope.canMarket && <form method="post" class="card flex flex-wrap items-end gap-3"><div><label class="label" for="name">New form</label><input class="field !w-72" id="name" name="name" placeholder="e.g. Book a demo" required /></div><button class="btn-primary">Create</button></form>}
+</Crm>

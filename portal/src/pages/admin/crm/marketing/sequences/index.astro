@@ -1,0 +1,47 @@
+---
+import Crm from '../../../../../layouts/Crm.astro';
+import PageHeader from '../../../../../components/PageHeader.astro';
+import Alert from '../../../../../components/Alert.astro';
+import { serviceClient } from '../../../../../lib/admin';
+import { field } from '../../../../../lib/forms';
+import { crmHref, crmScope } from '../../../../../lib/crm';
+import { PLAYBOOK_SEQUENCES } from '../../../../../lib/crm-playbooks';
+
+// CRM → Marketing → Sequences: a few emails over some days, sent from each salesperson's own mailbox to the
+// people enrolled; a reply, a meeting or an opt-out stops it, and the salesperson takes over.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+let error = '';
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canMarket) throw new Error('You can’t add sequences here.');
+    const start = PLAYBOOK_SEQUENCES[field(form, 'start')];
+    const name = field(form, 'name') || start?.name;
+    if (!name) throw new Error('Name the sequence.');
+    const { data: s } = await svc.from('crm_sequences').insert({ entity_id: company.id, name: name.slice(0, 120), steps: start?.steps ?? [{ day: 0, subject: '', body: '' }], created_by: Astro.locals.user!.id }).select('id').single().throwOnError();
+    return Astro.redirect(crmHref(scope, `/admin/crm/marketing/sequences/${s!.id}`), 303);
+  } catch (e) { error = (e as Error).message; }
+}
+const { data: seqs } = company ? await svc.from('crm_sequences').select('id, name, active, steps').eq('entity_id', company.id).order('created_at', { ascending: false }) : { data: [] };
+const { data: counts } = company ? await svc.from('crm_enrolments').select('sequence_id, status').eq('entity_id', company.id) : { data: [] };
+const n = (id: string, st: string) => (counts ?? []).filter((c) => c.sequence_id === id && c.status === st).length;
+---
+<Crm title="Sequences" scope={scope}>
+  <PageHeader title="Sequences" subtitle="A few emails over some days, from the salesperson’s own mailbox. A reply, a meeting or an opt-out stops it." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  <section class="card mb-6 overflow-x-auto p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Sequence</th><th class="px-5 py-3 text-right">Emails</th><th class="px-5 py-3 text-right">In it now</th><th class="px-5 py-3 text-right">Replied or stopped</th><th class="px-5 py-3">State</th></tr></thead>
+      <tbody class="divide-y divide-white/5">{(seqs ?? []).map((s) => (
+        <tr><td class="px-5 py-3"><a class="font-medium text-white hover:text-lk-blue" href={crmHref(scope, `/admin/crm/marketing/sequences/${s.id}`)}>{s.name}</a></td><td class="px-5 py-3 text-right">{(s.steps as unknown[]).length}</td><td class="px-5 py-3 text-right">{n(s.id, 'active')}</td><td class="px-5 py-3 text-right">{n(s.id, 'stopped')}</td><td class:list={['px-5 py-3', s.active ? 'text-lk-green' : 'text-white/45']}>{s.active ? 'On' : 'Off'}</td></tr>
+      ))}{!(seqs ?? []).length && <tr><td colspan="5" class="px-5 py-4 text-white/45">No sequences yet.</td></tr>}</tbody>
+    </table>
+  </section>
+  {scope.canMarket && <form method="post" class="card flex flex-wrap items-end gap-3">
+    <div><label class="label" for="start">Start from</label><select class="field" id="start" name="start"><option value="">Blank</option>{Object.entries(PLAYBOOK_SEQUENCES).map(([k, s]) => <option value={k}>{s.name}</option>)}</select></div>
+    <div><label class="label" for="name">Name</label><input class="field !w-64" id="name" name="name" placeholder="e.g. After the webinar" /></div>
+    <button class="btn-primary">Create</button>
+  </form>}
+</Crm>

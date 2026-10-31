@@ -1,0 +1,28 @@
+---
+import '../../styles/portal.css';
+import { serviceClient } from '../../lib/admin';
+import { optOut, readOptOut } from '../../lib/crm-marketing';
+
+// "Don't email me about this again" (the link in each CRM sequence email): no more sales emails from any Lakeba
+// company's CRM. It joins the newsletters' and the press office's opt-outs in one list.
+const t = readOptOut(Astro.params.token ?? '');
+if (!t) return new Response('This link isn’t valid.', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+const svc = serviceClient();
+const { data: ent } = await svc.from('entities').select('display_name').eq('id', t.entityId).maybeSingle();
+let done = false;
+if (Astro.request.method === 'POST') { await optOut(svc, t.personId, t.entityId, 'email link'); done = true; }
+---
+<!doctype html>
+<html lang="en">
+  <head><meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="robots" content="noindex" /><title>No more emails</title></head>
+  <body class="grid min-h-dvh place-items-center p-6">
+    <main class="card max-w-md text-center">
+      {done ? <p class="text-white">Done: you won’t get sales emails from {ent?.display_name ?? 'us'} or other Lakeba companies again.</p> : (
+        <form method="post" class="grid gap-4">
+          <p class="text-white">Stop sales emails from {ent?.display_name ?? 'us'} (and other Lakeba companies)?</p>
+          <button class="btn-primary justify-self-center">Yes, stop them</button>
+        </form>
+      )}
+    </main>
+  </body>
+</html>
