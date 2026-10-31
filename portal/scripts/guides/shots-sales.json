@@ -1,0 +1,14 @@
+[
+ {"name": "c01-today", "path": "/admin/crm?company=DXO", "maxHeight": 1100, "marks": [["[data-tour=crm-today]", 1], ["[data-tour=crm-menu]", 2], ["[data-tour=crm-search]", 3]]},
+ {"name": "c02-pipeline", "path": "/admin/crm/pipeline", "maxHeight": 900, "marks": [["[data-tour=crm-pipeline-filters]", 1], ["[data-tour=crm-board]", 2]]},
+ {"name": "c03-new-deal", "path": "/admin/crm/deals?new=1", "clip": ["[data-tour=crm-new-deal]"], "marks": [["label[for=pipeline_id]", 1, "dot"], ["label[for=company_name]", 2, "dot"], ["label[for=person_email]", 3, "dot"], ["label[for=amount]", 4, "dot"], ["label[for=next_step]", 5, "dot"]]},
+ {"name": "c04-deal", "path": "/admin/crm/deals/{{deal}}?company=DXO", "maxHeight": 3200, "marks": [["[data-tour=crm-stages]", 1], ["[data-tour=crm-ai-review]", 2], ["[data-tour=crm-also-known]", 3], ["[data-tour=crm-quotes]", 4], ["[data-tour=crm-room]", 5], ["[data-tour=crm-buying-group]", 6]]},
+ {"name": "c05-quote", "path": "/admin/crm/quotes/{{quote}}", "maxHeight": 1400, "marks": [["[data-tour=crm-quote-lines]", 1], ["[data-tour=crm-quote-next]", 2]]},
+ {"name": "c06-room", "path": "/deal/{{token}}", "maxHeight": 1300},
+ {"name": "c07-voice", "path": "/admin/crm/voice", "clip": ["[data-tour=crm-voice]"], "marks": [["[data-rec]", 1], ["label[for=text]", 2, "dot"], ["label[for=photo]", 3, "dot"]]},
+ {"name": "c08-phone", "path": "/admin/crm/phone", "maxHeight": 900, "marks": [["[data-tour=crm-whatsapp]", 1], ["[data-tour=crm-app]", 2]]},
+ {"name": "c09-forecast", "path": "/admin/crm/forecast", "maxHeight": 1000, "marks": [["[data-tour=crm-forecast]", 1]]},
+ {"name": "c10-marketing", "path": "/admin/crm/marketing", "maxHeight": 1200, "marks": [["[data-tour=crm-marketing-totals]", 1], ["[data-tour=crm-hot-leads]", 2]]},
+ {"name": "c11-form", "path": "/admin/crm/marketing/forms/{{form}}", "maxHeight": 1500, "marks": [["[data-tour=crm-form-embed]", 1]]},
+ {"name": "c12-settings", "path": "/admin/crm/settings?company=DXO", "marks": [["[data-tour=crm-switch]", 1], ["[data-tour=crm-sharing]", 2], ["[data-tour=crm-introductions-setting]", 3], ["[data-tour=crm-playbooks]", 4], ["[data-tour=crm-address]", 5], ["[data-tour=crm-selling]", 6]], "maxHeight": 3000}
+]

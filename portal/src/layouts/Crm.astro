@@ -50,6 +50,7 @@ const groups: { label?: string; items: Item[] }[] = [
     { href: '/admin/crm/settings', label: 'Settings', show: scope.canSettings },
     { href: '/admin/crm/mailbox', label: 'My mailbox', show: scope.canDo },
     { href: '/admin/crm/phone', label: 'My phone', show: scope.canDo },
+    { href: '/admin/guides/sales.pdf', label: 'Guide (PDF)' },
   ] },
 ];
 const under = (p: string) => path === p || path.startsWith(`${p}/`);

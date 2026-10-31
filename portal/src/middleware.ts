@@ -27,7 +27,7 @@ const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-logi
 const CENTRAL_PATHS = ['/login', '/forgot-password', '/passkey-login', '/mfa', '/account/security', '/api/passkeys', '/admin', '/auth/pass', '/oauth'];
 
 /** On a venture's CRM address (crm.doxai.com): its CRM pages; anything else opens on the central address. */
-const CRM_SITE_PATHS = ['/admin/crm', '/auth/redeem', '/logout', '/company-logo', '/favicon.ico', '/crm.webmanifest', '/icons', '/sw.js', '/deal'];
+const CRM_SITE_PATHS = ['/admin/crm', '/auth/redeem', '/logout', '/company-logo', '/favicon.ico', '/crm.webmanifest', '/icons', '/sw.js', '/deal', '/admin/guides/sales.pdf'];
 /** The CRM's company pick, remembered between CRM pages (lib/crm.ts). */
 const CRM_COMPANY_COOKIE = 'lakeba-crm-company';
 

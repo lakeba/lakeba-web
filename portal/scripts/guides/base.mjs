@@ -10,14 +10,16 @@ const { createClient } = require('@supabase/supabase-js');
 export const { PDFDocument, StandardFonts } = require('pdf-lib');
 
 const url = process.env.SUPABASE_URL ?? '';
-if (!/^http:\/\/(127\.0\.0\.1|localhost):54321$/.test(url)) throw new Error('local staging only');
+if (!/^http:\/\/(127\.0\.0\.1|localhost):(54321|56321)$/.test(url)) throw new Error('local staging only');
 export const svc = createClient(url, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 export const DOMAIN = '@sample.example.invalid';
 const HERE = new URL('.', import.meta.url).pathname;
 const day = 86400_000;
 export const d = (n) => new Date(Date.now() + n * day).toISOString().slice(0, 10);
 export const ts = (n) => new Date(Date.now() + n * day).toISOString();
-export const sql = (q) => execFileSync('docker', ['exec', '-i', 'supabase_db_lakeba-portal', 'psql', '-U', 'postgres', '-At', '-v', 'ON_ERROR_STOP=1', '-c', q], { encoding: 'utf8' }).trim();
+// The CRM branch's copy of staging (port 56321) has its own database container.
+const DB = url.includes(':56321') ? 'supabase_db_lakeba-portal-crm' : 'supabase_db_lakeba-portal';
+export const sql = (q) => execFileSync('docker', ['exec', '-i', DB, 'psql', '-U', 'postgres', '-At', '-v', 'ON_ERROR_STOP=1', '-c', q], { encoding: 'utf8' }).trim();
 export const ins = async (table, row) => { if (Array.isArray(row)) { const out = []; for (const r of row) out.push(await ins(table, r)); return out; } const { data, error } = await svc.from(table).insert(row).select('*'); if (error) throw new Error(`${table}: ${error.message} ${error.details ?? ''}`); return Array.isArray(row) ? data : data[0]; };
 export const pdf = async (title, lines = []) => {
   const doc = await PDFDocument.create(); const pg = doc.addPage([595, 842]); const f = await doc.embedFont(StandardFonts.Helvetica);

@@ -215,7 +215,7 @@ const tierRows = (tiers: { upTo: number | null; rate: number }[]) => [...tiers, 
 
       <section class="card mb-6 p-0" data-tour="com-plans">
         <h2 class="px-5 pt-5 font-display text-lg font-bold">Plans</h2>
-        <p class="px-5 text-xs text-white/45">Commission is earned when an invoice is raised. Tiers are marginal, by % of the rep’s target for the run’s period: with 8% up to 100% and 12% above, only the part over target earns 12%.</p>
+        <p class="px-5 text-xs text-white/45">Commission is earned when an invoice is raised or, if the plan says so, once it is paid in full. Tiers are marginal, by % of the rep’s target for the run’s period: with 8% up to 100% and 12% above, only the part over target earns 12%.</p>
         {setup.plans.length ? (
           <ul class="mt-2 divide-y divide-white/5 text-sm">
             {setup.plans.map((p) => (

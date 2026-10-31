@@ -11,6 +11,7 @@ screenshots: what to fill in, and why it matters.
 | Legal | `legal.md` | Legal | Legal "see" for the group |
 | Compliance and admin | `compliance.md` | Settings | Audit log or Users "see" for the group |
 | Marketing and press | `marketing.md` | Communications | News, Press or Newsletters "see" |
+| Sales (the CRM) | `sales.md` | Sales, and the CRM's own menu | CRM or CRM marketing "see" for any company |
 
 **Keep them up to date** (AGENTS.md, item 9): when a change adds, moves or removes something a guide shows
 or describes, update its text and, if the page looks different, its pictures, then rebuild the PDFs.
@@ -43,6 +44,10 @@ Screens are taken on the **staging copy on this Mac** with clearly fake data, ne
    Deadlines due soon would otherwise send real reminder emails, and staging must stay free of test data.
 4. Check the pictures in `docs/guides/img/`, update the numbered notes in the text if markers moved, and
    rebuild the PDFs.
+
+The Sales guide's screens (`shots-sales.json`) were taken on the CRM branch's own copy of staging, with records
+named "(CRM test)" and `@test.example.invalid` addresses; `ids.json` (not committed) gives the deal, quote, deal-room
+token and form they show.
 
 The seeds refuse to run against anything but the local staging database. They never press buttons that send
 email, call paid AI or touch Xero; opening pages only.

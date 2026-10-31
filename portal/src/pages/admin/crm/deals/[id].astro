@@ -234,7 +234,7 @@ const lost = pipeline.stages.find((s) => s.kind === 'lost');
       ))}
       {may && deal.status === 'open' && won && <form method="post" class="ml-auto"><input type="hidden" name="intent" value="move" /><input type="hidden" name="stage_id" value={won.id} /><button class="rounded-lg bg-lk-green/15 px-3 py-1.5 text-sm text-lk-green hover:bg-lk-green/25">Mark won</button></form>}
       {may && deal.status === 'open' && lost && (
-        <details class="relative"><summary class="cursor-pointer list-none rounded-lg bg-white/[0.05] px-3 py-1.5 text-sm text-white/55 hover:text-white">Lost…</summary>
+        <details class="relative" data-shut><summary class="cursor-pointer list-none rounded-lg bg-white/[0.05] px-3 py-1.5 text-sm text-white/55 hover:text-white">Lost…</summary>
           <form method="post" class="absolute right-0 z-10 mt-2 w-72 rounded-2xl border border-white/10 bg-ink p-3 shadow-2xl"><input type="hidden" name="intent" value="move" /><input type="hidden" name="stage_id" value={lost.id} />
             <label class="label" for="reason">Why was it lost?</label><input class="field" id="reason" name="reason" placeholder="Price, timing, a competitor…" required /><button class="btn-ghost mt-2 !py-1.5 text-sm">Mark lost</button></form>
         </details>

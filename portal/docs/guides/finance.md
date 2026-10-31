@@ -111,13 +111,13 @@ When something is wrong, the question is kept with the pack:
 
 ## Step 8 · Commissions
 
-**Commissions** tab. Commission is earned when an invoice is raised, and worked out from the sales invoices in Xero (or a CSV of invoices).
+**Commissions** tab. Commission is worked out from the sales invoices in Xero (or a CSV of invoices). Each plan says when it is earned (**Pays on**): when an invoice is **raised**, or only once it is **paid in full**, which is when the CRM counts a deal as won.
 
 First the plan and the people on it:
 
 ![Plans and people](img/F11-plans.jpg)
 
-1. **Plans:** name, cap per run, and tiers as a % of each rep's target (for example 8% up to 100% of target, then 12% above). Tick **Clawback** to take commission back when an invoice is later voided or credited.
+1. **Plans:** name, **Pays on** (invoices raised or paid in full), cap per run, and tiers as a % of each rep's target (for example 8% up to 100% of target, then 12% above). Tick **Clawback** to take commission back when an invoice is later voided or credited.
 2. **New plan.**
 3. **Who's on a plan:** each rep, their target for each run's period (a quarterly run needs a quarter's target) and from when.
 

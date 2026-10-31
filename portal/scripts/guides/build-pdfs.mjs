@@ -12,7 +12,7 @@ const OUT = new URL('../../templates/guides/', import.meta.url).pathname;
 const TMP = `${tmpdir()}/lakeba-guides-${process.pid}/`;
 mkdirSync(OUT, { recursive: true }); mkdirSync(TMP, { recursive: true });
 const MONTH = new Intl.DateTimeFormat('en-AU', { month: 'long', year: 'numeric' }).format(new Date());
-const keys = ['hr', 'finance', 'legal', 'compliance', 'marketing'];
+const keys = ['hr', 'finance', 'legal', 'compliance', 'marketing', 'sales'];
 const CSS = `
 @page { size: A4; margin: 16mm 15mm 18mm; }
 * { box-sizing: border-box; }

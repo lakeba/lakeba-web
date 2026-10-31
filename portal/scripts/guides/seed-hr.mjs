@@ -8,7 +8,7 @@ const { createClient } = require('@supabase/supabase-js');
 const { PDFDocument, StandardFonts } = require('pdf-lib');
 
 const url = process.env.SUPABASE_URL ?? '';
-if (!/^http:\/\/(127\.0\.0\.1|localhost):54321$/.test(url)) throw new Error('local staging only');
+if (!/^http:\/\/(127\.0\.0\.1|localhost):(54321|56321)$/.test(url)) throw new Error('local staging only');
 const svc = createClient(url, process.env.SUPABASE_SECRET_KEY, { auth: { persistSession: false } });
 const DOMAIN = '@sample.example.invalid';
 const HERE = new URL('.', import.meta.url).pathname;

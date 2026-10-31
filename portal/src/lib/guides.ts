@@ -11,6 +11,7 @@ export const GUIDES: Guide[] = [
   { key: 'finance', title: 'Finance guide', file: 'Lakeba Portal - Finance guide.pdf', covers: ['src/pages/admin/accounting', 'src/pages/admin/reporting'], mayRead: (a) => a.can('accounting.view', null) || a.canAny('reporting.view') },
   { key: 'legal', title: 'Legal guide', file: 'Lakeba Portal - Legal guide.pdf', covers: ['src/pages/admin/legal', 'src/pages/admin/legal-requests'], mayRead: (a) => a.can('legal.view', null) },
   { key: 'compliance', title: 'Compliance and admin guide', file: 'Lakeba Portal - Compliance and admin guide.pdf', covers: ['src/pages/admin/approvals', 'src/pages/admin/audit.astro', 'src/pages/admin/system', 'src/pages/admin/investors', 'src/pages/admin/holders', 'src/pages/admin/companies', 'src/pages/admin/ask-review.astro'], mayRead: (a) => a.can('audit.view', null) || a.can('users.view', null) },
+  { key: 'sales', title: 'Sales guide', file: 'Lakeba Portal - Sales guide.pdf', covers: ['src/pages/admin/crm', 'src/pages/deal'], mayRead: (a) => a.canAny('crm.view') || a.canAny('leadgen.view') },
   { key: 'marketing', title: 'Marketing and press guide', file: 'Lakeba Portal - Marketing and press guide.pdf', covers: ['src/pages/admin/news', 'src/pages/admin/content.astro', 'src/pages/admin/newsletters', 'src/pages/admin/press'], mayRead: (a) => ['news', 'press', 'newsletters'].some((area) => a.canAny(`${area}.view`)) },
 ];
 

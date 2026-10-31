@@ -55,6 +55,32 @@ export const TOURS: Tour[] = [
     ],
   },
   {
+    key: 'crm', start: '/admin/crm', who: 'page', auto: true, translate: false,
+    steps: [
+      { el: 'crm-today', title: 'Your day', body: 'What moves your deals forward today, with the reason for each and a draft ready when Lakeba AI chose it. Everything else is logged for you.' },
+      { el: 'crm-menu', title: 'The CRM', body: 'Pipeline, deals, people and companies, quotes, the emails found in your inbox, Ask Lakeba AI and voice notes. Sales leads also see the forecast and settings.' },
+      { el: 'crm-search', title: 'Find anything', body: 'People, companies and deals of this company, by name, email or web address.' },
+      { el: 'crm-brand', title: 'On your phone too', body: 'Install the CRM as an app (My phone), and update deals on WhatsApp by text or voice.' },
+    ],
+  },
+  {
+    key: 'guide-crm-deal', start: '/admin/crm/deals/*', who: 'page', auto: false, translate: false, guide: true,
+    steps: [
+      { el: 'crm-stages', title: 'Where it stands', body: 'Move the deal along; hover a stage for what must be true to move on. Lost asks why.' },
+      { el: 'crm-ai-review', title: 'Lakeba AI’s review', body: 'An honest chance, why it may still be lost, what isn’t known yet, and the next step with a draft email.' },
+      { el: 'crm-quotes', title: 'Quotes and Xero', body: 'Make a quote from your Xero items; it’s copied to Xero, accepted in the deal room, invoiced, and the deal is won when it’s paid.' },
+      { el: 'crm-room', title: 'Deal room', body: 'A private page for the buyer: the quote to accept, your files, their questions. Every visit shows on the timeline.' },
+      { el: 'crm-buying-group', title: 'Buying group', body: 'Who is involved and their part. Deals where nobody decides are the ones that stall.' },
+    ],
+  },
+  {
+    key: 'crm-marketing', start: '/admin/crm/marketing', who: 'page', auto: true, translate: false,
+    steps: [
+      { el: 'crm-marketing-totals', title: 'Results in cash', body: 'Leads, deals, what was won and paid in Xero, and the spend, for every campaign.' },
+      { el: 'crm-hot-leads', title: 'Hot leads', body: 'Scored by how well they fit your ideal customer and what they did lately. Give them to a salesperson here.' },
+    ],
+  },
+  {
     key: 'director', start: '/sign', who: 'director', auto: true, translate: false,
     steps: [
       { el: 'sign-list', title: 'Papers to sign', body: 'Directors’ resolutions and minutes sent to you. Open one to read it and sign in the portal.' },

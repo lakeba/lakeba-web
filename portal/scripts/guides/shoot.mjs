@@ -49,7 +49,7 @@ const MARK = `(list) => {
   }
   return out;
 }`;
-const HIDE = `document.querySelectorAll('details').forEach((d) => d.open = !/Sign out/.test(d.textContent) && !d.querySelector('[data-tour=admin-company]')); [...document.querySelectorAll('body *')].filter((e) => getComputedStyle(e).position === 'fixed').forEach((e) => e.remove()); 1`;
+const HIDE = `document.querySelectorAll('details').forEach((d) => d.open = !/Sign out/.test(d.textContent) && !d.querySelector('[data-tour=admin-company]') && !d.hasAttribute('data-menu') && !d.hasAttribute('data-shut')); [...document.querySelectorAll('body *')].filter((e) => getComputedStyle(e).position === 'fixed').forEach((e) => e.remove()); 1`;
 for (const s of shots.filter((x) => !ONLY || x.name === ONLY)) {
   await cdp('Emulation.setDeviceMetricsOverride', { width: s.width ?? 1440, height: s.height ?? 1000, deviceScaleFactor: 1.5, mobile: false });
   await go(s.path);
