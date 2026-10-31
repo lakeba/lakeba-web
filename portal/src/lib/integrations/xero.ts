@@ -156,7 +156,8 @@ export async function prepareDividend(svc: Svc, c: Connection, company: Ctx['com
   return { created: ok.length, failed: results.length - ok.length, total: ok.reduce((a, r) => a + r.amount, 0) };
 }
 
-export { ctxOf as xeroContext };
+export { ctxOf as xeroContext, xr as xeroCall };
+export type { Ctx as XeroCtx };
 
 /**
  * A reporting pack's figures from Xero (Accounting, phase 2): the period's and
@@ -215,6 +216,20 @@ export async function xeroSalesInvoices(svc: Svc, c: Connection, company: Ctx['c
     const res = await xr<{ Invoices?: XeroInvoice[] }>(x, 'GET', `/Invoices?where=${where}&Statuses=AUTHORISED,PAID&order=Date&page=${page}&pageSize=100&summaryOnly=true`);
     const list = res.Invoices ?? [];
     out.push(...list.filter((v) => v.Type === 'ACCREC' && ['AUTHORISED', 'PAID'].includes(v.Status)).map(salesInvoice));
+    if (list.length < 100) break;
+  }
+  return out;
+}
+
+/** The period's sales invoices paid in full (PAID, by the date they were fully paid), dated by that payment. */
+export async function xeroPaidInvoices(svc: Svc, c: Connection, company: Ctx['company'], central: string, p: { start: string; end: string }) {
+  const x = await ctxOf(svc, c, company, central);
+  const where = encodeURIComponent(`Type=="ACCREC" AND FullyPaidOnDate>=${ymd(p.start)} AND FullyPaidOnDate<=${ymd(p.end)}`);
+  const out: SalesInvoice[] = [];
+  for (let page = 1; page <= 200; page++) {
+    const res = await xr<{ Invoices?: (XeroInvoice & { FullyPaidOnDate?: string })[] }>(x, 'GET', `/Invoices?where=${where}&Statuses=PAID&order=Date&page=${page}&pageSize=100&summaryOnly=true`);
+    const list = res.Invoices ?? [];
+    out.push(...list.filter((v) => v.Type === 'ACCREC' && v.Status === 'PAID').map((v) => ({ ...salesInvoice(v), date: xeroDate({ ...v, DateString: undefined, Date: v.FullyPaidOnDate }) || salesInvoice(v).date })));
     if (list.length < 100) break;
   }
   return out;

@@ -12,7 +12,7 @@ import { readNumber } from '../../../../lib/kpis';
 import { xeroConnected } from '../../../../lib/reporting';
 import {
   DEFAULT_TIERS, RUN_COLUMNS, allRows, RUN_STATES, SOURCES, buildRun, clientKey, commissionCompanies, fetchFromXero, invoicesFromCsv, lastPeriod, money, overlappingRun, periodText,
-  saveAttribution, setupOf, tierProblems, tiersFrom, tiersText, voidedFromCsv, type Attribution, type Run,
+  BASES, saveAttribution, setupOf, tierProblems, tiersFrom, tiersText, voidedFromCsv, type Attribution, type Run,
 } from '../../../../lib/commissions';
 
 // Admin → Finance → Commissions: a company's commission plans (tiers by % of target, cap, clawback), who is on
@@ -50,7 +50,8 @@ if (Astro.request.method === 'POST' && company && mayDo) {
       if (problems.length) throw new Error(problems.join(' '));
       const cap = readNumber(field(form, 'cap'));
       if (cap != null && cap < 0) throw new Error('The cap can’t be negative.');
-      const row = { name, tiers, cap, clawback: form.get('clawback') === 'on', active: old ? form.get('active') === 'on' : true, notes: field(form, 'notes').slice(0, 2000), updated_at: now };
+      const basis = field(form, 'basis') === 'invoice_paid' ? 'invoice_paid' : 'invoice_raised';
+      const row = { name, basis, tiers, cap, clawback: form.get('clawback') === 'on', active: old ? form.get('active') === 'on' : true, notes: field(form, 'notes').slice(0, 2000), updated_at: now };
       if (old) await svc.from('commission_plans').update(row).eq('id', old.id).throwOnError();
       else await svc.from('commission_plans').insert({ ...row, entity_id: company.id, created_by: userId }).throwOnError();
       await log(old ? 'admin_saved_commission_plan' : 'admin_added_commission_plan', { name });
@@ -118,7 +119,7 @@ if (Astro.request.method === 'POST' && company && mayDo) {
       const upload = file instanceof File && file.size > 0;
       if (!upload && !xero) throw new Error('Xero isn’t connected for this company: upload a CSV of the period’s invoices.');
       if (upload && file.size > 5 * 1024 * 1024) throw new Error('The file is larger than 5 MB.');
-      const base = { id: '', entity_id: company.id, period_start: start, period_end: end };
+      const base = { id: '', entity_id: company.id, plan_id: planId, period_start: start, period_end: end };
       const fresh = upload
         ? await (async () => { const r = invoicesFromCsv(await file.text(), { start, end }); if (!r.invoices.length) throw new Error(`No invoices in the file for that period (${r.skipped.outside} outside it, ${r.skipped.unreadable} unreadable). Columns: invoice number, contact, date, amount excluding GST.`); return { invoices: r.invoices, earlier: await voidedFromCsv(svc, base, r.voided), source: 'upload' as const, upload_name: file.name.slice(0, 200) }; })()
         : { ...(await fetchFromXero(svc, base, company, central)), source: 'xero' as const, upload_name: null };
@@ -221,13 +222,14 @@ const tierRows = (tiers: { upTo: number | null; rate: number }[]) => [...tiers, 
               <li class="px-5 py-3">
                 <details>
                   <summary class="flex cursor-pointer flex-wrap items-baseline justify-between gap-2">
-                    <span><span class:list={['font-medium', p.active ? 'text-white' : 'text-white/45 line-through']}>{p.name}</span><span class="block text-xs text-white/45">{tiersText(p.tiers)}{p.cap != null && ` · cap ${money(p.cap)} a run`} · {p.clawback ? 'clawback on' : 'no clawback'}</span></span>
+                    <span><span class:list={['font-medium', p.active ? 'text-white' : 'text-white/45 line-through']}>{p.name}</span><span class="block text-xs text-white/45">{BASES[p.basis] ?? BASES.invoice_raised} · {tiersText(p.tiers)}{p.cap != null && ` · cap ${money(p.cap)} a run`} · {p.clawback ? 'clawback on' : 'no clawback'}</span></span>
                     <span class="text-xs text-white/45">{setup.assignments.filter((a) => a.plan_id === p.id && (!a.ends_on || a.ends_on >= today)).length} on it</span>
                   </summary>
                   {mayDo && (
                     <form method="post" class="mt-3 grid gap-3 sm:grid-cols-2">
                       <input type="hidden" name="id" value={p.id} />
                       <div><label class="label" for={`pn-${p.id}`}>Name</label><input class="field" id={`pn-${p.id}`} name="name" value={p.name} required /></div>
+                      <div><label class="label" for={`pb-${p.id}`}><span data-hint="Invoices raised: by invoice date. Paid in full: by the date the client paid (as the CRM counts a deal won).">Pays on</span></label><select class="field" id={`pb-${p.id}`} name="basis">{Object.entries(BASES).map(([k, l]) => <option value={k} selected={k === p.basis}>{l}</option>)}</select></div>
                       <div><label class="label" for={`pc-${p.id}`}><span data-hint="The most a rep earns in one run, in A$. Empty: no cap. Clawbacks aren’t capped.">Cap per run (A$)</span></label><input class="field" id={`pc-${p.id}`} name="cap" value={p.cap ?? ''} inputmode="decimal" /></div>
                       <fieldset class="grid gap-2 sm:col-span-2"><legend class="label">Tiers</legend>{tierRows(p.tiers).map((t, i) => (
                         <div class="flex flex-wrap items-center gap-2 text-white/65"><input class="field !w-20" name={`rate_${i}`} value={t.rate ?? ''} inputmode="decimal" aria-label={`Tier ${i + 1} rate %`} placeholder="Rate" />% on revenue up to <input class="field !w-20" name={`upto_${i}`} value={t.upTo ?? ''} inputmode="decimal" aria-label={`Tier ${i + 1} up to % of target`} placeholder="—" />% of target</div>
@@ -248,6 +250,7 @@ const tierRows = (tiers: { upTo: number | null; rate: number }[]) => [...tiers, 
             <summary class="cursor-pointer font-medium text-white">New plan</summary>
             <form method="post" class="mt-3 grid gap-3 sm:grid-cols-2">
               <div><label class="label" for="pn-new">Name</label><input class="field" id="pn-new" name="name" placeholder="e.g. Sales FY27" required /></div>
+              <div><label class="label" for="pb-new">Pays on</label><select class="field" id="pb-new" name="basis">{Object.entries(BASES).map(([k, l]) => <option value={k}>{l}</option>)}</select></div>
               <div><label class="label" for="pc-new">Cap per run (A$)</label><input class="field" id="pc-new" name="cap" inputmode="decimal" placeholder="No cap" /></div>
               <fieldset class="grid gap-2 sm:col-span-2"><legend class="label">Tiers</legend>{tierRows(DEFAULT_TIERS).map((t, i) => (
                 <div class="flex flex-wrap items-center gap-2 text-white/65"><input class="field !w-20" name={`rate_${i}`} value={t.rate ?? ''} inputmode="decimal" aria-label={`Tier ${i + 1} rate %`} placeholder="Rate" />% on revenue up to <input class="field !w-20" name={`upto_${i}`} value={t.upTo ?? ''} inputmode="decimal" aria-label={`Tier ${i + 1} up to % of target`} placeholder="—" />% of target</div>

@@ -1,4 +1,5 @@
 import { serviceClient } from './admin';
+import { crmJobs } from './crm-jobs';
 import { memberIds, notifyAdmins, notifyMembers } from './notify';
 import { CATEGORIES, DIGESTED } from './notification-events';
 import { processOutbox, pushEnabled } from './push';
@@ -177,7 +178,7 @@ export function startNotificationWorker() {
   const run = async () => {
     try {
       if (pushEnabled()) await processOutbox();
-      if (ticks % 4 === 0) { await pollMailboxes(lastOrigin); await pollPressMailbox(serviceClient(), lastOrigin); await newsJobs(); await monitorJobs(serviceClient()); await syncConnections(lastOrigin); } // mailboxes (shareholders@, press@) and news, every minute
+      if (ticks % 4 === 0) { await pollMailboxes(lastOrigin); await pollPressMailbox(serviceClient(), lastOrigin); await newsJobs(); await monitorJobs(serviceClient()); await syncConnections(lastOrigin); await crmJobs(serviceClient(), lastOrigin); } // mailboxes (shareholders@, press@) and news, every minute
       await sendDueAutoReplies(lastOrigin); // automatic replies whose 5-minute undo window has passed
       await newsletterJobs();
       await sendQueuedPitches(serviceClient(), lastOrigin); // press pitches to journalists, a few at a time

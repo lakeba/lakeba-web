@@ -82,13 +82,14 @@ export const forgetTenants = () => { tenantsAt = 0; };
 /** Staging (MAILBOXES_READ_ONLY): mailboxes are read, never sent from or changed. */
 export const READ_ONLY_MESSAGE = 'This server only reads mailboxes: it doesn’t send from them or change them.';
 
-export async function graph<T = unknown>(path: string, init: RequestInit & { prefer?: string } = {}): Promise<T> {
+export async function graph<T = unknown>(path: string, init: RequestInit & { prefer?: string; tenant?: string } = {}): Promise<T> {
   if (MAILBOXES_READ_ONLY && (init.method ?? 'GET').toUpperCase() !== 'GET') throw new Error(READ_ONLY_MESSAGE);
   const url = path.startsWith('http') ? path : `${MS_GRAPH_BASE}${path}`;
   const mailbox = /\/users\/([^/?]+)/.exec(new URL(url).pathname)?.[1];
-  const headers: Record<string, string> = { authorization: `Bearer ${await accessToken(await tenantOf(mailbox ? decodeURIComponent(mailbox) : null))}`, ...(init.body ? { 'content-type': 'application/json' } : {}) };
+  const headers: Record<string, string> = { authorization: `Bearer ${await accessToken(init.tenant ?? await tenantOf(mailbox ? decodeURIComponent(mailbox) : null))}`, ...(init.body ? { 'content-type': 'application/json' } : {}) };
   if (init.prefer) headers.prefer = init.prefer;
-  const res = await fetch(url, { ...init, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) } });
+  const { tenant: _tenant, prefer: _prefer, ...rest } = init;
+  const res = await fetch(url, { ...rest, headers: { ...headers, ...(init.headers as Record<string, string> | undefined) } });
   if (res.status === 202 || res.status === 204) return undefined as T;
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(`Microsoft Graph ${res.status}: ${(data as { error?: { message?: string } }).error?.message ?? res.statusText}`);

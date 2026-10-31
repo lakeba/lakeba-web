@@ -1,0 +1,279 @@
+---
+import Crm from '../../../../layouts/Crm.astro';
+import Alert from '../../../../components/Alert.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { field } from '../../../../lib/forms';
+import { centralOrigin } from '../../../../lib/sites';
+import { changedAfterApproval, getApproval, requestApproval } from '../../../../lib/approvals';
+import { crmHref, crmScope, logActivity, mayEditDeal, money, namesOf, type Deal } from '../../../../lib/crm';
+import { QUOTE_STATES, holdUp, lineTotals, nextNumber, quoteTotals, type Line, type Quote } from '../../../../lib/crm-quotes';
+import { crmXero, draftInvoice, ensureXeroContact, pushQuote, setXeroQuoteStatus, xeroCatalogue, type TaxRate, type Tracking, type XeroItem } from '../../../../lib/crm-xero';
+import { ensureRoom, roomLink } from '../../../../lib/crm-rooms';
+import { creditOwner } from '../../../../lib/crm-commission';
+
+// CRM → a quote: lines from the company's Xero items (prices, tax rates, tracking), totals as Xero works them
+// out, the approval a discount over the limit needs, then out: copied to Xero as a quote, and into the deal room
+// for the buyer to accept. Accepted, it becomes a draft invoice in Xero for Finance.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+const id = Astro.params.id!;
+if (!/^[0-9a-f-]{36}$/.test(id) || !company) return Astro.redirect('/admin/crm/deals');
+const { data: ent } = await svc.from('entities').select('id, code, display_name, legal_name, crm_discount_limit, crm_quote_prefix, crm_quote_terms, crm_currency, brand_color, website').eq('id', company.id).single();
+const load = async () => (await svc.from('crm_quotes').select('*').eq('id', id).eq('entity_id', company.id).maybeSingle()).data as Quote | null;
+let q = await load();
+if (!q) return Astro.redirect(crmHref(scope, '/admin/crm/deals'));
+const loadLines = async () => ((await svc.from('crm_quote_lines').select('*').eq('quote_id', id).order('sort')).data ?? []) as Line[];
+let lines = await loadLines();
+const { data: d } = await svc.from('crm_deals').select('*').eq('id', q.deal_id).single();
+const deal = d as Deal & { xero_contact_id: string | null };
+const may = mayEditDeal(scope, deal, me);
+const central = centralOrigin(Astro.url);
+const xero = await crmXero(svc, company, central).catch(() => null);
+let catalogue: { items: XeroItem[]; taxes: TaxRate[]; tracking: Tracking[] } = { items: [], taxes: [], tracking: [] };
+let xeroProblem = '';
+if (xero) catalogue = await xeroCatalogue(xero).catch((e) => { xeroProblem = `Couldn’t read Xero’s items: ${(e as Error).message}`; return catalogue; });
+const self = crmHref(scope, `/admin/crm/quotes/${id}`);
+let error = '';
+let done = Astro.url.searchParams.get('done') ?? '';
+const editable = q.status === 'draft' || q.status === 'ready';
+const audit = (action: string, detail: Record<string, unknown> = {}) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { entity_id: company.id, deal_id: deal.id, quote_id: id, ...detail } });
+const back = (msg: string) => Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent(msg)}`, 303);
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  const intent = field(form, 'intent');
+  try {
+    if (!may) throw new Error('Only the deal’s owner or a sales lead changes its quotes.');
+    if (intent === 'save') {
+      if (!editable) throw new Error('This quote has gone to the buyer: make a new version to change it.');
+      const all = (n: string) => form.getAll(n).map((v) => String(v).trim());
+      const codes = all('line_item'), descs = all('line_desc'), qtys = all('line_qty'), prices = all('line_price'), discs = all('line_disc'), taxes = all('line_tax'), accounts = all('line_account');
+      const num = (v: string) => Number((v || '0').replace(/[, $€]/g, ''));
+      const next: Line[] = [];
+      for (let i = 0; i < descs.length; i++) {
+        if (!descs[i] && !codes[i]) continue;
+        const qty = num(qtys[i]), price = num(prices[i]), disc = num(discs[i]);
+        if (![qty, price, disc].every(Number.isFinite) || qty < 0 || price < 0 || disc < 0 || disc > 100) throw new Error(`Line ${i + 1}: quantity, price and discount are numbers (discount 0–100%).`);
+        const tax = catalogue.taxes.find((t) => t.type === taxes[i]);
+        const tracking = catalogue.tracking.map((t) => ({ name: t.name, option: String(form.getAll(`line_track_${t.name}`)[i] ?? '') })).filter((t) => t.option);
+        const l = { sort: next.length, item_code: codes[i].slice(0, 30), description: descs[i].slice(0, 2000), quantity: qty, unit_price: price, discount: disc, account_code: accounts[i].slice(0, 20), tax_type: tax?.type ?? '', tax_rate: tax?.rate ?? Number(form.get('default_tax_rate') ?? 0), tracking, amount: 0 };
+        next.push({ ...l, amount: lineTotals(l, q.amounts_are).amount });
+      }
+      const amountsAre = ['Exclusive', 'Inclusive', 'NoTax'].includes(field(form, 'amounts_are')) ? field(form, 'amounts_are') as Quote['amounts_are'] : q.amounts_are;
+      const totals = quoteTotals(next.map((l) => ({ ...l, amount: lineTotals(l, amountsAre).amount })), amountsAre);
+      const expiry = /^\d{4}-\d{2}-\d{2}$/.test(field(form, 'expiry_date')) ? field(form, 'expiry_date') : null;
+      await svc.from('crm_quote_lines').delete().eq('quote_id', id);
+      if (next.length) await svc.from('crm_quote_lines').insert(next.map((l) => ({ ...l, quote_id: id }))).throwOnError();
+      await svc.from('crm_quotes').update({ title: field(form, 'title').slice(0, 100), summary: field(form, 'summary').slice(0, 3000), terms: field(form, 'terms').slice(0, 4000), expiry_date: expiry, amounts_are: amountsAre, ...totals, status: 'draft', updated_at: new Date().toISOString() }).eq('id', id).throwOnError();
+      // The deal's value follows its latest quote.
+      await svc.from('crm_deals').update({ amount: totals.subtotal, currency: q.currency, updated_at: new Date().toISOString() }).eq('id', deal.id);
+      if (q.status === 'ready') await changedAfterApproval(svc, 'quote', id, me, Astro.url.origin, `${q.number} · ${deal.title}`);
+      return back('Saved.');
+    }
+    if (intent === 'ask-approval') {
+      const problem = await requestApproval(svc, Astro.locals.access, me, { type: 'quote', id, entityId: company.id, title: `${q.number}${q.version > 1 ? ` v${q.version}` : ''} · ${deal.title} (${q.max_discount}% discount)`, note: field(form, 'note'), origin: Astro.url.origin });
+      if (problem) throw new Error(problem);
+      await audit('crm_quote_approval_asked');
+      return back('Asked for approval. The sales lead gets a notification.');
+    }
+    if (intent === 'ready') {
+      if (!lines.length) throw new Error('Add at least one line.');
+      const held = await holdUp(svc, q, Number(ent!.crm_discount_limit));
+      if (held) throw new Error(held);
+      if (xero) {
+        const contact = await ensureXeroContact(svc, xero, deal);
+        const x = await pushQuote(xero, q, lines, contact, deal.title);
+        await svc.from('crm_quotes').update({ xero_quote_id: x.QuoteID, xero_quote_number: x.QuoteNumber, xero_status: x.Status, status: 'ready', updated_at: new Date().toISOString() }).eq('id', id);
+        const { data: org } = deal.company_id ? await svc.from('crm_companies').select('name').eq('id', deal.company_id).maybeSingle() : { data: null };
+        await creditOwner(svc, { ...deal, xero_contact_id: contact }, org?.name ?? deal.title);
+        await logActivity(svc, { entity_id: company.id, kind: 'quote', deal_id: deal.id, subject: `Quote ${q.number} copied to Xero (${x.QuoteNumber})`, body: `${money(Number(q.total), q.currency, true)} · Xero status: draft`, created_by: me });
+      } else {
+        await svc.from('crm_quotes').update({ status: 'ready', updated_at: new Date().toISOString() }).eq('id', id);
+      }
+      await audit('crm_quote_ready');
+      return back(xero ? 'Ready, and copied to Xero as a draft quote.' : 'Ready to send. (Xero isn’t connected, so it isn’t copied there.)');
+    }
+    if (intent === 'send') {
+      if (q.status !== 'ready' && q.status !== 'sent') throw new Error('Make it ready first.');
+      const room = await ensureRoom(svc, deal, me);
+      if (xero && q.xero_quote_id && deal.xero_contact_id) await setXeroQuoteStatus(xero, q.xero_quote_id, deal.xero_contact_id, 'SENT').catch(() => null);
+      await svc.from('crm_quotes').update({ status: 'sent', xero_status: q.xero_quote_id ? 'SENT' : q.xero_status, updated_at: new Date().toISOString() }).eq('id', id);
+      if (q.status !== 'sent') {
+        await logActivity(svc, { entity_id: company.id, kind: 'quote', direction: 'out', deal_id: deal.id, subject: `Quote ${q.number} in the deal room`, body: money(Number(q.total), q.currency, true), created_by: me });
+        await audit('crm_quote_sent');
+      }
+      void room;
+      return back('It’s in the deal room. Send the buyer the link (below).');
+    }
+    if (intent === 'decline') {
+      await svc.from('crm_quotes').update({ status: 'declined', declined_reason: field(form, 'reason').slice(0, 500), updated_at: new Date().toISOString() }).eq('id', id);
+      if (xero && q.xero_quote_id && deal.xero_contact_id) await setXeroQuoteStatus(xero, q.xero_quote_id, deal.xero_contact_id, 'DECLINED').catch(() => null);
+      await logActivity(svc, { entity_id: company.id, kind: 'quote', deal_id: deal.id, subject: `Quote ${q.number} declined`, body: field(form, 'reason'), created_by: me });
+      return back('Marked declined.');
+    }
+    if (intent === 'version') {
+      const { data: nq } = await svc.from('crm_quotes').insert({ entity_id: company.id, deal_id: deal.id, number: q.number, version: q.version + 1, title: q.title, summary: q.summary, terms: q.terms, currency: q.currency, expiry_date: q.expiry_date, amounts_are: q.amounts_are, subtotal: q.subtotal, tax: q.tax, total: q.total, max_discount: q.max_discount, created_by: me }).select('id').single().throwOnError();
+      if (lines.length) await svc.from('crm_quote_lines').insert(lines.map(({ id: _l, ...l }) => ({ ...l, quote_id: nq!.id }))).throwOnError();
+      if (q.status === 'sent' || q.status === 'ready') await svc.from('crm_quotes').update({ status: 'expired', updated_at: new Date().toISOString() }).eq('id', id);
+      return Astro.redirect(crmHref(scope, `/admin/crm/quotes/${nq!.id}`), 303);
+    }
+    if (intent === 'invoice') {
+      if (q.status !== 'accepted') throw new Error('The buyer hasn’t accepted it yet.');
+      if (!xero) throw new Error('Connect Xero for this company first.');
+      if (q.xero_invoice_id) throw new Error('Its invoice is already in Xero.');
+      const contact = await ensureXeroContact(svc, xero, deal);
+      const inv = await draftInvoice(xero, q, lines, contact);
+      await svc.from('crm_quotes').update({ xero_invoice_id: inv.InvoiceID, updated_at: new Date().toISOString() }).eq('id', id);
+      await svc.from('crm_deals').update({ xero_invoice_ids: [...new Set([...(deal as unknown as { xero_invoice_ids: string[] }).xero_invoice_ids ?? [], inv.InvoiceID])] }).eq('id', deal.id);
+      await logActivity(svc, { entity_id: company.id, kind: 'xero', deal_id: deal.id, subject: `Draft invoice in Xero for quote ${q.number}`, body: 'Finance approves it in Xero; the deal follows its payment.', created_by: me });
+      await audit('crm_invoice_drafted');
+      return back('A draft invoice is in Xero for Finance to approve. The deal is won when it’s paid.');
+    }
+  } catch (e) {
+    error = (e as Error).message;
+    done = '';
+    q = (await load())!;
+    lines = await loadLines();
+  }
+}
+
+const approval = await getApproval(svc, 'quote', id);
+const held = editable && lines.length ? await holdUp(svc, q, Number(ent!.crm_discount_limit)) : null;
+const { data: others } = await svc.from('crm_quotes').select('id, number, version, status, total, currency').eq('deal_id', deal.id).order('version', { ascending: false });
+const { data: room } = await svc.from('crm_rooms').select('token_sealed, expires_at, revoked_at, views, last_viewed_at').eq('deal_id', deal.id).order('created_at', { ascending: false }).limit(1).maybeSingle();
+const link = room && !room.revoked_at && Date.parse(room.expires_at) > Date.now() ? roomLink(central, room) : null;
+const { data: contact } = deal.person_id ? await svc.from('crm_people').select('full_name, email').eq('id', deal.person_id).maybeSingle() : { data: null };
+const names = await namesOf(svc, [q.created_by, approval?.decided_by]);
+const showLines = lines.length ? lines : [];
+const blank = 3;
+const defaultTax = catalogue.taxes.find((t) => /gst on income|output/i.test(t.name)) ?? catalogue.taxes[0];
+const mailto = link && contact?.email ? `mailto:${contact.email}?subject=${encodeURIComponent(`${ent!.display_name}: ${q.title || 'your quote'}`)}&body=${encodeURIComponent(`Hi ${contact.full_name.split(' ')[0]},\n\nHere is our quote ${q.number}${q.title ? ` for ${q.title}` : ''}. You can read it, download the files and accept it here:\n\n${link}\n\n`)}` : null;
+---
+
+<Crm title={`Quote ${q.number}`} scope={scope}>
+  <div class="mb-6 flex flex-wrap items-start justify-between gap-4">
+    <div>
+      <p class="text-sm text-white/45"><a href={crmHref(scope, `/admin/crm/deals/${deal.id}`)} class="hover:text-white">{deal.title}</a> · {QUOTE_STATES[q.status]}{q.xero_quote_number && ` · Xero ${q.xero_quote_number} (${(q.xero_status ?? '').toLowerCase()})`}</p>
+      <h1 class="mt-1 font-display text-3xl font-bold">Quote {q.number}{q.version > 1 && <span class="text-white/45"> · version {q.version}</span>}</h1>
+    </div>
+    <div class="flex flex-wrap gap-2">
+      <a href={crmHref(scope, `/admin/crm/quotes/${id}/pdf`)} class="btn-ghost" target="_blank">Preview PDF</a>
+      {may && (q.status === 'sent' || q.status === 'ready' || q.status === 'declined' || q.status === 'expired') && <form method="post"><input type="hidden" name="intent" value="version" /><button class="btn-ghost">New version</button></form>}
+    </div>
+  </div>
+  {error && <div class="mb-4"><Alert tone="error">{error}</Alert></div>}
+  {done && <div class="mb-4"><Alert tone="success">{done}</Alert></div>}
+  {xeroProblem && <div class="mb-4"><Alert tone="info">{xeroProblem}</Alert></div>}
+  {!xero && <div class="mb-4"><Alert tone="info">Xero isn’t connected for {company.display_name}: type the lines yourself. Once it is (Settings → Companies → Integrations), items, prices and tax come from Xero and quotes are copied there.</Alert></div>}
+
+  <div class="grid gap-6 xl:grid-cols-[1.7fr_1fr]">
+    <form method="post" class="card" data-tour="crm-quote-lines">
+      <input type="hidden" name="intent" value="save" />
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div class="sm:col-span-2"><label class="label" for="title">Title</label><input class="field" id="title" name="title" value={q.title} placeholder="DoxAI Platform — 3 sites, 2 years" disabled={!editable || !may} /></div>
+        <div class="sm:col-span-2"><label class="label" for="summary">Summary for the buyer</label><textarea class="field min-h-16" id="summary" name="summary" disabled={!editable || !may}>{q.summary}</textarea></div>
+        <div><label class="label" for="expiry_date">Valid to</label><input class="field" type="date" id="expiry_date" name="expiry_date" value={q.expiry_date ?? ''} disabled={!editable || !may} /></div>
+        <div><label class="label" for="amounts_are">Prices are</label><select class="field" id="amounts_are" name="amounts_are" disabled={!editable || !may}>{[['Exclusive', 'Before tax'], ['Inclusive', 'Including tax'], ['NoTax', 'No tax']].map(([k, l]) => <option value={k} selected={k === q!.amounts_are}>{l}</option>)}</select></div>
+      </div>
+      <div class="mt-5 overflow-x-auto">
+        <table class="w-full min-w-[46rem] text-left text-sm" data-lines>
+          <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="py-2 pr-2">Item</th><th class="py-2 pr-2">Description</th><th class="py-2 pr-2 text-right">Qty</th><th class="py-2 pr-2 text-right">Price</th><th class="py-2 pr-2 text-right">Disc. %</th><th class="py-2 pr-2">Tax</th>{catalogue.tracking.map((t) => <th class="py-2 pr-2">{t.name}</th>)}<th class="py-2 text-right">Amount</th></tr></thead>
+          <tbody>
+            {[...showLines, ...Array.from({ length: editable && may ? blank : 0 }, () => null)].map((l) => (
+              <tr class="align-top">
+                <td class="py-1 pr-2"><input class="field !w-28" name="line_item" list="xero-items" value={l?.item_code ?? ''} disabled={!editable || !may} data-item aria-label="Item code" /><input type="hidden" name="line_account" value={l?.account_code ?? ''} data-account /></td>
+                <td class="py-1 pr-2"><textarea class="field min-w-56" rows="1" name="line_desc" disabled={!editable || !may} data-desc aria-label="Description">{l?.description ?? ''}</textarea></td>
+                <td class="py-1 pr-2"><input class="field !w-16 text-right" name="line_qty" value={l ? String(Number(l.quantity)) : '1'} inputmode="decimal" disabled={!editable || !may} data-qty aria-label="Quantity" /></td>
+                <td class="py-1 pr-2"><input class="field !w-28 text-right" name="line_price" value={l ? String(Number(l.unit_price)) : ''} inputmode="decimal" disabled={!editable || !may} data-price aria-label="Price" /></td>
+                <td class="py-1 pr-2"><input class="field !w-16 text-right" name="line_disc" value={l ? String(Number(l.discount)) : '0'} inputmode="decimal" disabled={!editable || !may} data-disc aria-label="Discount" /></td>
+                <td class="py-1 pr-2">{catalogue.taxes.length ? <select class="field !w-36" name="line_tax" disabled={!editable || !may} data-tax aria-label="Tax">{catalogue.taxes.map((t) => <option value={t.type} data-rate={t.rate} selected={l ? t.type === l.tax_type : t.type === defaultTax?.type}>{t.name}</option>)}</select> : <><input type="hidden" name="line_tax" value="" /><span class="text-xs text-white/40">{l ? `${Number(l.tax_rate)}%` : '—'}</span></>}</td>
+                {catalogue.tracking.map((t) => <td class="py-1 pr-2"><select class="field !w-32" name={`line_track_${t.name}`} disabled={!editable || !may} aria-label={t.name}><option value="">—</option>{t.options.map((o) => <option selected={l?.tracking?.some((x) => x.name === t.name && x.option === o)}>{o}</option>)}</select></td>)}
+                <td class="py-2 text-right tabular-nums text-white" data-amount>{l ? money(lineTotals(l, q!.amounts_are).amount, q!.currency, true) : ''}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      {!catalogue.taxes.length && <input type="hidden" name="default_tax_rate" value={q.currency === 'AUD' ? '10' : '0'} />}
+      <div class="mt-4 grid justify-end gap-1 text-right text-sm">
+        <p class="text-white/55">{q.amounts_are === 'Inclusive' ? 'Total excluding tax' : 'Subtotal'} <span class="ml-4 tabular-nums text-white">{money(Number(q.subtotal), q.currency, true)}</span></p>
+        {q.amounts_are !== 'NoTax' && <p class="text-white/55">{q.amounts_are === 'Inclusive' ? 'Includes tax' : 'Tax'} <span class="ml-4 tabular-nums text-white">{money(Number(q.tax), q.currency, true)}</span></p>}
+        <p class="font-display text-xl font-bold text-white">Total {q.currency} <span class="ml-4 tabular-nums">{money(Number(q.total), q.currency, true)}</span></p>
+      </div>
+      <div class="mt-4"><label class="label" for="terms">Terms</label><textarea class="field min-h-20" id="terms" name="terms" disabled={!editable || !may}>{q.terms}</textarea></div>
+      {editable && may && <div class="mt-4 flex items-center gap-3"><button class="btn-primary">Save</button><span class="text-xs text-white/40">Totals are worked out when you save. Empty lines are left out.</span></div>}
+      <datalist id="xero-items">{catalogue.items.map((i) => <option value={i.code} data-desc={i.description} data-price={i.price ?? ''} data-account={i.account} data-tax={i.taxType}>{i.name}</option>)}</datalist>
+    </form>
+
+    <div class="grid content-start gap-6">
+      <section class="card" data-tour="crm-quote-next">
+        <h2 class="font-display text-lg font-bold">Next</h2>
+        {q.status === 'draft' && (held ? (
+          <>
+            <p class="mt-2 text-sm text-lk-orange">{held}</p>
+            {may && !approval?.status?.match(/pending/) && <form method="post" class="mt-3 grid gap-2"><input type="hidden" name="intent" value="ask-approval" /><input class="field" name="note" placeholder="Why the discount (e.g. 2-year commitment)" /><button class="btn-primary justify-self-start">Ask a sales lead</button></form>}
+          </>
+        ) : (
+          <>
+            <p class="mt-2 text-sm text-white/65">{lines.length ? (xero ? 'Make it ready: it’s copied to Xero as a draft quote with the same number, items and tax.' : 'Make it ready to send.') : 'Add the lines and save.'}</p>
+            {may && lines.length > 0 && <form method="post" class="mt-3"><input type="hidden" name="intent" value="ready" /><button class="btn-primary">{xero ? 'Approve and copy to Xero' : 'Make it ready'}</button></form>}
+          </>
+        ))}
+        {(q.status === 'ready' || q.status === 'sent') && (
+          <>
+            <p class="mt-2 text-sm text-white/65">{q.status === 'ready' ? 'Put it in the deal room for the buyer to read and accept.' : 'It’s in the deal room. Send the buyer the link.'}</p>
+            {may && <form method="post" class="mt-3"><input type="hidden" name="intent" value="send" /><button class="btn-primary">{q.status === 'ready' ? 'Put it in the deal room' : 'Open the deal room again'}</button></form>}
+            {link && q.status === 'sent' && (
+              <div class="mt-3 rounded-xl border border-white/10 p-3 text-sm">
+                <p class="break-all text-white/80">{link}</p>
+                <div class="mt-2 flex flex-wrap gap-2"><button type="button" class="btn-ghost !py-1 text-xs" data-copy={link}>Copy link</button>{mailto && <a class="btn-ghost !py-1 text-xs" href={mailto}>Email it to {contact!.full_name.split(' ')[0]}</a>}</div>
+                {room && <p class="mt-2 text-xs text-white/40">Opened {room.views} time{room.views === 1 ? '' : 's'}</p>}
+              </div>
+            )}
+            {may && <details class="mt-3"><summary class="cursor-pointer text-xs text-white/45">They said no</summary><form method="post" class="mt-2 flex gap-2"><input type="hidden" name="intent" value="decline" /><input class="field" name="reason" placeholder="Why" /><button class="btn-ghost !py-1.5 text-sm">Mark declined</button></form></details>}
+          </>
+        )}
+        {q.status === 'accepted' && (
+          <>
+            <p class="mt-2 text-sm text-lk-green">Accepted{q.accepted_name && ` by ${q.accepted_name}${q.accepted_title ? `, ${q.accepted_title}` : ''}`}{q.accepted_at && ` on ${q.accepted_at.slice(0, 10)}`}.</p>
+            {q.xero_invoice_id ? <p class="mt-2 text-sm text-white/65">Its draft invoice is in Xero for Finance. The deal is won when it’s paid.</p>
+              : may && xero && <form method="post" class="mt-3"><input type="hidden" name="intent" value="invoice" /><button class="btn-primary">Raise the invoice in Xero (draft)</button></form>}
+          </>
+        )}
+        {q.status === 'declined' && <p class="mt-2 text-sm text-white/55">Declined{q.declined_reason && `: ${q.declined_reason}`}.</p>}
+        {approval && <p class="mt-3 text-xs text-white/45">Approval: {approval.status === 'approved' ? `approved${approval.decided_by ? ` by ${names.get(approval.decided_by)}` : ''}` : approval.status === 'pending' ? 'waiting' : 'changes requested'}</p>}
+        <p class="mt-3 text-xs text-white/40">Discounts over {Number(ent!.crm_discount_limit)}% need a sales lead’s approval (CRM → Settings).</p>
+      </section>
+      <section class="card">
+        <h2 class="mb-2 font-display text-lg font-bold">What happens in Xero</h2>
+        <ol class="grid gap-2 text-sm text-white/65">
+          <li><b class="text-white">1.</b> Ready: a draft quote in Xero, same number, items and tax.</li>
+          <li><b class="text-white">2.</b> The buyer accepts in the deal room: the Xero quote is marked accepted.</li>
+          <li><b class="text-white">3.</b> A draft invoice in Xero, for Finance to approve.</li>
+          <li><b class="text-white">4.</b> Paid in Xero: the deal is won, and commission is earned.</li>
+        </ol>
+      </section>
+      {(others ?? []).length > 1 && (
+        <section class="card"><h2 class="mb-2 font-display text-lg font-bold">Versions</h2>
+          <ul class="divide-y divide-white/5 text-sm">{(others ?? []).map((o) => <li class="flex justify-between py-1.5"><a href={crmHref(scope, `/admin/crm/quotes/${o.id}`)} class:list={[o.id === id ? 'text-white' : 'text-lk-blue hover:underline']}>{o.number} v{o.version}</a><span class="text-white/55">{QUOTE_STATES[o.status as Quote['status']]} · {money(Number(o.total), o.currency)}</span></li>)}</ul>
+        </section>
+      )}
+    </div>
+  </div>
+</Crm>
+
+<script>
+  // Picking a Xero item fills its description, price, account and tax; copy buttons copy the link.
+  const options = new Map([...document.querySelectorAll<HTMLOptionElement>('#xero-items option')].map((o) => [o.value, o.dataset]));
+  document.querySelectorAll<HTMLInputElement>('[data-item]').forEach((input) => input.addEventListener('change', () => {
+    const d = options.get(input.value); if (!d) return;
+    const row = input.closest('tr')!;
+    const desc = row.querySelector<HTMLTextAreaElement>('[data-desc]')!; if (!desc.value) desc.value = d.desc ?? '';
+    const price = row.querySelector<HTMLInputElement>('[data-price]')!; if (!price.value && d.price) price.value = d.price;
+    row.querySelector<HTMLInputElement>('[data-account]')!.value = d.account ?? '';
+    const tax = row.querySelector<HTMLSelectElement>('[data-tax]'); if (tax && d.tax) tax.value = d.tax;
+  }));
+  document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((b) => b.addEventListener('click', async () => { await navigator.clipboard.writeText(b.dataset.copy!); b.textContent = 'Copied'; }));
+</script>

@@ -1,0 +1,76 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { dateTime } from '../../../lib/format';
+import { cleanEmail, crmScope, validEmail } from '../../../lib/crm';
+import { checkMailbox, type Mailbox } from '../../../lib/crm-mail';
+import { graphConfigured } from '../../../lib/graph';
+import { gmailConfigured } from '../../../lib/gmail';
+
+// CRM → My mailbox: each salesperson connects their own work mailbox, and the CRM reads their Inbox, Sent Items
+// (and Microsoft 365 calendar) every few minutes: emails and meetings with people it knows go on their
+// timelines without anyone typing them. It only reads; it never sends, deletes or moves anything.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+let error = '';
+let done = '';
+const { data: ent } = company ? await svc.from('entities').select('ms_tenant_id, ms_connected_at, mail_via, google_mailbox_verified_at').eq('id', company.id).single() : { data: null };
+const provider: Mailbox['provider'] = ent?.mail_via === 'google' || ent?.google_mailbox_verified_at ? 'google' : 'microsoft';
+
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canDo) throw new Error('Only people who sell for the company connect a mailbox.');
+    if (field(form, 'intent') === 'connect') {
+      const address = cleanEmail(field(form, 'address'));
+      if (!validEmail(address)) throw new Error('Type your work email address.');
+      // Only your own mailbox (the address you sign in with), unless you lead sales.
+      if (address !== (Astro.locals.user!.email ?? '').toLowerCase() && !scope.canApprove) throw new Error('Connect your own mailbox: the address you sign in with.');
+      if (provider === 'google' ? !gmailConfigured() : !graphConfigured()) throw new Error('Reading mailboxes isn’t set up on this server yet (Lakeba’s side).');
+      await checkMailbox(address, provider, ent?.ms_tenant_id ?? undefined).catch((e) => { throw new Error(`The CRM can’t open that mailbox yet: ${(e as Error).message}. ${provider === 'microsoft' ? 'Your Microsoft 365 administrator approves the portal for the sales team’s mailboxes (Settings → Companies → Domain and mail).' : 'Your Google administrator allows the portal (Settings → Companies → Domain and mail).'}`); });
+      await svc.from('crm_mailboxes').upsert({ entity_id: company.id, user_id: me, address, provider, status: 'connected', delta_inbox: null, delta_sent: null, last_error: null }, { onConflict: 'entity_id,address' }).throwOnError();
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_mailbox_connected', event_detail: { entity_id: company.id, address } });
+      done = 'Connected. Emails and meetings with people in the CRM appear on their timelines within a few minutes (and the last 30 days, the first time).';
+    }
+    if (field(form, 'intent') === 'disconnect') {
+      await svc.from('crm_mailboxes').delete().eq('entity_id', company.id).eq('user_id', me).eq('id', field(form, 'id'));
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_mailbox_disconnected', event_detail: { entity_id: company.id } });
+      done = 'Disconnected. What was already filed stays on the timelines.';
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+const { data: mine } = company ? await svc.from('crm_mailboxes').select('*').eq('entity_id', company.id).eq('user_id', me) : { data: [] };
+const { data: team } = company && scope.canApprove ? await svc.from('crm_mailboxes').select('address, status, last_sync_at, last_error, profiles(first_name, last_name)').eq('entity_id', company.id).neq('user_id', me) : { data: [] };
+---
+
+<Crm title="My mailbox" scope={scope}>
+  <PageHeader title="My mailbox" subtitle="Connect your work mailbox once: your emails and meetings with people in the CRM go on their timelines by themselves. The CRM only reads; it never sends, deletes or moves anything." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {done && <div class="mb-6"><Alert tone="success">{done}</Alert></div>}
+  <section class="card mb-6" data-tour="crm-mailbox">
+    {((mine ?? []) as Mailbox[]).length ? ((mine ?? []) as Mailbox[]).map((m) => (
+      <div class="flex flex-wrap items-center justify-between gap-3">
+        <div><p class="font-medium text-white">{m.address}</p><p class="text-sm text-white/55">{m.provider === 'google' ? 'Google Workspace' : 'Microsoft 365'} · {m.last_error ? <span class="text-lk-red">{m.last_error}</span> : m.last_sync_at ? `last read ${dateTime.format(new Date(m.last_sync_at))}` : 'first read within 5 minutes'}</p></div>
+        <form method="post"><input type="hidden" name="intent" value="disconnect" /><input type="hidden" name="id" value={m.id} /><button class="btn-ghost !py-1.5 text-sm">Disconnect</button></form>
+      </div>
+    )) : (
+      <form method="post" class="flex flex-wrap items-end gap-3"><input type="hidden" name="intent" value="connect" />
+        <div><label class="label" for="address">Your work email</label><input class="field !w-72" id="address" name="address" type="email" value={Astro.locals.user!.email} /></div>
+        <button class="btn-primary">Connect</button>
+        <p class="w-full text-xs text-white/40">{provider === 'google' ? 'Google Workspace: your Google administrator has allowed the portal to read mail.' : 'Microsoft 365: your administrator has approved the portal for the sales team’s mailboxes. Calendar meetings come too.'} Only emails with people outside the company are looked at.</p>
+      </form>
+    )}
+  </section>
+  {(team ?? []).length > 0 && (
+    <section class="card"><h2 class="mb-3 font-display text-lg font-bold">The team’s mailboxes</h2>
+      <ul class="divide-y divide-white/5 text-sm">{((team ?? []) as unknown as { address: string; last_sync_at: string | null; last_error: string | null; profiles: { first_name: string; last_name: string } | null }[]).map((t) => <li class="flex justify-between gap-3 py-2"><span class="text-white">{t.profiles?.first_name} {t.profiles?.last_name} · {t.address}</span><span class:list={['text-xs', t.last_error ? 'text-lk-red' : 'text-white/45']}>{t.last_error ?? (t.last_sync_at ? dateTime.format(new Date(t.last_sync_at)) : 'waiting')}</span></li>)}</ul>
+    </section>
+  )}
+</Crm>

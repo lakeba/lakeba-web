@@ -1,0 +1,86 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import { serviceClient } from '../../../lib/admin';
+import { crmHref, crmScope, money, namesOf, toBase } from '../../../lib/crm';
+
+// CRM → Forecast: the quarter by salesperson. Paid comes from Xero (a deal is won when paid); invoiced but not
+// paid; what each rep commits and their best case; and the weighted pipeline (value × the stage's chance, or
+// Lakeba AI's). Each deal keeps its currency; totals are in the CRM's, at its exchange rates (Settings).
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+const me = Astro.locals.user!.id;
+const q = Astro.url.searchParams;
+const now = new Date();
+const year = Number(q.get('year')) || now.getUTCFullYear();
+const quarter = Math.min(4, Math.max(1, Number(q.get('q')) || Math.floor(now.getUTCMonth() / 3) + 1));
+const start = new Date(Date.UTC(year, (quarter - 1) * 3, 1)).toISOString().slice(0, 10);
+const end = new Date(Date.UTC(year, quarter * 3, 0)).toISOString().slice(0, 10);
+const { data: ent } = company ? await svc.from('entities').select('crm_currency, crm_fx, crm_week_target').eq('id', company.id).single() : { data: null };
+const fx = { crm_currency: ent?.crm_currency ?? 'AUD', crm_fx: (ent?.crm_fx ?? {}) as Record<string, number> };
+type D = { id: string; owner_id: string | null; amount: number; currency: string; status: string; forecast: string; expected_close: string | null; won_at: string | null; invoiced_amount: number; paid_amount: number; ai_chance: number | null; crm_stages: { chance: number } | null };
+let deals: D[] = [];
+if (company) {
+  const { data } = await svc.from('crm_deals').select('id, owner_id, amount, currency, status, forecast, expected_close, won_at, invoiced_amount, paid_amount, ai_chance, crm_stages(chance)').eq('entity_id', company.id)
+    .or(`and(status.eq.won,won_at.gte.${start},won_at.lte.${end}T23:59:59Z),and(status.eq.open,expected_close.lte.${end}),and(status.eq.open,expected_close.is.null)`).limit(5000);
+  deals = ((data ?? []) as unknown as D[]);
+  if (!scope.canApprove) deals = deals.filter((d) => d.owner_id === me);
+}
+const b = (d: D, v = Number(d.amount)) => toBase(v, d.currency, fx);
+type Row = { owner: string | null; paid: number; invoiced: number; commit: number; best: number; weighted: number; open: number; currencies: Set<string> };
+const rows = new Map<string, Row>();
+for (const d of deals) {
+  const k = d.owner_id ?? 'none';
+  const r = rows.get(k) ?? { owner: d.owner_id, paid: 0, invoiced: 0, commit: 0, best: 0, weighted: 0, open: 0, currencies: new Set<string>() };
+  r.currencies.add(d.currency);
+  if (d.status === 'won') r.paid += b(d);
+  else {
+    r.open++;
+    if (Number(d.invoiced_amount) > Number(d.paid_amount)) r.invoiced += b(d, Number(d.invoiced_amount) - Number(d.paid_amount));
+    if (d.forecast === 'commit') r.commit += b(d);
+    if (d.forecast === 'commit' || d.forecast === 'best_case') r.best += b(d);
+    r.weighted += b(d) * (d.ai_chance ?? d.crm_stages?.chance ?? 0) / 100;
+  }
+  rows.set(k, r);
+}
+const names = await namesOf(svc, [...rows.values()].map((r) => r.owner));
+const list = [...rows.values()].sort((x, y) => y.paid + y.commit - (x.paid + x.commit));
+const sum = (k: keyof Omit<Row, 'owner' | 'currencies'>) => list.reduce((s, r) => s + (r[k] as number), 0);
+const weeks = 13;
+const target = ent?.crm_week_target ? Number(ent.crm_week_target) * weeks * Math.max(1, list.filter((r) => r.owner).length) : null;
+const cur = fx.crm_currency;
+const prev = quarter === 1 ? { y: year - 1, q: 4 } : { y: year, q: quarter - 1 };
+const next = quarter === 4 ? { y: year + 1, q: 1 } : { y: year, q: quarter + 1 };
+---
+
+<Crm title="Forecast" scope={scope}>
+  <PageHeader title={`Forecast · Q${quarter} ${year}`} subtitle={`${start} to ${end}. Paid comes from Xero; totals in ${cur} at the CRM’s exchange rates (Settings).`}>
+    <div class="flex gap-2"><a class="btn-ghost !py-1.5 text-sm" href={crmHref(scope, `/admin/crm/forecast?year=${prev.y}&q=${prev.q}`)}>← Q{prev.q}</a><a class="btn-ghost !py-1.5 text-sm" href={crmHref(scope, `/admin/crm/forecast?year=${next.y}&q=${next.q}`)}>Q{next.q} →</a></div>
+  </PageHeader>
+  <div class="mb-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4" data-tour="crm-forecast">
+    {[['Paid', sum('paid'), target ? `${Math.round((sum('paid') / target) * 100)}% of the team’s target` : 'Won and paid in the quarter'], ['Invoiced, not paid', sum('invoiced'), 'Waiting for payment in Xero'], ['Committed', sum('commit'), `Best case ${money(sum('best'), cur)}`], ['Weighted pipeline', sum('weighted'), 'Value × chance of every open deal']].map(([l, v, s]) => (
+      <div class="card"><p class="text-xs uppercase tracking-widest text-white/40">{l}</p><p class="mt-1 font-display text-2xl font-bold text-white">{money(v as number, cur)}</p><p class="text-xs text-white/45">{s}</p></div>
+    ))}
+  </div>
+  <section class="card overflow-x-auto p-0">
+    <table class="w-full text-left text-sm">
+      <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Salesperson</th><th class="px-5 py-3 text-right">Paid</th><th class="px-5 py-3 text-right">Invoiced, not paid</th><th class="px-5 py-3 text-right">Commit</th><th class="px-5 py-3 text-right">Best case</th><th class="px-5 py-3 text-right">Weighted</th><th class="px-5 py-3 text-right">Open deals</th></tr></thead>
+      <tbody class="divide-y divide-white/5">
+        {list.map((r) => (
+          <tr>
+            <td class="px-5 py-3"><span class="font-medium text-white">{r.owner ? names.get(r.owner) : 'Nobody yet'}</span><span class="block text-xs text-white/40">{[...r.currencies].join(', ')}</span></td>
+            <td class="px-5 py-3 text-right tabular-nums text-lk-green">{money(r.paid, cur)}</td>
+            <td class="px-5 py-3 text-right tabular-nums text-white/70">{money(r.invoiced, cur)}</td>
+            <td class="px-5 py-3 text-right tabular-nums text-white">{money(r.commit, cur)}</td>
+            <td class="px-5 py-3 text-right tabular-nums text-white/70">{money(r.best, cur)}</td>
+            <td class="px-5 py-3 text-right tabular-nums text-white/70">{money(r.weighted, cur)}</td>
+            <td class="px-5 py-3 text-right text-white/55">{r.open}</td>
+          </tr>
+        ))}
+        {!list.length && <tr><td class="px-5 py-4 text-white/45" colspan="7">No deals in this quarter yet.</td></tr>}
+      </tbody>
+    </table>
+  </section>
+  <p class="mt-3 text-xs text-white/40">A deal counts in a quarter by its expected close (open deals) or when it was paid (won). Mark a deal’s forecast as commit or best case on the deal. Commission runs (HR → Commissions) use the same paid figures.</p>
+</Crm>

@@ -112,6 +112,19 @@ if (Astro.request.method === 'POST' && current) {
       await svc.from('crm_fields').delete().eq('id', field(form, 'field_id')).eq('entity_id', current.id);
       return here('Field removed. Values already filled in are kept on the records.');
     }
+    if (intent === 'selling') {
+      const prefix = field(form, 'prefix').toUpperCase();
+      if (!/^[A-Z0-9-]{1,8}$/.test(prefix)) throw new Error('The quote prefix is up to 8 letters or numbers, e.g. QU.');
+      const limit = Number(field(form, 'limit'));
+      if (!Number.isFinite(limit) || limit < 0 || limit > 100) throw new Error('The discount limit is a percentage, 0–100.');
+      const fx: Record<string, number> = {};
+      for (const c of CURRENCIES.filter((c) => c !== current.crm_currency)) { const v = Number(field(form, `fx_${c}`)); if (Number.isFinite(v) && v > 0) fx[c] = v; }
+      const target = field(form, 'week_target') ? Number(field(form, 'week_target').replace(/[, ]/g, '')) : null;
+      if (target != null && (!Number.isFinite(target) || target < 0)) throw new Error('The weekly target is an amount, e.g. 45000.');
+      await svc.from('entities').update({ crm_quote_prefix: prefix, crm_discount_limit: limit, crm_quote_terms: field(form, 'terms').slice(0, 4000), crm_fx: fx, crm_week_target: target }).eq('id', current.id);
+      await audit('crm_selling_settings', { prefix, limit });
+      return here('Saved.');
+    }
     if (intent === 'currency') {
       const c = field(form, 'currency');
       if (!CURRENCIES.includes(c)) throw new Error('Choose a currency.');
@@ -155,6 +168,7 @@ const inStage = new Map<string, number>();
 for (const d of counts ?? []) inStage.set(d.stage_id, (inStage.get(d.stage_id) ?? 0) + 1);
 const fields = current ? [...await fieldsOf(svc, current.id, 'deal'), ...await fieldsOf(svc, current.id, 'person'), ...await fieldsOf(svc, current.id, 'company')] : [];
 const portalHost = (PORTAL_DOMAIN ?? '').trim() || 'the portal’s address';
+const { data: selling } = current ? await svc.from('entities').select('crm_quote_prefix, crm_discount_limit, crm_quote_terms, crm_fx, crm_week_target').eq('id', current.id).single() : { data: null };
 const ON = { deal: 'Deals', person: 'People', company: 'Companies' } as const;
 const TYPES = { text: 'Text', number: 'Number', date: 'Date', choice: 'Choice from a list', yes_no: 'Yes or no' } as const;
 // The layout's company is this page's pick (it may be one whose CRM is still off).
@@ -260,6 +274,20 @@ const layoutScope = { ...scope, current, companies: all, canSettings: true };
           {current.crm_domain && <form method="post"><input type="hidden" name="intent" value="check-domain" /><button class="btn-ghost !py-2">Check now</button></form>}
         </div>
       ) : <p class="mt-3 text-xs text-white/45">The company’s Admins set it.</p>}
+    </section>
+
+    <section class="card" data-tour="crm-selling">
+      <h2 class="font-display text-lg font-bold">Quotes, discounts and targets</h2>
+      <form method="post" class="mt-4 grid gap-3 sm:grid-cols-3"><input type="hidden" name="intent" value="selling" />
+        <div><label class="label" for="prefix">Quote numbers start with</label><input class="field" id="prefix" name="prefix" value={selling?.crm_quote_prefix ?? 'QU'} /></div>
+        <div><label class="label" for="limit">Discounts above this need a sales lead (%)</label><input class="field" id="limit" name="limit" inputmode="decimal" value={String(selling?.crm_discount_limit ?? 10)} /></div>
+        <div><label class="label" for="week_target">Each salesperson’s weekly target ({current.crm_currency})</label><input class="field" id="week_target" name="week_target" inputmode="decimal" value={selling?.crm_week_target ?? ''} placeholder="e.g. 45000" /></div>
+        <div class="sm:col-span-3"><label class="label" for="terms">Standard terms on new quotes</label><textarea class="field min-h-20" id="terms" name="terms">{selling?.crm_quote_terms ?? ''}</textarea></div>
+        <fieldset class="grid grid-cols-3 gap-2 sm:col-span-3 sm:grid-cols-6"><legend class="label">Exchange rates: {current.crm_currency} for 1 of each</legend>
+          {CURRENCIES.filter((c) => c !== current.crm_currency).map((c) => <div><label class="text-xs text-white/50" for={`fx_${c}`}>{c}</label><input class="field" id={`fx_${c}`} name={`fx_${c}`} inputmode="decimal" value={String((selling?.crm_fx as Record<string, number> | null)?.[c] ?? '')} /></div>)}
+        </fieldset>
+        <div class="sm:col-span-3"><button class="btn-primary !py-2">Save</button><p class="mt-2 text-xs text-white/40">Exchange rates only change how totals add up; each deal and quote keeps its own currency, and Xero uses its own rates.</p></div>
+      </form>
     </section>
 
     <section class="card">

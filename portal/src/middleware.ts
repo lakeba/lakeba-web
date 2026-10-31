@@ -19,7 +19,7 @@ import { ADMIN_COMPANY_COOKIE } from './lib/admin-company';
 startNotificationWorker();
 
 /** Pages reachable without signing in. */
-const PUBLIC_PATHS = ['/tablet', '/api/tablet', '/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/setup', '/go', '/passkey-login', '/e', '/room', '/news-media', '/company-logo', '/api/public', '/api/v1', '/api/hooks', '/developers', '/oauth/token', '/embed', '/n', '/favicon.ico'];
+const PUBLIC_PATHS = ['/tablet', '/api/tablet', '/press', '/login', '/forgot-password', '/auth/confirm', '/auth/redeem', '/auth/ms-consent', '/setup', '/go', '/passkey-login', '/e', '/room', '/deal', '/news-media', '/company-logo', '/api/public', '/api/v1', '/api/hooks', '/developers', '/oauth/token', '/embed', '/n', '/favicon.ico'];
 /** Pages a signed-in user can reach before finishing MFA. */
 const MFA_PATHS = ['/mfa/verify', '/mfa/setup', '/logout', '/go', '/passkey-login'];
 

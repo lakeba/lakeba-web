@@ -1,0 +1,49 @@
+---
+import Crm from '../../../../layouts/Crm.astro';
+import PageHeader from '../../../../components/PageHeader.astro';
+import Empty from '../../../../components/Empty.astro';
+import { serviceClient } from '../../../../lib/admin';
+import { shortDate } from '../../../../lib/format';
+import { crmHref, crmScope, money } from '../../../../lib/crm';
+import { QUOTE_STATES, type Quote } from '../../../../lib/crm-quotes';
+
+// CRM → Quotes: every quote of the company, newest first, with where it stands and its Xero number. Quotes are
+// made from a deal (its Quotes panel).
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+const status = Astro.url.searchParams.get('status') ?? '';
+type Row = Quote & { crm_deals: { title: string; crm_companies: { name: string } | null } | null };
+let rows: Row[] = [];
+if (company) {
+  let q = svc.from('crm_quotes').select('*, crm_deals(title, crm_companies!crm_deals_company_id_fkey(name))').eq('entity_id', company.id).order('updated_at', { ascending: false }).limit(300);
+  if (status && status in QUOTE_STATES) q = q.eq('status', status);
+  rows = ((await q).data ?? []) as Row[];
+}
+const day = (d: string) => shortDate.format(new Date(`${d.slice(0, 10)}T12:00:00+10:00`));
+---
+
+<Crm title="Quotes" scope={scope}>
+  <PageHeader title="Quotes" subtitle="Made from a deal, copied to Xero, accepted in the deal room." />
+  <nav class="mb-4 flex flex-wrap gap-2 text-sm">
+    <a href={crmHref(scope, '/admin/crm/quotes')} aria-current={!status ? 'page' : undefined} class:list={['rounded-full px-3 py-1', !status ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>All</a>
+    {Object.entries(QUOTE_STATES).map(([k, l]) => <a href={crmHref(scope, `/admin/crm/quotes?status=${k}`)} aria-current={status === k ? 'page' : undefined} class:list={['rounded-full px-3 py-1', status === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}
+  </nav>
+  {rows.length ? (
+    <section class="card overflow-x-auto p-0">
+      <table class="w-full text-left text-sm">
+        <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Quote</th><th class="px-5 py-3">Deal</th><th class="px-5 py-3">State</th><th class="px-5 py-3">Xero</th><th class="px-5 py-3 text-right">Total</th><th class="px-5 py-3">Changed</th></tr></thead>
+        <tbody class="divide-y divide-white/5">{rows.map((r) => (
+          <tr>
+            <td class="px-5 py-3"><a class="font-medium text-white hover:text-lk-blue" href={crmHref(scope, `/admin/crm/quotes/${r.id}`)}>{r.number}{r.version > 1 && ` v${r.version}`}</a></td>
+            <td class="px-5 py-3 text-white/65">{r.crm_deals?.crm_companies?.name ? `${r.crm_deals.crm_companies.name} — ` : ''}{r.crm_deals?.title}</td>
+            <td class:list={['px-5 py-3', r.status === 'accepted' ? 'text-lk-green' : r.status === 'declined' ? 'text-lk-red' : 'text-white/65']}>{QUOTE_STATES[r.status]}</td>
+            <td class="px-5 py-3 text-white/55">{r.xero_quote_number ?? '—'}</td>
+            <td class="px-5 py-3 text-right tabular-nums text-white">{money(Number(r.total), r.currency)}</td>
+            <td class="px-5 py-3 text-white/55">{day(r.updated_at)}</td>
+          </tr>
+        ))}</tbody>
+      </table>
+    </section>
+  ) : <Empty title="No quotes here">Open a deal and make a quote from its Quotes panel.</Empty>}
+</Crm>

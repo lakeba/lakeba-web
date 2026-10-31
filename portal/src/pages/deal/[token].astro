@@ -1,0 +1,154 @@
+---
+import '../../styles/portal.css';
+import { serviceClient } from '../../lib/admin';
+import { field } from '../../lib/forms';
+import { centralOrigin } from '../../lib/sites';
+import { money, namesOf } from '../../lib/crm';
+import { lineTotals, type Line, type Quote } from '../../lib/crm-quotes';
+import { recordVisit, roomForToken } from '../../lib/crm-rooms';
+import { crmXero, setXeroQuoteStatus } from '../../lib/crm-xero';
+import { notifyMembers } from '../../lib/notify';
+import { accentOf } from '../../lib/brand';
+import { fileSize } from '../../lib/format';
+
+// A deal room (CRM → a deal → Deal room): the buyer's private page, no account needed. The quote to read and
+// accept, files to download, and questions for the salesperson. Everything they do lands on the deal.
+const svc = serviceClient();
+const token = Astro.params.token ?? '';
+let room = await roomForToken(svc, token);
+if (!room) return new Response('This link has expired or was switched off. Ask the person who sent it for a new one.', { status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' } });
+const ip = Astro.request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ?? Astro.clientAddress;
+const { data: deal } = await svc.from('crm_deals').select('id, title, owner_id, entity_id, xero_contact_id, crm_companies!crm_deals_company_id_fkey(name), crm_people!crm_deals_person_id_fkey(full_name)').eq('id', room.deal_id).single();
+const d = deal as unknown as { id: string; title: string; owner_id: string | null; entity_id: string; xero_contact_id: string | null; crm_companies: { name: string } | null; crm_people: { full_name: string } | null };
+const { data: ent } = await svc.from('entities').select('id, code, display_name, legal_name, brand_color, logo_url, relationship').eq('id', room.entity_id).single();
+const loadQuote = async () => (await svc.from('crm_quotes').select('*').eq('deal_id', d.id).in('status', ['sent', 'accepted']).order('version', { ascending: false }).limit(1).maybeSingle()).data as Quote | null;
+let quote = await loadQuote();
+let notice = '';
+let error = '';
+
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    if (field(form, 'website')) throw new Error('Thanks.');
+    const intent = field(form, 'intent');
+    if (intent === 'question') {
+      const text = field(form, 'question').slice(0, 3000);
+      if (text.length < 3) throw new Error('Write your question first.');
+      await recordVisit(svc, room, { kind: 'question', detail: `${field(form, 'name') ? `${field(form, 'name').slice(0, 100)}: ` : ''}${text}`, ip });
+      if (d.owner_id) await notifyMembers({ kind: 'crm', origin: centralOrigin(Astro.url), link: `/admin/crm/deals/${d.id}`, title: `A question in the deal room: ${d.crm_companies?.name ?? d.title}`, body: text.slice(0, 200), userIds: [d.owner_id], entityId: ent!.id }).catch(() => 0);
+      notice = 'Sent. You’ll hear back soon.';
+    } else if (intent === 'accept' && quote && quote.status === 'sent') {
+      const name = field(form, 'name').slice(0, 120), title = field(form, 'title').slice(0, 120);
+      if (name.length < 2) throw new Error('Type your name.');
+      if (form.get('agree') !== 'yes') throw new Error('Tick the box to accept.');
+      if (quote.expiry_date && quote.expiry_date < new Date().toISOString().slice(0, 10)) throw new Error('This quote has expired: ask for a new one.');
+      await svc.from('crm_quotes').update({ status: 'accepted', accepted_at: new Date().toISOString(), accepted_name: name, accepted_title: title, updated_at: new Date().toISOString() }).eq('id', quote.id).eq('status', 'sent');
+      await recordVisit(svc, room, { kind: 'accept', detail: `quote ${quote.number} (${name}${title ? `, ${title}` : ''})`, ip });
+      await svc.from('audit_log').insert({ user_id: null, action: 'crm_quote_accepted', detail: { entity_id: ent!.id, deal_id: d.id, quote_id: quote.id, number: quote.number, by: name, ip } });
+      const xero = await crmXero(svc, ent!, centralOrigin(Astro.url)).catch(() => null);
+      if (xero && quote.xero_quote_id && d.xero_contact_id) await setXeroQuoteStatus(xero, quote.xero_quote_id, d.xero_contact_id, 'ACCEPTED').then(() => svc.from('crm_quotes').update({ xero_status: 'ACCEPTED' }).eq('id', quote!.id)).catch(() => null);
+      await svc.from('crm_deals').update({ next_step: 'Raise the invoice in Xero', next_step_on: new Date().toISOString().slice(0, 10) }).eq('id', d.id);
+      if (d.owner_id) await notifyMembers({ kind: 'crm', origin: centralOrigin(Astro.url), link: `/admin/crm/quotes/${quote.id}`, title: `Quote accepted: ${d.crm_companies?.name ?? d.title}`, body: `${name}${title ? `, ${title},` : ''} accepted ${quote.number} (${money(Number(quote.total), quote.currency)}).`, userIds: [d.owner_id], entityId: ent!.id }).catch(() => 0);
+      quote = await loadQuote();
+      notice = 'Thank you: accepted. We’ll be in touch about the next steps.';
+    }
+  } catch (e) {
+    error = (e as Error).message;
+  }
+} else {
+  await recordVisit(svc, room, { kind: 'view', ip });
+}
+
+const [{ data: files }, { data: lines }] = await Promise.all([
+  svc.from('crm_room_files').select('id, title, file_name, size_bytes').eq('room_id', room.id).order('sort'),
+  quote ? svc.from('crm_quote_lines').select('*').eq('quote_id', quote.id).order('sort') : Promise.resolve({ data: [] }),
+]);
+const names = await namesOf(svc, [d.owner_id]);
+const { data: owner } = d.owner_id ? await svc.from('profiles').select('email').eq('id', d.owner_id).maybeSingle() : { data: null };
+const accent = accentOf(ent as never) ?? '#276ae7';
+const buyer = d.crm_companies?.name ?? d.crm_people?.full_name ?? '';
+---
+<!doctype html>
+<html lang="en" style={`--color-lk-blue:${accent}`}>
+  <head>
+    <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" /><meta name="robots" content="noindex, nofollow" />
+    <title>{ent!.display_name}{buyer ? ` · for ${buyer}` : ''}</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" /><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Montserrat:wght@600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body class="min-h-dvh">
+    <header class="border-b border-white/5">
+      <div class="container-portal flex h-16 items-center gap-3">
+        {ent!.logo_url ? <span class="grid h-9 place-items-center rounded-lg bg-[#fff] px-2"><img src={ent!.logo_url} alt={ent!.display_name} class="max-h-7 max-w-36 object-contain" /></span> : <span class="font-display text-lg font-bold text-white">{ent!.display_name}</span>}
+        {buyer && <span class="ml-auto text-sm text-white/55">For {buyer}</span>}
+      </div>
+    </header>
+    <main class="container-portal grid gap-6 py-8 lg:grid-cols-[1.6fr_1fr]">
+      <div class="grid content-start gap-6">
+        <section>
+          <h1 class="font-display text-3xl font-bold">{quote?.title || d.title}</h1>
+          {room.message && <p class="mt-3 max-w-2xl whitespace-pre-line text-white/70">{room.message}</p>}
+        </section>
+        {notice && <p role="status" class="rounded-xl border border-lk-green/40 bg-lk-green/10 px-4 py-3 text-sm">{notice}</p>}
+        {error && <p role="alert" class="rounded-xl border border-lk-red/40 bg-lk-red/10 px-4 py-3 text-sm">{error}</p>}
+        {quote ? (
+          <section class="card">
+            <div class="flex flex-wrap items-baseline justify-between gap-2">
+              <h2 class="font-display text-xl font-bold">Quote {quote.number}{quote.version > 1 && ` (version ${quote.version})`}</h2>
+              <a class="text-sm text-lk-blue hover:underline" href={`/deal/${token}/quote.pdf`}>Download PDF</a>
+            </div>
+            {quote.summary && <p class="mt-2 whitespace-pre-line text-sm text-white/70">{quote.summary}</p>}
+            <div class="mt-4 overflow-x-auto">
+              <table class="w-full text-left text-sm">
+                <thead class="text-xs uppercase tracking-wider text-white/40"><tr><th class="py-2 pr-3">Description</th><th class="py-2 pr-3 text-right">Qty</th><th class="py-2 pr-3 text-right">Price</th><th class="py-2 pr-3 text-right">Discount</th><th class="py-2 text-right">Amount</th></tr></thead>
+                <tbody class="divide-y divide-white/5">{((lines ?? []) as Line[]).map((l) => (
+                  <tr><td class="py-2 pr-3 text-white">{l.description || l.item_code}</td><td class="py-2 pr-3 text-right">{Number(l.quantity)}</td><td class="py-2 pr-3 text-right">{money(Number(l.unit_price), quote!.currency, true)}</td><td class="py-2 pr-3 text-right">{Number(l.discount) ? `${Number(l.discount)}%` : ''}</td><td class="py-2 text-right tabular-nums">{money(lineTotals(l, quote!.amounts_are).amount, quote!.currency, true)}</td></tr>
+                ))}</tbody>
+              </table>
+            </div>
+            <div class="mt-3 grid justify-end gap-1 text-right text-sm">
+              <p class="text-white/55">{quote.amounts_are === 'Inclusive' ? 'Total excluding tax' : 'Subtotal'} <span class="ml-4 text-white">{money(Number(quote.subtotal), quote.currency, true)}</span></p>
+              {quote.amounts_are !== 'NoTax' && <p class="text-white/55">{quote.amounts_are === 'Inclusive' ? 'Includes tax' : 'Tax'} <span class="ml-4 text-white">{money(Number(quote.tax), quote.currency, true)}</span></p>}
+              <p class="font-display text-xl font-bold">Total {quote.currency} <span class="ml-4">{money(Number(quote.total), quote.currency, true)}</span></p>
+            </div>
+            {quote.terms && <details class="mt-4 text-sm"><summary class="cursor-pointer text-white/70">Terms</summary><p class="mt-2 whitespace-pre-line text-white/60">{quote.terms}</p></details>}
+            {quote.status === 'accepted' ? (
+              <p class="mt-5 rounded-xl bg-lk-green/10 px-4 py-3 text-sm text-lk-green">Accepted by {quote.accepted_name}{quote.accepted_title && `, ${quote.accepted_title}`}{quote.accepted_at && ` on ${quote.accepted_at.slice(0, 10)}`}.</p>
+            ) : (
+              <form method="post" class="mt-5 grid gap-3 border-t border-white/5 pt-5 sm:grid-cols-2">
+                <input type="hidden" name="intent" value="accept" />
+                <input type="text" name="website" class="hidden" tabindex="-1" autocomplete="off" aria-hidden="true" />
+                <div><label class="label" for="name">Your name</label><input class="field" id="name" name="name" required /></div>
+                <div><label class="label" for="atitle">Your role</label><input class="field" id="atitle" name="title" placeholder="e.g. CFO" /></div>
+                <label class="flex items-start gap-2 text-sm text-white/70 sm:col-span-2"><input type="checkbox" name="agree" value="yes" class="mt-1" /> I accept this quote{buyer ? ` on behalf of ${buyer}` : ''}, and its terms.</label>
+                <button class="btn-primary sm:justify-self-start">Accept the quote</button>
+                {quote.expiry_date && <p class="self-center text-xs text-white/40">Valid to {quote.expiry_date}</p>}
+              </form>
+            )}
+          </section>
+        ) : <section class="card"><p class="text-sm text-white/60">The quote isn’t here yet. Files and questions are below.</p></section>}
+      </div>
+      <aside class="grid content-start gap-6">
+        <section class="card">
+          <h2 class="font-display text-lg font-bold">Your contact</h2>
+          <p class="mt-2 text-sm text-white">{d.owner_id ? names.get(d.owner_id) : ent!.display_name}</p>
+          {owner?.email && <a class="text-sm text-lk-blue hover:underline" href={`mailto:${owner.email}`}>{owner.email}</a>}
+        </section>
+        {(files ?? []).length > 0 && (
+          <section class="card"><h2 class="font-display text-lg font-bold">Files</h2>
+            <ul class="mt-2 divide-y divide-white/5 text-sm">{(files ?? []).map((f) => <li class="flex justify-between gap-3 py-2"><a class="text-lk-blue hover:underline" href={`/deal/${token}/file/${f.id}`}>{f.title}</a><span class="text-white/40">{fileSize(f.size_bytes)}</span></li>)}</ul>
+          </section>
+        )}
+        <section class="card">
+          <h2 class="font-display text-lg font-bold">A question?</h2>
+          <form method="post" class="mt-3 grid gap-2"><input type="hidden" name="intent" value="question" /><input type="text" name="website" class="hidden" tabindex="-1" autocomplete="off" aria-hidden="true" />
+            <input class="field" name="name" placeholder="Your name" aria-label="Your name" />
+            <textarea class="field min-h-24" name="question" placeholder="e.g. Can our data stay in Australia?" aria-label="Your question" required></textarea>
+            <button class="btn-ghost justify-self-start">Send</button>
+          </form>
+        </section>
+        <p class="text-xs text-white/35">A private page from {ent!.legal_name ?? ent!.display_name}, for {buyer || 'you'}. Please don’t forward the link.</p>
+      </aside>
+    </main>
+  </body>
+</html>

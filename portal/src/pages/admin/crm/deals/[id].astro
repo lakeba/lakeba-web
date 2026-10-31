@@ -11,6 +11,12 @@ import { shortDate } from '../../../../lib/format';
 import { CURRENCIES, PARTS, SOURCES, cleanEmail, companyDomainOf, crmHref, crmScope, ensureRelationship, fieldsOf, findOrCreateCompany, findOrCreatePerson, goingCold, initials, logActivity, mayEditDeal, money, namesOf, pipelines, readFields, salesTeam, todayIso, validEmail, type Activity, type Deal, type Task } from '../../../../lib/crm';
 import { commonAction, moveDeal } from '../../../../lib/crm-actions';
 import { notifyMembers } from '../../../../lib/notify';
+import { centralOrigin } from '../../../../lib/sites';
+import { fileSize } from '../../../../lib/format';
+import { QUOTE_STATES, nextNumber, type Quote } from '../../../../lib/crm-quotes';
+import { ensureRoom, roomLink, roomLive, roomOf } from '../../../../lib/crm-rooms';
+import { worthToOwner } from '../../../../lib/crm-commission';
+import { crmXero, syncDeal } from '../../../../lib/crm-xero';
 
 // CRM → a deal: where it stands, everything that happened (logged automatically wherever the CRM can), the
 // buying group, tasks and its details. Its owner or a sales lead changes it.
@@ -86,6 +92,54 @@ if (Astro.request.method === 'POST') {
       await svc.from('crm_deals').update({ company_id: org.id }).eq('id', id);
       return Astro.redirect(self, 303);
     }
+    if (intent === 'new-quote') {
+      const { data: ent } = await svc.from('entities').select('crm_quote_prefix, crm_quote_terms').eq('id', company.id).single();
+      const expiry = new Date(Date.now() + 30 * 86_400_000).toISOString().slice(0, 10);
+      const { data: q } = await svc.from('crm_quotes').insert({ entity_id: company.id, deal_id: id, number: await nextNumber(svc, company.id, ent!.crm_quote_prefix), title: deal.title, terms: ent!.crm_quote_terms, currency: deal.currency, expiry_date: expiry, created_by: me }).select('id').single().throwOnError();
+      return Astro.redirect(crmHref(scope, `/admin/crm/quotes/${q!.id}`), 303);
+    }
+    if (intent === 'forecast') {
+      const f = field(form, 'forecast');
+      if (!['pipeline', 'best_case', 'commit'].includes(f)) throw new Error('Choose pipeline, best case or commit.');
+      await svc.from('crm_deals').update({ forecast: f }).eq('id', id);
+      return Astro.redirect(self, 303);
+    }
+    if (intent === 'room') {
+      const r = await ensureRoom(svc, deal, me);
+      await svc.from('crm_rooms').update({ message: field(form, 'message').slice(0, 2000) }).eq('id', r.id);
+      return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent('Deal room ready: copy its link below.')}`, 303);
+    }
+    if (intent === 'room-file') {
+      const file = form.get('file');
+      if (!(file instanceof File) || !file.size) throw new Error('Choose a file.');
+      if (file.size > 25 * 1024 * 1024) throw new Error('Files up to 25 MB.');
+      const r = await ensureRoom(svc, deal, me);
+      const safe = file.name.replace(/[^\w.\- ]+/g, '_').slice(-120);
+      const path = `${company.id}/rooms/${r.id}/${crypto.randomUUID()}-${safe}`;
+      const { error: up } = await svc.storage.from('crm').upload(path, file, { contentType: file.type || 'application/octet-stream' });
+      if (up) throw new Error(`Couldn’t store the file: ${up.message}`);
+      await svc.from('crm_room_files').insert({ room_id: r.id, title: (field(form, 'title') || file.name).slice(0, 200), file_path: path, file_name: safe, size_bytes: file.size });
+      await logActivity(svc, { entity_id: company.id, kind: 'system', deal_id: id, subject: `Added to the deal room: ${field(form, 'title') || file.name}`, created_by: me });
+      return Astro.redirect(self, 303);
+    }
+    if (intent === 'room-file-remove') {
+      const r = await roomOf(svc, id);
+      const { data: f } = r ? await svc.from('crm_room_files').select('id, file_path').eq('id', field(form, 'file_id')).eq('room_id', r.id).maybeSingle() : { data: null };
+      if (f) { await svc.storage.from('crm').remove([f.file_path]); await svc.from('crm_room_files').delete().eq('id', f.id); }
+      return Astro.redirect(self, 303);
+    }
+    if (intent === 'room-off') {
+      const r = await roomOf(svc, id);
+      if (r) await svc.from('crm_rooms').update({ revoked_at: new Date().toISOString() }).eq('id', r.id);
+      await logActivity(svc, { entity_id: company.id, kind: 'system', deal_id: id, subject: 'Deal room link switched off', created_by: me });
+      return Astro.redirect(self, 303);
+    }
+    if (intent === 'xero-sync') {
+      const x = await crmXero(svc, company, centralOrigin(Astro.url));
+      if (!x) throw new Error('Xero isn’t connected for this company.');
+      const r = await syncDeal(svc, x, deal as never);
+      return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent(r ? (r.won ? 'Paid in full: the deal is won.' : 'Updated from Xero.') : 'Nothing new in Xero.')}`, 303);
+    }
     if (intent === 'reopen') {
       const stage = list.find((p) => p.id === deal!.pipeline_id)?.stages.find((s) => s.kind === 'open');
       if (!stage) throw new Error('This pipeline has no open stage.');
@@ -117,6 +171,13 @@ const [{ data: acts }, { data: tasks }, { data: group }, { data: org }, { data: 
 ]);
 const people = ((group ?? []) as unknown as { part: string; crm_people: { id: string; full_name: string; email: string | null; job_title: string } }[]).filter((g) => g.crm_people);
 const names = await namesOf(svc, [deal.owner_id, ...((acts ?? []) as Activity[]).map((a) => a.created_by), ...((tasks ?? []) as Task[]).map((t) => t.owner_id)]);
+const { data: quotes } = await svc.from('crm_quotes').select('id, number, version, status, total, currency, xero_quote_number').eq('deal_id', id).order('created_at', { ascending: false });
+const room = await roomOf(svc, id);
+const { data: roomFiles } = room ? await svc.from('crm_room_files').select('id, title, size_bytes').eq('room_id', room.id).order('sort') : { data: [] };
+const roomUrl = room && roomLive(room) ? roomLink(centralOrigin(Astro.url), room) : null;
+const { data: ent } = await svc.from('entities').select('crm_currency, crm_fx').eq('id', company.id).single();
+const worth = await worthToOwner(svc, deal, ent as { crm_currency: string; crm_fx: Record<string, number> }).catch(() => null);
+const x = deal as unknown as { forecast: string; xero_contact_id: string | null; invoiced_amount: number; paid_amount: number; paid_at: string | null };
 const day = (d: string | null) => (d ? shortDate.format(new Date(`${d}T12:00:00+10:00`)) : '—');
 const cold = goingCold(deal, stage);
 const chance = deal.status === 'won' ? 100 : deal.status === 'lost' ? 0 : deal.ai_chance ?? stage?.chance ?? 0;
@@ -135,6 +196,8 @@ const lost = pipeline.stages.find((s) => s.kind === 'lost');
     </div>
     <div class="text-right">
       <p class="font-display text-3xl font-bold text-white">{money(Number(deal.amount), deal.currency)}</p>
+      {worth && worth.amount > 0 && deal.owner_id === me && <p class="mt-1"><span class="rounded-full bg-lk-green/15 px-2 py-0.5 text-sm text-lk-green" title={`${worth.plan}: about, from your plan and what you were paid this quarter`}>About {money(worth.amount, worth.currency)} to you</span></p>}
+      {worth && worth.amount > 0 && deal.owner_id !== me && <p class="mt-1 text-xs text-white/45">About {money(worth.amount, worth.currency)} commission for {ownerName}</p>}
       <p class="mt-1 text-sm">{deal.status === 'won' ? <span class="rounded-full bg-lk-green/15 px-2 py-0.5 text-lk-green">Won</span> : deal.status === 'lost' ? <span class="rounded-full bg-lk-red/15 px-2 py-0.5 text-lk-red">Lost</span> : <span class="text-white/55">{chance}% chance{deal.ai_chance != null ? ' (Lakeba AI)' : ''}</span>}</p>
     </div>
   </div>
@@ -178,6 +241,41 @@ const lost = pipeline.stages.find((s) => s.kind === 'lost');
       <section class="card">
         <h2 class="mb-3 font-display text-lg font-bold">Tasks</h2>
         <Tasks tasks={(tasks ?? []) as Task[]} names={names} team={team} me={me} canDo={may} today={todayIso()} />
+      </section>
+      <section class="card" data-tour="crm-quotes">
+        <div class="mb-3 flex items-baseline justify-between gap-2"><h2 class="font-display text-lg font-bold">Quotes and Xero</h2>{may && deal.status !== 'lost' && <form method="post"><input type="hidden" name="intent" value="new-quote" /><button class="text-sm text-lk-blue hover:underline">New quote</button></form>}</div>
+        {(quotes ?? []).length ? <ul class="divide-y divide-white/5">{(quotes ?? []).map((qq) => (
+          <li class="flex items-center justify-between gap-3 py-2 text-sm"><a href={crmHref(scope, `/admin/crm/quotes/${qq.id}`)} class="text-white hover:text-lk-blue">{qq.number}{qq.version > 1 && ` v${qq.version}`}</a><span class:list={['text-xs', qq.status === 'accepted' ? 'text-lk-green' : qq.status === 'declined' ? 'text-lk-red' : 'text-white/55']}>{QUOTE_STATES[qq.status as Quote['status']]}{qq.xero_quote_number && ` · Xero ${qq.xero_quote_number}`} · {money(Number(qq.total), qq.currency)}</span></li>
+        ))}</ul> : <p class="text-sm text-white/45">No quote yet.</p>}
+        {(x.invoiced_amount > 0 || x.paid_amount > 0) && <p class="mt-3 text-sm text-white/65">Invoiced {money(Number(x.invoiced_amount), deal.currency)} · paid <b class:list={[Number(x.paid_amount) >= Number(x.invoiced_amount) ? 'text-lk-green' : 'text-white']}>{money(Number(x.paid_amount), deal.currency)}</b>{x.paid_at && ` on ${x.paid_at.slice(0, 10)}`}</p>}
+        {x.xero_contact_id && may && <form method="post" class="mt-2"><input type="hidden" name="intent" value="xero-sync" /><button class="text-xs text-white/45 hover:text-white">Check Xero now</button></form>}
+        <form method="post" class="mt-4 flex items-center gap-2 text-sm"><input type="hidden" name="intent" value="forecast" />
+          <label class="text-white/55" for="forecast">In the forecast as</label>
+          <select class="field !w-auto" id="forecast" name="forecast" disabled={!may || deal.status !== 'open'} onchange="this.form.requestSubmit()">{[['pipeline', 'Pipeline'], ['best_case', 'Best case'], ['commit', 'Commit']].map(([k, l]) => <option value={k} selected={k === x.forecast}>{l}</option>)}</select>
+        </form>
+      </section>
+      <section class="card" data-tour="crm-room">
+        <h2 class="mb-2 font-display text-lg font-bold">Deal room</h2>
+        <p class="text-sm text-white/55">A private page for the buyer: the quote to accept, your files, their questions. Every visit shows on the timeline.</p>
+        {roomUrl ? (
+          <div class="mt-3 rounded-xl border border-white/10 p-3 text-sm">
+            <p class="break-all text-white/80">{roomUrl}</p>
+            <div class="mt-2 flex flex-wrap items-center gap-2"><button type="button" class="btn-ghost !py-1 text-xs" data-copy={roomUrl}>Copy link</button><span class="text-xs text-white/40">Opened {room!.views} time{room!.views === 1 ? '' : 's'}{room!.last_viewed_at && `, last ${room!.last_viewed_at.slice(0, 10)}`} · works until {room!.expires_at.slice(0, 10)}</span></div>
+          </div>
+        ) : null}
+        {may && (
+          <>
+            <form method="post" class="mt-3 grid gap-2"><input type="hidden" name="intent" value="room" />
+              <textarea class="field min-h-16" name="message" placeholder="A note for the buyer at the top of the page (optional)">{room?.message ?? ''}</textarea>
+              <button class="btn-ghost justify-self-start !py-1.5 text-sm">{roomUrl ? 'Save the note' : 'Make the deal room'}</button>
+            </form>
+            {(roomFiles ?? []).length > 0 && <ul class="mt-3 divide-y divide-white/5 text-sm">{(roomFiles ?? []).map((f) => <li class="flex items-center justify-between gap-2 py-1.5"><span class="text-white">{f.title} <span class="text-white/40">{fileSize(f.size_bytes)}</span></span><form method="post"><input type="hidden" name="intent" value="room-file-remove" /><input type="hidden" name="file_id" value={f.id} /><button class="text-xs text-white/35 hover:text-lk-red">Remove</button></form></li>)}</ul>}
+            <form method="post" enctype="multipart/form-data" class="mt-3 flex flex-wrap items-end gap-2"><input type="hidden" name="intent" value="room-file" />
+              <input class="field !w-44" name="title" placeholder="Title, e.g. Security pack" aria-label="File title" /><input class="field !w-56" type="file" name="file" aria-label="File" /><button class="btn-ghost !py-1.5 text-sm">Add file</button>
+            </form>
+            {roomUrl && <form method="post" class="mt-2"><input type="hidden" name="intent" value="room-off" /><button class="text-xs text-white/40 hover:text-lk-red">Switch the link off</button></form>}
+          </>
+        )}
       </section>
       <section class="card" data-tour="crm-buying-group">
         <h2 class="mb-3 font-display text-lg font-bold">Buying group</h2>
@@ -231,3 +329,7 @@ const lost = pipeline.stages.find((s) => s.kind === 'lost');
     </div>
   </div>
 </Crm>
+
+<script>
+  document.querySelectorAll<HTMLButtonElement>('[data-copy]').forEach((b) => b.addEventListener('click', async () => { await navigator.clipboard.writeText(b.dataset.copy!); b.textContent = 'Copied'; }));
+</script>

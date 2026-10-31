@@ -2,9 +2,10 @@
 import Crm from '../../../layouts/Crm.astro';
 import Tasks from '../../../components/admin/crm/Tasks.astro';
 import { serviceClient } from '../../../lib/admin';
-import { crmHref, crmScope, ensurePipeline, goingCold, money, namesOf, salesTeam, todayIso, type Deal, type Task } from '../../../lib/crm';
+import { crmHref, crmScope, ensurePipeline, goingCold, money, namesOf, salesTeam, toBase, todayIso, type Deal, type Task } from '../../../lib/crm';
 import { commonAction } from '../../../lib/crm-actions';
 import { field } from '../../../lib/forms';
+import { sydneyMidnight } from '../../../lib/ask-limits';
 
 // CRM → Today: what moves this person's deals forward today, each with the reason. Overdue and today's tasks,
 // then deals with no next step and deals going cold, today's meetings and how the week is going.
@@ -59,6 +60,16 @@ const hour = Number(new Intl.DateTimeFormat('en-AU', { hour: 'numeric', hour12: 
 const hello = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening';
 const dateLine = new Intl.DateTimeFormat('en-AU', { weekday: 'long', day: 'numeric', month: 'long', timeZone: 'Australia/Sydney' }).format(new Date());
 const team = company ? await salesTeam(svc, company.id) : [];
+// Today's meetings with people the CRM knows (from the connected calendar), emails found in the inbox, the week's target.
+const dayStart = sydneyMidnight(0), dayEnd = sydneyMidnight(-1);
+const [{ data: cal }, { data: found }, { data: ent }] = company ? await Promise.all([
+  svc.from('crm_activities').select('id, subject, occurred_at, deal_id, person_id, meta, crm_people(full_name), crm_companies(name)').eq('entity_id', company.id).eq('kind', 'meeting').gte('occurred_at', dayStart).lte('occurred_at', dayEnd).eq('meta->>user', me).order('occurred_at'),
+  svc.from('crm_inbox').select('id, from_name, from_email, subject, received_at').eq('entity_id', company.id).eq('user_id', me).eq('status', 'open').order('received_at', { ascending: false }).limit(3),
+  svc.from('entities').select('crm_week_target, crm_currency, crm_fx').eq('id', company.id).single(),
+]) : [{ data: [] }, { data: [] }, { data: null }];
+const wonBase = ((wonWeek ?? []) as { amount: number; currency: string }[]).reduce((s, d) => s + toBase(Number(d.amount), d.currency, { crm_currency: ent?.crm_currency ?? 'AUD', crm_fx: ent?.crm_fx as Record<string, number> }), 0);
+const weekTarget = ent?.crm_week_target ? Number(ent.crm_week_target) : null;
+const time = (iso: string) => new Intl.DateTimeFormat('en-AU', { hour: 'numeric', minute: '2-digit', timeZone: 'Australia/Sydney' }).format(new Date(iso));
 const names = await namesOf(svc, [me]);
 ---
 
@@ -95,15 +106,30 @@ const names = await namesOf(svc, [me]);
         <h2 class="mb-3 font-display text-lg font-bold">Your tasks</h2>
         <Tasks tasks={tasks} names={names} team={team} me={me} canDo={scope.canDo} today={today} addLabel="Add a task for yourself" />
       </section>
-      {meetings.length > 0 && (
+      {((cal ?? []).length > 0 || meetings.length > 0) && (
         <section class="card"><h2 class="mb-3 font-display text-lg font-bold">Meetings today</h2>
-          <ul class="divide-y divide-white/5">{meetings.map((m) => <li class="py-2 text-sm text-white">{m.title}</li>)}</ul>
+          <ul class="divide-y divide-white/5">
+            {((cal ?? []) as unknown as { id: string; subject: string; occurred_at: string; deal_id: string | null; person_id: string | null; crm_people: { full_name: string } | null; crm_companies: { name: string } | null }[]).map((m) => (
+              <li class="flex gap-3 py-2 text-sm"><span class="w-14 shrink-0 text-white/55">{time(m.occurred_at)}</span><a class="text-white hover:text-lk-blue" href={crmHref(scope, m.deal_id ? `/admin/crm/deals/${m.deal_id}` : `/admin/crm/people/${m.person_id}`)}>{m.crm_companies?.name ? `${m.crm_companies.name} · ` : ''}{m.subject}</a></li>
+            ))}
+            {meetings.map((m) => <li class="py-2 text-sm text-white">{m.title}</li>)}
+          </ul>
+        </section>
+      )}
+      {(found ?? []).length > 0 && (
+        <section class="card"><h2 class="font-display text-lg font-bold">Found in your inbox</h2><p class="text-sm text-white/55">Business emails from people nobody in the CRM knows yet.</p>
+          <ul class="mt-2 divide-y divide-white/5">{(found ?? []).map((f) => <li class="py-2 text-sm"><a class="text-white hover:text-lk-blue" href={crmHref(scope, '/admin/crm/inbox')}>{f.from_name || f.from_email}: {f.subject}</a></li>)}</ul>
         </section>
       )}
       <section class="card">
         <h2 class="font-display text-lg font-bold">This week</h2>
-        <p class="mt-2 text-sm text-white/65">Won so far: <b class="text-white">{sum(won)}</b></p>
-        <p class="mt-1 text-xs text-white/40">Once Xero is connected, a deal counts as won when its invoice is paid.</p>
+        {weekTarget ? (
+          <>
+            <div class="mt-2 flex justify-between text-sm"><span class="text-white/65">Target {money(weekTarget, ent!.crm_currency)}</span><b class="text-white">{money(wonBase, ent!.crm_currency)} won</b></div>
+            <div class="mt-2 h-1.5 overflow-hidden rounded-full bg-white/10"><div class="h-full rounded-full bg-lk-blue" style={`width:${Math.min(100, Math.round((wonBase / weekTarget) * 100))}%`}></div></div>
+          </>
+        ) : <p class="mt-2 text-sm text-white/65">Won so far: <b class="text-white">{sum(won)}</b></p>}
+        <p class="mt-2 text-xs text-white/40">With Xero connected, a deal counts as won when its invoice is paid.</p>
       </section>
     </div>
   </div>

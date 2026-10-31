@@ -106,7 +106,7 @@ for (const p of pages) {
 
 // ── 5. Translations ─────────────────────────────────────────────────────────────────────────────────
 // Texts investors see: t('…') outside the admin. Some files are English-only on purpose.
-const ENGLISH_ONLY = [/^src\/pages\/admin\//, /^src\/pages\/(developers|tablet|press|setup|my-hr|sign)\b/, /^src\/pages\/api\//, /^src\/components\/(admin|setup)\//, /Nav\.astro$/, /^src\/layouts\/(Admin|Crm)\.astro$/, /^src\/lib\/(i18n|newsletter-design)\.ts$/];
+const ENGLISH_ONLY = [/^src\/pages\/admin\//, /^src\/pages\/(developers|tablet|press|setup|my-hr|sign|deal)\b/, /^src\/pages\/api\//, /^src\/components\/(admin|setup)\//, /Nav\.astro$/, /^src\/layouts\/(Admin|Crm)\.astro$/, /^src\/lib\/(i18n|newsletter-design)\.ts$/];
 const catalogues = await Promise.all(walk('src/i18n').map(async (p) => (await import(join(root, p))).default));
 const has = (lang, key) => catalogues.some((c) => c[lang] && key in c[lang]);
 const missing = new Map();

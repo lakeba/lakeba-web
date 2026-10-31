@@ -42,7 +42,7 @@ async function tokenFor(mailbox: string) {
   return data.access_token;
 }
 
-async function gmail<T = unknown>(mailbox: string, path: string, init: RequestInit = {}): Promise<T> {
+export async function gmail<T = unknown>(mailbox: string, path: string, init: RequestInit = {}): Promise<T> {
   if (MAILBOXES_READ_ONLY && (init.method ?? 'GET').toUpperCase() !== 'GET') throw new Error(READ_ONLY_MESSAGE);
   const res = await fetch(`${GMAIL_API_BASE}/users/${encodeURIComponent(mailbox)}${path}`, {
     ...init, headers: { authorization: `Bearer ${await tokenFor(mailbox)}`, ...(init.body ? { 'content-type': 'application/json' } : {}) },

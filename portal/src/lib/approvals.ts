@@ -10,7 +10,7 @@ type Svc = ReturnType<typeof serviceClient>;
 // who asked can't approve it themselves. Changing an approved item asks
 // again, with the person who changed it as the one asking.
 
-export type ItemType = 'document' | 'post' | 'newsletter' | 'meeting' | 'trade';
+export type ItemType = 'document' | 'post' | 'newsletter' | 'meeting' | 'trade' | 'quote';
 export type Approval = {
   id: string; item_type: ItemType; item_id: string; area: string; entity_id: string | null; status: 'pending' | 'approved' | 'changes_requested';
   title: string; note: string; requested_by: string | null; requested_at: string; decided_by: string | null; decided_at: string | null; decision_note: string;
@@ -23,6 +23,7 @@ export const ITEMS: Record<ItemType, { area: string; label: string; holds: strin
   newsletter: { area: 'newsletters', label: 'Newsletter', holds: 'sending or scheduling it', link: (id) => `/admin/newsletters/${id}` },
   meeting: { area: 'meetings', label: 'Meeting', holds: 'opening proxy voting and publishing results', link: (id) => `/admin/agm/${id}` },
   trade: { area: 'capital', label: 'Secondary trade', holds: 'completing it', link: () => '/admin/trading' },
+  quote: { area: 'crm', label: 'Quote', holds: 'sending it to the buyer and Xero', link: (id) => `/admin/crm/quotes/${id}` },
 };
 export const STATUS_TEXT: Record<Approval['status'], string> = { pending: 'Waiting for approval', approved: 'Approved', changes_requested: 'Changes requested' };
 export const approvalHref = (type: ItemType, id: string) => `/admin/approvals/${type}/${id}`;
@@ -129,6 +130,11 @@ export async function loadItem(svc: Svc, type: ItemType, id: string): Promise<It
   if (type === 'document') {
     const { data: d } = await svc.from('documents').select('title, summary, category, audience, entity_id, published_at').eq('id', id).maybeSingle();
     return d && { ...base, title: d.title, entityId: d.entity_id, preview: `/documents/${id}`, facts: [d.category, d.audience.replace('_', ' '), d.published_at ? 'published' : 'not published', d.summary].filter(Boolean) };
+  }
+  if (type === 'quote') {
+    const { data: q } = await svc.from('crm_quotes').select('number, version, total, currency, max_discount, entity_id, crm_deals(title)').eq('id', id).maybeSingle();
+    const deal = (q as unknown as { crm_deals: { title: string } | null } | null)?.crm_deals;
+    return q && { ...base, title: `${q.number}${q.version > 1 ? ` v${q.version}` : ''} · ${deal?.title ?? ''}`, entityId: q.entity_id, preview: `/admin/crm/quotes/${id}/pdf`, facts: [`${q.currency} ${Number(q.total).toLocaleString('en-AU', { minimumFractionDigits: 2 })} total`, `highest discount ${Number(q.max_discount)}%`] };
   }
   if (type === 'post') {
     const { data: p } = await svc.from('posts').select('title, excerpt, visibility, entity_id, published_at').eq('id', id).maybeSingle();

@@ -15,7 +15,7 @@ import type { SalesInvoice } from './integrations/xero';
 type Svc = ReturnType<typeof serviceClient>;
 
 export type Tier = { upTo: number | null; rate: number };
-export type Plan = { id: string; entity_id: string; name: string; basis: 'invoice_raised'; tiers: Tier[]; cap: number | null; clawback: boolean; active: boolean; notes: string };
+export type Plan = { id: string; entity_id: string; name: string; basis: 'invoice_raised' | 'invoice_paid'; tiers: Tier[]; cap: number | null; clawback: boolean; active: boolean; notes: string };
 export type Assignment = { id: string; plan_id: string; person_id: string; target: number; starts_on: string; ends_on: string | null };
 export type Attribution = { id: string; entity_id: string; xero_contact_id: string | null; contact_name: string; person_id: string; share: number; starts_on: string; ends_on: string | null };
 export type RunStatus = 'draft' | 'approved' | 'paid';
@@ -33,6 +33,8 @@ export type Line = {
 
 export const RUN_STATES: Record<RunStatus, string> = { draft: 'Draft', approved: 'Approved', paid: 'Paid' };
 export const SOURCES = { xero: 'Xero', upload: 'CSV upload' } as const;
+/** When a plan pays: on invoices raised in the period (by invoice date), or paid in full in it (by payment date). */
+export const BASES = { invoice_raised: 'Invoices raised', invoice_paid: 'Invoices paid in full' } as const;
 export const PLAN_COLUMNS = 'id, entity_id, name, basis, tiers, cap, clawback, active, notes';
 export const ASSIGNMENT_COLUMNS = 'id, plan_id, person_id, target, starts_on, ends_on';
 export const ATTRIBUTION_COLUMNS = 'id, entity_id, xero_contact_id, contact_name, person_id, share, starts_on, ends_on';
@@ -352,12 +354,16 @@ async function earlierLinesOf(svc: Svc, run: Pick<Run, 'id' | 'entity_id' | 'per
 }
 
 /** The period's invoices and the earlier ones' status, from Xero. */
-export async function fetchFromXero(svc: Svc, run: Pick<Run, 'id' | 'entity_id' | 'period_start' | 'period_end'>, company: Company, central: string) {
+export async function fetchFromXero(svc: Svc, run: Pick<Run, 'id' | 'entity_id' | 'period_start' | 'period_end'> & { plan_id?: string | null }, company: Company, central: string) {
   const { xeroConnected } = await import('./reporting');
   const c = await xeroConnected(svc, company.id);
   if (!c) throw new Error('Xero isn’t connected for this company: upload a CSV of the invoices instead.');
-  const { xeroSalesInvoices, xeroInvoicesById } = await import('./integrations/xero');
-  const invoices = await xeroSalesInvoices(svc, c, company, central, { start: run.period_start, end: run.period_end });
+  const { xeroSalesInvoices, xeroPaidInvoices, xeroInvoicesById } = await import('./integrations/xero');
+  // A plan that pays on invoices paid (CRM: a deal is won when it's paid) takes the period's payments instead.
+  const { data: plan } = run.plan_id ? await svc.from('commission_plans').select('basis').eq('id', run.plan_id).maybeSingle() : { data: null };
+  const invoices = plan?.basis === 'invoice_paid'
+    ? await xeroPaidInvoices(svc, c, company, central, { start: run.period_start, end: run.period_end })
+    : await xeroSalesInvoices(svc, c, company, central, { start: run.period_start, end: run.period_end });
   const earlierIds = [...new Set((await earlierLinesOf(svc, run)).filter((l) => l.kind === 'earned' && !l.invoice_id.startsWith('csv:')).map((l) => l.invoice_id))];
   const earlier = (await xeroInvoicesById(svc, c, company, central, earlierIds)).map((v) => ({ invoice_id: v.id, status: v.status, amount: ['VOIDED', 'DELETED'].includes(v.status) ? 0 : v.amount }));
   return { invoices, earlier };

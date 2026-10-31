@@ -303,3 +303,10 @@ export async function fieldsOf(svc: Svc, entityId: string, appliesTo: Field['app
 
 export const crmHref = (scope: Pick<CrmScope, 'companies' | 'current'>, href: string) =>
   scope.current && scope.companies.length > 1 ? `${href}${href.includes('?') ? '&' : '?'}company=${scope.current.code}` : href;
+
+/** An amount in the CRM's own currency (the company's exchange rates, CRM → Settings). */
+export function toBase(amount: number, currency: string, company: { crm_currency: string; crm_fx?: Record<string, number> | null }) {
+  if (currency === company.crm_currency) return amount;
+  const rate = Number(company.crm_fx?.[currency]);
+  return Number.isFinite(rate) && rate > 0 ? amount * rate : amount;
+}

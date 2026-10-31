@@ -5,6 +5,7 @@ import ThemeToggle from '../../../src/components/ThemeToggle.astro';
 import Tour from '../components/Tour.astro';
 import { initials, type CrmScope } from '../lib/crm';
 import { accentOf } from '../lib/brand';
+import { serviceClient } from '../lib/admin';
 
 // The CRM's own frame (docs/crm.md): the venture's name and colour, a search, its menu. The same pages open
 // in the admin (/admin/crm) and on the venture's CRM address (crm.doxai.com), where they are all there is.
@@ -15,6 +16,8 @@ const company = scope.current;
 const onCrmSite = Astro.locals.site?.kind === 'crm';
 const path = Astro.url.pathname;
 const q = (href: string) => (company && scope.companies.length > 1 && !onCrmSite ? `${href}${href.includes('?') ? '&' : '?'}company=${company.code}` : href);
+// Emails waiting in "Found in your inbox" for this person.
+const { count: inboxCount } = company ? await serviceClient().from('crm_inbox').select('id', { count: 'exact', head: true }).eq('entity_id', company.id).eq('user_id', Astro.locals.user!.id).eq('status', 'open') : { count: 0 };
 type Item = { href: string; label: string; exact?: boolean; show?: boolean; tag?: string | number | null };
 const groups: { label?: string; items: Item[] }[] = [
   { items: [
@@ -24,10 +27,14 @@ const groups: { label?: string; items: Item[] }[] = [
     { href: '/admin/crm/people', label: 'People' },
     { href: '/admin/crm/companies', label: 'Companies' },
     { href: '/admin/crm/tasks', label: 'Tasks' },
+    { href: '/admin/crm/quotes', label: 'Quotes' },
+    { href: '/admin/crm/inbox', label: 'Inbox', tag: inboxCount || null },
   ] },
   { label: 'Lead', items: [
+    { href: '/admin/crm/forecast', label: 'Forecast' },
     { href: '/admin/crm/import', label: 'Import', show: scope.canDo },
     { href: '/admin/crm/settings', label: 'Settings', show: scope.canSettings },
+    { href: '/admin/crm/mailbox', label: 'My mailbox', show: scope.canDo },
   ] },
 ];
 const under = (p: string) => path === p || path.startsWith(`${p}/`);

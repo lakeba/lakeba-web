@@ -1,0 +1,77 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import Empty from '../../../components/Empty.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { dateTime } from '../../../lib/format';
+import { companyDomainOf, crmHref, crmScope, ensurePipeline, ensureRelationship, findOrCreateCompany, findOrCreatePerson, logActivity } from '../../../lib/crm';
+
+// CRM → Found in your inbox: emails from business addresses that nobody in the CRM knows yet, read from the
+// salespeople's mailboxes. Each becomes a deal (or a person), or is dismissed.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const me = Astro.locals.user!.id;
+const company = scope.current;
+let error = '';
+
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    if (!scope.canDo) throw new Error('You can’t change this.');
+    const { data: m } = await svc.from('crm_inbox').select('*').eq('id', field(form, 'id')).eq('entity_id', company.id).maybeSingle();
+    if (!m || (m.user_id !== me && !scope.canApprove)) throw new Error('That email isn’t here any more.');
+    const intent = field(form, 'intent');
+    if (intent === 'dismiss') { await svc.from('crm_inbox').update({ status: 'dismissed' }).eq('id', m.id); return Astro.redirect(Astro.url.pathname + Astro.url.search, 303); }
+    const domain = companyDomainOf(m.from_email);
+    const org = domain ? await findOrCreateCompany(svc, { name: field(form, 'company') || domain, domain, source: 'email', createdBy: me }) : null;
+    const person = await findOrCreatePerson(svc, { full_name: m.from_name || m.from_email, email: m.from_email, company_id: org?.id ?? null, source: 'email', createdBy: me });
+    await ensureRelationship(svc, company.id, { person_id: person.id }, { kind: 'lead', owner_id: me, createdBy: me });
+    if (org) await ensureRelationship(svc, company.id, { company_id: org.id }, { kind: 'lead', owner_id: me, createdBy: me });
+    let dealId: string | null = null;
+    if (intent === 'deal') {
+      const p = (await ensurePipeline(svc, company.id))[0]!;
+      const { data: d } = await svc.from('crm_deals').insert({ entity_id: company.id, pipeline_id: p.id, stage_id: p.stages.find((s) => s.kind === 'open')!.id, title: (m.subject || `${m.from_name || m.from_email}`).slice(0, 200), company_id: org?.id ?? null, person_id: person.id, owner_id: me, currency: company.crm_currency, source: 'Inbound email', created_by: me }).select('id').single().throwOnError();
+      dealId = d!.id;
+      await svc.from('crm_deal_people').insert({ deal_id: dealId, person_id: person.id, part: 'champion' });
+      await Astro.locals.supabase.rpc('log_event', { event_action: 'crm_deal_created', event_detail: { entity_id: company.id, deal_id: dealId, from: 'inbox' } });
+    }
+    await logActivity(svc, { entity_id: company.id, kind: 'email', direction: 'in', subject: m.subject, body: m.snippet, person_id: person.id, company_id: org?.id ?? null, deal_id: dealId, source_ref: m.message_ref, occurred_at: m.received_at, created_by: me });
+    await svc.from('crm_inbox').update({ status: 'made' }).eq('id', m.id);
+    return Astro.redirect(crmHref(scope, dealId ? `/admin/crm/deals/${dealId}` : `/admin/crm/people/${person.id}`), 303);
+  } catch (e) {
+    error = (e as Error).message;
+  }
+}
+const { data: rows } = company ? await (scope.canApprove && Astro.url.searchParams.get('who') === 'team'
+  ? svc.from('crm_inbox').select('*').eq('entity_id', company.id).eq('status', 'open').order('received_at', { ascending: false }).limit(200)
+  : svc.from('crm_inbox').select('*').eq('entity_id', company.id).eq('user_id', me).eq('status', 'open').order('received_at', { ascending: false }).limit(200)) : { data: [] };
+---
+
+<Crm title="Found in your inbox" scope={scope}>
+  <PageHeader title="Found in your inbox" subtitle="Emails from businesses nobody in the CRM knows yet. Make a deal (or just add the person), or dismiss them." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  {scope.canApprove && <nav class="mb-4 flex gap-2 text-sm">{[['me', 'Mine'], ['team', 'The team’s']].map(([k, l]) => <a href={crmHref(scope, `/admin/crm/inbox?who=${k}`)} class:list={['rounded-full px-3 py-1', (Astro.url.searchParams.get('who') ?? 'me') === k ? 'bg-white/10 text-white' : 'text-white/55 hover:text-white']}>{l}</a>)}</nav>}
+  {(rows ?? []).length ? (
+    <section class="card divide-y divide-white/5 !py-2">
+      {(rows ?? []).map((m) => (
+        <div class="flex flex-wrap items-start gap-4 py-3">
+          <div class="min-w-0 flex-1">
+            <p class="font-medium text-white">{m.from_name || m.from_email} <span class="font-normal text-white/45">· {m.from_email}</span></p>
+            <p class="text-sm text-white">{m.subject}</p>
+            <p class="mt-1 line-clamp-2 text-sm text-white/55">{m.snippet}</p>
+            <p class="mt-1 text-xs text-white/40">{dateTime.format(new Date(m.received_at))}{m.ai?.summary && ` · Lakeba AI: ${m.ai.summary}`}</p>
+          </div>
+          {scope.canDo && (
+            <div class="flex shrink-0 flex-wrap gap-2">
+              <form method="post"><input type="hidden" name="id" value={m.id} /><input type="hidden" name="intent" value="deal" /><button class="btn-primary !py-1.5 text-sm">Make a deal</button></form>
+              <form method="post"><input type="hidden" name="id" value={m.id} /><input type="hidden" name="intent" value="person" /><button class="btn-ghost !py-1.5 text-sm">Add the person</button></form>
+              <form method="post"><input type="hidden" name="id" value={m.id} /><input type="hidden" name="intent" value="dismiss" /><button class="btn-ghost !py-1.5 text-sm text-white/55">Dismiss</button></form>
+            </div>
+          )}
+        </div>
+      ))}
+    </section>
+  ) : <Empty title="Nothing found">{'Connect your mailbox (My mailbox) and emails from new business contacts show up here.'}</Empty>}
+</Crm>
