@@ -167,7 +167,8 @@ try {
 
   // Company admin of the venture
   const coadmin = await person('coadmin');
-  await svc.from('entity_admins').insert({ entity_id: E.EZF, user_id: coadmin.id }).throwOnError();
+  // The built-in Admin role for this company only (user_roles; entity_admins follows it).
+  await svc.from('user_roles').insert({ user_id: coadmin.id, role_key: 'admin', entity_id: E.EZF, note: TAG }).throwOnError();
   const docRow = (entityId, title) => ({ entity_id: entityId, title: `${TAG} ${title} ${run}`, category: 'update', file_path: `entity/${entityId}/${run}/${crypto.randomUUID()}.pdf`, mime_type: 'application/pdf', audience: 'all_investors' });
   const { error: noMfa } = await coadmin.client.from('documents').insert(docRow(E.EZF, 'no two-step'));
   ok('company admin without two-step cannot write', !!noMfa);
