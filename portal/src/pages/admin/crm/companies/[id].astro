@@ -9,6 +9,9 @@ import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { KINDS, SIZE_BANDS, cleanDomain, crmHref, crmScope, fieldsOf, initials, money, namesOf, readFields, salesTeam, todayIso, warmth, warmthLabel, type Activity, type Org, type Relationship, type Task } from '../../../../lib/crm';
 import { commonAction } from '../../../../lib/crm-actions';
+import { alsoKnown, askIntroduction } from '../../../../lib/crm-group';
+import { centralOrigin } from '../../../../lib/sites';
+import AlsoKnown from '../../../../components/admin/crm/AlsoKnown.astro';
 
 // CRM → a company: its people this company knows, its deals (and those it referred, for partners), the
 // timeline, tasks and details. The company's details are shared by the whole group.
@@ -32,6 +35,10 @@ if (Astro.request.method === 'POST') {
   const form = await Astro.request.formData();
   try {
     if (!scope.canDo) throw new Error('You can see this company but not change anything.');
+    if (field(form, 'intent') === 'ask-intro') {
+      await askIntroduction(svc, { fromEntity: company.id, toEntity: field(form, 'to_entity'), userId: me, company_id: id, note: field(form, 'note'), central: centralOrigin(Astro.url) });
+      return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent('Asked. They get a notification; follow it in Introductions.')}`, 303);
+    }
     const msg = await commonAction(svc, Astro.locals, scope, form, { company_id: id }, Astro.url.origin, `/admin/crm/companies/${id}`);
     if (msg) return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent(msg)}`, 303);
     if (!mayEdit) throw new Error('Only the relationship’s owner or a sales lead changes this.');
@@ -75,6 +82,7 @@ const [{ data: acts }, { data: tasks }, { data: deals }, { data: referred }] = a
   svc.from('crm_deals').select('id, title, amount, currency, status, crm_stages(name)').eq('entity_id', company.id).eq('company_id', id).order('updated_at', { ascending: false }),
   svc.from('crm_deals').select('id, title, status, amount, currency, crm_people!crm_deals_person_id_fkey(full_name), crm_stages(name, kind)').eq('entity_id', company.id).eq('referred_by_company_id', id).order('created_at', { ascending: false }).limit(500),
 ]);
+const groupKnown = await alsoKnown(svc, company.id, { company_id: id });
 const names = await namesOf(svc, [rel.owner_id, ...((acts ?? []) as Activity[]).map((a) => a.created_by), ...((tasks ?? []) as Task[]).map((t) => t.owner_id)]);
 const w = warmth(rel.last_contact_at);
 type Ref = { id: string; title: string; status: string; amount: number; currency: string; crm_people: { full_name: string } | null; crm_stages: { name: string; kind: string } | null };
@@ -110,6 +118,7 @@ type DealRow = { id: string; title: string; amount: number; currency: string; st
       <Timeline items={(acts ?? []) as Activity[]} names={names} />
     </section>
     <div class="grid content-start gap-6">
+      <AlsoKnown items={groupKnown} canAsk={scope.canDo} name={org.name} />
       <section class="card">
         <h2 class="mb-3 font-display text-lg font-bold">Deals</h2>
         {(deals ?? []).length ? <ul class="divide-y divide-white/5">{((deals ?? []) as unknown as DealRow[]).map((d) => (

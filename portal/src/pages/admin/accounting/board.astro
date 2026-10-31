@@ -11,6 +11,8 @@ import { monthEnd, periodLabel, todayIn } from '../../../lib/reporting';
 import { boardSummaryPdf, draftCommentary, groupItems, ventureGroups } from '../../../lib/reporting-group';
 import { boardPeople, showPercent } from '../../../lib/kpis';
 import { aud } from '../../../lib/format';
+import GroupSales from '../../../components/admin/crm/GroupSales.astro';
+import { groupSales } from '../../../lib/crm-group';
 
 // Admin → Accounting → Board summary: one page with every venture's results
 // for a month and Lakeba's commentary (Lakeba AI can draft it), as a PDF or
@@ -26,6 +28,10 @@ const { data: saved } = await svc.from('board_summaries').select('commentary, do
 let commentary = (saved?.commentary as string) ?? '';
 let documentId = (saved?.document_id as string | null) ?? null;
 let error = '', ok = '';
+// Sales from the ventures' CRMs, for the quarter the period ends in.
+const qEnd = new Date(`${period}T00:00:00Z`);
+const qStartIso = new Date(Date.UTC(qEnd.getUTCFullYear(), Math.floor(qEnd.getUTCMonth() / 3) * 3, 1)).toISOString().slice(0, 10);
+const sales = await groupSales(svc, qStartIso, period);
 const log = (action: string) => Astro.locals.supabase.rpc('log_event', { event_action: action, event_detail: { period } });
 
 if (Astro.request.method === 'POST' && mayDo) {
@@ -101,6 +107,7 @@ const quarterOf = (d: string) => { const m = Number(d.slice(5, 7)); return `${['
           ))}</ul>
         </section>
       )}
+      {sales.length > 0 && <GroupSales rows={sales} title="Sales (from the CRMs)" note={`From each venture’s CRM, ${qStartIso} to ${period}: won (paid in Xero where connected), committed and weighted pipeline, in A$.`} />}
     </div>
   ) : <Empty title="No packs yet">The board summary appears once the ventures have sent reporting packs.</Empty>}
 </Admin>

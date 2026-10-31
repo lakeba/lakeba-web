@@ -9,6 +9,9 @@ import { serviceClient } from '../../../../lib/admin';
 import { field } from '../../../../lib/forms';
 import { KINDS, cleanEmail, crmHref, crmScope, ensureRelationship, fieldsOf, findOrCreateCompany, initials, money, namesOf, readFields, salesTeam, todayIso, validEmail, warmth, warmthLabel, type Activity, type Person, type Relationship, type Task } from '../../../../lib/crm';
 import { commonAction } from '../../../../lib/crm-actions';
+import { alsoKnown, askIntroduction } from '../../../../lib/crm-group';
+import { centralOrigin } from '../../../../lib/sites';
+import AlsoKnown from '../../../../components/admin/crm/AlsoKnown.astro';
 import { enrol, optOut, optedOut } from '../../../../lib/crm-marketing';
 
 // CRM → a person: what this company knows about them (their part, owner, warmth, deals, timeline, tasks) and
@@ -34,6 +37,10 @@ if (Astro.request.method === 'POST') {
   const intent = field(form, 'intent');
   try {
     if (!scope.canDo) throw new Error('You can see this person but not change anything.');
+    if (field(form, 'intent') === 'ask-intro') {
+      await askIntroduction(svc, { fromEntity: company.id, toEntity: field(form, 'to_entity'), userId: me, person_id: id, note: field(form, 'note'), central: centralOrigin(Astro.url) });
+      return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent('Asked. They get a notification; follow it in Introductions.')}`, 303);
+    }
     const msg = await commonAction(svc, Astro.locals, scope, form, { person_id: id }, Astro.url.origin, `/admin/crm/people/${id}`);
     if (msg) return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent(msg)}`, 303);
     if (intent === 'enrol') {
@@ -86,6 +93,7 @@ const [{ data: acts }, { data: tasks }, { data: deals }] = await Promise.all([
   svc.from('crm_tasks').select('*').eq('entity_id', company.id).eq('person_id', id).order('created_at', { ascending: false }).limit(50),
   svc.from('crm_deals').select('id, title, amount, currency, status, crm_stages(name)').eq('entity_id', company.id).or(`person_id.eq.${id},id.in.(${((await svc.from('crm_deal_people').select('deal_id').eq('person_id', id)).data ?? []).map((d) => d.deal_id).join(',') || '00000000-0000-0000-0000-000000000000'})`).order('updated_at', { ascending: false }),
 ]);
+const known = await alsoKnown(svc, company.id, { person_id: id });
 const names = await namesOf(svc, [rel.owner_id, ...((acts ?? []) as Activity[]).map((a) => a.created_by), ...((tasks ?? []) as Task[]).map((t) => t.owner_id)]);
 const w = warmth(rel.last_contact_at);
 const { data: consents } = await svc.from('crm_consents').select('channel, status, source, at').eq('person_id', id);
@@ -127,6 +135,7 @@ const r2 = rel as Relationship & { score?: number; score_reasons?: string[] };
         ))}</ul> : <p class="text-sm text-white/45">No deals yet.</p>}
         {scope.canDo && <a href={crmHref(scope, '/admin/crm/deals?new=1')} class="mt-3 inline-block text-sm text-lk-blue hover:underline">New deal</a>}
       </section>
+      <AlsoKnown items={known} canAsk={scope.canDo} name={p.full_name} />
       <section class="card" data-tour="crm-consent">
         <h2 class="mb-2 font-display text-lg font-bold">Consent and emails</h2>
         {r2.score ? <p class="mb-2 text-sm text-white/65">Lead score <b class="text-white">{r2.score}</b>{r2.score_reasons?.length ? <span class="text-white/45"> · {r2.score_reasons.join(', ')}</span> : null}</p> : null}

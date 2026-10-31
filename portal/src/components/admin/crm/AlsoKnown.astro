@@ -1,0 +1,25 @@
+---
+import type { Known } from '../../../lib/crm-group';
+
+// "Also known in the group": what ventures sharing with this one know about the same person or company
+// (lib/crm-group.ts), and asking their relationship owner for an introduction.
+interface Props { items: Known[]; canAsk: boolean; name: string }
+const { items, canAsk, name } = Astro.props;
+---
+{items.length > 0 && (
+  <section class="card border-lk-green/20" data-tour="crm-also-known">
+    <h2 class="font-display text-lg font-bold">Also known in the group</h2>
+    <ul class="mt-2 divide-y divide-white/5">{items.map((k) => (
+      <li class="py-2.5 text-sm">
+        <p class="text-white"><b>{k.venture}</b>: {k.kind}{k.stage && ` · ${k.stage}`}<span class="text-white/45"> · since {k.since}{k.owner && ` · ${k.owner} knows them`}</span></p>
+        {canAsk && k.owner_id && (
+          <details class="mt-1"><summary class="cursor-pointer text-xs text-lk-blue">Ask {k.owner ?? 'them'} for an introduction</summary>
+            <form method="post" class="mt-2 flex gap-2"><input type="hidden" name="intent" value="ask-intro" /><input type="hidden" name="to_entity" value={k.entity_id} />
+              <input class="field" name="note" placeholder={`Why you’d like to meet ${name}`} aria-label="Why" required /><button class="btn-ghost !py-1.5 text-sm">Ask</button></form>
+          </details>
+        )}
+      </li>
+    ))}</ul>
+    <p class="mt-2 text-xs text-white/40">Shared because both ventures switched sharing on. Values, notes and emails are never shared.</p>
+  </section>
+)}

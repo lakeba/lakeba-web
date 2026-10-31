@@ -9,6 +9,7 @@ import { domainStatus } from '../../../lib/domains';
 import { forgetVentureSites } from '../../../lib/sites';
 import { aiBudget } from '../../../lib/crm-ai';
 import { PLAYBOOKS, applyPlaybook } from '../../../lib/crm-playbooks';
+import { isActive, setSharing, sharingOf } from '../../../lib/crm-group';
 import { PORTAL_DOMAIN } from 'astro:env/server';
 
 // CRM → Settings: switching a company's CRM on (its Admins), its pipelines and stages, its own fields, its CRM
@@ -41,6 +42,19 @@ if (Astro.request.method === 'POST' && current) {
       forgetVentureSites();
       await audit(on ? 'crm_switched_on' : 'crm_switched_off', {});
       return here(on ? 'The CRM is on.' : 'The CRM is off. Its records are kept.');
+    }
+    if (intent === 'sharing') {
+      if (!isAdminOf(current.id)) throw new Error('Only the company’s Admins switch sharing with another venture.');
+      const { data: them } = await svc.from('entities').select('id, display_name').eq('id', field(form, 'with')).eq('crm_enabled', true).maybeSingle();
+      if (!them || them.id === current.id) throw new Error('Choose a venture whose CRM is on.');
+      await setSharing(svc, current.id, them.id, field(form, 'on') === 'yes', user!.id, field(form, 'stage') === 'yes');
+      return here(field(form, 'on') === 'yes' ? `Switched on your side. Sharing starts when ${them.display_name}’s Admins switch it on too.` : `Stopped sharing with ${them.display_name}.`);
+    }
+    if (intent === 'intros') {
+      if (!isAdminOf(current.id)) throw new Error('Only the company’s Admins change this.');
+      await svc.from('entities').update({ crm_accepts_introductions: field(form, 'accepts') === 'yes', crm_pitch: field(form, 'pitch').slice(0, 200) }).eq('id', current.id);
+      await audit('crm_introductions_setting', { accepts: field(form, 'accepts') === 'yes' });
+      return here('Saved.');
     }
     if (intent === 'playbook') {
       const added = await applyPlaybook(svc, current.id, field(form, 'playbook'), user!.id);
@@ -181,6 +195,11 @@ const fields = current ? [...await fieldsOf(svc, current.id, 'deal'), ...await f
 const portalHost = (PORTAL_DOMAIN ?? '').trim() || 'the portal’s address';
 const { data: selling } = current ? await svc.from('entities').select('crm_quote_prefix, crm_discount_limit, crm_quote_terms, crm_fx, crm_week_target, crm_ai_monthly_usd').eq('id', current.id).single() : { data: null };
 const budget = current ? await aiBudget(svc, current.id) : null;
+const { data: others } = current ? await svc.from('entities').select('id, display_name').eq('crm_enabled', true).neq('id', current.id).order('sort') : { data: [] };
+const shares = current ? await sharingOf(svc, current.id) : [];
+const shareWith = (id: string) => shares.find((x) => x.entity_a === id || x.entity_b === id);
+const side = (x: ReturnType<typeof shareWith>, me: boolean) => (!x ? null : (x.entity_a === current!.id) === me ? { on: x.a_on_at, stage: x.a_shares_stage } : { on: x.b_on_at, stage: x.b_shares_stage });
+const { data: introSet } = current ? await svc.from('entities').select('crm_accepts_introductions, crm_pitch').eq('id', current.id).single() : { data: null };
 const ON = { deal: 'Deals', person: 'People', company: 'Companies' } as const;
 const TYPES = { text: 'Text', number: 'Number', date: 'Date', choice: 'Choice from a list', yes_no: 'Yes or no' } as const;
 // The layout's company is this page's pick (it may be one whose CRM is still off).
@@ -244,6 +263,31 @@ const layoutScope = { ...scope, current, companies: all, canSettings: true };
         </div>
       </section>
     ))}
+
+    <section class="card" data-tour="crm-sharing">
+      <h2 class="font-display text-lg font-bold">Sharing with other Lakeba ventures</h2>
+      <p class="mt-1 text-sm text-white/55">When both ventures switch it on, each sees that the other knows a person or company, who owns that relationship and their work details (and the deal stage, if that side allows it). Never values, quotes, notes, emails or recordings, nor people marked not to share. Either side can stop it.</p>
+      {(others ?? []).length ? (
+        <ul class="mt-4 divide-y divide-white/5">{(others ?? []).map((o) => { const x = shareWith(o.id); const mine = side(x, true); const theirs = side(x, false); return (
+          <li class="flex flex-wrap items-center justify-between gap-3 py-3 text-sm">
+            <div><p class="font-medium text-white">{o.display_name} {x && isActive(x) && <span class="ml-1 rounded-full bg-lk-green/15 px-2 text-xs text-lk-green">sharing</span>}</p><p class="text-xs text-white/45">You: {mine?.on ? 'on' : 'off'}{mine?.stage ? ', with deal stages' : ''} · {o.display_name}: {theirs?.on ? 'on' : 'off'}{theirs?.stage ? ', with deal stages' : ''}</p></div>
+            {isAdminOf(current.id) && <form method="post" class="flex items-center gap-2"><input type="hidden" name="intent" value="sharing" /><input type="hidden" name="with" value={o.id} /><input type="hidden" name="on" value={mine?.on ? 'no' : 'yes'} />{!mine?.on && <label class="flex items-center gap-1 text-xs text-white/55"><input type="checkbox" name="stage" value="yes" /> show our deal stages</label>}<button class={mine?.on ? 'btn-ghost !py-1 text-xs' : 'btn-primary !py-1 text-xs'}>{mine?.on ? 'Stop sharing' : 'Switch on'}</button></form>}
+          </li>
+        ); })}</ul>
+      ) : <p class="mt-3 text-sm text-white/45">No other venture has its CRM on yet.</p>}
+    </section>
+
+    <section class="card" data-tour="crm-introductions-setting">
+      <h2 class="font-display text-lg font-bold">Introductions from shareholders</h2>
+      <p class="mt-1 text-sm text-white/55">Lakeba’s shareholders can introduce businesses to {current.display_name} from the investor portal. They see only the stage (meeting, customer, not now), never prices or notes.</p>
+      {isAdminOf(current.id) ? (
+        <form method="post" class="mt-4 grid gap-3 sm:grid-cols-[10rem_1fr_auto] sm:items-end"><input type="hidden" name="intent" value="intros" />
+          <div><label class="label" for="accepts">Shareholders may</label><select class="field" id="accepts" name="accepts"><option value="no">Not introduce</option><option value="yes" selected={introSet?.crm_accepts_introductions}>Introduce businesses</option></select></div>
+          <div><label class="label" for="pitch">What {current.display_name} does, in one line (they see it)</label><input class="field" id="pitch" name="pitch" value={introSet?.crm_pitch ?? ''} placeholder="Document automation for operations teams" /></div>
+          <button class="btn-ghost !py-2">Save</button>
+        </form>
+      ) : <p class="mt-3 text-sm text-white/65">{introSet?.crm_accepts_introductions ? 'On.' : 'Off.'} The company’s Admins change it.</p>}
+    </section>
 
     <section class="card" data-tour="crm-playbooks">
       <h2 class="font-display text-lg font-bold">Start from a playbook</h2>

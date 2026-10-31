@@ -19,6 +19,8 @@ import { worthToOwner } from '../../../../lib/crm-commission';
 import { crmXero, syncDeal } from '../../../../lib/crm-xero';
 import { aiBudget, reviewDeal, type Review } from '../../../../lib/crm-ai';
 import { sendNotetaker } from '../../../../lib/crm-recall';
+import { alsoKnown, askIntroduction } from '../../../../lib/crm-group';
+import AlsoKnown from '../../../../components/admin/crm/AlsoKnown.astro';
 
 // CRM → a deal: where it stands, everything that happened (logged automatically wherever the CRM can), the
 // buying group, tasks and its details. Its owner or a sales lead changes it.
@@ -142,6 +144,11 @@ if (Astro.request.method === 'POST') {
       const r = await syncDeal(svc, x, deal as never);
       return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent(r ? (r.won ? 'Paid in full: the deal is won.' : 'Updated from Xero.') : 'Nothing new in Xero.')}`, 303);
     }
+    if (intent === 'ask-intro') {
+      if (!deal.company_id) throw new Error('The deal has no company.');
+      await askIntroduction(svc, { fromEntity: company.id, toEntity: field(form, 'to_entity'), userId: me, company_id: deal.company_id, note: field(form, 'note'), central: centralOrigin(Astro.url) });
+      return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent('Asked. They get a notification; follow it in Introductions.')}`, 303);
+    }
     if (intent === 'ai-review') {
       await reviewDeal(svc, id, me);
       return Astro.redirect(`${self}${self.includes('?') ? '&' : '?'}done=${encodeURIComponent('Lakeba AI reviewed the deal.')}`, 303);
@@ -188,6 +195,7 @@ const roomUrl = room && roomLive(room) ? roomLink(centralOrigin(Astro.url), room
 const { data: ent } = await svc.from('entities').select('crm_currency, crm_fx').eq('id', company.id).single();
 const worth = await worthToOwner(svc, deal, ent as { crm_currency: string; crm_fx: Record<string, number> }).catch(() => null);
 const review = deal.ai_review as Review | null;
+const known = deal.company_id ? await alsoKnown(svc, company.id, { company_id: deal.company_id }) : [];
 const budget = await aiBudget(svc, company.id);
 const { data: recs } = await svc.from('crm_recordings').select('id, status, error, sent_at').eq('deal_id', id).order('sent_at', { ascending: false }).limit(3);
 const x = deal as unknown as { forecast: string; xero_contact_id: string | null; invoiced_amount: number; paid_amount: number; paid_at: string | null };
@@ -281,6 +289,7 @@ const lost = pipeline.stages.find((s) => s.kind === 'lost');
         <h2 class="mb-3 font-display text-lg font-bold">Tasks</h2>
         <Tasks tasks={(tasks ?? []) as Task[]} names={names} team={team} me={me} canDo={may} today={todayIso()} />
       </section>
+      <AlsoKnown items={known} canAsk={may} name={org?.name ?? deal.title} />
       <section class="card" data-tour="crm-quotes">
         <div class="mb-3 flex items-baseline justify-between gap-2"><h2 class="font-display text-lg font-bold">Quotes and Xero</h2>{may && deal.status !== 'lost' && <form method="post"><input type="hidden" name="intent" value="new-quote" /><button class="text-sm text-lk-blue hover:underline">New quote</button></form>}</div>
         {(quotes ?? []).length ? <ul class="divide-y divide-white/5">{(quotes ?? []).map((qq) => (

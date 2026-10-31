@@ -1,0 +1,25 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import GroupSales from '../../../components/admin/crm/GroupSales.astro';
+import { serviceClient } from '../../../lib/admin';
+import { crmHref, crmScope } from '../../../lib/crm';
+import { groupSales } from '../../../lib/crm-group';
+
+// CRM → Group: Lakeba's view of every venture's sales this quarter, from their CRMs (for people whose CRM role
+// is for the whole group). The board summary shows the same table.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+if (!Astro.locals.access.can('crm.view', null)) return Astro.redirect(crmHref(scope, '/admin/crm'));
+const q = Astro.url.searchParams;
+const now = new Date();
+const year = Number(q.get('year')) || now.getUTCFullYear();
+const quarter = Math.min(4, Math.max(1, Number(q.get('q')) || Math.floor(now.getUTCMonth() / 3) + 1));
+const start = new Date(Date.UTC(year, (quarter - 1) * 3, 1)).toISOString().slice(0, 10);
+const end = new Date(Date.UTC(year, quarter * 3, 0)).toISOString().slice(0, 10);
+const rows = await groupSales(svc, start, end);
+---
+<Crm title="Group" scope={scope}>
+  <PageHeader title={`The group · Q${quarter} ${year}`} subtitle="Every venture’s sales from its CRM, in A$ at Lakeba’s exchange rates. Won means paid in Xero where the venture has connected it." />
+  <GroupSales rows={rows} />
+</Crm>

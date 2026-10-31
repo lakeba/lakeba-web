@@ -7,6 +7,7 @@ import LinkedInIcon from '../components/LinkedInIcon.astro';
 import { brandName } from '../lib/companies';
 import { accentOf, brandOf } from '../lib/brand';
 import NoteBanner from '../components/NoteBanner.astro';
+import { serviceClient } from '../lib/admin';
 import { HTML_LANG } from '../lib/i18n';
 import { ADMIN_KINDS, workHome } from '../lib/view-mode';
 import Tour from '../components/Tour.astro';
@@ -36,6 +37,7 @@ const workNav: { href: string; label: string; tag?: string }[] = [
   ...(work.toSign ? [{ href: '/sign', label: t('To sign'), ...(work.waiting ? { tag: String(work.waiting) } : {}) }] : []),
   ...(work.hr ? [{ href: '/my-hr', label: t('My HR') }] : []),
 ];
+const introductions = user && !adminMode ? ((await serviceClient().from('entities').select('id', { count: 'exact', head: true }).eq('crm_enabled', true).eq('crm_accepts_introductions', true)).count ?? 0) > 0 : false;
 const nav: { href: string; label: string; tag?: string }[] = adminMode ? workNav : [
   { href: '/', label: t('Dashboard') },
   { href: '/documents', label: t('Documents') },
@@ -45,6 +47,8 @@ const nav: { href: string; label: string; tag?: string }[] = adminMode ? workNav
   ...(company && features.ask ? [{ href: '/ask', label: company.ask_name?.trim() || t('Ask {brand}', { brand }), tag: 'AI' }] : []),
   ...(features.boardQa ? [{ href: '/board', label: t('Ask the board') }] : []),
   ...(features.trading ? [{ href: '/trading', label: t('Trading') }] : []),
+  // Introduce a business to a Lakeba company (when one takes shareholders' introductions).
+  ...(introductions ? [{ href: '/introduce', label: t('Introduce') }] : []),
   // Not in the investor view of someone who works here (a venture's own domain keeps them).
   ...(view.on ? [] : workNav),
 ];

@@ -41,9 +41,11 @@ const groups: { label?: string; items: Item[] }[] = [
     { href: '/admin/crm/marketing', label: 'Marketing', exact: true },
     { href: '/admin/crm/marketing/forms', label: 'Forms and pages' },
     { href: '/admin/crm/marketing/sequences', label: 'Sequences' },
+    { href: '/admin/crm/introductions', label: 'Introductions' },
   ] },
   { label: 'Lead', items: [
     { href: '/admin/crm/forecast', label: 'Forecast' },
+    { href: '/admin/crm/group', label: 'Group', show: access.can('crm.view', null) },
     { href: '/admin/crm/import', label: 'Import', show: scope.canDo },
     { href: '/admin/crm/settings', label: 'Settings', show: scope.canSettings },
     { href: '/admin/crm/mailbox', label: 'My mailbox', show: scope.canDo },

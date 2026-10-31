@@ -1,0 +1,23 @@
+---
+import { aud } from '../../../lib/format';
+import type { GroupRow } from '../../../lib/crm-group';
+
+// The group's sales by venture (CRM → Group; the board summary's Sales section): from each venture's CRM, in A$.
+interface Props { rows: GroupRow[]; title?: string; note?: string }
+const { rows, title = 'Sales', note } = Astro.props;
+const sum = (k: 'paid' | 'commit' | 'weighted' | 'openValue') => rows.reduce((s, r) => s + r[k], 0);
+---
+<section class="card overflow-x-auto p-0" data-tour="crm-group-sales">
+  <h2 class="px-5 pt-5 font-display text-lg font-bold">{title}</h2>
+  {note && <p class="px-5 text-xs text-white/45">{note}</p>}
+  <table class="mt-3 w-full text-left text-sm">
+    <thead class="border-b border-white/5 text-xs uppercase tracking-wider text-white/40"><tr><th class="px-5 py-3">Company</th><th class="px-5 py-3 text-right">Won and paid</th><th class="px-5 py-3 text-right">Committed</th><th class="px-5 py-3 text-right">Weighted pipeline</th><th class="px-5 py-3 text-right">Open deals</th></tr></thead>
+    <tbody class="divide-y divide-white/5">
+      {rows.map((r) => (
+        <tr><td class="px-5 py-3 font-medium text-white">{r.name}</td><td class="px-5 py-3 text-right tabular-nums text-lk-green">{aud.format(r.paid)}<span class="block text-xs text-white/40">{r.wonDeals} deal{r.wonDeals === 1 ? '' : 's'}</span></td><td class="px-5 py-3 text-right tabular-nums">{aud.format(r.commit)}</td><td class="px-5 py-3 text-right tabular-nums text-white/70">{aud.format(r.weighted)}</td><td class="px-5 py-3 text-right text-white/70">{r.open}<span class="block text-xs text-white/40">{aud.format(r.openValue)}</span></td></tr>
+      ))}
+      {rows.length > 1 && <tr class="font-semibold"><td class="px-5 py-3 text-white">Group</td><td class="px-5 py-3 text-right tabular-nums text-lk-green">{aud.format(sum('paid'))}</td><td class="px-5 py-3 text-right tabular-nums">{aud.format(sum('commit'))}</td><td class="px-5 py-3 text-right tabular-nums text-white/70">{aud.format(sum('weighted'))}</td><td class="px-5 py-3 text-right text-white/70">{aud.format(sum('openValue'))}</td></tr>}
+      {!rows.length && <tr><td colspan="5" class="px-5 py-4 text-white/45">No company has its CRM switched on yet.</td></tr>}
+    </tbody>
+  </table>
+</section>

@@ -1,0 +1,70 @@
+---
+import Crm from '../../../layouts/Crm.astro';
+import PageHeader from '../../../components/PageHeader.astro';
+import Alert from '../../../components/Alert.astro';
+import { serviceClient } from '../../../lib/admin';
+import { field } from '../../../lib/forms';
+import { dateTime } from '../../../lib/format';
+import { centralOrigin } from '../../../lib/sites';
+import { crmHref, crmScope, namesOf } from '../../../lib/crm';
+import { introStage } from '../../../lib/crm-group';
+import { notifyMembers } from '../../../lib/notify';
+
+// CRM → Introductions: asked of you (another venture's salesperson would like to meet someone you know),
+// asked by you, and businesses Lakeba's shareholders introduced to this company.
+const svc = serviceClient();
+const scope = await crmScope(svc, Astro.locals, Astro.url);
+const company = scope.current;
+const me = Astro.locals.user!.id;
+let error = '';
+if (Astro.request.method === 'POST' && company) {
+  const form = await Astro.request.formData();
+  try {
+    const { data: i } = await svc.from('crm_introductions').select('*').eq('id', field(form, 'id')).maybeSingle();
+    if (!i || i.owner_id !== me) throw new Error('Only the person asked can answer.');
+    const accept = field(form, 'answer') === 'accept';
+    await svc.from('crm_introductions').update({ stage: accept ? 'accepted' : 'declined', updated_at: new Date().toISOString() }).eq('id', i.id);
+    if (i.by_user) await notifyMembers({ kind: 'crm', origin: centralOrigin(Astro.url), link: '/admin/crm/introductions', title: accept ? 'Your introduction was made' : 'Your introduction request was declined', body: field(form, 'note').slice(0, 300) || (accept ? 'They introduced you: follow up.' : ''), userIds: [i.by_user], entityId: i.from_entity_id ?? undefined }).catch(() => 0);
+    await Astro.locals.supabase.rpc('log_event', { event_action: accept ? 'crm_introduction_made' : 'crm_introduction_declined', event_detail: { entity_id: i.to_entity_id, introduction_id: i.id } });
+    return Astro.redirect(Astro.url.pathname + Astro.url.search, 303);
+  } catch (e) { error = (e as Error).message; }
+}
+type I = { id: string; by_kind: string; by_user: string | null; from_entity_id: string | null; to_entity_id: string; owner_id: string | null; note: string; stage: string; created_at: string; crm_people: { id: string; full_name: string } | null; crm_companies: { id: string; name: string } | null };
+const sel = 'id, by_kind, by_user, from_entity_id, to_entity_id, owner_id, note, stage, created_at, crm_people(id, full_name), crm_companies(id, name)';
+const [{ data: askedOfMe }, { data: mine }, { data: fromShareholders }] = company ? await Promise.all([
+  svc.from('crm_introductions').select(sel).eq('by_kind', 'venture').eq('owner_id', me).order('created_at', { ascending: false }).limit(100),
+  svc.from('crm_introductions').select(sel).eq('by_kind', 'venture').eq('by_user', me).eq('from_entity_id', company.id).order('created_at', { ascending: false }).limit(100),
+  svc.from('crm_introductions').select(sel).eq('by_kind', 'shareholder').eq('to_entity_id', company.id).order('created_at', { ascending: false }).limit(200),
+]) : [{ data: [] }, { data: [] }, { data: [] }];
+const all = [...(askedOfMe ?? []), ...(mine ?? []), ...(fromShareholders ?? [])] as unknown as I[];
+const names = await namesOf(svc, all.flatMap((i) => [i.by_user, i.owner_id]));
+const { data: ents } = await svc.from('entities').select('id, display_name').in('id', [...new Set(all.flatMap((i) => [i.from_entity_id, i.to_entity_id]).filter(Boolean) as string[])].concat('00000000-0000-0000-0000-000000000000'));
+const ent = new Map((ents ?? []).map((e) => [e.id, e.display_name]));
+const STAGE: Record<string, string> = { sent: 'Asked', accepted: 'Introduced', declined: 'Declined', meeting: 'In talks', customer: 'Customer', not_now: 'Not now' };
+const who = (i: I) => i.crm_people?.full_name ?? i.crm_companies?.name ?? 'someone';
+---
+<Crm title="Introductions" scope={scope}>
+  <PageHeader title="Introductions" subtitle="Between Lakeba’s ventures, through whoever knows the person; and businesses introduced by Lakeba’s shareholders." />
+  {error && <div class="mb-6"><Alert tone="error">{error}</Alert></div>}
+  <div class="grid gap-6 xl:grid-cols-2">
+    <section class="card" data-tour="crm-intros-asked">
+      <h2 class="font-display text-lg font-bold">Asked of you</h2>
+      <ul class="mt-2 divide-y divide-white/5">{((askedOfMe ?? []) as unknown as I[]).map((i) => (
+        <li class="py-3 text-sm"><p class="text-white"><b>{i.by_user ? names.get(i.by_user) : 'Someone'}</b> ({i.from_entity_id ? ent.get(i.from_entity_id) : ''}) would like to meet <b>{who(i)}</b></p><p class="mt-0.5 text-white/60">“{i.note}”</p><p class="mt-0.5 text-xs text-white/40">{dateTime.format(new Date(i.created_at))} · {STAGE[i.stage]}</p>
+          {i.stage === 'sent' && <form method="post" class="mt-2 flex flex-wrap gap-2"><input type="hidden" name="id" value={i.id} /><input class="field !w-64" name="note" placeholder="A note back (optional)" aria-label="Note" /><button name="answer" value="accept" class="btn-primary !py-1.5 text-sm">I introduced them</button><button name="answer" value="decline" class="btn-ghost !py-1.5 text-sm">Not now</button></form>}</li>
+      ))}{!(askedOfMe ?? []).length && <li class="py-2 text-sm text-white/45">Nothing asked of you.</li>}</ul>
+    </section>
+    <section class="card">
+      <h2 class="font-display text-lg font-bold">Asked by you</h2>
+      <ul class="mt-2 divide-y divide-white/5">{((mine ?? []) as unknown as I[]).map((i) => (
+        <li class="py-2.5 text-sm"><p class="text-white">{who(i)} <span class="text-white/45">via {i.owner_id ? names.get(i.owner_id) : ''} ({ent.get(i.to_entity_id)})</span></p><p class="text-xs text-white/45">{STAGE[i.stage]} · {dateTime.format(new Date(i.created_at))}</p></li>
+      ))}{!(mine ?? []).length && <li class="py-2 text-sm text-white/45">None yet. Ask from a person, company or deal (“Also known in the group”).</li>}</ul>
+    </section>
+    <section class="card xl:col-span-2" data-tour="crm-intros-shareholders">
+      <h2 class="font-display text-lg font-bold">From shareholders</h2>
+      <ul class="mt-2 divide-y divide-white/5">{((fromShareholders ?? []) as unknown as I[]).map((i) => (
+        <li class="flex flex-wrap items-baseline justify-between gap-3 py-2.5 text-sm"><span>{scope.canSell && i.crm_people ? <a class="text-white hover:text-lk-blue" href={crmHref(scope, `/admin/crm/people/${i.crm_people.id}`)}>{who(i)}</a> : <span class="text-white">{who(i)}</span>}{i.crm_companies && i.crm_people && <span class="text-white/45"> · {i.crm_companies.name}</span>}<span class="block text-xs text-white/45">by {i.by_user ? names.get(i.by_user) : 'a shareholder'}: “{i.note}”</span></span><span class="text-xs text-white/55">{i.owner_id ? `with ${names.get(i.owner_id)}` : 'not assigned'} · {dateTime.format(new Date(i.created_at))}</span></li>
+      ))}{!(fromShareholders ?? []).length && <li class="py-2 text-sm text-white/45">None yet. Switch introductions on in Settings so shareholders can make them.</li>}</ul>
+    </section>
+  </div>
+</Crm>

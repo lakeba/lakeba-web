@@ -1,0 +1,83 @@
+---
+import Portal from '../layouts/Portal.astro';
+import { serviceClient } from '../lib/admin';
+import { field } from '../lib/forms';
+import { cleanEmail, findOrCreatePerson } from '../lib/crm';
+import { introStage, shareholderIntroduction } from '../lib/crm-group';
+
+// Introduce a business (investor portal): a shareholder who knows a business that needs one of Lakeba's ventures
+// introduces it here. The venture's salesperson contacts them in the shareholder's name; the shareholder follows
+// the stage (in talks, customer, not now), never prices or notes. Ventures choose to take introductions (CRM →
+// Settings). Also: whether Lakeba's ventures may contact the shareholder themselves.
+const { t, user, profile } = Astro.locals;
+const svc = serviceClient();
+const { data: ventures } = await svc.from('entities').select('id, display_name, crm_pitch').eq('crm_enabled', true).eq('crm_accepts_introductions', true).order('sort');
+if (!ventures?.length) return Astro.redirect('/');
+let error = '';
+let done = '';
+const me = user!.id;
+const myEmail = cleanEmail(profile?.email ?? user!.email ?? '');
+const { data: person } = myEmail ? await svc.from('crm_people').select('id').eq('email', myEmail).is('merged_into', null).maybeSingle() : { data: null };
+if (Astro.request.method === 'POST') {
+  const form = await Astro.request.formData();
+  try {
+    if (field(form, 'intent') === 'consent') {
+      const p = person ?? (myEmail ? await findOrCreatePerson(svc, { full_name: `${profile?.first_name ?? ''} ${profile?.last_name ?? ''}`.trim() || myEmail, email: myEmail, source: 'investor' }) : null);
+      if (p) await svc.from('crm_consents').upsert({ person_id: p.id, channel: 'ventures', status: field(form, 'ventures') === 'yes' ? 'yes' : 'no', source: 'investor portal', at: new Date().toISOString() });
+      done = t('Saved.');
+    } else {
+      if (form.get('knows') !== 'yes') throw new Error(t('Please confirm they know you are introducing them.'));
+      const venture = (ventures ?? []).find((v) => v.id === field(form, 'venture'));
+      if (!venture) throw new Error(t('Choose a company.'));
+      if (field(form, 'company').length < 2 || field(form, 'name').length < 2) throw new Error(t('Give the business and the person’s name.'));
+      await shareholderIntroduction(svc, { userId: me, entityId: venture.id, company: field(form, 'company'), name: field(form, 'name'), email: field(form, 'email'), role: field(form, 'role'), how: field(form, 'how'), central: Astro.locals.site?.central ?? Astro.url.origin })
+        .catch((e) => { throw new Error((e as Error).message === 'bad_email' ? t('That email address doesn’t look right.') : (e as Error).message === 'too_many' ? t('That’s a lot of introductions for one day: please try again tomorrow.') : t('Something went wrong. Please try again.')); });
+      done = t('Thank you. {company} will contact them in your name.', { company: venture.display_name });
+    }
+  } catch (e) { error = (e as Error).message; }
+}
+const { data: mine } = await svc.from('crm_introductions').select('id, stage, to_entity_id, person_id, created_at, crm_companies(name)').eq('by_kind', 'shareholder').eq('by_user', me).order('created_at', { ascending: false }).limit(50);
+const rows = await Promise.all(((mine ?? []) as unknown as { id: string; stage: string; to_entity_id: string; person_id: string | null; created_at: string; crm_companies: { name: string } | null }[]).map(async (i) => {
+  const { data: d } = i.person_id ? await svc.from('crm_deals').select('status').eq('entity_id', i.to_entity_id).eq('person_id', i.person_id).order('updated_at', { ascending: false }).limit(1).maybeSingle() : { data: null };
+  return { ...i, now: introStage(i, d) };
+}));
+const ventureName = new Map((ventures ?? []).map((v) => [v.id, v.display_name]));
+const STAGE: Record<string, string> = { sent: t('Introduced'), accepted: t('Introduced'), declined: t('Not now'), meeting: t('In talks'), customer: t('Became a customer'), not_now: t('Not now') };
+const { data: consent } = person ? await svc.from('crm_consents').select('status').eq('person_id', person.id).eq('channel', 'ventures').maybeSingle() : { data: null };
+---
+
+<Portal title={t('Introduce a business')}>
+  <p class="text-sm text-white/45">{t('For shareholders')}</p>
+  <h1 class="mt-1 font-display text-3xl font-bold sm:text-4xl">{t('Know a business that needs one of our companies?')}</h1>
+  <p class="mt-3 max-w-2xl text-white/65">{t('Introduce them here. The company contacts them in your name, and you can follow what happens. You see the stage only, never prices or private notes.')}</p>
+  {error && <p role="alert" class="mt-4 rounded-xl border border-lk-red/40 bg-lk-red/10 px-4 py-3 text-sm">{error}</p>}
+  {done && <p role="status" class="mt-4 rounded-xl border border-lk-green/40 bg-lk-green/10 px-4 py-3 text-sm">{done}</p>}
+  <div class="mt-8 grid gap-6 lg:grid-cols-[1.2fr_1fr]">
+    <form method="post" class="card grid gap-3" data-tour="introduce-form">
+      <h2 class="font-display text-lg font-bold">{t('Make an introduction')}</h2>
+      <div><label class="label" for="venture">{t('Company')}</label><select class="field" id="venture" name="venture" required>{(ventures ?? []).map((v) => <option value={v.id}>{v.display_name}{v.crm_pitch && ` — ${v.crm_pitch}`}</option>)}</select></div>
+      <div><label class="label" for="company">{t('The business')}</label><input class="field" id="company" name="company" required /></div>
+      <div class="grid gap-3 sm:grid-cols-2">
+        <div><label class="label" for="name">{t('Person')}</label><input class="field" id="name" name="name" required /></div>
+        <div><label class="label" for="role">{t('Their role')}</label><input class="field" id="role" name="role" /></div>
+      </div>
+      <div><label class="label" for="email">{t('Their email')}</label><input class="field" type="email" id="email" name="email" required /></div>
+      <div><label class="label" for="how">{t('How you know them, and what they need')}</label><textarea class="field min-h-20" id="how" name="how" required></textarea></div>
+      <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="knows" value="yes" class="mt-1" /> {t('They know I am introducing them.')}</label>
+      <button class="btn-primary justify-self-start">{t('Send introduction')}</button>
+    </form>
+    <div class="grid content-start gap-6">
+      <section class="card">
+        <h2 class="font-display text-lg font-bold">{t('Your introductions')}</h2>
+        <ul class="mt-2 divide-y divide-white/5">{rows.map((r) => (
+          <li class="flex items-baseline justify-between gap-3 py-2.5 text-sm"><span><span class="text-white">{r.crm_companies?.name ?? '—'}</span><span class="block text-xs text-white/45">{ventureName.get(r.to_entity_id)}</span></span><span class:list={['rounded-full px-2 py-0.5 text-xs', r.now === 'customer' ? 'bg-lk-green/15 text-lk-green' : r.now === 'not_now' || r.now === 'declined' ? 'bg-white/[0.07] text-white/55' : 'bg-lk-blue/15 text-lk-blue']}>{STAGE[r.now] ?? STAGE.sent}</span></li>
+        ))}{!rows.length && <li class="py-2 text-sm text-white/45">{t('None yet.')}</li>}</ul>
+      </section>
+      <form method="post" class="card grid gap-3"><input type="hidden" name="intent" value="consent" />
+        <h2 class="font-display text-lg font-bold">{t('Hearing from our companies')}</h2>
+        <label class="flex items-start gap-2 text-sm text-white/70"><input type="checkbox" name="ventures" value="yes" class="mt-1" checked={consent?.status === 'yes'} /> {t('Lakeba’s companies may contact me about what they do.')}</label>
+        <button class="btn-ghost justify-self-start !py-1.5 text-sm">{t('Save')}</button>
+      </form>
+    </div>
+  </div>
+</Portal>
