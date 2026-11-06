@@ -1,0 +1,23 @@
+---
+import Mark from './Mark.astro';
+---
+
+<section id="start" class="py-28">
+  <div class="container-x">
+    <div class="reveal relative overflow-hidden rounded-[2.5rem] border border-white/10 px-6 py-20 text-center sm:px-16">
+      <div aria-hidden="true" class="absolute inset-0 -z-10 bg-[radial-gradient(ellipse_at_top_left,rgba(39,106,231,0.35),transparent_55%),radial-gradient(ellipse_at_bottom_right,rgba(235,128,43,0.3),transparent_55%),radial-gradient(ellipse_at_bottom_left,rgba(53,169,84,0.2),transparent_50%)]"></div>
+      <div aria-hidden="true" class="absolute inset-0 -z-10 grid-bg opacity-60"></div>
+      <Mark class="mx-auto size-16" animated />
+      <h2 class="mx-auto mt-8 max-w-3xl text-4xl font-extrabold sm:text-6xl">Have an idea?<br />Start building today.</h2>
+      <p class="mx-auto mt-5 max-w-xl text-lg text-white/65">Download LakebaOS, build your MVP with your AI team, then apply to be co-founded by Lakeba.</p>
+      <div class="mt-10 flex flex-wrap justify-center gap-3">
+        <a href="https://lakeba.github.io/agent-team/#start" class="rounded-2xl bg-white px-6 py-3.5 font-semibold text-ink transition hover:bg-white/85">Get LakebaOS</a>
+        <a href="https://lakeba.com/os/apply" class="rounded-2xl bg-lk-blue px-6 py-3.5 font-semibold text-white shadow-lg shadow-lk-blue/30 transition hover:shadow-lk-blue/60">Apply to Lakeba →</a>
+      </div>
+      <div class="mx-auto mt-12 inline-flex items-center gap-3 rounded-2xl border border-white/10 bg-ink/70 px-5 py-3 font-mono text-sm">
+        <span class="text-lk-green">$</span><span class="text-white/80">pipx install agent-team</span>
+        <a href="https://github.com/lakeba/agent-team" class="ml-2 border-l border-white/10 pl-3 text-xs text-white/50 hover:text-white">Open source · MIT ↗</a>
+      </div>
+    </div>
+  </div>
+</section>

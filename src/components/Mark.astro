@@ -1,0 +1,31 @@
+---
+// The Lakeba four-petal mark. `animated` lets the petals breathe apart.
+interface Props { class?: string; animated?: boolean }
+const { class: cls = 'size-8', animated = false } = Astro.props;
+const petals = [
+  { fill: '#276AE7', rot: 0, dx: 0, dy: -1 },
+  { fill: '#EB802B', rot: 90, dx: 1, dy: 0 },
+  { fill: '#DD3B2D', rot: 180, dx: 0, dy: 1 },
+  { fill: '#35A954', rot: 270, dx: -1, dy: 0 },
+];
+---
+
+<svg viewBox="-10 -10 120 120" class:list={[cls, animated && 'mark-anim']} role="img" aria-label="Lakeba">
+  {petals.map((p) => (
+    <g style={`--dx:${p.dx * 6}px;--dy:${p.dy * 6}px`} class="petal">
+      <path
+        d="M15 11C21 4.5 28 1.5 36 1.5C43 1.5 46.5 3.5 50 5.5C53.5 3.5 57 1.5 64 1.5C72 1.5 79 4.5 85 11L63 33C58 38 54.5 39.5 50 39.5C45.5 39.5 42 38 37 33Z"
+        fill={p.fill}
+        transform={`rotate(${p.rot} 50 50)`}
+      />
+    </g>
+  ))}
+</svg>
+
+<style>
+  @keyframes breathe {
+    0%, 100% { transform: translate(0, 0); }
+    50% { transform: translate(var(--dx), var(--dy)); }
+  }
+  .mark-anim .petal { animation: breathe 5s ease-in-out infinite; }
+</style>

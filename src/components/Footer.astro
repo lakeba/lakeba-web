@@ -1,0 +1,42 @@
+---
+import Mark from './Mark.astro';
+import NewsletterSignup from './NewsletterSignup.astro';
+import { href } from '../lib/paths';
+const offices = ['Sydney', 'India', 'Indonesia', 'Italy', 'United Kingdom', 'United States'];
+const cols = [
+  { h: 'LakebaOS', l: [['How it works', href('/#program')], ['AI team', href('/#team')], ['GitHub', 'https://github.com/lakeba/agent-team'], ['Download', 'https://lakeba.github.io/agent-team/#desktop']] },
+  { h: 'Lakeba', l: [['News & Media', href('/news/')], ['Press room', href('/press/')], ['Portfolio', 'https://lakeba.com/portfolios/'], ['About us', 'https://lakeba.com/about-us/'], ['Our team', 'https://lakeba.com/our-team/'], ['Investors', 'https://lakeba.com/']] },
+  { h: 'Founders', l: [['Fund offer', href('/#fund')], ['Apply', 'https://lakeba.com/os/apply'], ['Contact', 'mailto:info@lakeba.com']] },
+];
+---
+
+<footer class="border-t border-white/5 pt-16 pb-10">
+  <div class="container-x grid gap-12 md:grid-cols-[1.4fr_repeat(3,1fr)]">
+    <div>
+      <div class="flex items-center gap-2.5"><Mark class="size-8" /><span class="font-display text-xl font-bold text-white">lakeba</span></div>
+      <p class="mt-4 max-w-xs text-sm text-white/50">Conceive · Create · Commercialise. A global venture studio, now an operating system for founders.</p>
+      <p class="mt-6 flex flex-wrap gap-x-3 gap-y-1 text-xs text-white/40">{offices.map((o) => <span>{o}</span>)}</p>
+    </div>
+    {cols.map((c) => (
+      <div>
+        <h4 class="text-sm font-semibold">{c.h}</h4>
+        <ul class="mt-4 space-y-2.5 text-sm">
+          {c.l.map(([t, h]) => <li><a href={h} class="text-white/50 transition hover:text-white">{t}</a></li>)}
+        </ul>
+      </div>
+    ))}
+  </div>
+  <div class="container-x">
+    <NewsletterSignup compact />
+  </div>
+  <div class="container-x mt-14 flex flex-col justify-between gap-3 border-t border-white/5 pt-6 text-xs text-white/35 sm:flex-row">
+    <p>© 2026 Lakeba Group Limited</p>
+    <p class="flex items-center gap-4">
+      <a href="https://www.linkedin.com/company/lakeba-group" target="_blank" rel="noopener" class="inline-flex items-center gap-1.5 hover:text-white" aria-label="Lakeba on LinkedIn">
+        <svg class="size-4" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.86 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.42v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43a2.06 2.06 0 1 1 0-4.13 2.06 2.06 0 0 1 0 4.13zM7.12 20.45H3.56V9h3.56v11.45zM22.22 0H1.77C.79 0 0 .77 0 1.73v20.54C0 23.23.79 24 1.77 24h20.45c.98 0 1.78-.77 1.78-1.73V1.73C24 .77 23.2 0 22.22 0z"/></svg>
+        LinkedIn
+      </a>
+      <a href="mailto:info@lakeba.com" class="hover:text-white">info@lakeba.com</a>
+    </p>
+  </div>
+</footer>

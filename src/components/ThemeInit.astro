@@ -1,0 +1,22 @@
+---
+// Applies the saved theme before first paint. "auto" (no attribute) follows
+// the operating system. Shared by the site and the investor portal.
+---
+
+<meta name="theme-color" media="(prefers-color-scheme: dark)" content="#050b16" />
+<meta name="theme-color" media="(prefers-color-scheme: light)" content="#f4f7fc" />
+<script is:inline>
+  (() => {
+    const apply = () => {
+      let choice = 'auto';
+      try { choice = localStorage.getItem('lakeba-theme') || 'auto'; } catch {}
+      const root = document.documentElement;
+      if (choice === 'light' || choice === 'dark') root.dataset.theme = choice;
+      else delete root.dataset.theme;
+      root.dataset.themeChoice = choice;
+    };
+    apply();
+    // Astro view transitions replace <html> attributes on navigation.
+    document.addEventListener('astro:after-swap', apply);
+  })();
+</script>

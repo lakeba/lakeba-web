@@ -1,0 +1,27 @@
+---
+const phases = [
+  { w: 'Conceive', d: 'Shape the idea with Atlas: discuss, scope, plan.', agents: 'Atlas', bar: 'bg-lk-blue', fg: 'text-lk-blue' },
+  { w: 'Create', d: 'Forge builds, Probe tests, Sentinel guards. On autopilot.', agents: 'Forge · Probe · Sentinel', bar: 'bg-lk-orange', fg: 'text-lk-orange' },
+  { w: 'Commercialise', d: 'Harbor ships, Spark markets — Lakeba scales.', agents: 'Harbor · Spark', bar: 'bg-lk-green', fg: 'text-lk-green' },
+];
+---
+
+<section class="py-28">
+  <div class="container-x">
+    <div class="reveal max-w-2xl">
+      <span class="eyebrow">The Lakeba framework, rebuilt for AI</span>
+      <h2 class="mt-5 text-4xl font-extrabold sm:text-5xl">Same playbook.<br /><span class="text-white/40">Now it runs itself.</span></h2>
+    </div>
+    <div class="mt-14 grid gap-px overflow-hidden rounded-3xl border border-white/8 bg-white/8 md:grid-cols-3">
+      {phases.map((p, i) => (
+        <div class="reveal group relative bg-ink p-8 sm:p-10">
+          <div class:list={['absolute top-0 left-0 h-1 w-0 transition-all duration-700 group-hover:w-full', p.bar]}></div>
+          <p class="font-mono text-xs text-white/35">0{i + 1}</p>
+          <h3 class:list={['mt-10 text-4xl font-extrabold', p.fg]}>{p.w}</h3>
+          <p class="mt-4 text-white/60">{p.d}</p>
+          <p class="mt-8 font-mono text-xs uppercase tracking-widest text-white/35">{p.agents}</p>
+        </div>
+      ))}
+    </div>
+  </div>
+</section>

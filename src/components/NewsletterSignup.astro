@@ -1,0 +1,111 @@
+---
+// Newsletter sign-up. Posts to the investor portal, which handles double opt-in.
+interface Props {
+  compact?: boolean;
+  /** Prefix for element ids, so two forms can sit on one page. */
+  id?: string;
+}
+const { compact = false, id = compact ? 'nl-footer' : 'nl-main' } = Astro.props;
+const portal = (import.meta.env.PUBLIC_PORTAL_URL ?? 'https://investors.lakeba.com').replace(/\/+$/, '');
+const endpoint = `${portal}/api/public/newsletter/subscribe`;
+const input = 'w-full min-w-0 rounded-xl border border-white/10 bg-ink px-3.5 py-2.5 text-sm text-white placeholder:text-white/35 focus:border-lk-blue focus:outline-none';
+---
+
+<section
+  class:list={['newsletter', compact ? 'mt-14 border-t border-white/5 pt-10' : 'glass rounded-3xl p-6 sm:p-10']}
+  aria-labelledby={`${id}-title`}
+  data-newsletter
+>
+  <div class:list={[compact ? 'grid gap-6 lg:grid-cols-[1fr_1.4fr] lg:items-start' : 'grid gap-8 lg:grid-cols-[1fr_1.2fr] lg:items-center']}>
+    <div>
+      <h2 id={`${id}-title`} class:list={[compact ? 'text-base font-semibold' : 'text-2xl font-bold sm:text-3xl']}>Get the Lakeba newsletter</h2>
+      <p class:list={['mt-2 text-white/55', compact ? 'max-w-sm text-sm' : 'max-w-md']}>News from Lakeba Group and our ventures, about four times a year. No spam; unsubscribe any time.</p>
+    </div>
+
+    <div>
+      <form action={endpoint} method="post" class="newsletter-form" data-endpoint={endpoint}>
+        <div class:list={['grid gap-3', compact ? 'sm:grid-cols-[1fr_1.4fr_auto]' : 'sm:grid-cols-2']}>
+          <div class="min-w-0">
+            <label for={`${id}-name`} class="mb-1.5 block text-xs font-medium text-white/60">First name <span class="text-white/35">(optional)</span></label>
+            <input id={`${id}-name`} name="name" type="text" autocomplete="given-name" maxlength="100" class={input} />
+          </div>
+          <div class="min-w-0">
+            <label for={`${id}-email`} class="mb-1.5 block text-xs font-medium text-white/60">Email</label>
+            <input id={`${id}-email`} name="email" type="email" autocomplete="email" inputmode="email" required maxlength="254" class={input} />
+          </div>
+          <label for={`${id}-consent`} class:list={['flex items-start gap-2.5 py-1 text-sm text-white/60', compact ? 'sm:order-last sm:col-span-3' : 'sm:col-span-2']}>
+            <input id={`${id}-consent`} name="consent" type="checkbox" value="yes" required class="mt-0.5 size-4 shrink-0 accent-lk-blue" />
+            <span>I agree to receive the Lakeba newsletter by email.</span>
+          </label>
+          <div class:list={['flex items-end', !compact && 'sm:col-span-2']}>
+            <button type="submit" class="w-full rounded-xl bg-lk-blue px-5 py-2.5 text-sm font-semibold text-[#fff] shadow-lg shadow-lk-blue/30 transition hover:shadow-lk-blue/60 disabled:cursor-wait disabled:opacity-60 sm:w-auto">Subscribe</button>
+          </div>
+        </div>
+        <div class="nl-hp" aria-hidden="true">
+          <label for={`${id}-website`}>Website</label>
+          <input id={`${id}-website`} name="website" type="text" tabindex="-1" autocomplete="off" />
+        </div>
+      </form>
+      <p class="nl-status mt-3 text-sm empty:hidden" role="status" aria-live="polite"></p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .nl-hp { position: absolute; left: -10000px; top: auto; width: 1px; height: 1px; overflow: hidden; }
+  .nl-status[data-state='ok'] { color: var(--color-lk-green); }
+  .nl-status[data-state='error'] { color: var(--color-lk-red); }
+</style>
+
+<script>
+  const FAIL = 'Something went wrong. Please try again later.';
+
+  function bind(root: HTMLElement) {
+    if (root.dataset.bound) return;
+    root.dataset.bound = '1';
+    const form = root.querySelector<HTMLFormElement>('form')!;
+    const status = root.querySelector<HTMLElement>('.nl-status')!;
+    const button = form.querySelector<HTMLButtonElement>('button[type=submit]')!;
+
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      if (!form.reportValidity()) return;
+      const data = new FormData(form);
+      const body = {
+        email: String(data.get('email') ?? '').trim(),
+        name: String(data.get('name') ?? '').trim(),
+        consent: data.get('consent') === 'yes',
+        website: String(data.get('website') ?? ''),
+      };
+      button.disabled = true;
+      status.dataset.state = '';
+      status.textContent = 'Sending…';
+      try {
+        const res = await fetch(form.dataset.endpoint!, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        const json = await res.json().catch(() => null) as { ok?: boolean; message?: string } | null;
+        if (res.ok && json?.ok) {
+          status.dataset.state = 'ok';
+          status.textContent = json.message ?? 'Thanks! Please check your inbox and click the link to confirm.';
+          form.reset();
+          form.hidden = true;
+        } else {
+          status.dataset.state = 'error';
+          status.textContent = json?.message ?? FAIL;
+          button.disabled = false;
+        }
+      } catch {
+        status.dataset.state = 'error';
+        status.textContent = FAIL;
+        button.disabled = false;
+      }
+    });
+  }
+
+  document.addEventListener('astro:page-load', () => {
+    document.querySelectorAll<HTMLElement>('[data-newsletter]').forEach(bind);
+  });
+</script>

@@ -1,0 +1,61 @@
+---
+const stats = [
+  { v: 17, s: '', k: 'Ventures built' },
+  { v: 35, p: '$', s: 'M', k: 'Capital raised' },
+  { v: 3, s: '', k: 'Exits' },
+  { v: 13, s: '', k: 'Patents' },
+  { v: 7, s: '', k: 'Countries' },
+  { v: 2013, s: '', k: 'Since', plain: true },
+];
+const ventures = ['Bricklet', 'DoxAI', 'ezidox', 'Verimoto', 'Quixxi', 'SHELFIE', 'Ezifin', 'Whitehawk', 'Appreci', 'Mist', '360Dgrees', 'Eziprop'];
+---
+
+<section id="track" class="relative py-28">
+  <div class="container-x">
+    <div class="reveal text-center">
+      <span class="eyebrow">Track record</span>
+      <h2 class="mt-5 text-4xl font-extrabold sm:text-5xl">A decade of building businesses.</h2>
+    </div>
+
+    <dl class="mt-14 grid grid-cols-2 gap-px overflow-hidden rounded-3xl border border-white/8 bg-white/8 sm:grid-cols-3 lg:grid-cols-6">
+      {stats.map((s) => (
+        <div class="bg-ink px-6 py-8 text-center">
+          <dd class="font-display text-4xl font-extrabold text-white">
+            {s.p}<span data-count={s.plain ? undefined : s.v}>{s.v}</span>{s.s}
+          </dd>
+          <dt class="mt-1 text-xs uppercase tracking-widest text-white/45">{s.k}</dt>
+        </div>
+      ))}
+    </dl>
+
+    <div class="reveal mt-16 flex flex-wrap justify-center gap-3">
+      {ventures.map((v) => (
+        <span class="rounded-full border border-white/10 bg-white/[0.03] px-5 py-2.5 font-display text-sm font-semibold text-white/70 transition hover:border-white/30 hover:text-white">{v}</span>
+      ))}
+    </div>
+    <p class="mt-6 text-center text-sm text-white/40">Your venture could be next on this list.</p>
+  </div>
+</section>
+
+<script>
+  document.addEventListener('astro:page-load', () => {
+    const els = document.querySelectorAll<HTMLElement>('[data-count]');
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const io = new IntersectionObserver((entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        io.unobserve(e.target);
+        const el = e.target as HTMLElement;
+        const end = Number(el.dataset.count);
+        const t0 = performance.now();
+        const tick = (t: number) => {
+          const k = Math.min(1, (t - t0) / 1400);
+          el.textContent = String(Math.round(end * (1 - Math.pow(1 - k, 3))));
+          if (k < 1) requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      }
+    }, { threshold: 0.6 });
+    els.forEach((el) => io.observe(el));
+  });
+</script>

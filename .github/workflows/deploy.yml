@@ -1,0 +1,60 @@
+name: Deploy to GitHub Pages
+
+# Manual only: run from the Actions tab when it's time to publish.
+# Pushing to main does not deploy.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Build
+        run: npm run build
+        env:
+          SITE: https://${{ github.repository_owner }}.github.io
+          BASE: /${{ github.event.repository.name }}
+          NEWS_FEED_URL: https://investors.lakeba.com/api/public/news.json
+          PUBLIC_PORTAL_URL: https://investors.lakeba.com
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
+      # Tell Bing, Yandex and the other IndexNow search engines about new and
+      # changed news right away (Google reads the news sitemap). Best effort.
+      - name: Notify search engines (IndexNow)
+        continue-on-error: true
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          base="${PAGE_URL%/}"
+          key=129781b8f81c50b09b72e52e52fb3519  # public/<key>.txt (an IndexNow key is public by design)
+          urls=$(curl -fsS "$base/news-sitemap.xml" | grep -o '<loc>[^<]*</loc>' | sed 's/<\/*loc>//g' | head -100)
+          list=$(printf '%s\n' "$base/news/" "$base/press/" $urls | jq -R . | jq -s .)
+          host=$(echo "$base" | sed -E 's#https?://([^/]+).*#\1#')
+          jq -n --arg host "$host" --arg key "$key" --arg loc "$base/$key.txt" --argjson urls "$list" '{host:$host,key:$key,keyLocation:$loc,urlList:$urls}' \
+            | curl -sS -X POST -H 'content-type: application/json; charset=utf-8' --data @- https://api.indexnow.org/indexnow -w ' IndexNow answered %{http_code}\n'
